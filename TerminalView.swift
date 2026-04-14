@@ -94,7 +94,11 @@ class TerminalSurfaceView: NSView {
     var surface: ghostty_surface_t?
     private var trackingArea: NSTrackingArea?
 
-    init(app: ghostty_app_t) {
+    // Keep C strings alive for the lifetime of the surface
+    private var commandCString: UnsafeMutablePointer<CChar>?
+    private var workingDirCString: UnsafeMutablePointer<CChar>?
+
+    init(app: ghostty_app_t, command: String? = nil, workingDirectory: String? = nil) {
         super.init(frame: .zero)
         wantsLayer = true
 
@@ -104,6 +108,15 @@ class TerminalSurfaceView: NSView {
         surfaceCfg.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque()))
         surfaceCfg.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
         surfaceCfg.context = GHOSTTY_SURFACE_CONTEXT_TAB
+
+        if let command {
+            commandCString = strdup(command)
+            surfaceCfg.command = UnsafePointer(commandCString!)
+        }
+        if let workingDirectory {
+            workingDirCString = strdup(workingDirectory)
+            surfaceCfg.working_directory = UnsafePointer(workingDirCString!)
+        }
 
         guard let s = ghostty_surface_new(app, &surfaceCfg) else {
             NSLog("ghostty_surface_new failed")
@@ -116,6 +129,8 @@ class TerminalSurfaceView: NSView {
 
     deinit {
         if let surface { ghostty_surface_free(surface) }
+        free(commandCString)
+        free(workingDirCString)
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -259,9 +274,11 @@ class TerminalSurfaceView: NSView {
 
 struct TerminalSurfaceRepresentable: NSViewRepresentable {
     let app: ghostty_app_t
+    var command: String? = nil
+    var workingDirectory: String? = nil
 
     func makeNSView(context: Context) -> TerminalSurfaceView {
-        let view = TerminalSurfaceView(app: app)
+        let view = TerminalSurfaceView(app: app, command: command, workingDirectory: workingDirectory)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             view.window?.makeFirstResponder(view)
         }
@@ -275,6 +292,8 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
 
 struct TerminalView: View {
     @ObservedObject private var ghostty = GhosttyApp.shared
+    var command: String? = nil
+    var workingDirectory: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -291,7 +310,7 @@ struct TerminalView: View {
                 .background(Theme.base)
                 .accessibilityIdentifier("terminal.placeholder")
             } else if let app = ghostty.app {
-                TerminalSurfaceRepresentable(app: app)
+                TerminalSurfaceRepresentable(app: app, command: command, workingDirectory: workingDirectory)
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "terminal")

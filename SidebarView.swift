@@ -19,12 +19,14 @@ enum NavDestination: Hashable {
     case landings
     case issues
     case terminal
+    case terminalCommand(binary: String, workingDirectory: String, name: String)
     case workspaces
 
     var label: String {
         switch self {
         case .chat: return "Chat"
         case .terminal: return "Terminal"
+        case .terminalCommand(binary: _, workingDirectory: _, name: let name): return name
         case .dashboard: return "Dashboard"
         case .agents: return "Agents"
         case .changes: return "Changes"
@@ -47,6 +49,7 @@ enum NavDestination: Hashable {
         switch self {
         case .chat: return "message"
         case .terminal: return "terminal"
+        case .terminalCommand(binary: _, workingDirectory: _, name: _): return "terminal"
         case .dashboard: return "square.grid.2x2"
         case .agents: return "person.2"
         case .changes: return "point.3.connected.trianglepath.dotted"
@@ -71,7 +74,6 @@ enum NavDestination: Hashable {
 struct SidebarView: View {
     @ObservedObject var store: SessionStore
     @Binding var destination: NavDestination
-    var onNewTerminal: () -> Void = {}
     @State private var searchText: String = ""
 
     private let smithersNav: [NavDestination] = [
@@ -97,9 +99,9 @@ struct SidebarView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // Chat section
                     SidebarSection(title: "CHAT") {
-                        NewActionRow(
+                        NewChatMenuRow(
                             newChatAction: startNewChat,
-                            newTerminalAction: startNewTerminal
+                            terminalAction: { destination = .terminal }
                         )
 
                         NavRow(
@@ -192,11 +194,6 @@ struct SidebarView: View {
         store.newSession()
         destination = .chat
     }
-
-    private func startNewTerminal() {
-        onNewTerminal()
-        destination = .terminal
-    }
 }
 
 // MARK: - Sidebar Components
@@ -248,24 +245,24 @@ struct NavRow: View {
     }
 }
 
-struct NewActionRow: View {
+struct NewChatMenuRow: View {
     let newChatAction: () -> Void
-    let newTerminalAction: () -> Void
+    let terminalAction: () -> Void
 
     var body: some View {
         Menu {
+            Button(action: terminalAction) {
+                Label("Terminal", systemImage: NavDestination.terminal.icon)
+            }
             Button(action: newChatAction) {
                 Label("New Chat", systemImage: NavDestination.chat.icon)
-            }
-            Button(action: newTerminalAction) {
-                Label("New Terminal", systemImage: NavDestination.terminal.icon)
             }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "plus")
                     .font(.system(size: 11))
                     .frame(width: 16)
-                Text("New")
+                Text("New Chat")
                     .font(.system(size: 12))
                     .lineLimit(1)
                 Spacer()
@@ -277,8 +274,6 @@ struct NewActionRow: View {
             .cornerRadius(6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-        } primaryAction: {
-            newChatAction()
         }
         .menuStyle(.borderlessButton)
         .buttonStyle(.plain)

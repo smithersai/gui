@@ -16,18 +16,11 @@ struct ContentView: View {
     @StateObject private var store = SessionStore()
     @StateObject private var smithers = SmithersClient()
     @State private var destination: NavDestination = .dashboard
-    @State private var terminalSessionId = UUID()
     @State private var liveRunChatSelection: LiveRunChatSelection?
 
     var body: some View {
         HStack(spacing: 0) {
-            SidebarView(
-                store: store,
-                destination: $destination,
-                onNewTerminal: {
-                    terminalSessionId = UUID()
-                }
-            )
+            SidebarView(store: store, destination: $destination)
                 .frame(width: 240)
 
             Divider()
@@ -55,8 +48,11 @@ struct ContentView: View {
                     }
                 case .terminal:
                     TerminalView()
-                        .id(terminalSessionId)
                         .accessibilityIdentifier("view.terminal")
+                case .terminalCommand(let binary, let workingDirectory, let name):
+                    TerminalView(command: binary, workingDirectory: workingDirectory)
+                        .id("\(binary)-\(workingDirectory)")
+                        .accessibilityIdentifier("view.terminalCommand.\(name)")
                 case .dashboard:
                     DashboardView(smithers: smithers)
                         .accessibilityIdentifier("view.dashboard")

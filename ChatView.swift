@@ -435,20 +435,13 @@ struct ChatView: View {
             return
         }
 
-        Task { @MainActor in
-            launchingTargetID = target.id
-            defer { launchingTargetID = nil }
-
-            do {
-                try await ExternalChatLauncher.launch(binaryPath: target.binary, workingDirectory: agent.workingDirectory)
-                targetLaunchStatus = "Launched \(target.name). Smithers remains available in this window."
-                agent.appendStatusMessage("Launched \(target.name) via external terminal.")
-                await loadChatTargets(force: true)
-            } catch {
-                targetPickerError = "Failed to launch \(target.name): \(error.localizedDescription)"
-                agent.appendStatusMessage("Failed to launch \(target.name): \(error.localizedDescription)")
-            }
-        }
+        // Launch in embedded terminal
+        showTargetPicker = false
+        onNavigate?(.terminalCommand(
+            binary: target.binary,
+            workingDirectory: agent.workingDirectory,
+            name: target.name
+        ))
     }
 
     private func loadChatTargetsIfNeeded() async {
