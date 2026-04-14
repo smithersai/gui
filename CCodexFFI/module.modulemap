@@ -1,0 +1,5 @@
+module CCodexFFI {
+    header "codex_ffi.h"
+    link "codex_ffi"
+    export *
+}
