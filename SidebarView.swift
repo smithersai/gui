@@ -14,11 +14,13 @@ enum NavDestination: Hashable {
     case search
     case landings
     case issues
+    case terminal
     case workspaces
 
     var label: String {
         switch self {
         case .chat: return "Chat"
+        case .terminal: return "Terminal"
         case .dashboard: return "Dashboard"
         case .runs: return "Runs"
         case .workflows: return "Workflows"
@@ -36,6 +38,7 @@ enum NavDestination: Hashable {
     var icon: String {
         switch self {
         case .chat: return "message"
+        case .terminal: return "terminal"
         case .dashboard: return "square.grid.2x2"
         case .runs: return "play.circle"
         case .workflows: return "arrow.triangle.branch"
@@ -92,6 +95,14 @@ struct SidebarView: View {
                             isSelected: destination == .chat
                         ) {
                             destination = .chat
+                        }
+
+                        NavRow(
+                            icon: NavDestination.terminal.icon,
+                            label: NavDestination.terminal.label,
+                            isSelected: destination == .terminal
+                        ) {
+                            destination = .terminal
                         }
                     }
 
