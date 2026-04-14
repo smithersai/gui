@@ -294,11 +294,21 @@ struct RunsView: View {
             // Action buttons
             HStack(spacing: 8) {
                 if run.status == .waitingApproval {
-                    actionButton("Approve", icon: "checkmark", color: Theme.success) {
-                        // Will need nodeId from inspection
-                    }
-                    actionButton("Deny", icon: "xmark", color: Theme.danger) {
-                        // Will need nodeId from inspection
+                    if let inspection = inspections[run.runId],
+                       let blockedNode = inspection.tasks.first(where: { $0.state == "blocked" || $0.state == "waiting-approval" }) {
+                        actionButton("Approve", icon: "checkmark", color: Theme.success) {
+                            Task { await approveNode(runId: run.runId, nodeId: blockedNode.nodeId) }
+                        }
+                        actionButton("Deny", icon: "xmark", color: Theme.danger) {
+                            Task { await denyNode(runId: run.runId, nodeId: blockedNode.nodeId) }
+                        }
+                    } else {
+                        actionButton("Approve", icon: "checkmark", color: Theme.success) {}
+                            .disabled(true)
+                            .opacity(0.5)
+                        actionButton("Deny", icon: "xmark", color: Theme.danger) {}
+                            .disabled(true)
+                            .opacity(0.5)
                     }
                 }
                 if run.status == .running || run.status == .waitingApproval {
@@ -450,6 +460,26 @@ struct RunsView: View {
             inspections[runId] = inspection
         } catch {
             // Silently fail — row will show the error
+        }
+    }
+
+    private func approveNode(runId: String, nodeId: String) async {
+        do {
+            try await smithers.approveNode(runId: runId, nodeId: nodeId)
+            await loadRuns()
+            if let expandedRunId { await loadInspection(expandedRunId) }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func denyNode(runId: String, nodeId: String) async {
+        do {
+            try await smithers.denyNode(runId: runId, nodeId: nodeId)
+            await loadRuns()
+            if let expandedRunId { await loadInspection(expandedRunId) }
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 

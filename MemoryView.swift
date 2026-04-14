@@ -255,7 +255,8 @@ struct MemoryView: View {
         VStack(spacing: 0) {
             // Query input
             HStack(spacing: 8) {
-                TextField("Semantic recall query...", text: $recallQuery, onCommit: { Task { await doRecall() } })
+                TextField("Semantic recall query...", text: $recallQuery)
+                    .onSubmit { Task { await doRecall() } }
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .padding(.horizontal, 10)

@@ -32,7 +32,8 @@ struct SearchView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.textTertiary)
-                TextField("Search...", text: $query, onCommit: { Task { await search() } })
+                TextField("Search...", text: $query)
+                    .onSubmit { Task { await search() } }
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
 
