@@ -1,0 +1,65 @@
+name: SmithersGUI
+options:
+  minimumXcodeGenVersion: 2.43.0
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+targets:
+  SmithersGUI:
+    type: application
+    platform: macOS
+    sources:
+      - path: .
+        includes:
+          - "*.swift"
+        excludes:
+          - "Package.swift"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUI
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: SmithersGUI
+        INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CCodexFFI $(SRCROOT)/CGhosttyKit"
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/CCodexFFI"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/codex/codex-rs/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64"
+        OTHER_LDFLAGS: "$(inherited) -lcodex_ffi -lghostty-fat -lc++ -lresolv -lz -lbz2"
+    dependencies:
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: CoreGraphics.framework
+      - sdk: CoreText.framework
+      - sdk: IOKit.framework
+      - sdk: AppKit.framework
+      - sdk: Carbon.framework
+      - sdk: Foundation.framework
+  SmithersGUIUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: Tests/SmithersGUIUITests
+    dependencies:
+      - target: SmithersGUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUIUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: SmithersGUI
+schemes:
+  SmithersGUI:
+    build:
+      targets:
+        SmithersGUI: all
+        SmithersGUIUITests: [test]
+    test:
+      targets:
+        - SmithersGUIUITests
+      gatherCoverageData: false
