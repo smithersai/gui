@@ -5,13 +5,17 @@ import SwiftUI
 enum NavDestination: Hashable {
     case chat
     case dashboard
+    case agents
+    case changes
     case runs
     case workflows
+    case jjhubWorkflows
     case approvals
     case prompts
     case scores
     case memory
     case search
+    case sql
     case landings
     case issues
     case terminal
@@ -22,13 +26,17 @@ enum NavDestination: Hashable {
         case .chat: return "Chat"
         case .terminal: return "Terminal"
         case .dashboard: return "Dashboard"
+        case .agents: return "Agents"
+        case .changes: return "Changes"
         case .runs: return "Runs"
         case .workflows: return "Workflows"
+        case .jjhubWorkflows: return "JJHub Workflows"
         case .approvals: return "Approvals"
         case .prompts: return "Prompts"
         case .scores: return "Scores"
         case .memory: return "Memory"
         case .search: return "Search"
+        case .sql: return "SQL Browser"
         case .landings: return "Landings"
         case .issues: return "Issues"
         case .workspaces: return "Workspaces"
@@ -40,13 +48,17 @@ enum NavDestination: Hashable {
         case .chat: return "message"
         case .terminal: return "terminal"
         case .dashboard: return "square.grid.2x2"
+        case .agents: return "person.2"
+        case .changes: return "point.3.connected.trianglepath.dotted"
         case .runs: return "play.circle"
         case .workflows: return "arrow.triangle.branch"
+        case .jjhubWorkflows: return "point.3.filled.connected.trianglepath.dotted"
         case .approvals: return "checkmark.shield"
         case .prompts: return "doc.text"
         case .scores: return "chart.bar"
         case .memory: return "brain"
         case .search: return "magnifyingglass"
+        case .sql: return "tablecells"
         case .landings: return "arrow.down.to.line"
         case .issues: return "exclamationmark.circle"
         case .workspaces: return "desktopcomputer"
@@ -59,11 +71,12 @@ enum NavDestination: Hashable {
 struct SidebarView: View {
     @ObservedObject var store: SessionStore
     @Binding var destination: NavDestination
+    var onNewTerminal: () -> Void = {}
     @State private var searchText: String = ""
 
     private let smithersNav: [NavDestination] = [
-        .dashboard, .runs, .workflows, .approvals,
-        .prompts, .scores, .memory, .search,
+        .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows, .approvals,
+        .prompts, .scores, .memory, .search, .sql,
         .landings, .issues, .workspaces
     ]
 
@@ -84,10 +97,10 @@ struct SidebarView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // Chat section
                     SidebarSection(title: "CHAT") {
-                        NavRow(icon: "plus", label: "New Chat", isSelected: false) {
-                            store.newSession()
-                            destination = .chat
-                        }
+                        NewActionRow(
+                            newChatAction: startNewChat,
+                            newTerminalAction: startNewTerminal
+                        )
 
                         NavRow(
                             icon: NavDestination.chat.icon,
@@ -129,6 +142,7 @@ struct SidebarView: View {
                             TextField("Search chats...", text: $searchText)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 11))
+                                .accessibilityIdentifier("sidebar.sessionSearch")
                         }
                         .padding(.horizontal, 10)
                         .frame(height: 28)
@@ -171,6 +185,17 @@ struct SidebarView: View {
             }
         }
         .background(Theme.sidebarBg)
+        .accessibilityIdentifier("sidebar")
+    }
+
+    private func startNewChat() {
+        store.newSession()
+        destination = .chat
+    }
+
+    private func startNewTerminal() {
+        onNewTerminal()
+        destination = .terminal
     }
 }
 
@@ -219,6 +244,46 @@ struct NavRow: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 4)
+        .accessibilityIdentifier("nav.\(label.replacingOccurrences(of: " ", with: ""))")
+    }
+}
+
+struct NewActionRow: View {
+    let newChatAction: () -> Void
+    let newTerminalAction: () -> Void
+
+    var body: some View {
+        Menu {
+            Button(action: newChatAction) {
+                Label("New Chat", systemImage: NavDestination.chat.icon)
+            }
+            Button(action: newTerminalAction) {
+                Label("New Terminal", systemImage: NavDestination.terminal.icon)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11))
+                    .frame(width: 16)
+                Text("New")
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .foregroundColor(Theme.textSecondary)
+            .background(Color.clear)
+            .cornerRadius(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        } primaryAction: {
+            newChatAction()
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+        .accessibilityIdentifier("sidebar.newChat")
     }
 }
 
@@ -254,6 +319,7 @@ struct SessionRow: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 4)
+        .accessibilityIdentifier("session.\(session.id)")
     }
 }
 
