@@ -5,6 +5,71 @@ import SwiftUI
 import AppKit
 #endif
 
+enum ChatTargetKind: String {
+    case smithers
+    case externalAgent = "external_agent"
+}
+
+struct ChatTargetOption: Identifiable, Equatable {
+    let kind: ChatTargetKind
+    let id: String
+    let name: String
+    let description: String
+    let status: String
+    let roles: [String]
+    let binary: String
+    let recommended: Bool
+    let usable: Bool
+}
+
+func buildChatTargets(from agents: [SmithersAgent]) -> [ChatTargetOption] {
+    var targets: [ChatTargetOption] = [
+        ChatTargetOption(
+            kind: .smithers,
+            id: "smithers",
+            name: "Smithers",
+            description: "Use the built-in chat without leaving Smithers GUI.",
+            status: "",
+            roles: [],
+            binary: "",
+            recommended: true,
+            usable: true
+        ),
+    ]
+
+    for agent in agents where agent.usable {
+        let binary = agent.binaryPath.isEmpty ? agent.command : agent.binaryPath
+        targets.append(
+            ChatTargetOption(
+                kind: .externalAgent,
+                id: agent.id,
+                name: agent.name,
+                description: "Launch the \(agent.name) CLI in this terminal.",
+                status: agent.status,
+                roles: agent.roles,
+                binary: binary,
+                recommended: false,
+                usable: true
+            )
+        )
+    }
+
+    return targets
+}
+
+func chatTargetStatusLabel(_ status: String) -> String {
+    switch status {
+    case "likely-subscription":
+        return "Signed in"
+    case "api-key":
+        return "API key"
+    case "binary-only":
+        return "Binary only"
+    default:
+        return "Available"
+    }
+}
+
 struct ChatView: View {
     @ObservedObject var agent: AgentService
     var onSend: (String) -> Void
@@ -16,6 +81,13 @@ struct ChatView: View {
     @State private var workflowCommands: [SlashCommandItem] = []
     @State private var promptCommands: [SlashCommandItem] = []
     @State private var selectedSlashIndex = 0
+    @State private var chatTargets: [ChatTargetOption] = buildChatTargets(from: [])
+    @State private var showTargetPicker = !UITestSupport.isEnabled
+    @State private var loadingTargets = false
+    @State private var hasLoadedTargets = false
+    @State private var launchingTargetID: String? = nil
+    @State private var targetPickerError: String? = nil
+    @State private var targetLaunchStatus: String? = nil
 
     private var slashCommands: [SlashCommandItem] {
         SlashCommandRegistry.builtInCommands + workflowCommands + promptCommands
@@ -31,16 +103,23 @@ struct ChatView: View {
             !matchingSlashCommands.isEmpty
     }
 
+    private var shouldShowTargetPicker: Bool {
+        smithers != nil && showTargetPicker
+    }
+
+    private var headerBusy: Bool {
+        agent.isRunning || loadingTargets || launchingTargetID != nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             HStack {
                 Spacer()
                 HStack(spacing: 6) {
                     Text("Smithers")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(Theme.titlebarFg)
-                    if agent.isRunning {
+                    if headerBusy {
                         ProgressView()
                             .scaleEffect(0.5)
                             .frame(width: 12, height: 12)
@@ -53,7 +132,20 @@ struct ChatView: View {
             .background(Theme.titlebarBg)
             .border(Theme.border, edges: [.bottom])
 
-            // Messages
+            if shouldShowTargetPicker {
+                targetPickerView
+            } else {
+                chatSurfaceView
+            }
+        }
+        .task {
+            await loadDynamicSlashCommands()
+            await loadChatTargetsIfNeeded()
+        }
+    }
+
+    private var chatSurfaceView: some View {
+        VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
@@ -68,6 +160,7 @@ struct ChatView: View {
                                     .foregroundColor(Theme.textTertiary)
                             }
                             .frame(maxWidth: .infinity)
+                            .accessibilityIdentifier("chat.emptyState")
                         }
                         ForEach(agent.messages) { message in
                             MessageRow(message: message)
@@ -96,107 +189,295 @@ struct ChatView: View {
             }
             .background(Theme.surface1)
 
-            // Composer
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 8) {
-                    if slashPaletteVisible {
-                        SlashCommandPalette(
-                            commands: Array(matchingSlashCommands.prefix(8)),
-                            selectedIndex: selectedSlashIndex,
-                            onSelect: { command in
-                                executeSlashCommand(command)
-                            }
-                        )
+            composerView
+                .background(Theme.surface1)
+        }
+        .accessibilityIdentifier("chat.surface")
+    }
+
+    private var composerView: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                if slashPaletteVisible {
+                    SlashCommandPalette(
+                        commands: Array(matchingSlashCommands.prefix(8)),
+                        selectedIndex: selectedSlashIndex,
+                        onSelect: { command in
+                            executeSlashCommand(command)
+                        }
+                    )
+                }
+
+                TextField("Ask anything...", text: $inputText, axis: .vertical)
+                    .font(.system(size: 13))
+                    .foregroundColor(Theme.textPrimary)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...5)
+                    .frame(minHeight: 60, alignment: .top)
+                    .onKeyPress(.return) {
+                        if NSEvent.modifierFlags.contains(.shift) {
+                            return .ignored // let shift+return insert newline
+                        }
+                        if executeSelectedSlashCommand() {
+                            return .handled
+                        }
+                        send()
+                        return .handled
                     }
-
-                    TextField("Ask anything...", text: $inputText, axis: .vertical)
-                        .font(.system(size: 13))
-                        .foregroundColor(Theme.textPrimary)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...5)
-                        .frame(minHeight: 60, alignment: .top)
-                        .onKeyPress(.return) {
-                            if NSEvent.modifierFlags.contains(.shift) {
-                                return .ignored // let shift+return insert newline
-                            }
-                            if executeSelectedSlashCommand() {
-                                return .handled
-                            }
-                            send()
-                            return .handled
-                        }
-                        .onKeyPress(.downArrow) {
-                            guard slashPaletteVisible else { return .ignored }
-                            moveSlashSelection(1)
-                            return .handled
-                        }
-                        .onKeyPress(.upArrow) {
-                            guard slashPaletteVisible else { return .ignored }
-                            moveSlashSelection(-1)
-                            return .handled
-                        }
-                        .onKeyPress(.tab) {
-                            guard slashPaletteVisible else { return .ignored }
-                            if let command = selectedSlashCommand {
-                                inputText = "/\(command.name) "
-                                selectedSlashIndex = 0
-                            }
-                            return .handled
-                        }
-                        .onKeyPress(.escape) {
-                            guard slashPaletteVisible else { return .ignored }
-                            inputText = ""
-                            selectedSlashIndex = 0
-                            return .handled
-                        }
-                        .onChange(of: inputText) { _, _ in
+                    .onKeyPress(.downArrow) {
+                        guard slashPaletteVisible else { return .ignored }
+                        moveSlashSelection(1)
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        guard slashPaletteVisible else { return .ignored }
+                        moveSlashSelection(-1)
+                        return .handled
+                    }
+                    .onKeyPress(.tab) {
+                        guard slashPaletteVisible else { return .ignored }
+                        if let command = selectedSlashCommand {
+                            inputText = "/\(command.name) "
                             selectedSlashIndex = 0
                         }
+                        return .handled
+                    }
+                    .onKeyPress(.escape) {
+                        guard slashPaletteVisible else { return .ignored }
+                        inputText = ""
+                        selectedSlashIndex = 0
+                        return .handled
+                    }
+                    .onChange(of: inputText) { _, _ in
+                        selectedSlashIndex = 0
+                    }
+                    .accessibilityIdentifier("chat.input")
 
-                    HStack {
-                        HStack(spacing: 12) {
-                            Image(systemName: "paperclip")
-                            Image(systemName: "at")
-                            Button(action: { inputText = "/" }) {
-                                Image(systemName: "sparkles")
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .foregroundColor(Theme.textTertiary)
-                        .font(.system(size: 14))
-
-                        Spacer()
-
-                        Button(action: send) {
-                            Image(systemName: agent.isRunning ? "stop.fill" : "arrow.up")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(Theme.surface1)
-                                .frame(width: 24, height: 24)
-                                .background(agent.isRunning ? Theme.danger : Theme.accent)
-                                .cornerRadius(6)
+                HStack {
+                    HStack(spacing: 12) {
+                        Image(systemName: "paperclip")
+                            .accessibilityIdentifier("chat.attachmentButton")
+                        Image(systemName: "at")
+                            .accessibilityIdentifier("chat.mentionButton")
+                        Button(action: { inputText = "/" }) {
+                            Image(systemName: "sparkles")
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.slashButton")
+                    }
+                    .foregroundColor(Theme.textTertiary)
+                    .font(.system(size: 14))
+
+                    Spacer()
+
+                    Button(action: send) {
+                        Image(systemName: agent.isRunning ? "stop.fill" : "arrow.up")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(Theme.surface1)
+                            .frame(width: 24, height: 24)
+                            .background(agent.isRunning ? Theme.danger : Theme.accent)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier(agent.isRunning ? "chat.stopButton" : "chat.sendButton")
+                }
+            }
+            .padding(12)
+            .background(Theme.surface2.opacity(0.5))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Theme.border, lineWidth: 1)
+            )
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+
+            Text("Return to send - / for commands")
+                .font(.system(size: 10))
+                .foregroundColor(Theme.textTertiary)
+                .padding(.vertical, 8)
+        }
+        .accessibilityIdentifier("chat.composer")
+    }
+
+    private var targetPickerView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Choose how you want to chat in this workspace.")
+                    .font(.system(size: 14))
+                    .foregroundColor(Theme.textSecondary)
+
+                ForEach(chatTargets) { target in
+                    Button(action: { selectTarget(target) }) {
+                        HStack(alignment: .top, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 6) {
+                                    Text(target.name)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(Theme.textPrimary)
+                                    if target.recommended {
+                                        Text("Recommended")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(Theme.success)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Theme.success.opacity(0.15))
+                                            .cornerRadius(4)
+                                    } else if !target.status.isEmpty {
+                                        Text("\(chatTargetStatusLabel(target.status))")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(Theme.textTertiary)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Theme.pillBg)
+                                            .cornerRadius(4)
+                                    }
+                                }
+
+                                Text(target.description)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Theme.textSecondary)
+
+                                Text(targetMetaLine(target))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+
+                            Spacer()
+
+                            if launchingTargetID == target.id {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                            } else {
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+                        }
+                        .padding(12)
+                        .background(Theme.surface2.opacity(0.5))
+                        .cornerRadius(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Theme.border, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(launchingTargetID != nil)
+                }
+
+                if loadingTargets {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Detecting installed agents...")
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textTertiary)
                     }
                 }
-                .padding(12)
-                .background(Theme.surface2.opacity(0.5))
-                .cornerRadius(12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Theme.border, lineWidth: 1)
-                )
-                .padding(.horizontal, 20)
-                .padding(.top, 10)
 
-                Text("Return to send - / for commands")
-                    .font(.system(size: 10))
-                    .foregroundColor(Theme.textTertiary)
-                    .padding(.vertical, 8)
+                if chatTargets.count == 1 && !loadingTargets {
+                    Text("No external chat agents detected on PATH.")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                if let status = targetLaunchStatus {
+                    Text(status)
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textSecondary)
+                }
+
+                if let error = targetPickerError {
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.danger)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Refresh") {
+                        Task { await loadChatTargets(force: true) }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Theme.accent)
+                }
             }
-            .background(Theme.surface1)
+            .padding(20)
         }
-        .task {
-            await loadDynamicSlashCommands()
+        .background(Theme.surface1)
+        .accessibilityIdentifier("chat.targetPicker")
+    }
+
+    private func targetMetaLine(_ target: ChatTargetOption) -> String {
+        if target.kind == .smithers {
+            return "Built in"
+        }
+
+        var parts: [String] = [chatTargetStatusLabel(target.status)]
+        if !target.roles.isEmpty {
+            parts.append(target.roles.map { $0.capitalized }.joined(separator: ", "))
+        }
+        if !target.binary.isEmpty {
+            parts.append(target.binary)
+        }
+        return parts.joined(separator: " • ")
+    }
+
+    private func selectTarget(_ target: ChatTargetOption) {
+        guard target.usable else { return }
+        targetPickerError = nil
+        targetLaunchStatus = nil
+
+        if target.kind == .smithers {
+            showTargetPicker = false
+            return
+        }
+
+        Task { @MainActor in
+            launchingTargetID = target.id
+            defer { launchingTargetID = nil }
+
+            do {
+                try await ExternalChatLauncher.launch(binaryPath: target.binary, workingDirectory: agent.workingDirectory)
+                targetLaunchStatus = "Launched \(target.name). Smithers remains available in this window."
+                agent.appendStatusMessage("Launched \(target.name) via external terminal.")
+                await loadChatTargets(force: true)
+            } catch {
+                targetPickerError = "Failed to launch \(target.name): \(error.localizedDescription)"
+                agent.appendStatusMessage("Failed to launch \(target.name): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func loadChatTargetsIfNeeded() async {
+        guard smithers != nil else {
+            showTargetPicker = false
+            return
+        }
+
+        await loadChatTargets(force: false)
+    }
+
+    private func loadChatTargets(force: Bool) async {
+        guard let smithers else { return }
+        if !force && hasLoadedTargets {
+            return
+        }
+
+        loadingTargets = true
+        defer { loadingTargets = false }
+        targetPickerError = nil
+
+        do {
+            let agents = try await smithers.listAgents()
+            chatTargets = buildChatTargets(from: agents)
+            hasLoadedTargets = true
+        } catch {
+            chatTargets = buildChatTargets(from: [])
+            targetPickerError = "Failed to discover chat targets: \(error.localizedDescription)"
+            hasLoadedTargets = true
         }
     }
 
@@ -337,7 +618,7 @@ struct ChatView: View {
         Task { @MainActor in
             do {
                 let run = try await smithers.runWorkflow(workflowId, inputs: inputs)
-                agent.appendStatusMessage("Started workflow \(workflowId).\nRun: \(run.id)")
+                agent.appendStatusMessage("Started workflow \(workflowId).\nRun: \(run.runId)")
                 onNavigate?(.runs)
             } catch {
                 agent.appendStatusMessage("Failed to start workflow \(workflowId): \(error.localizedDescription)")
@@ -449,6 +730,7 @@ struct SlashCommandPalette: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Theme.border, lineWidth: 1)
         )
+        .accessibilityIdentifier("chat.slashPalette")
     }
 }
 
@@ -498,6 +780,62 @@ private enum LocalGitDiff {
             return ("", error.localizedDescription, 1)
         }
     }
+}
+
+private enum ExternalChatLauncher {
+    static func launch(binaryPath: String, workingDirectory: String) async throws {
+        guard !binaryPath.isEmpty else {
+            throw SmithersError.cli("Missing binary path for external chat target")
+        }
+
+        #if os(macOS)
+        try await Task.detached {
+            try launchViaTerminal(binaryPath: binaryPath, workingDirectory: workingDirectory)
+        }.value
+        #else
+        throw SmithersError.notAvailable("External chat launch is only supported on macOS in this GUI build")
+        #endif
+    }
+
+    #if os(macOS)
+    private static func launchViaTerminal(binaryPath: String, workingDirectory: String) throws {
+        let command = "cd \(shellQuote(workingDirectory)); \(shellQuote(binaryPath))"
+        let script = """
+        tell application "Terminal"
+            activate
+            do script \(appleScriptString(command))
+        end tell
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+
+        let stderr = Pipe()
+        process.standardError = stderr
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+            let errText = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw SmithersError.cli(errText?.isEmpty == false ? errText! : "External launcher exited with code \(process.terminationStatus)")
+        }
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+    }
+
+    private static func appleScriptString(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+    #endif
 }
 
 struct MessageRow: View {
@@ -553,6 +891,7 @@ struct MessageRow: View {
                 Spacer()
             }
         }
+        .accessibilityIdentifier("chat.message.\(message.type.rawValue).\(message.id)")
     }
 }
 

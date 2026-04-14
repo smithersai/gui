@@ -94,6 +94,19 @@ class AgentService: ObservableObject {
         partialText = ""
         isRunning = true
 
+        if UITestSupport.isEnabled {
+            let responseNumber = messageCounter
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard self.isRunning else { return }
+                self.appendAssistantMessage("UI test response for: \(prompt)")
+                self.partialText = ""
+                self.isRunning = false
+                NSLog("[AgentService] Simulated UI test turn %@", "\(responseNumber)")
+            }
+            return
+        }
+
         let cwd = workingDir
 
         weak let weakSelf = self

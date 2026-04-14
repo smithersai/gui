@@ -244,6 +244,15 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
                 action: .navigate(.dashboard)
             ),
             SlashCommandItem(
+                id: "smithers.agents",
+                name: "agents",
+                title: "Agents",
+                description: "Browse available Smithers/external agents.",
+                category: .smithers,
+                aliases: ["agent"],
+                action: .navigate(.agents)
+            ),
+            SlashCommandItem(
                 id: "smithers.runs",
                 name: "runs",
                 title: "Runs",
@@ -260,6 +269,15 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
                 category: .smithers,
                 aliases: ["workflow"],
                 action: .navigate(.workflows)
+            ),
+            SlashCommandItem(
+                id: "smithers.jjhub-workflows",
+                name: "jjhub-workflows",
+                title: "JJHub Workflows",
+                description: "Browse and run JJHub workflows for the current repo.",
+                category: .smithers,
+                aliases: ["jjhub_workflows", "jjhub-workflow"],
+                action: .navigate(.jjhubWorkflows)
             ),
             SlashCommandItem(
                 id: "smithers.approvals",
@@ -305,6 +323,15 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
                 category: .smithers,
                 aliases: ["find"],
                 action: .navigate(.search)
+            ),
+            SlashCommandItem(
+                id: "smithers.sql",
+                name: "sql",
+                title: "SQL Browser",
+                description: "Inspect Smithers tables and run read queries.",
+                category: .smithers,
+                aliases: ["database", "tables"],
+                action: .navigate(.sql)
             ),
             SlashCommandItem(
                 id: "smithers.landings",
