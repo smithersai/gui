@@ -631,7 +631,7 @@ final class SmithersModelDecodingTests: XCTestCase {
 
     func testMemoryFactDecoding() throws {
         let json = """
-        {"namespace":"default","key":"api-key","valueJson":"{\"v\":1}","schemaSig":"abc","createdAtMs":1000,"updatedAtMs":2000,"ttlMs":60000}
+        {"namespace":"default","key":"api-key","valueJson":"{\\"v\\":1}","schemaSig":"abc","createdAtMs":1000,"updatedAtMs":2000,"ttlMs":60000}
         """
         let fact = try JSONDecoder().decode(MemoryFact.self, from: json.data(using: .utf8)!)
         XCTAssertEqual(fact.namespace, "default")

@@ -8,7 +8,7 @@ import ViewInspector
 extension SidebarView: @retroactive Inspectable {}
 extension SidebarSection: @retroactive Inspectable {}
 extension NavRow: @retroactive Inspectable {}
-extension NewActionRow: @retroactive Inspectable {}
+extension NewChatMenuRow: @retroactive Inspectable {}
 extension SessionRow: @retroactive Inspectable {}
 extension EdgeBorder: @retroactive Inspectable {}
 
@@ -266,8 +266,8 @@ final class SidebarViewTests: XCTestCase {
         XCTAssertTrue(sectionTitles.contains("SESSIONS"), "Missing SESSIONS section")
     }
 
-    // PLATFORM_SIDEBAR_NEW_BUTTON
-    func testNewButtonExists() throws {
+    // PLATFORM_SIDEBAR_NEW_CHAT_BUTTON
+    func testNewChatButtonExists() throws {
         let store = SessionStore()
         var dest = NavDestination.chat
         let view = SidebarView(store: store, destination: Binding(get: { dest }, set: { dest = $0 }))
@@ -275,18 +275,17 @@ final class SidebarViewTests: XCTestCase {
 
         let allText = try sut.findAll(ViewType.Text.self)
         let labels = try allText.map { try $0.string() }
-        XCTAssertTrue(labels.contains("New"), "New button label should exist")
+        XCTAssertTrue(labels.contains("New Chat"), "New Chat button label should exist")
     }
 
-    func testNewActionMenuContainsChatAndTerminal() throws {
-        let row = NewActionRow(newChatAction: {}, newTerminalAction: {})
+    func testNewChatMenuContainsTerminalAndChat() throws {
+        let row = NewChatMenuRow(newChatAction: {}, terminalAction: {})
         let sut = try row.inspect()
 
         let allText = try sut.findAll(ViewType.Text.self)
         let labels = try allText.map { try $0.string() }
-        XCTAssertTrue(labels.contains("New"), "New menu label should exist")
+        XCTAssertTrue(labels.contains("Terminal"), "Terminal menu item should exist")
         XCTAssertTrue(labels.contains("New Chat"), "New Chat menu item should exist")
-        XCTAssertTrue(labels.contains("New Terminal"), "New Terminal menu item should exist")
     }
 
     // PLATFORM_SIDEBAR_SESSION_SEARCH
