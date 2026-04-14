@@ -213,16 +213,16 @@ final class ContentViewTests: XCTestCase {
     }
 
     // -------------------------------------------------------------------------
-    // PLATFORM_DESTINATION_ROUTING — all 16 destinations
+    // PLATFORM_DESTINATION_ROUTING — all 17 destinations
     // -------------------------------------------------------------------------
 
-    func testNavDestinationEnumHasExactly16Cases() {
+    func testNavDestinationEnumHasExactly17Cases() {
         let all: [NavDestination] = [
             .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows,
-            .approvals, .prompts, .scores, .memory, .search,
+            .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .issues, .workspaces,
         ]
-        XCTAssertEqual(all.count, 16)
+        XCTAssertEqual(all.count, 17)
     }
 
     func testNavDestinationHashable() {
@@ -309,6 +309,11 @@ final class ContentViewTests: XCTestCase {
         XCTAssertEqual(NavDestination.search.icon, "magnifyingglass")
     }
 
+    func testSQLDestinationLabel() {
+        XCTAssertEqual(NavDestination.sql.label, "SQL Browser")
+        XCTAssertEqual(NavDestination.sql.icon, "tablecells")
+    }
+
     func testLandingsDestinationLabel() {
         XCTAssertEqual(NavDestination.landings.label, "Landings")
         XCTAssertEqual(NavDestination.landings.icon, "arrow.down.to.line")
@@ -328,7 +333,7 @@ final class ContentViewTests: XCTestCase {
     // PLATFORM_DESTINATION_ROUTING — switch completeness
     // -------------------------------------------------------------------------
 
-    /// Verify the switch in ContentView covers all 16 cases. This is a compile-time
+    /// Verify the switch in ContentView covers all 17 cases. This is a compile-time
     /// guarantee in Swift (exhaustive switch), but we verify the routing map is correct.
     func testAllDestinationsAreMappedInSwitch() {
         // The switch in ContentView.body maps:
@@ -345,18 +350,19 @@ final class ContentViewTests: XCTestCase {
         // .scores -> ScoresView
         // .memory -> MemoryView
         // .search -> SearchView
+        // .sql -> SQLBrowserView
         // .landings -> LandingsView
         // .issues -> IssuesView
         // .workspaces -> WorkspacesView
         //
-        // Swift enforces exhaustive switch, so all 16 are covered.
+        // Swift enforces exhaustive switch, so all 17 are covered.
         // No default case means adding a new NavDestination case will cause a compiler error.
         let count = [
             NavDestination.chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows,
-            .approvals, .prompts, .scores, .memory, .search,
+            .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .issues, .workspaces,
         ].count
-        XCTAssertEqual(count, 16, "All 16 destinations must be routed")
+        XCTAssertEqual(count, 17, "All 17 destinations must be routed")
     }
 
     // -------------------------------------------------------------------------
@@ -601,7 +607,7 @@ final class NavDestinationRoutingTests: XCTestCase {
     func testAllDestinationsHaveUniqueLabels() {
         let all: [NavDestination] = [
             .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows,
-            .approvals, .prompts, .scores, .memory, .search,
+            .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .issues, .workspaces,
         ]
         let labels = all.map(\.label)
@@ -611,7 +617,7 @@ final class NavDestinationRoutingTests: XCTestCase {
     func testAllDestinationsHaveUniqueIcons() {
         let all: [NavDestination] = [
             .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows,
-            .approvals, .prompts, .scores, .memory, .search,
+            .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .issues, .workspaces,
         ]
         let icons = all.map(\.icon)
@@ -629,14 +635,14 @@ final class NavDestinationRoutingTests: XCTestCase {
 
     func testSidebarSmithersNavOrder() {
         // The sidebar lists smithers nav items in this order:
-        // dashboard, agents, changes, runs, workflows, jjhubWorkflows, approvals, prompts, scores, memory, search, landings, issues, workspaces
+        // dashboard, agents, changes, runs, workflows, jjhubWorkflows, approvals, prompts, scores, memory, search, sql, landings, issues, workspaces
         // Verify this matches the enum order expectations
         let expected: [NavDestination] = [
             .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows, .approvals,
-            .prompts, .scores, .memory, .search,
+            .prompts, .scores, .memory, .search, .sql,
             .landings, .issues, .workspaces,
         ]
-        XCTAssertEqual(expected.count, 14, "Smithers nav section has 14 items (excludes chat and terminal)")
+        XCTAssertEqual(expected.count, 15, "Smithers nav section has 15 items (excludes chat and terminal)")
     }
 
     /// BUG: The sidebar CHAT section includes both .chat and .terminal, but terminal

@@ -714,7 +714,7 @@ struct LiveRunChatView: View {
         promptResumeAutomation = false
         hijackReturned = false
         appendStatusBlock("Resuming automation...")
-        Task { await loadRun() }
+        Task { await refresh() }
     }
 
     private func dismissHijackPrompt() {
