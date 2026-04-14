@@ -1,174 +1,157 @@
 import SwiftUI
 
+// MARK: - Navigation Destination
+
+enum NavDestination: Hashable {
+    case chat
+    case dashboard
+    case runs
+    case workflows
+    case approvals
+    case prompts
+    case scores
+    case memory
+    case search
+    case landings
+    case issues
+    case workspaces
+
+    var label: String {
+        switch self {
+        case .chat: return "Chat"
+        case .dashboard: return "Dashboard"
+        case .runs: return "Runs"
+        case .workflows: return "Workflows"
+        case .approvals: return "Approvals"
+        case .prompts: return "Prompts"
+        case .scores: return "Scores"
+        case .memory: return "Memory"
+        case .search: return "Search"
+        case .landings: return "Landings"
+        case .issues: return "Issues"
+        case .workspaces: return "Workspaces"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .chat: return "message"
+        case .dashboard: return "square.grid.2x2"
+        case .runs: return "play.circle"
+        case .workflows: return "arrow.triangle.branch"
+        case .approvals: return "checkmark.shield"
+        case .prompts: return "doc.text"
+        case .scores: return "chart.bar"
+        case .memory: return "brain"
+        case .search: return "magnifyingglass"
+        case .landings: return "arrow.down.to.line"
+        case .issues: return "exclamationmark.circle"
+        case .workspaces: return "desktopcomputer"
+        }
+    }
+}
+
+// MARK: - Sidebar
+
 struct SidebarView: View {
     @ObservedObject var store: SessionStore
-    @State private var mode: SidebarMode = .chats
+    @Binding var destination: NavDestination
     @State private var searchText: String = ""
 
-    enum SidebarMode {
-        case chats, source, agents
-    }
+    private let smithersNav: [NavDestination] = [
+        .dashboard, .runs, .workflows, .approvals,
+        .prompts, .scores, .memory, .search,
+        .landings, .issues, .workspaces
+    ]
 
     var body: some View {
         VStack(spacing: 0) {
-            // Mode Bar
-            HStack(spacing: 4) {
-                ModeButton(title: "Chats", icon: "message", isSelected: mode == .chats) {
-                    mode = .chats
-                }
-                ModeButton(title: "Source", icon: "arrow.branch", isSelected: mode == .source) {
-                    mode = .source
-                }
-                ModeButton(title: "Agents", icon: "person.2", isSelected: mode == .agents) {
-                    mode = .agents
-                }
+            // App title
+            HStack {
+                Text("Smithers")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(Theme.textPrimary)
+                Spacer()
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 12)
             .frame(height: 40)
             .border(Theme.border, edges: [.bottom])
 
-            if mode == .chats {
-                ChatsContent(store: store, searchText: $searchText)
-            } else if mode == .agents {
-                AgentsContent(store: store)
-            } else {
-                Spacer()
-                Text("Source")
-                    .foregroundColor(Theme.textTertiary)
-                    .font(.system(size: 11))
-                Spacer()
-            }
-        }
-        .background(Theme.sidebarBg)
-    }
-}
-
-struct AgentsContent: View {
-    @ObservedObject var store: SessionStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("RUNNING")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(Theme.textTertiary)
-                .padding(.horizontal, 12)
-                .padding(.top, 16)
-                .padding(.bottom, 8)
-
-            let running = store.sessions.filter { $0.agent.isRunning }
-            if running.isEmpty {
-                Text("No agents running")
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.textTertiary)
-                    .padding(.horizontal, 12)
-            }
-            ForEach(running) { session in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Theme.success)
-                        .frame(width: 6, height: 6)
-                    Text(session.title)
-                        .font(.system(size: 12))
-                        .foregroundColor(Theme.textPrimary)
-                        .lineLimit(1)
-                    Spacer()
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 12, height: 12)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-            }
-            Spacer()
-        }
-    }
-}
-
-struct ModeButton: View {
-    let title: String
-    let icon: String
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                Text(title)
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 28)
-            .background(isSelected ? Theme.sidebarSelected : Color.clear)
-            .foregroundColor(isSelected ? Theme.accent : Theme.textSecondary)
-            .cornerRadius(6)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct ChatsContent: View {
-    @ObservedObject var store: SessionStore
-    @Binding var searchText: String
-
-    let groups = ["Today", "Yesterday", "Older"]
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // New Chat + Search
-            VStack(spacing: 8) {
-                Button(action: { store.newSession() }) {
-                    HStack {
-                        Image(systemName: "plus")
-                        Text("New Chat")
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 32)
-                    .background(Theme.accent)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                }
-                .buttonStyle(.plain)
-
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(Theme.textTertiary)
-                        .font(.system(size: 12))
-                    TextField("Search chats...", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 11))
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .background(Theme.inputBg)
-                .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Theme.border, lineWidth: 1)
-                )
-            }
-            .padding(12)
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    let allSessions = store.chatSessions().filter {
-                        searchText.isEmpty || $0.title.localizedCaseInsensitiveContains(searchText)
-                    }
-                    ForEach(groups, id: \.self) { group in
-                        let sessions = allSessions.filter { $0.group == group }
-                        if !sessions.isEmpty {
-                            Text(group.uppercased())
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(Theme.textTertiary)
-                                .padding(.horizontal, 12)
-                                .padding(.top, 16)
-                                .padding(.bottom, 8)
+                    // Chat section
+                    SidebarSection(title: "CHAT") {
+                        NavRow(icon: "plus", label: "New Chat", isSelected: false) {
+                            store.newSession()
+                            destination = .chat
+                        }
 
-                            ForEach(sessions) { session in
-                                SessionRow(session: session, isSelected: store.activeSessionId == session.id) {
-                                    store.selectSession(session.id)
+                        NavRow(
+                            icon: NavDestination.chat.icon,
+                            label: NavDestination.chat.label,
+                            isSelected: destination == .chat
+                        ) {
+                            destination = .chat
+                        }
+                    }
+
+                    // Smithers section
+                    SidebarSection(title: "SMITHERS") {
+                        ForEach(smithersNav, id: \.self) { nav in
+                            NavRow(
+                                icon: nav.icon,
+                                label: nav.label,
+                                isSelected: destination == nav
+                            ) {
+                                destination = nav
+                            }
+                        }
+                    }
+
+                    // Sessions list
+                    SidebarSection(title: "SESSIONS") {
+                        // Search
+                        HStack {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundColor(Theme.textTertiary)
+                                .font(.system(size: 10))
+                            TextField("Search chats...", text: $searchText)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 11))
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(Theme.inputBg)
+                        .cornerRadius(6)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Theme.border, lineWidth: 1)
+                        )
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 4)
+
+                        let groups = ["Today", "Yesterday", "Older"]
+                        let allSessions = store.chatSessions().filter {
+                            searchText.isEmpty || $0.title.localizedCaseInsensitiveContains(searchText)
+                        }
+                        ForEach(groups, id: \.self) { group in
+                            let sessions = allSessions.filter { $0.group == group }
+                            if !sessions.isEmpty {
+                                Text(group)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(Theme.textTertiary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.top, 8)
+                                    .padding(.bottom, 2)
+
+                                ForEach(sessions) { session in
+                                    SessionRow(
+                                        session: session,
+                                        isSelected: destination == .chat && store.activeSessionId == session.id
+                                    ) {
+                                        store.selectSession(session.id)
+                                        destination = .chat
+                                    }
                                 }
                             }
                         }
@@ -176,6 +159,55 @@ struct ChatsContent: View {
                 }
             }
         }
+        .background(Theme.sidebarBg)
+    }
+}
+
+// MARK: - Sidebar Components
+
+struct SidebarSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(Theme.textTertiary)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+
+            content
+        }
+    }
+}
+
+struct NavRow: View {
+    let icon: String
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                    .frame(width: 16)
+                Text(label)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .foregroundColor(isSelected ? Theme.accent : Theme.textSecondary)
+            .background(isSelected ? Theme.sidebarSelected : Color.clear)
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
     }
 }
 
@@ -183,32 +215,38 @@ struct SessionRow: View {
     let session: ChatSession
     let isSelected: Bool
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text(session.title)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
                     Spacer()
                     Text(session.timestamp)
-                        .font(.system(size: 10))
+                        .font(.system(size: 9))
                         .foregroundColor(Theme.textTertiary)
                 }
-                Text(session.preview)
-                    .font(.system(size: 10))
-                    .foregroundColor(Theme.textTertiary)
-                    .lineLimit(2)
+                if !session.preview.isEmpty {
+                    Text(session.preview)
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                        .lineLimit(1)
+                }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 6)
             .background(isSelected ? Theme.sidebarSelected : Color.clear)
+            .cornerRadius(6)
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 4)
     }
 }
+
+// MARK: - Edge Border (kept from original)
 
 extension View {
     func border(_ color: Color, edges: [Edge]) -> some View {
@@ -229,21 +267,18 @@ struct EdgeBorder: Shape {
                 case .trailing: return rect.maxX - width
                 }
             }
-
             var y: CGFloat {
                 switch edge {
                 case .top, .leading, .trailing: return rect.minY
                 case .bottom: return rect.maxY - width
                 }
             }
-
             var w: CGFloat {
                 switch edge {
                 case .top, .bottom: return rect.width
                 case .leading, .trailing: return width
                 }
             }
-
             var h: CGFloat {
                 switch edge {
                 case .top, .bottom: return width
