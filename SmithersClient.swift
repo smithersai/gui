@@ -421,21 +421,6 @@ class SmithersClient: ObservableObject {
         }
     }
 
-    // MARK: - Find smithers binary
-
-    private static func findSmithersBin() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        process.arguments = ["smithers"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        try? process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return path?.isEmpty == false ? path : nil
-    }
 }
 
 // MARK: - Response wrappers (CLI JSON can be wrapped or bare)
