@@ -14,11 +14,35 @@ targets:
     type: application
     platform: macOS
     sources:
-      - path: .
-        includes:
-          - "*.swift"
-        excludes:
-          - "Package.swift"
+      - AgentProtocol.swift
+      - AgentService.swift
+      - AgentsView.swift
+      - ApprovalsView.swift
+      - ChangesView.swift
+      - ChatView.swift
+      - ContentView.swift
+      - DashboardView.swift
+      - IssuesView.swift
+      - JJHubWorkflowsView.swift
+      - LandingsView.swift
+      - LiveRunChatView.swift
+      - MemoryView.swift
+      - Models.swift
+      - PromptsView.swift
+      - RunsView.swift
+      - SQLBrowserView.swift
+      - ScoresView.swift
+      - SearchView.swift
+      - SessionStore.swift
+      - SidebarView.swift
+      - SlashCommands.swift
+      - SmithersClient.swift
+      - SmithersModels.swift
+      - TerminalView.swift
+      - Theme.swift
+      - UITestSupport.swift
+      - WorkflowsView.swift
+      - WorkspacesView.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUI
