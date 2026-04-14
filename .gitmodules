@@ -1,3 +1,6 @@
 [submodule "codex"]
 	path = codex
-	url = /Users/williamcory/codex
+	url = https://github.com/evmts/codex.git
+[submodule "ghostty"]
+	path = ghostty
+	url = https://github.com/ghostty-org/ghostty.git
