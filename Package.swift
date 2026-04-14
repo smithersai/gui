@@ -29,6 +29,7 @@ let package = Package(
                 "build.sh",
                 "Tests",
                 "docs",
+                "project.yml",
             ],
             linkerSettings: [
                 .unsafeFlags([
