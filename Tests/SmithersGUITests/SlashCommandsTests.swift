@@ -152,6 +152,12 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertEqual(c?.id, "smithers.search")
     }
 
+    func testSlashCmdSQL() {
+        let c = cmd(named: "sql")
+        XCTAssertNotNil(c)
+        XCTAssertEqual(c?.id, "smithers.sql")
+    }
+
     func testSlashCmdLandings() {
         let c = cmd(named: "landings")
         XCTAssertNotNil(c)
@@ -243,7 +249,7 @@ final class SlashCommandsTests: XCTestCase {
 
     func testCategorySmithers() {
         let smithersCommands = builtIn.filter { $0.category == .smithers }
-        XCTAssertEqual(smithersCommands.count, 15)
+        XCTAssertEqual(smithersCommands.count, 16)
     }
 
     func testCategoryAction() {
