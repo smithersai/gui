@@ -19,11 +19,12 @@ struct WorkflowsView: View {
             if let error {
                 errorView(error)
             } else {
-                HSplitView {
+                HStack(spacing: 0) {
                     workflowList
-                        .frame(minWidth: 250)
+                        .frame(width: 280)
+                    Divider().background(Theme.border)
                     detailPane
-                        .frame(minWidth: 300)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }

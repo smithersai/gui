@@ -72,11 +72,12 @@ struct LandingsView: View {
             if let error {
                 errorView(error)
             } else {
-                HSplitView {
+                HStack(spacing: 0) {
                     landingList
-                        .frame(minWidth: 260)
+                        .frame(width: 300)
+                    Divider().background(Theme.border)
                     detailPane
-                        .frame(minWidth: 350)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }

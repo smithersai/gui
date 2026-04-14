@@ -21,11 +21,12 @@ struct ApprovalsView: View {
             if let error {
                 errorView(error)
             } else {
-                HSplitView {
+                HStack(spacing: 0) {
                     listPane
-                        .frame(minWidth: 260)
+                        .frame(width: 300)
+                    Divider().background(Theme.border)
                     detailPane
-                        .frame(minWidth: 320)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }

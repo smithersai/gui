@@ -23,11 +23,12 @@ struct IssuesView: View {
             if let error {
                 errorView(error)
             } else {
-                HSplitView {
+                HStack(spacing: 0) {
                     issueList
-                        .frame(minWidth: 280)
+                        .frame(width: 300)
+                    Divider().background(Theme.border)
                     detailPane
-                        .frame(minWidth: 320)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }

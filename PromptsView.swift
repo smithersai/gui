@@ -36,11 +36,12 @@ struct PromptsView: View {
             if let error {
                 errorView(error)
             } else {
-                HSplitView {
+                HStack(spacing: 0) {
                     promptList
-                        .frame(minWidth: 220)
+                        .frame(width: 240)
+                    Divider().background(Theme.border)
                     detailPane
-                        .frame(minWidth: 400)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }
