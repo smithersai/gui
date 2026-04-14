@@ -7,18 +7,16 @@ struct CodexEvent: Decodable {
     let item: CodexItem?
     let usage: CodexUsage?
     let threadId: String?
-    let error: CodexError?
+    let message: String?  // top-level message for "error" and "turn.failed" events
+    let error: CodexErrorInfo?  // nested error for "turn.failed"
 
     enum CodingKeys: String, CodingKey {
-        case type
-        case item
-        case usage
+        case type, item, usage, message, error
         case threadId = "thread_id"
-        case error
     }
 }
 
-struct CodexError: Decodable {
+struct CodexErrorInfo: Decodable {
     let message: String?
 }
 
