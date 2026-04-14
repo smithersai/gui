@@ -46,6 +46,18 @@ struct ChatView: View {
                         ForEach(agent.messages) { message in
                             MessageRow(message: message)
                         }
+                        if agent.isRunning {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                Text("Codex is thinking...")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Theme.textTertiary)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                        }
                         Color.clear.frame(height: 1).id("bottom")
                     }
                     .padding(20)
@@ -69,6 +81,13 @@ struct ChatView: View {
                         .frame(minHeight: 60, alignment: .top)
                         .onSubmit {
                             send()
+                        }
+                        .onKeyPress(.return) {
+                            if NSEvent.modifierFlags.contains(.shift) {
+                                return .ignored // let shift+return insert newline
+                            }
+                            send()
+                            return .handled
                         }
 
                     HStack {
@@ -113,13 +132,20 @@ struct ChatView: View {
     }
 
     private func send() {
+        NSLog("[ChatView] send() called, isRunning=%d, inputText='%@'", agent.isRunning, inputText)
         if agent.isRunning {
             agent.cancel()
             return
         }
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else {
+            NSLog("[ChatView] send() - text was empty, ignoring")
+            FileManager.default.createFile(atPath: "/tmp/smithers_send_empty.txt", contents: Data("empty".utf8))
+            return
+        }
         inputText = ""
+        NSLog("[ChatView] sending: %@", text)
+        FileManager.default.createFile(atPath: "/tmp/smithers_send_ok.txt", contents: Data(text.utf8))
         onSend(text)
     }
 }
