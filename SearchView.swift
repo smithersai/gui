@@ -36,6 +36,7 @@ struct SearchView: View {
                     .onSubmit { Task { await search() } }
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
+                    .accessibilityIdentifier("search.input")
 
                 if isSearching {
                     ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
@@ -58,6 +59,7 @@ struct SearchView: View {
                             .padding(.vertical, 10)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("search.tab.\(t.rawValue)")
                     .overlay(alignment: .bottom) {
                         if tab == t {
                             Rectangle().fill(Theme.accent).frame(height: 2)
@@ -153,6 +155,7 @@ struct SearchView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
+                            .accessibilityIdentifier("search.result.\(result.id)")
                             Divider().background(Theme.border)
                         }
                     }
@@ -162,6 +165,7 @@ struct SearchView: View {
             }
         }
         .background(Theme.surface1)
+        .accessibilityIdentifier("search.root")
     }
 
     private func search() async {

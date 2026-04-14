@@ -31,6 +31,7 @@ struct ApprovalsView: View {
             }
         }
         .background(Theme.surface1)
+        .accessibilityIdentifier("approvals.root")
         .task { await loadApprovals() }
     }
 
@@ -59,6 +60,7 @@ struct ApprovalsView: View {
                 .cornerRadius(6)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("approvals.historyToggle")
 
             if isLoading {
                 ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
@@ -108,6 +110,7 @@ struct ApprovalsView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
+                            .accessibilityIdentifier("approval.history.row.\(decision.id)")
                             Divider().background(Theme.border)
                         }
                     }
@@ -149,6 +152,7 @@ struct ApprovalsView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("approval.row.\(approval.id)")
                             Divider().background(Theme.border)
                         }
                     }
@@ -156,6 +160,7 @@ struct ApprovalsView: View {
             }
         }
         .background(Theme.surface2)
+        .accessibilityIdentifier(showHistory ? "approvals.historyList" : "approvals.pendingList")
     }
 
     // MARK: - Detail Pane
@@ -222,6 +227,7 @@ struct ApprovalsView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(actionInFlight != nil)
+                                .accessibilityIdentifier("approval.approveButton")
 
                                 Button(action: { Task { await deny(approval) } }) {
                                     HStack(spacing: 6) {
@@ -237,6 +243,7 @@ struct ApprovalsView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(actionInFlight != nil)
+                                .accessibilityIdentifier("approval.denyButton")
                             }
                         }
                     }
@@ -252,6 +259,7 @@ struct ApprovalsView: View {
                         .foregroundColor(Theme.textTertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("approvals.detail.placeholder")
             }
         }
         .background(Theme.surface1)

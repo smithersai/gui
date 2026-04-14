@@ -4,6 +4,9 @@ import PackageDescription
 let package = Package(
     name: "SmithersGUI",
     platforms: [.macOS(.v14)],
+    dependencies: [
+        .package(url: "https://github.com/nalexn/ViewInspector.git", from: "0.10.0"),
+    ],
     targets: [
         .systemLibrary(
             name: "CCodexFFI",
@@ -24,6 +27,8 @@ let package = Package(
                 "CGhosttyKit",
                 "codex-ffi.h",
                 "build.sh",
+                "Tests",
+                "docs",
             ],
             linkerSettings: [
                 .unsafeFlags([
@@ -49,6 +54,14 @@ let package = Package(
                 .linkedFramework("Carbon"),
                 .linkedFramework("Foundation"),
             ]
-        )
+        ),
+        .testTarget(
+            name: "SmithersGUITests",
+            dependencies: [
+                "SmithersGUI",
+                .product(name: "ViewInspector", package: "ViewInspector"),
+            ],
+            path: "Tests/SmithersGUITests"
+        ),
     ]
 )

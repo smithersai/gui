@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RunsView: View {
     @ObservedObject var smithers: SmithersClient
+    var onOpenLiveChat: ((String, String?) -> Void)? = nil
     @State private var runs: [RunSummary] = []
     @State private var expandedRunId: String?
     @State private var inspections: [String: RunInspection] = [:]
@@ -293,6 +294,9 @@ struct RunsView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Action buttons
             HStack(spacing: 8) {
+                actionButton("Live Chat", icon: "message", color: Theme.accent) {
+                    onOpenLiveChat?(run.runId, nil)
+                }
                 if run.status == .waitingApproval {
                     if let inspection = inspections[run.runId],
                        let blockedNode = inspection.tasks.first(where: { $0.state == "blocked" || $0.state == "waiting-approval" }) {
@@ -343,6 +347,17 @@ struct RunsView: View {
                             Text(task.state)
                                 .font(.system(size: 9, weight: .medium))
                                 .foregroundColor(nodeStateColor(task.state))
+                            Button(action: {
+                                onOpenLiveChat?(run.runId, task.nodeId)
+                            }) {
+                                Image(systemName: "message")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(Theme.accent)
+                                    .frame(width: 18, height: 18)
+                                    .background(Theme.accent.opacity(0.14))
+                                    .cornerRadius(4)
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(.vertical, 4)
                         if task.id != inspection.tasks.last?.id {

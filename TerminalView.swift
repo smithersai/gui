@@ -15,6 +15,11 @@ class GhosttyApp: ObservableObject {
     static let shared = GhosttyApp()
 
     private init() {
+        if UITestSupport.isEnabled {
+            ready = true
+            return
+        }
+
         // Create config
         guard let cfg = ghostty_config_new() else {
             NSLog("ghostty_config_new failed")
@@ -273,7 +278,19 @@ struct TerminalView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let app = ghostty.app {
+            if UITestSupport.isEnabled {
+                VStack(spacing: 12) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 32))
+                        .foregroundColor(Theme.textTertiary)
+                    Text("Terminal ready")
+                        .font(.system(size: 14))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.base)
+                .accessibilityIdentifier("terminal.placeholder")
+            } else if let app = ghostty.app {
                 TerminalSurfaceRepresentable(app: app)
             } else {
                 VStack(spacing: 12) {
@@ -289,5 +306,6 @@ struct TerminalView: View {
             }
         }
         .background(Theme.base)
+        .accessibilityIdentifier("terminal.root")
     }
 }

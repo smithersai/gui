@@ -51,6 +51,7 @@ struct DashboardView: View {
                             .padding(.vertical, 10)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("dashboard.tab.\(t.rawValue)")
                     .overlay(alignment: .bottom) {
                         if tab == t {
                             Rectangle()
@@ -80,6 +81,7 @@ struct DashboardView: View {
             }
         }
         .background(Theme.surface1)
+        .accessibilityIdentifier("dashboard.root")
         .task { await loadAll() }
     }
 
@@ -412,6 +414,7 @@ struct StatCard: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Theme.border, lineWidth: 1)
         )
+        .accessibilityIdentifier("dashboard.stat.\(title.replacingOccurrences(of: " ", with: ""))")
     }
 }
 

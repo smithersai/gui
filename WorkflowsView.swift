@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WorkflowsView: View {
     @ObservedObject var smithers: SmithersClient
+    var onNavigate: ((NavDestination) -> Void)?
     @State private var workflows: [Workflow] = []
     @State private var isLoading = true
     @State private var error: String?
@@ -22,13 +23,16 @@ struct WorkflowsView: View {
                 HStack(spacing: 0) {
                     workflowList
                         .frame(width: 280)
+                        .accessibilityIdentifier("workflows.list")
                     Divider().background(Theme.border)
                     detailPane
                         .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("workflows.detail")
                 }
             }
         }
         .background(Theme.surface1)
+        .accessibilityIdentifier("workflows.root")
         .task { await loadWorkflows() }
     }
 
@@ -110,6 +114,7 @@ struct WorkflowsView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("workflow.row.\(workflow.id)")
                         Divider().background(Theme.border)
                     }
                 }
@@ -203,6 +208,7 @@ struct WorkflowsView: View {
                                 .cornerRadius(8)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("workflows.runButton")
                         }
 
                         if let launchError {
@@ -223,6 +229,7 @@ struct WorkflowsView: View {
                         .foregroundColor(Theme.textTertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("workflows.detail.placeholder")
             }
         }
         .background(Theme.surface1)
@@ -256,6 +263,7 @@ struct WorkflowsView: View {
                         .background(Theme.inputBg)
                         .cornerRadius(6)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                        .accessibilityIdentifier("workflows.launchField.\(field.key)")
                     }
                 }
             }
@@ -277,6 +285,7 @@ struct WorkflowsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isLaunching)
+                .accessibilityIdentifier("workflows.launchButton")
 
                 Button(action: { showLaunchForm = false }) {
                     Text("Cancel")
@@ -288,8 +297,10 @@ struct WorkflowsView: View {
                         .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("workflows.cancelLaunchButton")
             }
         }
+        .accessibilityIdentifier("workflows.launchForm")
     }
 
     // MARK: - Actions
@@ -342,6 +353,7 @@ struct WorkflowsView: View {
             _ = try await smithers.runWorkflow(workflow.id, inputs: launchInputs)
             showLaunchForm = false
             launchInputs = [:]
+            onNavigate?(.runs)
         } catch {
             launchError = error.localizedDescription
         }

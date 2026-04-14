@@ -32,6 +32,7 @@ struct WorkspacesView: View {
                             .padding(.vertical, 10)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspaces.tab.\(t.rawValue)")
                     .overlay(alignment: .bottom) {
                         if tab == t {
                             Rectangle().fill(Theme.accent).frame(height: 2)
@@ -52,6 +53,7 @@ struct WorkspacesView: View {
             }
         }
         .background(Theme.surface1)
+        .accessibilityIdentifier("workspaces.root")
         .task { await loadData() }
     }
 
@@ -77,6 +79,7 @@ struct WorkspacesView: View {
                 .cornerRadius(6)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("workspaces.newButton")
 
             if isLoading {
                 ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
@@ -161,6 +164,7 @@ struct WorkspacesView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
+                        .accessibilityIdentifier("workspace.row.\(ws.id)")
                         Divider().background(Theme.border)
                     }
                 }
@@ -226,6 +230,7 @@ struct WorkspacesView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
+                        .accessibilityIdentifier("workspace.snapshot.\(snap.id)")
                         Divider().background(Theme.border)
                     }
                 }
@@ -246,6 +251,7 @@ struct WorkspacesView: View {
                 .background(Theme.inputBg)
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                .accessibilityIdentifier("workspaces.create.name")
 
             Button(action: { Task { await createWS() } }) {
                 HStack {
@@ -261,15 +267,18 @@ struct WorkspacesView: View {
             }
             .buttonStyle(.plain)
             .disabled(newName.isEmpty || isCreating)
+            .accessibilityIdentifier("workspaces.create.submit")
 
             Button("Cancel") { showCreate = false; newName = "" }
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textSecondary)
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("workspaces.create.cancel")
         }
         .padding(16)
         .background(Theme.base.opacity(0.5))
         .border(Theme.border, edges: [.bottom])
+        .accessibilityIdentifier("workspaces.create.form")
     }
 
     // MARK: - Helpers

@@ -33,6 +33,7 @@ struct IssuesView: View {
             }
         }
         .background(Theme.surface1)
+        .accessibilityIdentifier("issues.root")
         .task { await loadIssues() }
     }
 
@@ -61,6 +62,7 @@ struct IssuesView: View {
                     .foregroundColor(Theme.accent)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("issues.createButton")
 
             if isLoading {
                 ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
@@ -87,6 +89,7 @@ struct IssuesView: View {
                 .background(stateFilter == state ? Theme.pillActive : Color.clear)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("issues.filter.\(label)")
     }
 
     // MARK: - Issue List
@@ -159,6 +162,7 @@ struct IssuesView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("issue.row.\(issue.id)")
                         Divider().background(Theme.border)
                     }
                 }
@@ -183,6 +187,7 @@ struct IssuesView: View {
                 .background(Theme.inputBg)
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                .accessibilityIdentifier("issues.create.title")
 
             TextEditor(text: $newBody)
                 .font(.system(size: 12))
@@ -192,6 +197,7 @@ struct IssuesView: View {
                 .background(Theme.inputBg)
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                .accessibilityIdentifier("issues.create.body")
 
             HStack(spacing: 8) {
                 Button(action: { Task { await createIssue() } }) {
@@ -208,16 +214,19 @@ struct IssuesView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(newTitle.isEmpty || isCreating)
+                .accessibilityIdentifier("issues.create.submit")
 
                 Button("Cancel") { showCreate = false; newTitle = ""; newBody = "" }
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("issues.create.cancel")
             }
         }
         .padding(16)
         .background(Theme.base.opacity(0.5))
         .border(Theme.border, edges: [.bottom])
+        .accessibilityIdentifier("issues.create.form")
     }
 
     // MARK: - Detail Pane
@@ -308,6 +317,7 @@ struct IssuesView: View {
                         .foregroundColor(Theme.textTertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("issues.detail.placeholder")
             }
         }
         .background(Theme.surface1)
