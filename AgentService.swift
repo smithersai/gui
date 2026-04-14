@@ -96,15 +96,16 @@ class AgentService: ObservableObject {
 
         let cwd = workingDir
 
-        bridgeTask = Task.detached { [weak self] in
+        weak let weakSelf = self
+        bridgeTask = Task.detached {
             NSLog("[AgentService] Starting codex turn on background thread, cwd=%@", cwd)
 
             let bridge = CodexBridge(cwd: cwd)
             guard let bridge = bridge else {
                 NSLog("[AgentService] Bridge creation failed")
                 await MainActor.run {
-                    self?.appendAssistantMessage("Failed to initialize Codex. cwd=\(cwd)")
-                    self?.isRunning = false
+                    weakSelf?.appendAssistantMessage("Failed to initialize Codex. cwd=\(cwd)")
+                    weakSelf?.isRunning = false
                 }
                 return
             }
@@ -116,16 +117,16 @@ class AgentService: ObservableObject {
                 else { return }
 
                 DispatchQueue.main.async {
-                    self?.handleEvent(event)
+                    weakSelf?.handleEvent(event)
                 }
             }
 
             await MainActor.run {
                 if !success {
-                    self?.appendAssistantMessage("Codex turn failed")
+                    weakSelf?.appendAssistantMessage("Codex turn failed")
                 }
-                self?.partialText = ""
-                self?.isRunning = false
+                weakSelf?.partialText = ""
+                weakSelf?.isRunning = false
             }
         }
     }
