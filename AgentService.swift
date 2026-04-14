@@ -71,6 +71,8 @@ class AgentService: ObservableObject {
     // Bridge lives on a background thread, never touched from MainActor
     private var bridgeTask: Task<Void, Never>?
 
+    var workingDirectory: String { workingDir }
+
     init(workingDir: String? = nil) {
         // Use the actual process cwd (set by the shell that launched us),
         // falling back to home directory if it's "/" (Finder launch).
@@ -131,6 +133,23 @@ class AgentService: ObservableObject {
     func cancel() {
         bridgeTask?.cancel()
         isRunning = false
+    }
+
+    func clearMessages() {
+        messages.removeAll()
+        partialText = ""
+    }
+
+    func appendStatusMessage(_ text: String) {
+        messageCounter += 1
+        messages.append(ChatMessage(
+            id: "s\(messageCounter)",
+            type: .status,
+            content: text,
+            timestamp: Self.now(),
+            command: nil,
+            diff: nil
+        ))
     }
 
     private func handleEvent(_ event: CodexEvent) {
