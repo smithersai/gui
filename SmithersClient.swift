@@ -17,8 +17,8 @@ class SmithersClient: ObservableObject {
 
     init(cwd: String? = nil) {
         self.cwd = cwd ?? FileManager.default.currentDirectoryPath
-        self.smithersBin = SmithersClient.findSmithersBin() ?? "smithers"
-
+        // Don't spawn a process during init — just use "smithers" and rely on PATH
+        self.smithersBin = "smithers"
         self.decoder = JSONDecoder()
 
         let config = URLSessionConfiguration.default
@@ -126,7 +126,8 @@ class SmithersClient: ObservableObject {
             let inputJSON = try JSONEncoder().encode(inputs)
             args += ["--input", String(data: inputJSON, encoding: .utf8)!]
         }
-        return try await execJSON(args[0], args[1], args[2], args[3], args[4])
+        let data = try await execArgs(args)
+        return try decoder.decode(RunSummary.self, from: data)
     }
 
     // MARK: - Runs
@@ -331,10 +332,29 @@ class SmithersClient: ObservableObject {
     // MARK: - Stubs for features that need JJHub/server
 
     func listPendingApprovals() async throws -> [Approval] {
-        // Approvals come from running workflows — check ps for waiting-approval
+        // Approvals come from running workflows — check ps for waiting-approval status
         let runs = try await listRuns()
-        // Return empty for now — approvals are per-run, accessed via the run
-        return []
+        var approvals: [Approval] = []
+        for run in runs where run.status == .waitingApproval {
+            // Inspect the run to find blocked/waiting nodes
+            if let inspection = try? await inspectRun(run.runId) {
+                for task in inspection.tasks where task.state == "blocked" || task.state == "waiting-approval" {
+                    approvals.append(Approval(
+                        id: "\(run.runId):\(task.nodeId)",
+                        runId: run.runId,
+                        nodeId: task.nodeId,
+                        workflowPath: run.workflowPath,
+                        gate: task.label,
+                        status: "pending",
+                        payload: nil,
+                        requestedAt: run.startedAtMs ?? Int64(Date().timeIntervalSince1970 * 1000),
+                        resolvedAt: nil,
+                        resolvedBy: nil
+                    ))
+                }
+            }
+        }
+        return approvals
     }
 
     func listRecentDecisions(limit: Int = 20) async throws -> [ApprovalDecision] { return [] }

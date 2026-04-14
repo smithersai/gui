@@ -314,8 +314,28 @@ struct ChatBlock: Identifiable, Codable {
     let id: String?
     let role: String            // system, assistant, user
     let content: String
+    private let _fallbackId: String
 
-    var stableId: String { id ?? UUID().uuidString }
+    var stableId: String { id ?? _fallbackId }
+
+    enum CodingKeys: String, CodingKey {
+        case id, role, content
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+        role = try container.decode(String.self, forKey: .role)
+        content = try container.decode(String.self, forKey: .content)
+        _fallbackId = UUID().uuidString
+    }
+
+    init(id: String?, role: String, content: String) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self._fallbackId = UUID().uuidString
+    }
 }
 
 // MARK: - Cron Schedule
