@@ -5,12 +5,18 @@ import CCodexFFI
 // MARK: - Codex FFI Bridge
 
 /// Swift wrapper around the codex-ffi C library.
+/// Not bound to any actor — all methods are synchronous and block the caller.
 class CodexBridge {
     private var handle: OpaquePointer?
 
     init?(cwd: String) {
+        NSLog("[CodexBridge] init with cwd: %@", cwd)
         handle = cwd.withCString { codex_create($0) }
-        if handle == nil { return nil }
+        if handle == nil {
+            NSLog("[CodexBridge] codex_create returned NULL")
+            return nil
+        }
+        NSLog("[CodexBridge] codex_create succeeded")
     }
 
     deinit {
@@ -23,20 +29,18 @@ class CodexBridge {
     func send(prompt: String, onEvent: @escaping (String) -> Void) -> Bool {
         guard let h = handle else { return false }
 
-        // Box the closure so we can pass it through void*
-        let context = Unmanaged.passRetained(Box(onEvent)).toOpaque()
+        let context = Unmanaged.passRetained(CallbackBox(onEvent)).toOpaque()
 
         let result = prompt.withCString { promptPtr in
             codex_send(h, promptPtr, { (eventJson, userData) in
                 guard let eventJson = eventJson, let userData = userData else { return }
                 let json = String(cString: eventJson)
-                let box = Unmanaged<Box<(String) -> Void>>.fromOpaque(userData).takeUnretainedValue()
-                box.value(json)
+                let box = Unmanaged<CallbackBox>.fromOpaque(userData).takeUnretainedValue()
+                box.callback(json)
             }, context)
         }
 
-        // Release the boxed closure
-        Unmanaged<Box<(String) -> Void>>.fromOpaque(context).release()
+        Unmanaged<CallbackBox>.fromOpaque(context).release()
         return result == 0
     }
 
@@ -47,10 +51,10 @@ class CodexBridge {
     }
 }
 
-/// Helper class to box a value for Unmanaged pointer passing.
-private class Box<T> {
-    let value: T
-    init(_ value: T) { self.value = value }
+/// Helper to box a closure for Unmanaged pointer passing.
+private class CallbackBox {
+    let callback: (String) -> Void
+    init(_ callback: @escaping (String) -> Void) { self.callback = callback }
 }
 
 // MARK: - Agent Service
@@ -60,13 +64,18 @@ class AgentService: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var isRunning = false
 
-    private var bridge: CodexBridge?
     private var messageCounter = 0
     private var partialText = ""
     private let workingDir: String
 
-    init(workingDir: String = FileManager.default.currentDirectoryPath) {
-        self.workingDir = workingDir
+    // Bridge lives on a background thread, never touched from MainActor
+    private var bridgeTask: Task<Void, Never>?
+
+    init(workingDir: String? = nil) {
+        // Use the actual process cwd (set by the shell that launched us),
+        // falling back to home directory if it's "/" (Finder launch).
+        let cwd = FileManager.default.currentDirectoryPath
+        self.workingDir = workingDir ?? (cwd == "/" ? NSHomeDirectory() : cwd)
     }
 
     func sendMessage(_ prompt: String) {
@@ -83,52 +92,45 @@ class AgentService: ObservableObject {
         partialText = ""
         isRunning = true
 
-        Task.detached { [weak self] in
-            await self?.runCodex(prompt: prompt)
+        let cwd = workingDir
+
+        bridgeTask = Task.detached { [weak self] in
+            NSLog("[AgentService] Starting codex turn on background thread, cwd=%@", cwd)
+
+            let bridge = CodexBridge(cwd: cwd)
+            guard let bridge = bridge else {
+                NSLog("[AgentService] Bridge creation failed")
+                await MainActor.run {
+                    self?.appendAssistantMessage("Failed to initialize Codex. cwd=\(cwd)")
+                    self?.isRunning = false
+                }
+                return
+            }
+
+            let success = bridge.send(prompt: prompt) { json in
+                NSLog("[AgentService] Event: %@", json)
+                guard let data = json.data(using: .utf8),
+                      let event = try? JSONDecoder().decode(CodexEvent.self, from: data)
+                else { return }
+
+                DispatchQueue.main.async {
+                    self?.handleEvent(event)
+                }
+            }
+
+            await MainActor.run {
+                if !success {
+                    self?.appendAssistantMessage("Codex turn failed")
+                }
+                self?.partialText = ""
+                self?.isRunning = false
+            }
         }
     }
 
     func cancel() {
-        bridge?.cancel()
-    }
-
-    private func runCodex(prompt: String) async {
-        // Create bridge if needed (lazy init, so first message pays the cost)
-        if bridge == nil {
-            let cwd = workingDir
-            NSLog("[SmithersGUI] Creating CodexBridge with cwd: \(cwd)")
-            bridge = CodexBridge(cwd: cwd)
-        }
-
-        guard let bridge = bridge else {
-            await MainActor.run {
-                self.appendAssistantMessage("Failed to initialize Codex session. Check console for [codex-ffi] logs. cwd=\(self.workingDir)")
-                self.isRunning = false
-            }
-            return
-        }
-
-        let success = bridge.send(prompt: prompt) { [weak self] json in
-            // This callback runs on the background thread
-            guard let self = self else { return }
-
-            // Parse the JSONL event
-            guard let data = json.data(using: .utf8),
-                  let event = try? JSONDecoder().decode(CodexEvent.self, from: data)
-            else { return }
-
-            DispatchQueue.main.async {
-                self.handleEvent(event)
-            }
-        }
-
-        await MainActor.run {
-            if !success {
-                self.appendAssistantMessage("Codex turn failed")
-            }
-            self.partialText = ""
-            self.isRunning = false
-        }
+        bridgeTask?.cancel()
+        isRunning = false
     }
 
     private func handleEvent(_ event: CodexEvent) {
@@ -164,7 +166,6 @@ class AgentService: ObservableObject {
                 }
 
                 if item.type == "file_change" {
-                    // Show file changes as a status message
                     if let changes = item.changes {
                         let summary = changes.map { "\($0.kind): \($0.path)" }.joined(separator: "\n")
                         messageCounter += 1
@@ -183,9 +184,15 @@ class AgentService: ObservableObject {
         case "turn.completed":
             break
 
-        case "error", "turn.failed":
-            let errorMsg = event.error?.message ?? "Unknown error"
+        case "turn.failed":
+            let errorMsg = event.error?.message ?? event.message ?? "Unknown error"
             appendAssistantMessage("Error: \(errorMsg)")
+
+        case "error":
+            // Non-fatal errors (e.g. MCP login warnings) — log but don't show
+            if let msg = event.message {
+                NSLog("[AgentService] non-fatal error: %@", msg)
+            }
 
         default:
             break
