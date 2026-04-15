@@ -370,13 +370,15 @@ final class LandingsActionsTests: XCTestCase {
 
 final class LandingsTabTests: XCTestCase {
 
-    /// LANDINGS_INFO_TAB & LANDINGS_DIFF_TAB: DetailTab enum has exactly two cases.
+    /// LANDINGS_INFO_TAB, LANDINGS_DIFF_TAB, LANDINGS_CHECKS_TAB:
+    /// DetailTab enum has exactly three cases.
     @MainActor
-    func test_detailTab_hasTwoCases() throws {
+    func test_detailTab_hasThreeCases() throws {
         let allCases = LandingsView.DetailTab.allCases
-        XCTAssertEqual(allCases.count, 2)
+        XCTAssertEqual(allCases.count, 3)
         XCTAssertEqual(allCases[0].rawValue, "Info")
         XCTAssertEqual(allCases[1].rawValue, "Diff")
+        XCTAssertEqual(allCases[2].rawValue, "Checks")
     }
 
     /// LANDINGS_INFO_TAB: Selecting a landing defaults to the Info tab.
@@ -577,8 +579,8 @@ final class LandingsDetailTabEnumTests: XCTestCase {
     @MainActor
     func test_detailTab_isCaseIterable() throws {
         let cases = LandingsView.DetailTab.allCases
-        XCTAssertEqual(cases.count, 2)
-        XCTAssertEqual(cases.map(\.rawValue), ["Info", "Diff"])
+        XCTAssertEqual(cases.count, 3)
+        XCTAssertEqual(cases.map(\.rawValue), ["Info", "Diff", "Checks"])
     }
 
     /// DetailTab raw values are capitalized for display.
@@ -586,6 +588,7 @@ final class LandingsDetailTabEnumTests: XCTestCase {
     func test_detailTab_rawValuesCapitalized() throws {
         XCTAssertEqual(LandingsView.DetailTab.info.rawValue, "Info")
         XCTAssertEqual(LandingsView.DetailTab.diff.rawValue, "Diff")
+        XCTAssertEqual(LandingsView.DetailTab.checks.rawValue, "Checks")
     }
 }
 
