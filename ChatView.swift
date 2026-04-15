@@ -76,6 +76,7 @@ struct ChatView: View {
     var smithers: SmithersClient? = nil
     var onNavigate: ((NavDestination) -> Void)? = nil
     var onNewChat: (() -> Void)? = nil
+    var onRunStarted: ((String, String?) -> Void)? = nil
 
     @State private var inputText: String = ""
     @State private var workflowCommands: [SlashCommandItem] = []
@@ -162,7 +163,7 @@ struct ChatView: View {
                             .frame(maxWidth: .infinity)
                             .accessibilityIdentifier("chat.emptyState")
                         }
-                        ForEach(agent.messages) { message in
+                        ForEach(deduplicatedChatMessages(agent.messages)) { message in
                             MessageRow(message: message)
                         }
                         if agent.isRunning {
@@ -335,8 +336,7 @@ struct ChatView: View {
                                             .foregroundColor(Theme.textTertiary)
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 2)
-                                            .background(Theme.pillBg)
-                                            .cornerRadius(4)
+                                            .themedPill(cornerRadius: 4)
                                     }
                                 }
 
@@ -547,8 +547,8 @@ struct ChatView: View {
         case .showHelp:
             inputText = ""
             agent.appendStatusMessage(SlashCommandRegistry.helpText(for: slashCommands))
-        case .runWorkflow(let workflowId):
-            runWorkflow(workflowId, args: args)
+        case .runWorkflow(let workflow):
+            runWorkflow(workflow, args: args)
         case .runSmithersPrompt(let promptId):
             runSmithersPrompt(promptId, args: args)
         }
@@ -606,7 +606,7 @@ struct ChatView: View {
         }
     }
 
-    private func runWorkflow(_ workflowId: String, args: String) {
+    private func runWorkflow(_ workflow: Workflow, args: String) {
         guard let smithers else {
             inputText = ""
             agent.appendStatusMessage("Smithers is not available in this chat view.")
@@ -617,11 +617,12 @@ struct ChatView: View {
         let inputs = SlashCommandRegistry.keyValueArgs(args)
         Task { @MainActor in
             do {
-                let run = try await smithers.runWorkflow(workflowId, inputs: inputs)
-                agent.appendStatusMessage("Started workflow \(workflowId).\nRun: \(run.runId)")
-                onNavigate?(.runs)
+                let run = try await smithers.runWorkflow(workflow, inputs: inputs)
+                agent.appendStatusMessage("Started workflow \(workflow.name).\nRun: \(run.runId)")
+                onRunStarted?(run.runId, workflow.name)
+                onNavigate?(.liveRun(runId: run.runId, nodeId: nil))
             } catch {
-                agent.appendStatusMessage("Failed to start workflow \(workflowId): \(error.localizedDescription)")
+                agent.appendStatusMessage("Failed to start workflow \(workflow.name): \(error.localizedDescription)")
             }
         }
     }
@@ -702,8 +703,7 @@ struct SlashCommandPalette: View {
                                     .foregroundColor(Theme.textTertiary)
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 2)
-                                    .background(Theme.pillBg)
-                                    .cornerRadius(4)
+                                    .themedPill(cornerRadius: 4)
                             }
                             Text(command.description)
                                 .font(.system(size: 11))
@@ -714,7 +714,7 @@ struct SlashCommandPalette: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
-                    .background(index == selectedIndex ? Theme.sidebarSelected : Color.clear)
+                    .themedSidebarRowBackground(isSelected: index == selectedIndex)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -876,10 +876,8 @@ struct MessageRow: View {
             } else if message.type == .diff {
                 if let diff = message.diff {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(diff.snippet)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(Theme.textPrimary)
-                            .lineSpacing(2)
+                        SyntaxHighlightedText(diff.snippet, font: .system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
                         HStack(spacing: 12) {
                             Text("\(diff.files.count) file\(diff.files.count == 1 ? "" : "s")")
                                 .font(.system(size: 11, weight: .medium))
@@ -893,12 +891,7 @@ struct MessageRow: View {
                         }
                     }
                     .padding(12)
-                    .background(Color.black.opacity(0.2))
-                    .cornerRadius(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Theme.border, lineWidth: 1)
-                    )
+                    .themedDiffBlock()
                     Spacer()
                 }
             } else if message.type == .status {
@@ -970,10 +963,11 @@ struct CommandBlock: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(Theme.textPrimary)
                     .lineSpacing(2)
+                    .textSelection(.enabled)
             }
             .padding(12)
         }
-        .background(Color.black.opacity(0.2))
+        .background(Theme.bubbleCommand)
         .cornerRadius(8)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
