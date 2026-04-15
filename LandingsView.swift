@@ -9,6 +9,7 @@ struct LandingsView: View {
     @State private var error: String?
     @State private var stateFilter: String?
     @State private var detailTab: DetailTab = .info
+    @State private var actionError: String?
 
     enum DetailTab: String, CaseIterable {
         case info = "Info"
@@ -72,6 +73,25 @@ struct LandingsView: View {
             if let error {
                 errorView(error)
             } else {
+                if let actionError {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(Theme.warning)
+                        Text(actionError)
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textSecondary)
+                        Spacer()
+                        Button(action: { self.actionError = nil }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10))
+                                .foregroundColor(Theme.textTertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Theme.warning.opacity(0.1))
+                }
                 HStack(spacing: 0) {
                     landingList
                         .frame(width: 300)
@@ -82,7 +102,7 @@ struct LandingsView: View {
             }
         }
         .background(Theme.surface1)
-        .task { await loadLandings() }
+        .task(id: stateFilter) { await loadLandings() }
     }
 
     // MARK: - List
@@ -192,20 +212,22 @@ struct LandingsView: View {
                             }
                             .buttonStyle(.plain)
 
-                            Button(action: { Task { await landLanding(landing) } }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.down.to.line")
-                                    Text("Land")
+                            if landing.state == "ready" {
+                                Button(action: { Task { await landLanding(landing) } }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "arrow.down.to.line")
+                                        Text("Land")
+                                    }
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(Theme.accent)
+                                    .padding(.horizontal, 8)
+                                    .frame(height: 26)
+                                    .background(Theme.accent.opacity(0.12))
+                                    .cornerRadius(6)
                                 }
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(Theme.accent)
-                                .padding(.horizontal, 8)
-                                .frame(height: 26)
-                                .background(Theme.accent.opacity(0.12))
-                                .cornerRadius(6)
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
-                            .padding(.trailing, 12)
+                            Spacer().frame(width: 12)
                         }
                     }
                     .border(Theme.border, edges: [.bottom])
@@ -239,7 +261,7 @@ struct LandingsView: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(Theme.textPrimary)
 
-                if let desc = landing.description, !desc.isEmpty {
+                if let desc = landing.description, !desc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(desc)
                         .font(.system(size: 12))
                         .foregroundColor(Theme.textSecondary)
@@ -253,7 +275,7 @@ struct LandingsView: View {
                     if let branch = landing.targetBranch { infoRow("Target", branch) }
                     if let author = landing.author { infoRow("Author", author) }
                     if let review = landing.reviewStatus { infoRow("Review", review) }
-                    if let created = landing.createdAt { infoRow("Created", created) }
+                    if let created = landing.createdAt { infoRow("Created", formattedDate(created)) }
                 }
             }
             .padding(20)
@@ -309,8 +331,26 @@ struct LandingsView: View {
         switch state {
         case "landed": return Theme.success
         case "ready": return Theme.accent
+        case "draft": return Theme.info
         default: return Theme.textTertiary
         }
+    }
+
+    private func formattedDate(_ iso: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let display = DateFormatter()
+        display.dateStyle = .medium
+        display.timeStyle = .short
+        if let date = formatter.date(from: iso) {
+            return display.string(from: date)
+        }
+        // Retry without fractional seconds
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: iso) {
+            return display.string(from: date)
+        }
+        return iso
     }
 
     private func reviewColor(_ status: String) -> Color {
@@ -338,7 +378,7 @@ struct LandingsView: View {
             try await smithers.reviewLanding(number: num, action: "approve", body: nil)
             await loadLandings()
         } catch {
-            self.error = error.localizedDescription
+            self.actionError = error.localizedDescription
         }
     }
 
@@ -348,7 +388,7 @@ struct LandingsView: View {
             try await smithers.reviewLanding(number: num, action: "land", body: nil)
             await loadLandings()
         } catch {
-            self.error = error.localizedDescription
+            self.actionError = error.localizedDescription
         }
     }
 

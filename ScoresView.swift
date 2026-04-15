@@ -177,7 +177,7 @@ struct ScoresView: View {
     }
 
     private func scoreCell(_ value: Double, width: CGFloat) -> some View {
-        Text(String(format: "%.3f", value))
+        Text(String(format: "%.2f", value))
             .foregroundColor(scoreColor(value))
             .frame(width: width, alignment: .trailing)
     }
@@ -194,11 +194,15 @@ struct ScoresView: View {
         return Theme.danger
     }
 
-    private func formatDate(_ date: Date) -> String {
+    private static let dateFormatter: DateFormatter = {
         let fmt = DateFormatter()
         fmt.dateStyle = .short
         fmt.timeStyle = .short
-        return fmt.string(from: date)
+        return fmt
+    }()
+
+    private func formatDate(_ date: Date) -> String {
+        Self.dateFormatter.string(from: date)
     }
 
     private func emptyView(_ message: String) -> some View {
@@ -232,9 +236,9 @@ struct ScoresView: View {
         isLoading = true
         error = nil
         do {
-            async let s = smithers.listRecentScores()
-            async let a = smithers.aggregateScores()
-            (scores, aggregates) = try await (s, a)
+            let recentScores = try await smithers.listRecentScores()
+            scores = recentScores
+            aggregates = try await smithers.aggregateScores(from: recentScores)
         } catch {
             self.error = error.localizedDescription
         }

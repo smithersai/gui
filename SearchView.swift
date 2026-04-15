@@ -7,6 +7,7 @@ struct SearchView: View {
     @State private var results: [SearchResult] = []
     @State private var isSearching = false
     @State private var issueState: String? = nil
+    @State private var error: String? = nil
 
     enum SearchTab: String, CaseIterable {
         case code = "Code"
@@ -50,22 +51,9 @@ struct SearchView: View {
 
             // Tabs
             HStack(spacing: 0) {
-                ForEach(SearchTab.allCases, id: \.self) { t in
-                    Button(action: { tab = t; if !query.isEmpty { Task { await search() } } }) {
-                        Text(t.rawValue)
-                            .font(.system(size: 12, weight: tab == t ? .semibold : .regular))
-                            .foregroundColor(tab == t ? Theme.accent : Theme.textSecondary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("search.tab.\(t.rawValue)")
-                    .overlay(alignment: .bottom) {
-                        if tab == t {
-                            Rectangle().fill(Theme.accent).frame(height: 2)
-                        }
-                    }
-                }
+                tabButton(.code)
+                tabButton(.issues)
+                tabButton(.repos)
 
                 if tab == .issues {
                     Menu {
@@ -91,7 +79,7 @@ struct SearchView: View {
 
                 Spacer()
 
-                Text("\(results.count) results")
+                Text("\(results.count) result\(results.count == 1 ? "" : "s")")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textTertiary)
                     .padding(.trailing, 8)
@@ -104,12 +92,21 @@ struct SearchView: View {
                 VStack(spacing: 0) {
                     if results.isEmpty && !isSearching {
                         VStack(spacing: 8) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: 28))
-                                .foregroundColor(Theme.textTertiary)
-                            Text(query.isEmpty ? "Enter a search query" : "No results found")
-                                .font(.system(size: 13))
-                                .foregroundColor(Theme.textTertiary)
+                            if let error = error {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 28))
+                                    .foregroundColor(.red)
+                                Text(error)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.red)
+                            } else {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.system(size: 28))
+                                    .foregroundColor(Theme.textTertiary)
+                                Text(query.isEmpty ? "Enter a search query" : "No results found")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
                         }
                         .frame(maxWidth: .infinity, minHeight: 200)
                     } else {
@@ -136,7 +133,17 @@ struct SearchView: View {
                                 }
 
                                 if let snippet = result.snippet {
-                                    Text(snippet)
+                                    let displaySnippet: String = {
+                                        if let startLine = result.lineNumber {
+                                            return snippet
+                                                .components(separatedBy: "\n")
+                                                .enumerated()
+                                                .map { "L\(startLine + $0.offset): \($0.element)" }
+                                                .joined(separator: "\n")
+                                        }
+                                        return snippet
+                                    }()
+                                    Text(displaySnippet)
                                         .font(.system(size: 11, design: .monospaced))
                                         .foregroundColor(Theme.textSecondary)
                                         .lineLimit(3)
@@ -168,9 +175,36 @@ struct SearchView: View {
         .accessibilityIdentifier("search.root")
     }
 
+    private func tabButton(_ searchTab: SearchTab) -> some View {
+        Button(action: {
+            if tab != searchTab && searchTab != .issues {
+                issueState = nil
+            }
+            tab = searchTab
+            if !query.isEmpty {
+                Task { await search() }
+            }
+        }) {
+            Text(searchTab.rawValue)
+                .font(.system(size: 12, weight: tab == searchTab ? .semibold : .regular))
+                .foregroundColor(tab == searchTab ? Theme.accent : Theme.textSecondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("search.tab.\(searchTab.rawValue)")
+        .overlay(alignment: .bottom) {
+            if tab == searchTab {
+                Rectangle().fill(Theme.accent).frame(height: 2)
+            }
+        }
+    }
+
     private func search() async {
         guard !query.isEmpty else { return }
         isSearching = true
+        results = []
+        self.error = nil
         do {
             switch tab {
             case .code:
@@ -181,6 +215,7 @@ struct SearchView: View {
                 results = try await smithers.searchRepos(query: query)
             }
         } catch {
+            self.error = error.localizedDescription
             results = []
         }
         isSearching = false

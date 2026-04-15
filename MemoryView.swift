@@ -5,7 +5,8 @@ struct MemoryView: View {
     @State private var facts: [MemoryFact] = []
     @State private var recallResults: [MemoryRecallResult] = []
     @State private var isLoading = true
-    @State private var error: String?
+    @State private var listError: String?
+    @State private var recallError: String?
     @State private var namespaceFilter: String?
     @State private var recallQuery = ""
     @State private var isRecalling = false
@@ -32,19 +33,21 @@ struct MemoryView: View {
             header
             toolbar
 
-            if let error {
-                errorView(error)
-            } else {
-                switch mode {
+            switch mode {
                 case .list:
-                    if let fact = selectedFact {
+                    if let err = listError {
+                        errorView(err)
+                    } else if let fact = selectedFact {
                         factDetail(fact)
                     } else {
                         factList
                     }
                 case .recall:
-                    recallView
-                }
+                    if let err = recallError {
+                        errorView(err)
+                    } else {
+                        recallView
+                    }
             }
         }
         .background(Theme.surface1)
@@ -79,7 +82,7 @@ struct MemoryView: View {
     private var toolbar: some View {
         HStack(spacing: 8) {
             // Mode toggle
-            Button(action: { mode = .list; selectedFact = nil }) {
+            Button(action: { mode = .list; selectedFact = nil; recallError = nil }) {
                 Text("Facts")
                     .font(.system(size: 11, weight: mode == .list ? .semibold : .regular))
                     .foregroundColor(mode == .list ? Theme.accent : Theme.textSecondary)
@@ -90,7 +93,7 @@ struct MemoryView: View {
             }
             .buttonStyle(.plain)
 
-            Button(action: { mode = .recall }) {
+            Button(action: { mode = .recall; listError = nil }) {
                 Text("Recall")
                     .font(.system(size: 11, weight: mode == .recall ? .semibold : .regular))
                     .foregroundColor(mode == .recall ? Theme.accent : Theme.textSecondary)
@@ -102,8 +105,7 @@ struct MemoryView: View {
             .buttonStyle(.plain)
 
             // Namespace filter
-            if mode == .list {
-                Menu {
+            Menu {
                     Button("All Namespaces") { namespaceFilter = nil }
                     Divider()
                     ForEach(namespaces, id: \.self) { ns in
@@ -124,7 +126,6 @@ struct MemoryView: View {
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-            }
 
             Spacer()
 
@@ -225,7 +226,7 @@ struct MemoryView: View {
                     metaRow("Created", formatDate(fact.createdAt))
                     metaRow("Updated", formatDate(fact.updatedAt))
                     if let ttl = fact.ttlMs {
-                        metaRow("TTL", "\(ttl / 1000)s")
+                        metaRow("TTL", String(format: "%.1fs", Double(ttl) / 1000.0))
                     }
                 }
 
@@ -293,7 +294,7 @@ struct MemoryView: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: 150)
                     } else {
-                        ForEach(recallResults) { result in
+                        ForEach(Array(recallResults.enumerated()), id: \.offset) { index, result in
                             HStack(alignment: .top, spacing: 12) {
                                 Text(String(format: "%.2f", result.score))
                                     .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -381,22 +382,23 @@ struct MemoryView: View {
 
     private func loadFacts() async {
         isLoading = true
-        error = nil
+        listError = nil
         do {
-            facts = try await smithers.listMemoryFacts()
+            facts = try await smithers.listMemoryFacts(namespace: namespaceFilter)
         } catch {
-            self.error = error.localizedDescription
+            self.listError = error.localizedDescription
         }
         isLoading = false
     }
 
     private func doRecall() async {
         guard !recallQuery.isEmpty else { return }
+        recallError = nil
         isRecalling = true
         do {
-            recallResults = try await smithers.recallMemory(query: recallQuery)
+            recallResults = try await smithers.recallMemory(query: recallQuery, namespace: namespaceFilter)
         } catch {
-            self.error = error.localizedDescription
+            self.recallError = error.localizedDescription
         }
         isRecalling = false
     }

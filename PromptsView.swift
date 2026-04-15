@@ -13,12 +13,29 @@ struct PromptsView: View {
     @State private var isSaving = false
     @State private var isPreviewing = false
     @State private var error: String?
+    @State private var saveError: String?
+    @State private var showUnsavedAlert = false
+    @State private var pendingPrompt: SmithersPrompt?
     @State private var tab: DetailTab = .source
 
     enum DetailTab: String, CaseIterable {
         case source = "Source"
         case inputs = "Inputs"
         case preview = "Preview"
+    }
+
+    init(smithers: SmithersClient) {
+        self.smithers = smithers
+    }
+
+    init(
+        smithers: SmithersClient,
+        initialPrompts: [SmithersPrompt],
+        isLoading: Bool = false
+    ) {
+        self.smithers = smithers
+        _prompts = State(initialValue: initialPrompts)
+        _isLoading = State(initialValue: isLoading)
     }
 
     private var selectedPrompt: SmithersPrompt? {
@@ -47,6 +64,20 @@ struct PromptsView: View {
         }
         .background(Theme.surface1)
         .task { await loadPrompts() }
+        .alert("Unsaved Changes", isPresented: $showUnsavedAlert) {
+            Button("Discard", role: .destructive) {
+                if let p = pendingPrompt {
+                    pendingPrompt = nil
+                    saveError = nil
+                    applySelection(p)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingPrompt = nil
+            }
+        } message: {
+            Text("You have unsaved changes. Discard them?")
+        }
     }
 
     // MARK: - Header
@@ -150,8 +181,16 @@ struct PromptsView: View {
                         }
                         Spacer()
 
+                        if let saveError {
+                            Text(saveError)
+                                .font(.system(size: 11))
+                                .foregroundColor(Theme.danger)
+                                .lineLimit(1)
+                                .padding(.trailing, 4)
+                        }
+
                         if hasChanges {
-                            Button(action: { Task { await savePrompt() } }) {
+                            Button(action: { isSaving = true; Task { await savePrompt() } }) {
                                 HStack(spacing: 4) {
                                     if isSaving {
                                         ProgressView().scaleEffect(0.4).frame(width: 10, height: 10)
@@ -305,27 +344,43 @@ struct PromptsView: View {
     // MARK: - Actions
 
     private func selectPrompt(_ prompt: SmithersPrompt) {
+        if hasChanges {
+            pendingPrompt = prompt
+            showUnsavedAlert = true
+            return
+        }
+        applySelection(prompt)
+    }
+
+    private func applySelection(_ prompt: SmithersPrompt) {
+        let promptId = prompt.id
         selectedId = prompt.id
         source = prompt.source ?? ""
         originalSource = source
         inputs = prompt.inputs ?? []
         inputValues = [:]
         previewText = nil
+        isPreviewing = false
         tab = .source
 
         // Load full details + props
         Task {
             do {
-                let full = try await smithers.getPrompt(prompt.id)
+                let full = try await smithers.getPrompt(promptId)
+                guard selectedId == promptId else { return }
                 source = full.source ?? ""
                 originalSource = source
-                let props = try await smithers.discoverPromptProps(prompt.id)
+
+                let props = try await smithers.discoverPromptProps(promptId)
+                guard selectedId == promptId else { return }
                 inputs = props
+                var defaults: [String: String] = [:]
                 for prop in props {
                     if let def = prop.defaultValue {
-                        inputValues[prop.name] = def
+                        defaults[prop.name] = def
                     }
                 }
+                inputValues = defaults
             } catch {
                 // Use what we have from the list
             }
@@ -334,25 +389,30 @@ struct PromptsView: View {
 
     private func savePrompt() async {
         guard let id = selectedId else { return }
-        isSaving = true
         do {
             try await smithers.updatePrompt(id, source: source)
             originalSource = source
+            saveError = nil
         } catch {
-            self.error = error.localizedDescription
+            saveError = error.localizedDescription
         }
         isSaving = false
     }
 
     private func renderPreview() async {
         guard let id = selectedId else { return }
+        let selectedValues = inputValues
         isPreviewing = true
         tab = .preview
         do {
-            previewText = try await smithers.previewPrompt(id, input: inputValues)
+            let preview = try await smithers.previewPrompt(id, input: selectedValues)
+            guard selectedId == id else { return }
+            previewText = preview
         } catch {
+            guard selectedId == id else { return }
             previewText = "Error: \(error.localizedDescription)"
         }
+        guard selectedId == id else { return }
         isPreviewing = false
     }
 

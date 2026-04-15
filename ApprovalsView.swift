@@ -8,7 +8,7 @@ struct ApprovalsView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var showHistory = false
-    @State private var actionInFlight: String? // approval id being acted on
+    @State private var actionInFlight: Set<String> = [] // approval ids being acted on
 
     private var selectedApproval: Approval? {
         approvals.first { $0.id == selectedId }
@@ -48,9 +48,9 @@ struct ApprovalsView: View {
             // Toggle pending / history
             Button(action: { showHistory.toggle(); Task { await loadApprovals() } }) {
                 HStack(spacing: 4) {
-                    Image(systemName: showHistory ? "clock.arrow.circlepath" : "tray")
+                    Image(systemName: showHistory ? "tray" : "clock.arrow.circlepath")
                         .font(.system(size: 11))
-                    Text(showHistory ? "History" : "Pending")
+                    Text(showHistory ? "Pending" : "History")
                         .font(.system(size: 11))
                 }
                 .foregroundColor(Theme.textSecondary)
@@ -122,7 +122,7 @@ struct ApprovalsView: View {
                         ForEach(pending) { approval in
                             Button(action: { selectedId = approval.id }) {
                                 HStack(spacing: 10) {
-                                    if actionInFlight == approval.id {
+                                    if actionInFlight.contains(approval.id) {
                                         ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
                                     } else {
                                         Circle()
@@ -226,7 +226,7 @@ struct ApprovalsView: View {
                                     .cornerRadius(8)
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(actionInFlight != nil)
+                                .disabled(actionInFlight.contains(approval.id))
                                 .accessibilityIdentifier("approval.approveButton")
 
                                 Button(action: { Task { await deny(approval) } }) {
@@ -242,7 +242,7 @@ struct ApprovalsView: View {
                                     .cornerRadius(8)
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(actionInFlight != nil)
+                                .disabled(actionInFlight.contains(approval.id))
                                 .accessibilityIdentifier("approval.denyButton")
                             }
                         }
@@ -348,7 +348,7 @@ struct ApprovalsView: View {
     }
 
     private func approve(_ approval: Approval) async {
-        actionInFlight = approval.id
+        actionInFlight.insert(approval.id)
         do {
             try await smithers.approveNode(runId: approval.runId, nodeId: approval.nodeId)
             await loadApprovals()
@@ -356,11 +356,11 @@ struct ApprovalsView: View {
         } catch {
             self.error = error.localizedDescription
         }
-        actionInFlight = nil
+        actionInFlight.remove(approval.id)
     }
 
     private func deny(_ approval: Approval) async {
-        actionInFlight = approval.id
+        actionInFlight.insert(approval.id)
         do {
             try await smithers.denyNode(runId: approval.runId, nodeId: approval.nodeId)
             await loadApprovals()
@@ -368,6 +368,6 @@ struct ApprovalsView: View {
         } catch {
             self.error = error.localizedDescription
         }
-        actionInFlight = nil
+        actionInFlight.remove(approval.id)
     }
 }

@@ -94,7 +94,7 @@ struct DashboardView: View {
                 HStack(spacing: 12) {
                     StatCard(
                         title: "Active Runs",
-                        value: "\(runs.filter { $0.status == .running }.count)",
+                        value: "\(runs.filter { $0.status == .running || $0.status == .waitingApproval }.count)",
                         icon: "play.circle.fill",
                         color: Theme.success
                     )
@@ -169,7 +169,9 @@ struct DashboardView: View {
                 } else {
                     ForEach(runs) { run in
                         RunRow(run: run)
-                        Divider().background(Theme.border)
+                        if run.id != runs.last?.id {
+                            Divider().background(Theme.border)
+                        }
                     }
                 }
             }
@@ -187,7 +189,9 @@ struct DashboardView: View {
                 } else {
                     ForEach(workflows) { workflow in
                         WorkflowRow(workflow: workflow)
-                        Divider().background(Theme.border)
+                        if workflow.id != workflows.last?.id {
+                            Divider().background(Theme.border)
+                        }
                     }
                 }
             }
@@ -206,7 +210,9 @@ struct DashboardView: View {
                 } else {
                     ForEach(pending) { approval in
                         ApprovalRow(approval: approval)
-                        Divider().background(Theme.border)
+                        if approval.id != pending.last?.id {
+                            Divider().background(Theme.border)
+                        }
                     }
                 }
             }
@@ -228,7 +234,9 @@ struct DashboardView: View {
             workflows = fetchedWorkflows
             approvals = fetchedApprovals
         } catch {
+            isLoading = false
             self.error = error.localizedDescription
+            return
         }
         isLoading = false
     }

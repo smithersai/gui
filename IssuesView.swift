@@ -21,15 +21,15 @@ struct IssuesView: View {
             header
 
             if let error {
-                errorView(error)
-            } else {
-                HStack(spacing: 0) {
-                    issueList
-                        .frame(width: 300)
-                    Divider().background(Theme.border)
-                    detailPane
-                        .frame(maxWidth: .infinity)
-                }
+                errorBanner(error)
+            }
+
+            HStack(spacing: 0) {
+                issueList
+                    .frame(width: 300)
+                Divider().background(Theme.border)
+                detailPane
+                    .frame(maxWidth: .infinity)
             }
         }
         .background(Theme.surface1)
@@ -104,7 +104,7 @@ struct IssuesView: View {
 
                 if issues.isEmpty && !isLoading {
                     VStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.circle")
+                        Image(systemName: "tray")
                             .font(.system(size: 24))
                             .foregroundColor(Theme.textTertiary)
                         Text("No issues found")
@@ -133,7 +133,7 @@ struct IssuesView: View {
                                                 .foregroundColor(Theme.textTertiary)
                                         }
                                         if let labels = issue.labels {
-                                            ForEach(labels.prefix(3), id: \.self) { label in
+                                            ForEach(Array(labels.prefix(3).enumerated()), id: \.offset) { _, label in
                                                 Text(label)
                                                     .font(.system(size: 9, weight: .medium))
                                                     .foregroundColor(Theme.accent)
@@ -213,7 +213,7 @@ struct IssuesView: View {
                     .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
-                .disabled(newTitle.isEmpty || isCreating)
+                .disabled(newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
                 .accessibilityIdentifier("issues.create.submit")
 
                 Button("Cancel") { showCreate = false; newTitle = ""; newBody = "" }
@@ -255,6 +255,20 @@ struct IssuesView: View {
                                     .cornerRadius(6)
                                 }
                                 .buttonStyle(.plain)
+                            } else if issue.state == "closed" {
+                                Button(action: { Task { await reopenIssue(issue) } }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "arrow.uturn.left.circle")
+                                        Text("Reopen")
+                                    }
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(Theme.success)
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 28)
+                                    .background(Theme.pillBg)
+                                    .cornerRadius(6)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
 
@@ -273,7 +287,7 @@ struct IssuesView: View {
                                 .cornerRadius(4)
 
                             if let labels = issue.labels {
-                                ForEach(labels, id: \.self) { label in
+                                ForEach(Array(labels.enumerated()), id: \.offset) { _, label in
                                     Text(label)
                                         .font(.system(size: 10, weight: .medium))
                                         .foregroundColor(Theme.accent)
@@ -309,7 +323,7 @@ struct IssuesView: View {
                 }
             } else {
                 VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.circle")
+                    Image(systemName: "sidebar.right")
                         .font(.system(size: 28))
                         .foregroundColor(Theme.textTertiary)
                     Text("Select an issue")
@@ -350,8 +364,20 @@ struct IssuesView: View {
         isCreating = false
     }
 
+    private func reopenIssue(_ issue: SmithersIssue) async {
+        guard let num = issue.number else {
+            self.error = "Cannot reopen issue: missing issue number"
+            return
+        }
+        // TODO: Call smithers.reopenIssue when backend support is available
+        self.error = "Reopen is not yet implemented for issue #\(num)"
+    }
+
     private func closeIssue(_ issue: SmithersIssue) async {
-        guard let num = issue.number else { return }
+        guard let num = issue.number else {
+            self.error = "Cannot close issue: missing issue number"
+            return
+        }
         do {
             try await smithers.closeIssue(number: num, comment: nil)
             await loadIssues()
@@ -360,15 +386,30 @@ struct IssuesView: View {
         }
     }
 
-    private func errorView(_ message: String) -> some View {
-        VStack(spacing: 12) {
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 28))
+                .font(.system(size: 12))
                 .foregroundColor(Theme.warning)
-            Text(message).font(.system(size: 13)).foregroundColor(Theme.textSecondary)
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(2)
+            Spacer()
             Button("Retry") { Task { await loadIssues() } }
-                .buttonStyle(.plain).foregroundColor(Theme.accent)
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Theme.accent)
+            Button(action: { error = nil }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            .buttonStyle(.plain)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Theme.warning.opacity(0.1))
+        .border(Theme.border, edges: [.bottom])
     }
 }

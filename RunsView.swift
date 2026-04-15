@@ -4,7 +4,7 @@ struct RunsView: View {
     @ObservedObject var smithers: SmithersClient
     var onOpenLiveChat: ((String, String?) -> Void)? = nil
     @State private var runs: [RunSummary] = []
-    @State private var expandedRunId: String?
+    @State private var expandedRunIds: Set<String> = []
     @State private var inspections: [String: RunInspection] = [:]
     @State private var isLoading = true
     @State private var error: String?
@@ -28,7 +28,7 @@ struct RunsView: View {
         }
         if !searchText.isEmpty {
             result = result.filter {
-                ($0.workflowName ?? "").localizedCaseInsensitiveContains(searchText) ||
+                ($0.workflowName ?? "Unnamed workflow").localizedCaseInsensitiveContains(searchText) ||
                 $0.runId.localizedCaseInsensitiveContains(searchText)
             }
         }
@@ -159,7 +159,7 @@ struct RunsView: View {
             Spacer()
 
             // Count
-            Text("\(filteredRuns.count) runs")
+            Text("\(filteredRuns.count) run\(filteredRuns.count == 1 ? "" : "s")")
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textTertiary)
         }
@@ -232,7 +232,7 @@ struct RunsView: View {
                 ForEach(runs) { run in
                     VStack(spacing: 0) {
                         expandableRunRow(run)
-                        if expandedRunId == run.id {
+                        if expandedRunIds.contains(run.id) {
                             runDetail(run)
                         }
                         Divider().background(Theme.border)
@@ -246,46 +246,62 @@ struct RunsView: View {
     }
 
     private func expandableRunRow(_ run: RunSummary) -> some View {
-        Button(action: { toggleExpand(run) }) {
-            HStack(spacing: 12) {
-                Image(systemName: expandedRunId == run.id ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9))
-                    .foregroundColor(Theme.textTertiary)
-                    .frame(width: 12)
+        HStack(spacing: 8) {
+            Button(action: { toggleExpand(run) }) {
+                HStack(spacing: 12) {
+                    Image(systemName: expandedRunIds.contains(run.id) ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundColor(Theme.textTertiary)
+                        .frame(width: 12)
 
-                StatusPill(status: run.status)
+                    StatusPill(status: run.status)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(run.workflowName ?? "Unnamed workflow")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(Theme.textPrimary)
-                        .lineLimit(1)
-                    Text(String(run.runId.prefix(8)))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(run.workflowName ?? "Unnamed workflow")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(Theme.textPrimary)
+                            .lineLimit(1)
+                        Text(String(run.runId.prefix(8)))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+
+                    Spacer()
+
+                    if run.status == .running && run.totalNodes > 0 {
+                        ProgressBar(progress: run.progress)
+                            .frame(width: 80)
+                        Text("\(Int((run.progress * 100).rounded()))%")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(Theme.textTertiary)
+                            .frame(width: 32, alignment: .trailing)
+                    }
+
+                    Text(run.elapsedString)
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(Theme.textTertiary)
+                        .frame(width: 60, alignment: .trailing)
                 }
-
-                Spacer()
-
-                if run.status == .running && run.totalNodes > 0 {
-                    ProgressBar(progress: run.progress)
-                        .frame(width: 80)
-                    Text("\(Int(run.progress * 100))%")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(Theme.textTertiary)
-                        .frame(width: 32, alignment: .trailing)
-                }
-
-                Text(run.elapsedString)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(Theme.textTertiary)
-                    .frame(width: 60, alignment: .trailing)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if onOpenLiveChat != nil {
+                Button(action: { onOpenLiveChat?(run.runId, nil) }) {
+                    Image(systemName: "message")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(Theme.accent)
+                        .frame(width: 22, height: 22)
+                        .background(Theme.accent.opacity(0.14))
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 14)
+            }
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Run Detail (expanded)
@@ -448,10 +464,10 @@ struct RunsView: View {
     // MARK: - Actions
 
     private func toggleExpand(_ run: RunSummary) {
-        if expandedRunId == run.id {
-            expandedRunId = nil
+        if expandedRunIds.contains(run.id) {
+            expandedRunIds.remove(run.id)
         } else {
-            expandedRunId = run.id
+            expandedRunIds.insert(run.id)
             if inspections[run.id] == nil {
                 Task { await loadInspection(run.runId) }
             }
@@ -482,7 +498,7 @@ struct RunsView: View {
         do {
             try await smithers.approveNode(runId: runId, nodeId: nodeId)
             await loadRuns()
-            if let expandedRunId { await loadInspection(expandedRunId) }
+            for id in expandedRunIds { await loadInspection(id) }
         } catch {
             self.error = error.localizedDescription
         }
@@ -492,7 +508,7 @@ struct RunsView: View {
         do {
             try await smithers.denyNode(runId: runId, nodeId: nodeId)
             await loadRuns()
-            if let expandedRunId { await loadInspection(expandedRunId) }
+            for id in expandedRunIds { await loadInspection(id) }
         } catch {
             self.error = error.localizedDescription
         }
