@@ -82,7 +82,7 @@ struct ChatView: View {
     @State private var promptCommands: [SlashCommandItem] = []
     @State private var selectedSlashIndex = 0
     @State private var chatTargets: [ChatTargetOption] = buildChatTargets(from: [])
-    @State private var showTargetPicker = !UITestSupport.isEnabled
+    @State private var showTargetPicker = true
     @State private var loadingTargets = false
     @State private var hasLoadedTargets = false
     @State private var launchingTargetID: String? = nil
@@ -255,10 +255,16 @@ struct ChatView: View {
 
                 HStack {
                     HStack(spacing: 12) {
-                        Image(systemName: "paperclip")
-                            .accessibilityIdentifier("chat.attachmentButton")
-                        Image(systemName: "at")
-                            .accessibilityIdentifier("chat.mentionButton")
+                        Button(action: { /* TODO: open file picker */ }) {
+                            Image(systemName: "paperclip")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.attachmentButton")
+                        Button(action: { inputText += "@" }) {
+                            Image(systemName: "at")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.mentionButton")
                         Button(action: { inputText = "/" }) {
                             Image(systemName: "sparkles")
                         }
@@ -363,7 +369,8 @@ struct ChatView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .disabled(launchingTargetID != nil)
+                    .disabled(launchingTargetID != nil || !target.usable)
+                    .accessibilityIdentifier("chat.target.\(target.id)")
                 }
 
                 if loadingTargets {
@@ -402,6 +409,7 @@ struct ChatView: View {
                     .buttonStyle(.plain)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Theme.accent)
+                    .accessibilityIdentifier("chat.target.refresh")
                 }
             }
             .padding(20)
@@ -468,7 +476,6 @@ struct ChatView: View {
             chatTargets = buildChatTargets(from: agents)
             hasLoadedTargets = true
         } catch {
-            chatTargets = buildChatTargets(from: [])
             targetPickerError = "Failed to discover chat targets: \(error.localizedDescription)"
             hasLoadedTargets = true
         }
@@ -866,6 +873,34 @@ struct MessageRow: View {
                     CommandBlock(command: cmd)
                 }
                 Spacer()
+            } else if message.type == .diff {
+                if let diff = message.diff {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(diff.snippet)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(Theme.textPrimary)
+                            .lineSpacing(2)
+                        HStack(spacing: 12) {
+                            Text("\(diff.files.count) file\(diff.files.count == 1 ? "" : "s")")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(Theme.textSecondary)
+                            Text("+\(diff.totalAdditions)")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundColor(Theme.success)
+                            Text("-\(diff.totalDeletions)")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundColor(Theme.danger)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color.black.opacity(0.2))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Theme.border, lineWidth: 1)
+                    )
+                    Spacer()
+                }
             } else if message.type == .status {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(message.content)
@@ -899,21 +934,27 @@ struct CommandBlock: View {
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundColor(Theme.textPrimary)
                 Spacer()
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.system(size: 10))
-                    Text("exit 0")
-                        .font(.system(size: 10, weight: .medium))
+                if command.running == true {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 14, height: 14)
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: command.exitCode == 0 ? "checkmark.circle" : "xmark.circle")
+                            .font(.system(size: 10))
+                        Text("exit \(command.exitCode)")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background((command.exitCode == 0 ? Theme.success : Theme.danger).opacity(0.15))
+                    .foregroundColor(command.exitCode == 0 ? Theme.success : Theme.danger)
+                    .cornerRadius(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke((command.exitCode == 0 ? Theme.success : Theme.danger).opacity(0.3), lineWidth: 1)
+                    )
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Theme.success.opacity(0.15))
-                .foregroundColor(Theme.success)
-                .cornerRadius(4)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(Theme.success.opacity(0.3), lineWidth: 1)
-                )
             }
             .padding(12)
             .background(Theme.bubbleCommand)
