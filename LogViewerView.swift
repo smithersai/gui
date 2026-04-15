@@ -149,18 +149,18 @@ struct LogViewerView: View {
                 let errorCount = entries.filter { $0.level == .error }.count
                 if errorCount > 0 {
                     HStack(spacing: 4) {
-                        Circle().fill(Color.red).frame(width: 6, height: 6)
+                        Circle().fill(Theme.danger).frame(width: 6, height: 6)
                         Text("\(errorCount) errors")
-                            .foregroundColor(.red)
+                            .foregroundColor(Theme.danger)
                     }
                 }
 
                 let warningCount = entries.filter { $0.level == .warning }.count
                 if warningCount > 0 {
                     HStack(spacing: 4) {
-                        Circle().fill(Color.orange).frame(width: 6, height: 6)
+                        Circle().fill(Theme.warning).frame(width: 6, height: 6)
                         Text("\(warningCount) warnings")
-                            .foregroundColor(.orange)
+                            .foregroundColor(Theme.warning)
                     }
                 }
 
@@ -380,10 +380,10 @@ private struct LevelBadge: View {
 
     private var color: Color {
         switch level {
-        case .debug: return .gray
-        case .info: return .blue
-        case .warning: return .orange
-        case .error: return .red
+        case .debug: return Theme.textTertiary
+        case .info: return Theme.info
+        case .warning: return Theme.warning
+        case .error: return Theme.danger
         }
     }
 

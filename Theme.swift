@@ -11,6 +11,7 @@ struct Theme {
     static let danger = Color(hex: "#F87171")
     static let info = Color(hex: "#60A5FA")
     static let border = Color.white.opacity(0.08)
+    static let overlayShadow = Color.black.opacity(0.25)
     static let sidebarBg = base
     static let sidebarHover = Color.white.opacity(0.04)
     static let sidebarSelected = accent.opacity(0.12)
@@ -124,7 +125,7 @@ private struct ThemedRowHover: ViewModifier {
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(isHovered ? Color.white.opacity(0.03) : Color.clear)
+                    .fill(isHovered ? Theme.sidebarHover : Color.clear)
             )
             .animation(.easeOut(duration: 0.12), value: isHovered)
             .onHover { isHovered = $0 }

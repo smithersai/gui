@@ -495,7 +495,7 @@ private struct AppToastRow: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(toast.level.color.opacity(0.45), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.25), radius: 6, x: 0, y: 2)
+        .shadow(color: Theme.overlayShadow, radius: 6, x: 0, y: 2)
         .accessibilityIdentifier("notifications.toast.\(toast.id.uuidString)")
     }
 }

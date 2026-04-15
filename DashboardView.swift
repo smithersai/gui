@@ -1,6 +1,6 @@
 import SwiftUI
 
-private struct DashboardLoadResult<Value> {
+struct DashboardLoadResult<Value> {
     let value: Value
     let error: Error?
 }
@@ -856,7 +856,7 @@ struct DashboardTabButton: View {
                 .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
-        .background(isHovered && !isActive ? Color.white.opacity(0.03) : .clear)
+        .background(isHovered && !isActive ? Theme.sidebarHover : .clear)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(isActive ? Theme.accent : .clear)
@@ -953,7 +953,7 @@ struct DashboardActionRow: View {
             .padding(.horizontal, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovered && enabled ? Color.white.opacity(0.03) : .clear)
+                    .fill(isHovered && enabled ? Theme.sidebarHover : .clear)
             )
             .contentShape(Rectangle())
         }
