@@ -4,9 +4,13 @@ import CCodexFFI
 
 // MARK: - Codex FFI Bridge
 
+protocol CodexBridgeControlling: AnyObject, Sendable {
+    func cancel()
+}
+
 /// Swift wrapper around the codex-ffi C library.
 /// Not bound to any actor — all methods are synchronous and block the caller.
-final class CodexBridge: @unchecked Sendable {
+final class CodexBridge: CodexBridgeControlling, @unchecked Sendable {
     private var handle: OpaquePointer?
 
     init?(cwd: String) {
@@ -25,7 +29,7 @@ final class CodexBridge: @unchecked Sendable {
         }
     }
 
-    /// Send a prompt. Blocks the calling thread. Calls `onEvent` for each JSONL event.
+    /// Send a prompt. Blocks the calling thread. Calls `onEvent` for each JSONL chunk.
     func send(prompt: String, onEvent: @escaping (String) -> Void) -> Bool {
         guard let h = handle else { return false }
 
@@ -36,7 +40,7 @@ final class CodexBridge: @unchecked Sendable {
                 guard let eventJson = eventJson, let userData = userData else { return }
                 let json = String(cString: eventJson)
                 let box = Unmanaged<CallbackBox>.fromOpaque(userData).takeUnretainedValue()
-                box.callback(json)
+                box.callback(json.hasSuffix("\n") ? json : json + "\n")
             }, context)
         }
 
@@ -57,30 +61,77 @@ private class CallbackBox {
     init(_ callback: @escaping (String) -> Void) { self.callback = callback }
 }
 
-private final class ActiveBridgeSlot: @unchecked Sendable {
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+final class CodexBridgeLifecycle<Bridge: CodexBridgeControlling>: @unchecked Sendable {
     private let lock = NSLock()
-    private var bridge: CodexBridge?
+    private var currentTurnID = UUID()
+    private var bridge: Bridge?
 
-    func set(_ bridge: CodexBridge) {
+    func beginTurn(_ turnID: UUID) -> Bridge? {
         lock.lock()
-        self.bridge = bridge
-        lock.unlock()
-    }
-
-    func clear(ifSame bridge: CodexBridge) {
-        lock.lock()
-        if self.bridge === bridge {
-            self.bridge = nil
-        }
-        lock.unlock()
-    }
-
-    func take() -> CodexBridge? {
-        lock.lock()
+        currentTurnID = turnID
         let current = bridge
         bridge = nil
         lock.unlock()
         return current
+    }
+
+    func cancelTurn(_ turnID: UUID) -> Bridge? {
+        lock.lock()
+        currentTurnID = turnID
+        let current = bridge
+        bridge = nil
+        lock.unlock()
+        return current
+    }
+
+    func isCurrent(_ turnID: UUID) -> Bool {
+        lock.lock()
+        let isCurrent = currentTurnID == turnID
+        lock.unlock()
+        return isCurrent
+    }
+
+    func activate(_ bridge: Bridge, for turnID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard currentTurnID == turnID, self.bridge == nil else {
+            return false
+        }
+
+        self.bridge = bridge
+        return true
+    }
+
+    func clear(ifSame bridge: Bridge, for turnID: UUID) {
+        lock.lock()
+        if currentTurnID == turnID, self.bridge === bridge {
+            self.bridge = nil
+        }
+        lock.unlock()
+    }
+}
+
+/// Serializes `codex_create` so cancelled turns cannot race multiple bridge creations.
+private final class CodexBridgeCreationQueue: @unchecked Sendable {
+    private let lock = NSLock()
+
+    func create(cwd: String, if shouldCreate: () -> Bool) -> CodexBridge? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard shouldCreate() else {
+            return nil
+        }
+
+        return CodexBridge(cwd: cwd)
     }
 }
 
@@ -93,33 +144,31 @@ class AgentService: ObservableObject {
 
     private var messageCounter = 0
     private var partialText = ""
+    private var commandMessageIDsByItemID: [String: String] = [:]
+    private var statusMessageIDsByItemID: [String: String] = [:]
     private let workingDir: String
 
     // Bridge lives on a background thread, never touched from MainActor
     private var bridgeTask: Task<Void, Never>?
-    private let activeBridge = ActiveBridgeSlot()
+    private let bridgeLifecycle = CodexBridgeLifecycle<CodexBridge>()
+    private let bridgeCreationQueue = CodexBridgeCreationQueue()
     private var currentTurnID = UUID()
 
     var workingDirectory: String { workingDir }
 
     init(workingDir: String? = nil) {
-        // Use the actual process cwd (set by the shell that launched us),
-        // falling back to home directory if it's "/" (Finder launch).
-        let cwd = FileManager.default.currentDirectoryPath
-        self.workingDir = workingDir ?? (cwd == "/" ? NSHomeDirectory() : cwd)
+        self.workingDir = CWDResolver.resolve(workingDir)
     }
 
     func sendMessage(_ prompt: String) {
         currentTurnID = UUID()
         let turnID = currentTurnID
+        commandMessageIDsByItemID.removeAll()
+        statusMessageIDsByItemID.removeAll()
 
         bridgeTask?.cancel()
         bridgeTask = nil
-        if let bridge = activeBridge.take() {
-            Task.detached {
-                bridge.cancel()
-            }
-        }
+        cancelBridge(bridgeLifecycle.beginTurn(turnID))
 
         messageCounter += 1
         let userMsg = ChatMessage(
@@ -148,14 +197,21 @@ class AgentService: ObservableObject {
         }
 
         let cwd = workingDir
-        let activeBridge = activeBridge
+        let bridgeLifecycle = bridgeLifecycle
+        let bridgeCreationQueue = bridgeCreationQueue
 
         weak var weakSelf = self
-        bridgeTask = Task.detached { [cwd, prompt, turnID, activeBridge, weakSelf] in
+        bridgeTask = Task.detached { [cwd, prompt, turnID, bridgeLifecycle, bridgeCreationQueue, weakSelf] in
             NSLog("[AgentService] Starting codex turn on background thread, cwd=%@", cwd)
 
-            let bridge = CodexBridge(cwd: cwd)
+            let bridge = bridgeCreationQueue.create(cwd: cwd) {
+                !Task.isCancelled && bridgeLifecycle.isCurrent(turnID)
+            }
             guard let bridge = bridge else {
+                if Task.isCancelled || !bridgeLifecycle.isCurrent(turnID) {
+                    NSLog("[AgentService] Bridge creation skipped for stale or cancelled turn")
+                    return
+                }
                 NSLog("[AgentService] Bridge creation failed")
                 await MainActor.run {
                     guard let self = weakSelf, self.currentTurnID == turnID else { return }
@@ -165,23 +221,32 @@ class AgentService: ObservableObject {
                 }
                 return
             }
-            activeBridge.set(bridge)
+            guard !Task.isCancelled, bridgeLifecycle.activate(bridge, for: turnID) else {
+                NSLog("[AgentService] Discarding bridge for stale or cancelled turn")
+                bridge.cancel()
+                return
+            }
 
-            let success = bridge.send(prompt: prompt) { json in
-                NSLog("[AgentService] Event: %@", json)
-                guard let data = json.data(using: .utf8),
-                      let event = try? JSONDecoder().decode(CodexEvent.self, from: data)
-                else { return }
-
+            let eventBuffer = CodexJSONLLineBuffer()
+            func enqueueEvent(_ event: CodexEvent) {
                 Task { @MainActor in
                     guard let self = weakSelf,
-                          self.currentTurnID == turnID,
-                          self.isRunning
+                          self.currentTurnID == turnID
                     else { return }
                     self.handleEvent(event)
                 }
             }
-            activeBridge.clear(ifSame: bridge)
+
+            let success = bridge.send(prompt: prompt) { chunk in
+                NSLog("[AgentService] Event chunk: %@", chunk)
+                for event in eventBuffer.append(chunk) {
+                    enqueueEvent(event)
+                }
+            }
+            for event in eventBuffer.finish() {
+                enqueueEvent(event)
+            }
+            bridgeLifecycle.clear(ifSame: bridge, for: turnID)
 
             await MainActor.run {
                 guard let self = weakSelf, self.currentTurnID == turnID else { return }
@@ -199,18 +264,25 @@ class AgentService: ObservableObject {
         currentTurnID = UUID()
         bridgeTask?.cancel()
         bridgeTask = nil
-        if let bridge = activeBridge.take() {
-            Task.detached {
-                bridge.cancel()
-            }
-        }
+        cancelBridge(bridgeLifecycle.cancelTurn(currentTurnID))
         partialText = ""
+        commandMessageIDsByItemID.removeAll()
+        statusMessageIDsByItemID.removeAll()
         isRunning = false
+    }
+
+    private nonisolated func cancelBridge(_ bridge: CodexBridge?) {
+        guard let bridge else { return }
+        Task.detached {
+            bridge.cancel()
+        }
     }
 
     func clearMessages() {
         messages.removeAll()
         partialText = ""
+        commandMessageIDsByItemID.removeAll()
+        statusMessageIDsByItemID.removeAll()
     }
 
     func appendStatusMessage(_ text: String) {
@@ -225,9 +297,9 @@ class AgentService: ObservableObject {
         ))
     }
 
-    private func handleEvent(_ event: CodexEvent) {
+    func handleEvent(_ event: CodexEvent) {
         switch event.type {
-        case "item.completed", "item.started":
+        case "item.completed", "item.started", "item.updated", "item.progress":
             if let item = event.item {
                 if item.type == "agent_message", let text = item.text {
                     if partialText.isEmpty {
@@ -239,22 +311,23 @@ class AgentService: ObservableObject {
                 }
 
                 if item.type == "command_execution" {
-                    messageCounter += 1
-                    let cmdMsg = ChatMessage(
-                        id: "c\(messageCounter)",
-                        type: .command,
-                        content: "",
-                        timestamp: Self.now(),
-                        command: Command(
-                            cmd: item.command ?? "unknown",
-                            cwd: workingDir,
-                            output: item.aggregatedOutput ?? "",
-                            exitCode: item.exitCode ?? 0,
-                            running: event.type == "item.started"
-                        ),
-                        diff: nil
-                    )
-                    messages.append(cmdMsg)
+                    updateOrAppendCommandMessage(for: item, eventType: event.type)
+                }
+
+                if item.type == "todo_list", let content = todoListStatusContent(for: item) {
+                    updateOrAppendStatusMessage(for: item, content: content)
+                }
+
+                if item.type == "web_search", let content = webSearchStatusContent(for: item) {
+                    updateOrAppendStatusMessage(for: item, content: content)
+                }
+
+                if item.type == "mcp_tool_call", let content = mcpToolCallStatusContent(for: item) {
+                    updateOrAppendStatusMessage(for: item, content: content)
+                }
+
+                if item.type == "error", let message = item.message?.nilIfBlank {
+                    updateOrAppendStatusMessage(for: item, content: "Codex item error:\n\(message)")
                 }
 
                 if item.type == "file_change" {
@@ -311,6 +384,134 @@ class AgentService: ObservableObject {
                 command: nil,
                 diff: nil
             ))
+        }
+    }
+
+    private func updateOrAppendCommandMessage(for item: CodexItem, eventType: String) {
+        let itemID = normalizedCommandItemID(item.id)
+        let existingIndex = itemID
+            .flatMap { commandMessageIDsByItemID[$0] }
+            .flatMap { messageID in messages.firstIndex { $0.id == messageID } }
+        let existingMessage = existingIndex.map { messages[$0] }
+        let existingCommand = existingMessage?.command
+        let command = Command(
+            itemID: itemID,
+            cmd: item.command ?? existingCommand?.cmd ?? "unknown",
+            cwd: existingCommand?.cwd ?? workingDir,
+            output: item.aggregatedOutput ?? existingCommand?.output ?? "",
+            exitCode: item.exitCode ?? existingCommand?.exitCode ?? 0,
+            running: commandIsRunning(eventType: eventType, item: item)
+        )
+
+        if let existingIndex {
+            messages[existingIndex] = ChatMessage(
+                id: messages[existingIndex].id,
+                type: .command,
+                content: messages[existingIndex].content,
+                timestamp: messages[existingIndex].timestamp,
+                command: command,
+                diff: nil
+            )
+            return
+        }
+
+        messageCounter += 1
+        let messageID = "c\(messageCounter)"
+        if let itemID {
+            commandMessageIDsByItemID[itemID] = messageID
+        }
+        messages.append(ChatMessage(
+            id: messageID,
+            type: .command,
+            content: "",
+            timestamp: Self.now(),
+            command: command,
+            diff: nil
+        ))
+    }
+
+    private func updateOrAppendStatusMessage(for item: CodexItem, content: String) {
+        let itemID = normalizedCommandItemID(item.id)
+        let existingIndex = itemID
+            .flatMap { statusMessageIDsByItemID[$0] }
+            .flatMap { messageID in messages.firstIndex { $0.id == messageID } }
+
+        if let existingIndex {
+            messages[existingIndex] = ChatMessage(
+                id: messages[existingIndex].id,
+                type: .status,
+                content: content,
+                timestamp: messages[existingIndex].timestamp,
+                command: nil,
+                diff: nil
+            )
+            return
+        }
+
+        messageCounter += 1
+        let messageID = "s\(messageCounter)"
+        if let itemID {
+            statusMessageIDsByItemID[itemID] = messageID
+        }
+        messages.append(ChatMessage(
+            id: messageID,
+            type: .status,
+            content: content,
+            timestamp: Self.now(),
+            command: nil,
+            diff: nil
+        ))
+    }
+
+    private func todoListStatusContent(for item: CodexItem) -> String? {
+        guard let todos = item.items else {
+            return "Plan updated"
+        }
+
+        guard !todos.isEmpty else {
+            return "Plan updated\nNo steps"
+        }
+
+        let lines = todos.map { todo in
+            "\(todo.completed ? "[x]" : "[ ]") \(todo.text)"
+        }
+        return "Plan updated\n" + lines.joined(separator: "\n")
+    }
+
+    private func webSearchStatusContent(for item: CodexItem) -> String? {
+        guard let query = item.query?.nilIfBlank else {
+            return "Web search"
+        }
+        return "Web search\n\(query)"
+    }
+
+    private func mcpToolCallStatusContent(for item: CodexItem) -> String? {
+        let server = item.server?.nilIfBlank
+        let tool = item.tool?.nilIfBlank
+        let target = [server, tool].compactMap { $0 }.joined(separator: "/")
+        let name = target.isEmpty ? "MCP tool" : "MCP tool: \(target)"
+
+        guard let status = item.status?.nilIfBlank else {
+            return name
+        }
+        return "\(name)\nStatus: \(status)"
+    }
+
+    private func normalizedCommandItemID(_ id: String?) -> String? {
+        guard let trimmed = id?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private func commandIsRunning(eventType: String, item: CodexItem) -> Bool {
+        switch item.status?.lowercased() {
+        case "completed", "failed", "cancelled", "canceled":
+            return false
+        case "running", "started", "in_progress":
+            return true
+        default:
+            return eventType != "item.completed"
         }
     }
 
