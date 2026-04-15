@@ -38,6 +38,7 @@ struct AgentsView: View {
                     }
                     .padding(20)
                 }
+                .refreshable { await loadAgents() }
             }
         }
         .background(Theme.surface1)
@@ -134,8 +135,7 @@ struct AgentsView: View {
             .foregroundColor(Theme.textTertiary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Theme.pillBg)
-            .cornerRadius(5)
+            .themedPill(cornerRadius: 5)
     }
 
     private var loadingView: some View {
