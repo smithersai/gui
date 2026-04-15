@@ -363,6 +363,13 @@ struct MemoryView: View {
                                         .font(.system(size: 12))
                                         .foregroundColor(Theme.textPrimary)
                                         .textSelection(.enabled)
+                                    if let metadata = recallMetadataText(result.metadata) {
+                                        Text(metadata)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundColor(Theme.textTertiary)
+                                            .lineLimit(1)
+                                            .textSelection(.enabled)
+                                    }
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -426,6 +433,14 @@ struct MemoryView: View {
         }
     }
 
+    private func recallMetadataText(_ metadata: String?) -> String? {
+        guard let metadata = metadata?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !metadata.isEmpty else {
+            return nil
+        }
+        return metadata
+    }
+
     private func scoreColor(_ value: Double) -> Color {
         ScoreColorScale.color(for: value)
     }
@@ -457,9 +472,7 @@ struct MemoryView: View {
     private func detailTimestamp(_ timestampMs: Int64, includeAge: Bool = false) -> String {
         guard timestampMs > 0 else { return "-" }
         let date = Date(timeIntervalSince1970: Double(timestampMs) / 1000)
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        let base = formatter.string(from: date)
+        let base = DateFormatters.yearMonthDayHourMinuteSecond.string(from: date)
         guard includeAge else { return base }
         let age = factAge(timestampMs)
         return age.isEmpty ? base : "\(base) (\(age))"

@@ -115,6 +115,34 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(store.sessions.first?.id, secondId)
     }
 
+    func testNewSessionPassesResolvedWorkingDirectoryToAgent() throws {
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+
+        let store = SessionStore(workingDirectory: project.path, persistence: nil)
+
+        XCTAssertEqual(store.activeAgent?.workingDirectory, project.path)
+    }
+
+    func testRestoredSessionPassesResolvedWorkingDirectoryToAgent() throws {
+        let project = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+
+        let persistence = StubSessionPersistence(sessions: [
+            PersistedSessionSummary(
+                id: UUID().uuidString,
+                title: "Restored",
+                preview: "",
+                updatedAt: Date()
+            ),
+        ])
+        let store = SessionStore(workingDirectory: project.path, persistence: persistence)
+
+        XCTAssertEqual(store.activeAgent?.workingDirectory, project.path)
+    }
+
     func testSelectSession() {
         let store = SessionStore()
         let firstId = store.sessions.first!.id
@@ -500,5 +528,55 @@ final class SessionStoreTests: XCTestCase {
 
         let store2 = makePersistentStore(tempDirectory: tempDirectory.path)
         XCTAssertFalse(store2.sessions.contains(where: { $0.id == sessionID }))
+    }
+}
+
+private final class StubSessionPersistence: SessionPersisting {
+    var sessions: [PersistedSessionSummary]
+    var messagesBySessionID: [String: [PersistedSessionMessage]]
+
+    init(
+        sessions: [PersistedSessionSummary] = [],
+        messagesBySessionID: [String: [PersistedSessionMessage]] = [:]
+    ) {
+        self.sessions = sessions
+        self.messagesBySessionID = messagesBySessionID
+    }
+
+    func loadSessions() throws -> [PersistedSessionSummary] {
+        sessions
+    }
+
+    func loadMessages(sessionID: String) throws -> [PersistedSessionMessage] {
+        messagesBySessionID[sessionID] ?? []
+    }
+
+    func createSession(id _: String, title _: String) throws {}
+
+    func renameSession(id _: String, title _: String) throws {}
+
+    func deleteSession(id: String) throws {
+        sessions.removeAll { $0.id == id }
+        messagesBySessionID[id] = nil
+    }
+
+    func createMessage(sessionID: String, messageID: String, role: PersistedChatRole, text: String) throws {
+        let message = PersistedSessionMessage(id: messageID, role: role, text: text, createdAt: Date())
+        messagesBySessionID[sessionID, default: []].append(message)
+    }
+
+    func updateMessage(messageID: String, role: PersistedChatRole, text: String) throws {
+        for sessionID in messagesBySessionID.keys {
+            guard let idx = messagesBySessionID[sessionID]?.firstIndex(where: { $0.id == messageID }) else {
+                continue
+            }
+            messagesBySessionID[sessionID]?[idx] = PersistedSessionMessage(
+                id: messageID,
+                role: role,
+                text: text,
+                createdAt: Date()
+            )
+            return
+        }
     }
 }

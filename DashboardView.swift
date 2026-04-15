@@ -229,6 +229,9 @@ struct DashboardView: View {
                 if let initializationError {
                     actionErrorBanner(initializationError)
                 }
+                if !sourceErrors.isEmpty {
+                    partialLoadErrorBanner
+                }
 
                 quickActionsSection
 
@@ -236,27 +239,27 @@ struct DashboardView: View {
                 HStack(spacing: 12) {
                     StatCard(
                         title: "Active Runs",
-                        value: "\(activeRuns.count)",
-                        icon: "play.circle.fill",
-                        color: Theme.success
+                        value: statValue(.runs, activeRuns.count),
+                        icon: statIcon(.runs, fallback: "play.circle.fill"),
+                        color: statColor(.runs, fallback: Theme.success)
                     )
                     StatCard(
                         title: "Pending Approvals",
-                        value: "\(pendingApprovals.count)",
-                        icon: "checkmark.shield.fill",
-                        color: Theme.warning
+                        value: statValue(.approvals, pendingApprovals.count),
+                        icon: statIcon(.approvals, fallback: "checkmark.shield.fill"),
+                        color: statColor(.approvals, fallback: Theme.warning)
                     )
                     StatCard(
                         title: "Workflows",
-                        value: "\(workflows.count)",
-                        icon: "arrow.triangle.branch",
-                        color: Theme.accent
+                        value: statValue(.workflows, workflows.count),
+                        icon: statIcon(.workflows, fallback: "arrow.triangle.branch"),
+                        color: statColor(.workflows, fallback: Theme.accent)
                     )
                     StatCard(
                         title: "Failed Runs",
-                        value: "\(runs.filter { $0.status == .failed }.count)",
-                        icon: "xmark.circle.fill",
-                        color: Theme.danger
+                        value: statValue(.runs, runs.filter { $0.status == .failed }.count),
+                        icon: statIcon(.runs, fallback: "xmark.circle.fill"),
+                        color: statColor(.runs, fallback: Theme.danger)
                     )
                 }
 
@@ -265,21 +268,21 @@ struct DashboardView: View {
                     HStack(spacing: 12) {
                         StatCard(
                             title: "Open Landings",
-                            value: "\(openLandingsCount)",
-                            icon: "arrow.down.to.line",
-                            color: Theme.accent
+                            value: statValue(.landings, openLandingsCount),
+                            icon: statIcon(.landings, fallback: "arrow.down.to.line"),
+                            color: statColor(.landings, fallback: Theme.accent)
                         )
                         StatCard(
                             title: "Open Issues",
-                            value: "\(openIssuesCount)",
-                            icon: "exclamationmark.circle.fill",
-                            color: Theme.success
+                            value: statValue(.issues, openIssuesCount),
+                            icon: statIcon(.issues, fallback: "exclamationmark.circle.fill"),
+                            color: statColor(.issues, fallback: Theme.success)
                         )
                         StatCard(
                             title: "Active Workspaces",
-                            value: "\(activeWorkspacesCount)",
-                            icon: "desktopcomputer",
-                            color: Theme.warning
+                            value: statValue(.workspaces, activeWorkspacesCount),
+                            icon: statIcon(.workspaces, fallback: "desktopcomputer"),
+                            color: statColor(.workspaces, fallback: Theme.warning)
                         )
                     }
                 }
@@ -322,19 +325,19 @@ struct DashboardView: View {
                         DashboardMetricRow(
                             icon: "arrow.down.to.line",
                             title: "Landings",
-                            detail: "\(landings.count) total · \(openLandingsCount) open"
+                            detail: sourceDetail(.landings, "\(landings.count) total · \(openLandingsCount) open")
                         )
                         Divider().background(Theme.border)
                         DashboardMetricRow(
                             icon: "exclamationmark.circle",
                             title: "Issues",
-                            detail: "\(issues.count) total · \(openIssuesCount) open"
+                            detail: sourceDetail(.issues, "\(issues.count) total · \(openIssuesCount) open")
                         )
                         Divider().background(Theme.border)
                         DashboardMetricRow(
                             icon: "desktopcomputer",
                             title: "Workspaces",
-                            detail: "\(workspaces.count) total · \(activeWorkspacesCount) active"
+                            detail: sourceDetail(.workspaces, "\(workspaces.count) total · \(activeWorkspacesCount) active")
                         )
                     }
                 }
@@ -356,7 +359,9 @@ struct DashboardView: View {
                     onNavigate?(.runs)
                 }
 
-                if runs.isEmpty && !isLoading {
+                if sourceErrors[.runs] != nil && runs.isEmpty && !isLoading {
+                    emptySection("Unable to load runs", icon: "exclamationmark.triangle")
+                } else if runs.isEmpty && !isLoading {
                     emptySection("No runs found", icon: "play.circle")
                 } else {
                     ForEach(runs) { run in
@@ -384,7 +389,9 @@ struct DashboardView: View {
                     onNavigate?(.workflows)
                 }
 
-                if workflows.isEmpty && !isLoading {
+                if sourceErrors[.workflows] != nil && workflows.isEmpty && !isLoading {
+                    emptySection("Unable to load workflows", icon: "exclamationmark.triangle")
+                } else if workflows.isEmpty && !isLoading {
                     emptySection("No workflows found", icon: "arrow.triangle.branch")
                 } else {
                     ForEach(workflows) { workflow in
@@ -412,7 +419,9 @@ struct DashboardView: View {
                     onNavigate?(.approvals)
                 }
 
-                if pendingApprovals.isEmpty && !isLoading {
+                if sourceErrors[.approvals] != nil && approvals.isEmpty && !isLoading {
+                    emptySection("Unable to load approvals", icon: "exclamationmark.triangle")
+                } else if pendingApprovals.isEmpty && !isLoading {
                     emptySection("No pending approvals", icon: "checkmark.shield")
                 } else {
                     ForEach(pendingApprovals) { approval in
@@ -469,7 +478,9 @@ struct DashboardView: View {
                     onNavigate?(.landings)
                 }
 
-                if landings.isEmpty && !isLoading {
+                if sourceErrors[.landings] != nil && landings.isEmpty && !isLoading {
+                    emptySection("Unable to load landings", icon: "exclamationmark.triangle")
+                } else if landings.isEmpty && !isLoading {
                     emptySection("No landings found", icon: "arrow.down.to.line")
                 } else {
                     ForEach(landings.prefix(20)) { landing in
@@ -495,7 +506,9 @@ struct DashboardView: View {
                     onNavigate?(.issues)
                 }
 
-                if issues.isEmpty && !isLoading {
+                if sourceErrors[.issues] != nil && issues.isEmpty && !isLoading {
+                    emptySection("Unable to load issues", icon: "exclamationmark.triangle")
+                } else if issues.isEmpty && !isLoading {
                     emptySection("No issues found", icon: "exclamationmark.circle")
                 } else {
                     ForEach(issues.prefix(20)) { issue in
@@ -521,7 +534,9 @@ struct DashboardView: View {
                     onNavigate?(.workspaces)
                 }
 
-                if workspaces.isEmpty && !isLoading {
+                if sourceErrors[.workspaces] != nil && workspaces.isEmpty && !isLoading {
+                    emptySection("Unable to load workspaces", icon: "exclamationmark.triangle")
+                } else if workspaces.isEmpty && !isLoading {
                     emptySection("No workspaces found", icon: "desktopcomputer")
                 } else {
                     ForEach(workspaces.prefix(20)) { workspace in
@@ -544,6 +559,8 @@ struct DashboardView: View {
         let generation = loadGeneration
         isLoading = true
         error = nil
+        sourceErrors = [:]
+        var nextSourceErrors: [DashboardDataSource: String] = [:]
 
         hasSmithersProject = smithers.hasSmithersProject()
         if !hasSmithersProject {
@@ -561,6 +578,10 @@ struct DashboardView: View {
             workflows = loadedWorkflows.value
             approvals = loadedApprovals.value
             onAutoPopulateActiveRuns?(loadedRuns.value)
+            recordSourceError(loadedRuns.error, source: .runs, into: &nextSourceErrors)
+            recordSourceError(loadedWorkflows.error, source: .workflows, into: &nextSourceErrors)
+            recordSourceError(loadedApprovals.error, source: .approvals, into: &nextSourceErrors)
+            sourceErrors = nextSourceErrors
 
             let allSmithersFailed = loadedRuns.error != nil && loadedWorkflows.error != nil && loadedApprovals.error != nil
             if allSmithersFailed, let firstError = loadedRuns.error ?? loadedWorkflows.error ?? loadedApprovals.error {
@@ -582,6 +603,10 @@ struct DashboardView: View {
             landings = loadedLandings.value
             issues = loadedIssues.value
             workspaces = loadedWorkspaces.value
+            recordSourceError(loadedLandings.error, source: .landings, into: &nextSourceErrors)
+            recordSourceError(loadedIssues.error, source: .issues, into: &nextSourceErrors)
+            recordSourceError(loadedWorkspaces.error, source: .workspaces, into: &nextSourceErrors)
+            sourceErrors = nextSourceErrors
         } catch {
             guard generation == loadGeneration else { return }
             hasJJHubTransport = false
@@ -646,6 +671,31 @@ struct DashboardView: View {
                 }
             }
         }
+    }
+
+    private var partialLoadErrorBanner: some View {
+        let failedSources = DashboardDataSource.allCases
+            .filter { sourceErrors[$0] != nil }
+            .map(\.label)
+            .joined(separator: ", ")
+
+        return actionErrorBanner("Unable to load: \(failedSources). Affected stats are unavailable.")
+    }
+
+    private func statValue(_ source: DashboardDataSource, _ value: Int) -> String {
+        sourceErrors[source] == nil ? "\(value)" : "—"
+    }
+
+    private func statIcon(_ source: DashboardDataSource, fallback: String) -> String {
+        sourceErrors[source] == nil ? fallback : "exclamationmark.triangle.fill"
+    }
+
+    private func statColor(_ source: DashboardDataSource, fallback: Color) -> Color {
+        sourceErrors[source] == nil ? fallback : Theme.warning
+    }
+
+    private func sourceDetail(_ source: DashboardDataSource, _ detail: String) -> String {
+        sourceErrors[source] == nil ? detail : "Unavailable"
     }
 
     private func dashboardActionButton(
@@ -782,6 +832,16 @@ struct DashboardView: View {
             return DashboardLoadResult(value: try await smithers.listWorkspaces(), error: nil)
         } catch {
             return DashboardLoadResult(value: [], error: error)
+        }
+    }
+
+    private func recordSourceError(
+        _ error: Error?,
+        source: DashboardDataSource,
+        into sourceErrors: inout [DashboardDataSource: String]
+    ) {
+        if let error {
+            sourceErrors[source] = error.localizedDescription
         }
     }
 
@@ -1054,12 +1114,12 @@ struct RunRow: View {
 
             Spacer()
 
-            if run.status == .running, run.totalNodes > 0 {
+            if run.totalNodes > 0 && (run.status == .running || run.status == .waitingApproval) {
                 ProgressBar(progress: run.progress, failedProgress: run.failedProgress)
                     .frame(width: 60)
             }
 
-            Text(run.elapsedString)
+            RunElapsedText(run: run)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundColor(Theme.textTertiary)
         }

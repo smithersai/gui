@@ -375,24 +375,29 @@ class AgentService: ObservableObject {
             }
 
             let eventBuffer = CodexJSONLLineBuffer()
-            func enqueueEvent(_ event: CodexEvent) {
-                Task { @MainActor in
-                    guard let self,
-                          self.currentTurnID == turnID
-                    else { return }
-                    self.handleEvent(event)
+            let (eventStream, eventContinuation) = AsyncStream<CodexEvent>.makeStream()
+            let eventConsumer = Task { [weak self] in
+                for await event in eventStream {
+                    await MainActor.run {
+                        guard let self,
+                              self.currentTurnID == turnID
+                        else { return }
+                        self.handleEvent(event)
+                    }
                 }
             }
 
             let success = bridge.send(prompt: prompt) { chunk in
                 AppLogger.codex.debug("AgentService event chunk", metadata: ["size": "\(chunk.count)"])
                 for event in eventBuffer.append(chunk) {
-                    enqueueEvent(event)
+                    eventContinuation.yield(event)
                 }
             }
             for event in eventBuffer.finish() {
-                enqueueEvent(event)
+                eventContinuation.yield(event)
             }
+            eventContinuation.finish()
+            await eventConsumer.value
             bridgeLifecycle.clear(ifSame: bridge, for: turnID)
 
             await self?.finishDetachedTurn(success: success, turnID: turnID)

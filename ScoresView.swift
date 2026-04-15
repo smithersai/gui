@@ -494,7 +494,7 @@ struct ScoresView: View {
     private var periodCostSummary: (dailyCost: Double, weeklyCost: Double, weeklyRuns: Int)? {
         guard let costReport, !costReport.byPeriod.isEmpty else { return nil }
 
-        let todayLabel = Self.periodFormatter.string(from: Date())
+        let todayLabel = DateFormatters.yearMonthDay.string(from: Date())
         let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? .distantPast
         var dailyCost = 0.0
         var weeklyCost = 0.0
@@ -504,7 +504,7 @@ struct ScoresView: View {
             if period.label == todayLabel {
                 dailyCost += period.totalCostUSD
             }
-            if let periodDate = Self.periodFormatter.date(from: period.label), periodDate >= weekAgo {
+            if let periodDate = DateFormatters.yearMonthDay.date(from: period.label), periodDate >= weekAgo {
                 weeklyCost += period.totalCostUSD
                 weeklyRuns += period.runCount
             }
@@ -599,23 +599,8 @@ struct ScoresView: View {
         ScoreColorScale.color(for: value)
     }
 
-    private static let dateFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.dateStyle = .short
-        fmt.timeStyle = .short
-        return fmt
-    }()
-
-    private static let periodFormatter: DateFormatter = {
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.timeZone = .current
-        fmt.dateFormat = "yyyy-MM-dd"
-        return fmt
-    }()
-
     private func formatDate(_ date: Date) -> String {
-        Self.dateFormatter.string(from: date)
+        DateFormatters.localizedShortDateShortTime.string(from: date)
     }
 
     private func formatTokenCount(_ value: Int64) -> String {

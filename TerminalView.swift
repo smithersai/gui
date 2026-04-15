@@ -373,37 +373,34 @@ class GhosttyApp: ObservableObject {
         runtime.userdata = Unmanaged.passUnretained(callbacks).toOpaque()
         runtime.supports_selection_clipboard = true
         runtime.wakeup_cb = { userdata in
-            guard let userdata else { return }
-            let callbacks = Unmanaged<TerminalCallbackCoordinator>.fromOpaque(userdata).takeUnretainedValue()
+            guard let callbacks = TerminalCallbackCoordinator.from(userdata) else { return }
             callbacks.wakeupApp()
         }
         runtime.action_cb = { app, target, action in
             return false
         }
         runtime.read_clipboard_cb = { userdata, loc, state in
-            guard let userdata else { return false }
-            let callbacks = Unmanaged<TerminalCallbackCoordinator>.fromOpaque(userdata).takeUnretainedValue()
+            guard let callbacks = TerminalCallbackCoordinator.from(userdata) else { return false }
             return callbacks.readClipboard(location: loc, state: state)
         }
         runtime.confirm_read_clipboard_cb = { userdata, str, state, request in
-            guard let userdata else { return }
-            let callbacks = Unmanaged<TerminalCallbackCoordinator>.fromOpaque(userdata).takeUnretainedValue()
+            guard let callbacks = TerminalCallbackCoordinator.from(userdata) else { return }
             callbacks.confirmReadClipboard(string: str, state: state, request: request)
         }
         runtime.write_clipboard_cb = { userdata, loc, content, len, confirm in
-            guard let userdata else { return }
-            let callbacks = Unmanaged<TerminalCallbackCoordinator>.fromOpaque(userdata).takeUnretainedValue()
+            guard let callbacks = TerminalCallbackCoordinator.from(userdata) else { return }
             callbacks.writeClipboard(location: loc, content: content, count: len, confirm: confirm)
         }
         runtime.close_surface_cb = { userdata, processAlive in
-            guard let userdata else { return }
-            let callbacks = Unmanaged<TerminalCallbackCoordinator>.fromOpaque(userdata).takeUnretainedValue()
+            guard let callbacks = TerminalCallbackCoordinator.from(userdata) else { return }
             callbacks.closeSurface(processAlive: processAlive)
         }
 
         // Create the app
         guard let app = ghostty_app_new(&runtime, cfg) else {
             AppLogger.terminal.error("ghostty_app_new failed")
+            ghostty_config_free(cfg)
+            self.config = nil
             return
         }
         self.app = app
@@ -426,9 +423,28 @@ class GhosttyApp: ObservableObject {
         callbacks.surfaceView = surfaceView
     }
 
-    deinit {
+    func shutdown() {
         tickTimer?.invalidate()
-        // Singleton — never deallocated in practice
+        tickTimer = nil
+
+        TerminalSurfaceRegistry.shared.removeAll()
+
+        if let app {
+            ghostty_app_free(app)
+            self.app = nil
+        }
+
+        if let config {
+            ghostty_config_free(config)
+            self.config = nil
+        }
+
+        callbacks.invalidate()
+        ready = false
+    }
+
+    deinit {
+        shutdown()
     }
 }
 
@@ -436,10 +452,13 @@ class GhosttyApp: ObservableObject {
 
 class TerminalSurfaceView: NSView {
     var surface: ghostty_surface_t?
+    private(set) var sessionId: String?
     private var trackingArea: NSTrackingArea?
     private var keyEventMonitor: Any?
     private var forwardedKeyDownKeyCodes = Set<UInt16>()
     private let callbacks = TerminalCallbackCoordinator()
+    private var retainedCallbacks: Unmanaged<TerminalCallbackCoordinator>?
+    private var cleanedUp = false
 
     // Keep C strings alive for the lifetime of the surface
     private var commandCString: UnsafeMutablePointer<CChar>?
@@ -450,15 +469,17 @@ class TerminalSurfaceView: NSView {
         case paste
     }
 
-    init(app: ghostty_app_t, command: String? = nil, workingDirectory: String? = nil) {
+    init(app: ghostty_app_t, sessionId: String? = nil, command: String? = nil, workingDirectory: String? = nil) {
         super.init(frame: .zero)
         wantsLayer = true
+        self.sessionId = sessionId
         callbacks.surfaceView = self
+        retainedCallbacks = Unmanaged.passRetained(callbacks)
         GhosttyApp.shared.setClipboardSurface(self)
 
         // Use the factory function for default config, then customize
         var surfaceCfg = ghostty_surface_config_new()
-        surfaceCfg.userdata = Unmanaged.passUnretained(callbacks).toOpaque()
+        surfaceCfg.userdata = retainedCallbacks?.toOpaque()
         surfaceCfg.platform_tag = GHOSTTY_PLATFORM_MACOS
         surfaceCfg.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque()))
         surfaceCfg.scale_factor = Double(effectiveBackingScale)
@@ -484,10 +505,25 @@ class TerminalSurfaceView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     deinit {
+        shutdownSurface()
+    }
+
+    func shutdownSurface() {
+        guard !cleanedUp else { return }
+        cleanedUp = true
+
         removeKeyEventMonitor()
-        if let surface { ghostty_surface_free(surface) }
+        callbacks.invalidate()
+        if let surface {
+            ghostty_surface_free(surface)
+            self.surface = nil
+        }
+        retainedCallbacks?.release()
+        retainedCallbacks = nil
         free(commandCString)
+        commandCString = nil
         free(workingDirCString)
+        workingDirCString = nil
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -721,6 +757,23 @@ class TerminalSurfaceView: NSView {
 
     private var effectiveBackingScale: CGFloat {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+    }
+
+    func synchronizeLayoutSize(_ size: CGSize) {
+        guard size.width.isFinite, size.height.isFinite else {
+            syncSurfaceBackingMetrics()
+            return
+        }
+
+        let normalizedSize = CGSize(
+            width: max(0, size.width),
+            height: max(0, size.height)
+        )
+        if bounds.size != normalizedSize {
+            setFrameSize(normalizedSize)
+        } else {
+            syncSurfaceBackingMetrics()
+        }
     }
 
     private func syncSurfaceBackingMetrics(sendSize: Bool = true) {
@@ -962,6 +1015,66 @@ class TerminalSurfaceView: NSView {
               let scalar = chars.unicodeScalars.first
         else { return 0 }
         return scalar.value
+    }
+
+    @discardableResult
+    func readClipboard(location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) -> Bool {
+        guard surface != nil else { return false }
+        guard let str = TerminalClipboard.readString(for: location) else { return false }
+        return completeClipboardRequest(data: str, state: state, confirmed: false)
+    }
+
+    func confirmReadClipboard(
+        data: String,
+        state: UnsafeMutableRawPointer?,
+        request: ghostty_clipboard_request_e
+    ) {
+        guard surface != nil, state != nil else { return }
+        let approved = TerminalClipboardConfirmation.requestApproval(
+            for: request,
+            preview: data,
+            window: window
+        )
+        _ = completeClipboardRequest(
+            data: approved ? data : "",
+            state: state,
+            confirmed: approved
+        )
+    }
+
+    func writeClipboard(
+        _ items: [TerminalClipboard.Item],
+        location: ghostty_clipboard_e,
+        confirm: Bool
+    ) {
+        guard surface != nil else { return }
+        guard let pasteboard = TerminalClipboard.pasteboard(for: location) else { return }
+
+        if confirm {
+            guard TerminalClipboardConfirmation.requestApprovalForWrite(
+                items: items,
+                window: window
+            ) else { return }
+        }
+
+        TerminalClipboard.write(items, to: pasteboard)
+        if TerminalClipboard.isSelectionClipboard(location) {
+            TerminalClipboard.write(items, to: .general)
+        }
+    }
+
+    func handleGhosttyClose(processAlive: Bool) {
+        AppLogger.terminal.info(
+            "Ghostty surface requested close",
+            metadata: ["processAlive": "\(processAlive)"]
+        )
+
+        if let sessionId {
+            TerminalSurfaceRegistry.shared.deregister(sessionId: sessionId, view: self)
+        } else {
+            shutdownSurface()
+            removeFromSuperview()
+        }
     }
 
     @discardableResult

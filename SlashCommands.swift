@@ -138,7 +138,6 @@ struct SlashCommandExecutionContext {
     let canToggleDeveloperDebug: Bool
     let canStartNewChat: Bool
     let canTerminateApp: Bool
-    let helpText: String
     let statusText: String
 }
 
@@ -194,7 +193,7 @@ enum SlashCommandExecutor {
             effects.clearMessages()
         case .showHelp:
             effects.setInputText("")
-            effects.appendStatusMessage(context.helpText)
+            effects.appendStatusMessage(SlashCommandRegistry.helpText(for: context.commands))
         case .runWorkflow(let workflow):
             effects.setInputText("")
             effects.runWorkflow(workflow, args)
@@ -220,14 +219,22 @@ enum SlashCommandExecutor {
             }
         case .initialize:
             effects.setInputText("")
-            effects.sendPromptIfReady(SlashCommandRegistry.initPrompt)
+            sendPromptIfReady(SlashCommandRegistry.initPrompt, context: context, effects: effects)
         case .review:
             effects.setInputText("")
             let suffix = args.isEmpty ? "" : "\n\nFocus: \(args)"
-            effects.sendPromptIfReady("Review my current changes and find issues. Prioritize bugs, regressions, and missing tests.\(suffix)")
+            sendPromptIfReady(
+                "Review my current changes and find issues. Prioritize bugs, regressions, and missing tests.\(suffix)",
+                context: context,
+                effects: effects
+            )
         case .compact:
             effects.setInputText("")
-            effects.sendPromptIfReady("Summarize the important context from this conversation so we can continue with a shorter working history.")
+            sendPromptIfReady(
+                "Summarize the important context from this conversation so we can continue with a shorter working history.",
+                context: context,
+                effects: effects
+            )
         case .diff:
             effects.setInputText("")
             effects.showGitDiff()
@@ -260,6 +267,18 @@ enum SlashCommandExecutor {
             effects.setInputText("")
             effects.startFeedbackFlow()
         }
+    }
+
+    private static func sendPromptIfReady(
+        _ prompt: String,
+        context: SlashCommandExecutionContext,
+        effects: SlashCommandExecutionEffects
+    ) {
+        guard context.chatReady else {
+            effects.appendStatusMessage("Codex is not authenticated. Use the auth panel above to sign in or add an API key.")
+            return
+        }
+        effects.sendPromptIfReady(prompt)
     }
 }
 
@@ -685,9 +704,10 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
 
     static func exactMatch(for input: String, commands: [SlashCommandItem]) -> SlashCommandItem? {
         guard let parsed = parse(input), !parsed.name.isEmpty else { return nil }
-        let name = parsed.name.lowercased()
+        let name = parsed.name.normalizedSlashCommandQuery
         return matches(for: input, commands: commands).first {
-            $0.name.lowercased() == name || $0.aliases.contains(where: { $0.lowercased() == name })
+            $0.name.normalizedSlashCommandQuery == name ||
+                $0.aliases.contains(where: { $0.normalizedSlashCommandQuery == name })
         }
     }
 
@@ -867,7 +887,7 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
     private struct DynamicCommandRegistrationState {
         private var names: Set<String> = []
         private var aliases: Set<String> = Set(
-            builtInCommands.flatMap { [$0.name] + $0.aliases }
+            SlashCommandRegistry.builtInCommands.flatMap { [$0.name] + $0.aliases }
                 .map(\.normalizedSlashCommandQuery)
         )
 

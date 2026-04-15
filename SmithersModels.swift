@@ -1164,6 +1164,7 @@ struct ApprovalDecision: Identifiable, Codable {
     let id: String
     let runId: String
     let nodeId: String
+    let iteration: Int?
     let action: String          // approved, denied
     let note: String?
     let reason: String?
@@ -1179,6 +1180,7 @@ struct ApprovalDecision: Identifiable, Codable {
         id: String,
         runId: String,
         nodeId: String,
+        iteration: Int? = nil,
         action: String,
         note: String? = nil,
         reason: String? = nil,
@@ -1193,6 +1195,7 @@ struct ApprovalDecision: Identifiable, Codable {
         self.id = id
         self.runId = runId
         self.nodeId = nodeId
+        self.iteration = iteration
         self.action = action
         self.note = note
         self.reason = reason
@@ -1209,6 +1212,8 @@ struct ApprovalDecision: Identifiable, Codable {
         case id
         case runId
         case nodeId
+        case iteration
+        case attempt
         case action
         case decision
         case status
@@ -1249,6 +1254,8 @@ struct ApprovalDecision: Identifiable, Codable {
             ?? container.decode(String.self, forKey: .runIDSnake)
         nodeId = try container.decodeIfPresent(String.self, forKey: .nodeId)
             ?? container.decode(String.self, forKey: .nodeIDSnake)
+        iteration = container.decodeLossyInt(forKey: .iteration)
+            ?? container.decodeLossyInt(forKey: .attempt)
         action = Self.normalizedAction(
             try container.decodeIfPresent(String.self, forKey: .action)
                 ?? container.decodeIfPresent(String.self, forKey: .decision)
@@ -1286,6 +1293,7 @@ struct ApprovalDecision: Identifiable, Codable {
         try container.encode(id, forKey: .id)
         try container.encode(runId, forKey: .runId)
         try container.encode(nodeId, forKey: .nodeId)
+        try container.encodeIfPresent(iteration, forKey: .iteration)
         try container.encode(action, forKey: .action)
         try container.encodeIfPresent(note, forKey: .note)
         try container.encodeIfPresent(reason, forKey: .reason)

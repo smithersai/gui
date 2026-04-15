@@ -1148,24 +1148,12 @@ func runInspectorShellQuote(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
 }
 
-private let runInspectorDateFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-    return formatter
-}()
-
-private let runInspectorRelativeFormatter: RelativeDateTimeFormatter = {
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .short
-    return formatter
-}()
-
 func runInspectorShortDate(_ ms: Int64) -> String {
     let date = Date(timeIntervalSince1970: Double(ms) / 1000.0)
-    return runInspectorDateFormatter.string(from: date)
+    return DateFormatters.yearMonthDayHourMinuteSecond.string(from: date)
 }
 
 func runInspectorRelativeDate(_ ms: Int64) -> String {
     let date = Date(timeIntervalSince1970: Double(ms) / 1000.0)
-    return runInspectorRelativeFormatter.localizedString(for: date, relativeTo: Date())
+    return DateFormatters.relativeShort.localizedString(for: date, relativeTo: Date())
 }

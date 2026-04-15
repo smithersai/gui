@@ -1030,7 +1030,6 @@ struct ChatView: View {
             canToggleDeveloperDebug: onToggleDeveloperDebug != nil,
             canStartNewChat: onNewChat != nil,
             canTerminateApp: canTerminateApp,
-            helpText: SlashCommandRegistry.helpText(for: slashCommands),
             statusText: statusText()
         )
         let effects = SlashCommandExecutionEffects(

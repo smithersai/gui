@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 private final class PipeOutputCollector: @unchecked Sendable {
     private let lock = NSLock()
@@ -656,6 +657,31 @@ class SmithersClient: ObservableObject {
         return false
     }
 
+    private nonisolated static func waitForProcessExit(_ process: Process, timeoutSeconds: Double) async -> Bool {
+        let deadline = Date(timeIntervalSinceNow: timeoutSeconds)
+        while process.isRunning && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return !process.isRunning
+    }
+
+    private nonisolated static func terminateProcess(_ process: Process) async {
+        guard process.isRunning else { return }
+
+        process.terminate()
+        if await waitForProcessExit(process, timeoutSeconds: 0.5) { return }
+
+        if process.isRunning {
+            process.interrupt()
+        }
+        if await waitForProcessExit(process, timeoutSeconds: 0.5) { return }
+
+        if process.isRunning {
+            Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+        _ = await waitForProcessExit(process, timeoutSeconds: 0.5)
+    }
+
     private func exec(_ args: String...) async throws -> Data {
         try await execArgs(args)
     }
@@ -733,8 +759,7 @@ class SmithersClient: ObservableObject {
                         let deadline = Date(timeIntervalSinceNow: timeoutSeconds)
                         while process.isRunning && Date() < deadline {
                             if Task.isCancelled || cancellationBox.isCancelled {
-                                process.terminate()
-                                process.waitUntilExit()
+                                await Self.terminateProcess(process)
                                 continuation.resume(throwing: CancellationError())
                                 return
                             }
@@ -743,19 +768,14 @@ class SmithersClient: ObservableObject {
 
                         if Task.isCancelled || cancellationBox.isCancelled {
                             if process.isRunning {
-                                process.terminate()
-                                process.waitUntilExit()
+                                await Self.terminateProcess(process)
                             }
                             continuation.resume(throwing: CancellationError())
                             return
                         }
 
                         if process.isRunning {
-                            process.terminate()
-                            // Give it a moment to clean up
-                            try? await Task.sleep(nanoseconds: 100_000_000)
-                            if process.isRunning { process.interrupt() }
-                            process.waitUntilExit()
+                            await Self.terminateProcess(process)
                             outPipe.fileHandleForReading.readabilityHandler = nil
                             errPipe.fileHandleForReading.readabilityHandler = nil
                             let durationMs = String(Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000))
@@ -800,8 +820,7 @@ class SmithersClient: ObservableObject {
                         }
                     } catch is CancellationError {
                         if process.isRunning {
-                            process.terminate()
-                            process.waitUntilExit()
+                            await Self.terminateProcess(process)
                         }
                         continuation.resume(throwing: CancellationError())
                     } catch {
@@ -1425,9 +1444,11 @@ class SmithersClient: ObservableObject {
 
     func approveNode(runId: String, nodeId: String, iteration: Int? = nil, note: String? = nil) async throws {
         if UITestSupport.isEnabled {
-            uiResolvedApprovalIDs.insert("\(runId):\(nodeId)")
+            let approvalID = iteration.map { "\(runId):\(nodeId):\($0)" } ?? "\(runId):\(nodeId)"
+            let decisionSuffix = iteration.map { "-\($0)" } ?? ""
+            uiResolvedApprovalIDs.insert(approvalID)
             uiApprovalDecisions.insert(
-                ApprovalDecision(id: "decision-\(runId)-\(nodeId)-approved", runId: runId, nodeId: nodeId, action: "approved", note: note, reason: nil, resolvedAt: UITestSupport.nowMs, resolvedBy: "ui-test"),
+                ApprovalDecision(id: "decision-\(runId)-\(nodeId)\(decisionSuffix)-approved", runId: runId, nodeId: nodeId, iteration: iteration, action: "approved", note: note, reason: nil, resolvedAt: UITestSupport.nowMs, resolvedBy: "ui-test"),
                 at: 0
             )
             return
@@ -1464,9 +1485,11 @@ class SmithersClient: ObservableObject {
 
     func denyNode(runId: String, nodeId: String, iteration: Int? = nil, reason: String? = nil) async throws {
         if UITestSupport.isEnabled {
-            uiResolvedApprovalIDs.insert("\(runId):\(nodeId)")
+            let approvalID = iteration.map { "\(runId):\(nodeId):\($0)" } ?? "\(runId):\(nodeId)"
+            let decisionSuffix = iteration.map { "-\($0)" } ?? ""
+            uiResolvedApprovalIDs.insert(approvalID)
             uiApprovalDecisions.insert(
-                ApprovalDecision(id: "decision-\(runId)-\(nodeId)-denied", runId: runId, nodeId: nodeId, action: "denied", note: nil, reason: reason, resolvedAt: UITestSupport.nowMs, resolvedBy: "ui-test"),
+                ApprovalDecision(id: "decision-\(runId)-\(nodeId)\(decisionSuffix)-denied", runId: runId, nodeId: nodeId, iteration: iteration, action: "denied", note: nil, reason: reason, resolvedAt: UITestSupport.nowMs, resolvedBy: "ui-test"),
                 at: 0
             )
             return
@@ -2071,7 +2094,7 @@ class SmithersClient: ObservableObject {
 
     func getTokenUsageMetrics(filters: MetricsFilter = MetricsFilter()) async throws -> TokenMetrics {
         if UITestSupport.isEnabled {
-            let day = Self.metricsPeriodDayFormatter.string(from: Date())
+            let day = DateFormatters.yearMonthDay.string(from: Date())
             return TokenMetrics(
                 totalInputTokens: 24_000,
                 totalOutputTokens: 9_200,
@@ -2131,8 +2154,8 @@ class SmithersClient: ObservableObject {
             let calendar = Calendar.current
             let today = Date()
             let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
-            let todayLabel = Self.metricsPeriodDayFormatter.string(from: today)
-            let yesterdayLabel = Self.metricsPeriodDayFormatter.string(from: yesterday)
+            let todayLabel = DateFormatters.yearMonthDay.string(from: today)
+            let yesterdayLabel = DateFormatters.yearMonthDay.string(from: yesterday)
             return CostReport(
                 totalCostUSD: 0.358_800,
                 inputCostUSD: 0.072_000,
@@ -2827,7 +2850,7 @@ class SmithersClient: ObservableObject {
         try source.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
-    private static func discoverPromptInputs(in source: String) -> [PromptInput] {
+    nonisolated static func discoverPromptInputs(in source: String) -> [PromptInput] {
         let normalized = source
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
@@ -3809,6 +3832,7 @@ class SmithersClient: ObservableObject {
                         id: approval.id,
                         runId: approval.runId,
                         nodeId: approval.nodeId,
+                        iteration: approval.iteration,
                         workflowPath: approval.workflowPath,
                         gate: approval.gate,
                         status: Self.normalizedApprovalStatus(approval.status),
@@ -3835,6 +3859,7 @@ class SmithersClient: ObservableObject {
                         id: approval.id,
                         runId: approval.runId,
                         nodeId: approval.nodeId,
+                        iteration: approval.iteration,
                         workflowPath: approval.workflowPath,
                         gate: approval.gate,
                         status: Self.normalizedApprovalStatus(approval.status),
@@ -4966,12 +4991,15 @@ class SmithersClient: ObservableObject {
                 matches = [(content, searchInt(item["line_number"]) ?? searchInt(item["lineNumber"]))]
             }
 
-            let snippet = matches
-                .map { $0.content }
+            let snippetRanges = matches
+                .filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .map { SearchSnippetRange(content: $0.content, startLine: $0.lineNumber) }
+            let snippet = snippetRanges
+                .map(\.content)
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .joined(separator: "\n")
                 .nilIfEmpty
-            let lineNumber = matches.first { $0.lineNumber != nil }?.lineNumber
+            let lineNumber = snippetRanges.first { $0.startLine != nil }?.startLine
             let rawId = searchString(item["id"])
                 ?? [repository, filePath, lineNumber.map { String($0) }].compactMap { $0 }.joined(separator: ":").nilIfEmpty
                 ?? "\(offset)"
@@ -4982,7 +5010,8 @@ class SmithersClient: ObservableObject {
                 snippet: snippet,
                 filePath: filePath,
                 lineNumber: lineNumber,
-                kind: "code"
+                kind: "code",
+                snippetRanges: snippetRanges.isEmpty ? nil : snippetRanges
             )
         }
     }
