@@ -332,6 +332,83 @@ final class AgentServiceEventHandlingTests: XCTestCase {
         XCTAssertEqual(completed.item?.aggregatedOutput, "PASS")
     }
 
+    // CODEX_EVENT_COMMAND_EXECUTION — command lifecycle updates one row by item.id
+    func testCommandLifecycleUpdatesExistingMessageByItemID() throws {
+        let svc = makeServiceWithUserMessage()
+        let started = try JSONDecoder().decode(CodexEvent.self, from: Data("""
+        {"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"npm test"}}
+        """.utf8))
+        let completed = try JSONDecoder().decode(CodexEvent.self, from: Data("""
+        {"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"npm test","aggregated_output":"PASS","exit_code":0}}
+        """.utf8))
+
+        svc.handleEvent(started)
+        let startedMessageID = svc.messages.last?.id
+        svc.handleEvent(completed)
+
+        let commandMessages = svc.messages.filter { $0.type == .command }
+        XCTAssertEqual(commandMessages.count, 1)
+        XCTAssertEqual(commandMessages[0].id, startedMessageID)
+        XCTAssertEqual(commandMessages[0].command?.itemID, "cmd-1")
+        XCTAssertEqual(commandMessages[0].command?.output, "PASS")
+        XCTAssertEqual(commandMessages[0].command?.exitCode, 0)
+        XCTAssertEqual(commandMessages[0].command?.running, false)
+    }
+
+    func testTodoListLifecycleUpdatesExistingStatusMessageByItemID() throws {
+        let svc = makeServiceWithUserMessage()
+        let started = try JSONDecoder().decode(CodexEvent.self, from: Data("""
+        {"type":"item.started","item":{"id":"todo-1","type":"todo_list","items":[{"text":"Fix bug","completed":false},{"text":"Write tests","completed":false}]}}
+        """.utf8))
+        let updated = try JSONDecoder().decode(CodexEvent.self, from: Data("""
+        {"type":"item.updated","item":{"id":"todo-1","type":"todo_list","items":[{"text":"Fix bug","completed":true},{"text":"Write tests","completed":false}]}}
+        """.utf8))
+
+        svc.handleEvent(started)
+        let startedMessageID = svc.messages.last?.id
+        svc.handleEvent(updated)
+
+        let statusMessages = svc.messages.filter { $0.type == .status && $0.content.contains("Plan updated") }
+        XCTAssertEqual(statusMessages.count, 1)
+        XCTAssertEqual(statusMessages[0].id, startedMessageID)
+        XCTAssertTrue(statusMessages[0].content.contains("[x] Fix bug"))
+        XCTAssertTrue(statusMessages[0].content.contains("[ ] Write tests"))
+    }
+
+    func testWebSearchProducesStatusMessage() throws {
+        let svc = makeServiceWithUserMessage()
+        let event = try JSONDecoder().decode(CodexEvent.self, from: Data("""
+        {"type":"item.completed","item":{"id":"search-1","type":"web_search","query":"swift concurrency"}}
+        """.utf8))
+
+        svc.handleEvent(event)
+
+        let status = svc.messages.last
+        XCTAssertEqual(status?.type, .status)
+        XCTAssertTrue(status?.content.contains("Web search") ?? false)
+        XCTAssertTrue(status?.content.contains("swift concurrency") ?? false)
+    }
+
+    func testMCPToolCallLifecycleUpdatesExistingStatusMessageByItemID() throws {
+        let svc = makeServiceWithUserMessage()
+        let started = try JSONDecoder().decode(CodexEvent.self, from: Data("""
+        {"type":"item.started","item":{"id":"mcp-1","type":"mcp_tool_call","server":"linear","tool":"list_issues","status":"in_progress"}}
+        """.utf8))
+        let completed = try JSONDecoder().decode(CodexEvent.self, from: Data("""
+        {"type":"item.completed","item":{"id":"mcp-1","type":"mcp_tool_call","server":"linear","tool":"list_issues","status":"completed"}}
+        """.utf8))
+
+        svc.handleEvent(started)
+        let startedMessageID = svc.messages.last?.id
+        svc.handleEvent(completed)
+
+        let statusMessages = svc.messages.filter { $0.type == .status && $0.content.contains("MCP tool") }
+        XCTAssertEqual(statusMessages.count, 1)
+        XCTAssertEqual(statusMessages[0].id, startedMessageID)
+        XCTAssertTrue(statusMessages[0].content.contains("linear/list_issues"))
+        XCTAssertTrue(statusMessages[0].content.contains("completed"))
+    }
+
     // CODEX_EVENT_FILE_CHANGE — file changes produce summary
     func testFileChangeProducesSummary() throws {
         let json = """
@@ -666,6 +743,62 @@ final class AgentServiceBackgroundExecutionTests: XCTestCase {
         XCTAssertFalse(svc.isRunning)
         svc.cancel() // Should not crash
         XCTAssertFalse(svc.isRunning)
+    }
+}
+
+// MARK: - Codex Bridge Lifecycle Tests
+
+private final class FakeCodexBridge: CodexBridgeControlling, @unchecked Sendable {
+    func cancel() {}
+}
+
+final class CodexBridgeLifecycleTests: XCTestCase {
+
+    func testCancelInvalidatesPendingBridgeCreation() {
+        let lifecycle = CodexBridgeLifecycle<FakeCodexBridge>()
+        let creatingTurn = UUID()
+        let cancelledTurn = UUID()
+        let staleBridge = FakeCodexBridge()
+
+        XCTAssertNil(lifecycle.beginTurn(creatingTurn))
+        XCTAssertNil(lifecycle.cancelTurn(cancelledTurn))
+
+        XCTAssertFalse(lifecycle.activate(staleBridge, for: creatingTurn))
+        XCTAssertTrue(lifecycle.isCurrent(cancelledTurn))
+    }
+
+    func testLateBridgeCannotOverwriteNewerActiveBridge() {
+        let lifecycle = CodexBridgeLifecycle<FakeCodexBridge>()
+        let oldTurn = UUID()
+        let newTurn = UUID()
+        let lateBridge = FakeCodexBridge()
+        let activeBridge = FakeCodexBridge()
+
+        XCTAssertNil(lifecycle.beginTurn(oldTurn))
+        XCTAssertNil(lifecycle.beginTurn(newTurn))
+        XCTAssertTrue(lifecycle.activate(activeBridge, for: newTurn))
+        XCTAssertFalse(lifecycle.activate(lateBridge, for: oldTurn))
+
+        let returnedBridge = lifecycle.cancelTurn(UUID())
+        XCTAssertTrue(returnedBridge === activeBridge)
+    }
+
+    func testStaleClearDoesNotRemoveNewerActiveBridge() {
+        let lifecycle = CodexBridgeLifecycle<FakeCodexBridge>()
+        let oldTurn = UUID()
+        let newTurn = UUID()
+        let oldBridge = FakeCodexBridge()
+        let newBridge = FakeCodexBridge()
+
+        XCTAssertNil(lifecycle.beginTurn(oldTurn))
+        XCTAssertTrue(lifecycle.activate(oldBridge, for: oldTurn))
+        XCTAssertTrue(lifecycle.beginTurn(newTurn) === oldBridge)
+        XCTAssertTrue(lifecycle.activate(newBridge, for: newTurn))
+
+        lifecycle.clear(ifSame: oldBridge, for: oldTurn)
+
+        let returnedBridge = lifecycle.cancelTurn(UUID())
+        XCTAssertTrue(returnedBridge === newBridge)
     }
 }
 
