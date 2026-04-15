@@ -20,8 +20,10 @@ final class CodexBridge: CodexBridgeControlling, @unchecked Sendable {
         model: String?,
         reasoningEffort: CodexReasoningEffort?,
         approvalPolicy: CodexApprovalPolicy?,
-        sandboxMode: CodexSandboxMode?
+        sandboxMode: CodexSandboxMode?,
+        createCancellationToken: CodexCreateCancellationToken?
     ) {
+        let createCancellationTokenID = createCancellationToken?.id ?? 0
         AppLogger.codex.info(
             "CodexBridge init",
             metadata: [
@@ -30,6 +32,7 @@ final class CodexBridge: CodexBridgeControlling, @unchecked Sendable {
                 "reasoning_effort": reasoningEffort?.rawValue ?? "default",
                 "approval_policy": approvalPolicy?.rawValue ?? "default",
                 "sandbox_mode": sandboxMode?.rawValue ?? "default",
+                "create_cancellation_token_id": "\(createCancellationTokenID)",
             ]
         )
 
@@ -38,12 +41,13 @@ final class CodexBridge: CodexBridgeControlling, @unchecked Sendable {
                 withOptionalCString(reasoningEffort?.rawValue) { effortPtr in
                     withOptionalCString(approvalPolicy?.rawValue) { approvalPtr in
                         withOptionalCString(sandboxMode?.rawValue) { sandboxPtr in
-                            codex_create_with_options(
+                            codex_create_with_options_and_cancellation(
                                 cwdPtr,
                                 modelPtr,
                                 effortPtr,
                                 approvalPtr,
-                                sandboxPtr
+                                sandboxPtr,
+                                createCancellationTokenID
                             )
                         }
                     }
@@ -123,6 +127,46 @@ private func withOptionalCString<T>(_ value: String?, _ body: (UnsafePointer<CCh
     }
 }
 
+final class CodexCreateCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokenID: Int64
+
+    init?() {
+        let allocatedTokenID = codex_create_cancellation_token_new()
+        guard allocatedTokenID > 0 else {
+            AppLogger.codex.error("Codex create cancellation token allocation failed")
+            return nil
+        }
+        tokenID = allocatedTokenID
+    }
+
+    var id: Int64 {
+        lock.lock()
+        let id = tokenID
+        lock.unlock()
+        return id
+    }
+
+    func cancel() {
+        let id: Int64
+        lock.lock()
+        id = tokenID
+        lock.unlock()
+        guard id > 0 else { return }
+        codex_create_cancellation_token_cancel(id)
+    }
+
+    deinit {
+        let id: Int64
+        lock.lock()
+        id = tokenID
+        tokenID = 0
+        lock.unlock()
+        guard id > 0 else { return }
+        codex_create_cancellation_token_free(id)
+    }
+}
+
 private extension String {
     var nilIfBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
@@ -191,6 +235,7 @@ private final class CodexBridgeCreationQueue: @unchecked Sendable {
         reasoningEffort: CodexReasoningEffort?,
         approvalPolicy: CodexApprovalPolicy?,
         sandboxMode: CodexSandboxMode?,
+        createCancellationToken: CodexCreateCancellationToken?,
         if shouldCreate: () -> Bool
     ) -> CodexBridge? {
         lock.lock()
@@ -205,7 +250,8 @@ private final class CodexBridgeCreationQueue: @unchecked Sendable {
             model: model,
             reasoningEffort: reasoningEffort,
             approvalPolicy: approvalPolicy,
-            sandboxMode: sandboxMode
+            sandboxMode: sandboxMode,
+            createCancellationToken: createCancellationToken
         )
     }
 }
@@ -243,6 +289,7 @@ class AgentService: ObservableObject {
     private var bridgeTask: Task<Void, Never>?
     private let bridgeLifecycle = CodexBridgeLifecycle<CodexBridge>()
     private let bridgeCreationQueue = CodexBridgeCreationQueue()
+    private var bridgeCreationCancellationToken: CodexCreateCancellationToken?
     private var currentTurnID = UUID()
 
     var workingDirectory: String { workingDir }
@@ -283,6 +330,7 @@ class AgentService: ObservableObject {
 
         bridgeTask?.cancel()
         bridgeTask = nil
+        cancelBridgeCreationToken()
         cancelBridge(bridgeLifecycle.beginTurn(turnID))
 
         let visiblePrompt: String
@@ -325,6 +373,8 @@ class AgentService: ObservableObject {
         let sandboxModeOverride = sandboxModeOverride
         let bridgeLifecycle = bridgeLifecycle
         let bridgeCreationQueue = bridgeCreationQueue
+        let bridgeCreationCancellationToken = CodexCreateCancellationToken()
+        self.bridgeCreationCancellationToken = bridgeCreationCancellationToken
 
         bridgeTask = Task.detached {
             [
@@ -337,6 +387,7 @@ class AgentService: ObservableObject {
                 reasoningEffortOverride,
                 approvalPolicyOverride,
                 sandboxModeOverride,
+                bridgeCreationCancellationToken,
                 weak self,
             ] in
             AppLogger.agent.info(
@@ -355,10 +406,12 @@ class AgentService: ObservableObject {
                 model: modelOverride,
                 reasoningEffort: reasoningEffortOverride,
                 approvalPolicy: approvalPolicyOverride,
-                sandboxMode: sandboxModeOverride
+                sandboxMode: sandboxModeOverride,
+                createCancellationToken: bridgeCreationCancellationToken
             ) {
                 !Task.isCancelled && bridgeLifecycle.isCurrent(turnID)
             }
+            await self?.clearBridgeCreationTokenIfCurrent(bridgeCreationCancellationToken, turnID: turnID)
             guard let bridge = bridge else {
                 if Task.isCancelled || !bridgeLifecycle.isCurrent(turnID) {
                     AppLogger.agent.debug("AgentService bridge creation skipped (stale/cancelled turn)")
@@ -409,6 +462,7 @@ class AgentService: ObservableObject {
         currentTurnID = UUID()
         bridgeTask?.cancel()
         bridgeTask = nil
+        cancelBridgeCreationToken()
         cancelBridge(bridgeLifecycle.cancelTurn(currentTurnID))
         partialText = ""
         commandMessageIDsByItemID.removeAll()
@@ -424,6 +478,17 @@ class AgentService: ObservableObject {
         Task.detached {
             bridge.cancel()
         }
+    }
+
+    private func cancelBridgeCreationToken() {
+        bridgeCreationCancellationToken?.cancel()
+        bridgeCreationCancellationToken = nil
+    }
+
+    private func clearBridgeCreationTokenIfCurrent(_ token: CodexCreateCancellationToken?, turnID: UUID) {
+        guard currentTurnID == turnID else { return }
+        guard bridgeCreationCancellationToken === token else { return }
+        bridgeCreationCancellationToken = nil
     }
 
     private func handleBridgeCreationFailure(cwd: String, turnID: UUID) {

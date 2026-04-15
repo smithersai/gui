@@ -270,22 +270,28 @@ private final class TerminalCallbackCoordinator: @unchecked Sendable {
     }
 
     @discardableResult
-    private func syncOnMain<T>(_ body: (TerminalSurfaceView) -> T) -> T? {
+    private func syncOnMain<T>(_ body: @escaping @MainActor (TerminalSurfaceView) -> T) -> T? {
         if Thread.isMainThread {
-            guard let surfaceView = currentSurfaceView() else { return nil }
-            return body(surfaceView)
+            return MainActor.assumeIsolated {
+                guard let surfaceView = currentSurfaceView() else { return nil }
+                return body(surfaceView)
+            }
         }
 
         return DispatchQueue.main.sync {
-            guard let surfaceView = currentSurfaceView() else { return nil }
-            return body(surfaceView)
+            MainActor.assumeIsolated {
+                guard let surfaceView = currentSurfaceView() else { return nil }
+                return body(surfaceView)
+            }
         }
     }
 
-    private func asyncOnMain(_ body: @escaping (TerminalSurfaceView) -> Void) {
+    private func asyncOnMain(_ body: @escaping @MainActor (TerminalSurfaceView) -> Void) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, let surfaceView = self.currentSurfaceView() else { return }
-            body(surfaceView)
+            MainActor.assumeIsolated {
+                guard let self, let surfaceView = self.currentSurfaceView() else { return }
+                body(surfaceView)
+            }
         }
     }
 
@@ -444,7 +450,9 @@ class GhosttyApp: ObservableObject {
     }
 
     deinit {
-        shutdown()
+        MainActor.assumeIsolated {
+            shutdown()
+        }
     }
 }
 

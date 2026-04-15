@@ -109,12 +109,12 @@ final class ApprovalDecisionTests: XCTestCase {
         XCTAssertEqual(d.action, "denied")
     }
 
-    func testDecisionDefaultsToApproved() throws {
+    func testDecisionDefaultsToPending() throws {
         let json = """
         {"id":"d3","runId":"r3","nodeId":"n3"}
         """.data(using: .utf8)!
         let d = try JSONDecoder().decode(ApprovalDecision.self, from: json)
-        XCTAssertEqual(d.action, "approved")
+        XCTAssertEqual(d.action, "pending")
     }
 
     func testDecisionResolvedAtFromMultipleKeys() throws {
@@ -123,6 +123,15 @@ final class ApprovalDecisionTests: XCTestCase {
         """.data(using: .utf8)!
         let d = try JSONDecoder().decode(ApprovalDecision.self, from: json)
         XCTAssertEqual(d.resolvedAt, 1700000000000)
+    }
+
+    func testDecisionResolvedAtFromMillisecondAlias() throws {
+        let json = """
+        {"id":"d4-ms","runId":"r4","nodeId":"n4","action":"approved","decided_at_ms":1700000000123,"requested_at_ms":1700000000000}
+        """.data(using: .utf8)!
+        let d = try JSONDecoder().decode(ApprovalDecision.self, from: json)
+        XCTAssertEqual(d.resolvedAt, 1700000000123)
+        XCTAssertEqual(d.requestedAt, 1700000000000)
     }
 
     func testDecisionSourceFromTransportSource() throws {

@@ -5,9 +5,9 @@ final class SmithersModelsTests: XCTestCase {
 
     // MARK: - RunStatus
 
-    func testRunStatusHas5Variants() {
-        XCTAssertEqual(RunStatus.allCases.count, 5)
-        let expected: Set<RunStatus> = [.running, .waitingApproval, .finished, .failed, .cancelled]
+    func testRunStatusHas6Variants() {
+        XCTAssertEqual(RunStatus.allCases.count, 6)
+        let expected: Set<RunStatus> = [.running, .waitingApproval, .finished, .failed, .cancelled, .unknown]
         XCTAssertEqual(Set(RunStatus.allCases), expected)
     }
 
@@ -17,6 +17,7 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(RunStatus.finished.rawValue, "finished")
         XCTAssertEqual(RunStatus.failed.rawValue, "failed")
         XCTAssertEqual(RunStatus.cancelled.rawValue, "cancelled")
+        XCTAssertEqual(RunStatus.unknown.rawValue, "unknown")
     }
 
     func testRunStatusLabels() {
@@ -25,12 +26,16 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(RunStatus.finished.label, "FINISHED")
         XCTAssertEqual(RunStatus.failed.label, "FAILED")
         XCTAssertEqual(RunStatus.cancelled.label, "CANCELLED")
+        XCTAssertEqual(RunStatus.unknown.label, "UNKNOWN")
     }
 
     func testRunStatusCodable() throws {
         let json = Data(#""waiting-approval""#.utf8)
         let decoded = try JSONDecoder().decode(RunStatus.self, from: json)
         XCTAssertEqual(decoded, .waitingApproval)
+
+        let unknown = try JSONDecoder().decode(RunStatus.self, from: Data(#""queued""#.utf8))
+        XCTAssertEqual(unknown, .unknown)
 
         let encoded = try JSONEncoder().encode(RunStatus.cancelled)
         let str = String(data: encoded, encoding: .utf8)

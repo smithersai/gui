@@ -244,11 +244,19 @@ struct PromptsView: View {
                     HStack(spacing: 0) {
                         ForEach(DetailTab.allCases, id: \.self) { t in
                             Button(action: { tab = t }) {
-                                Text(t.rawValue)
-                                    .font(.system(size: 12, weight: tab == t ? .semibold : .regular))
-                                    .foregroundColor(tab == t ? Theme.accent : Theme.textSecondary)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
+                                HStack(spacing: 5) {
+                                    Text(t.rawValue)
+                                    if t == .inputs && hasInputValueChanges {
+                                        Circle()
+                                            .fill(Theme.warning)
+                                            .frame(width: 6, height: 6)
+                                            .accessibilityLabel("Unsaved input values")
+                                    }
+                                }
+                                .font(.system(size: 12, weight: tab == t ? .semibold : .regular))
+                                .foregroundColor(tab == t ? Theme.accent : Theme.textSecondary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
                             }
                             .buttonStyle(.plain)
                             .overlay(alignment: .bottom) {
@@ -267,10 +275,10 @@ struct PromptsView: View {
                                 .padding(.trailing, 4)
                         }
 
-                        if hasChanges {
-                            Button(action: { isSaving = true; Task { await savePrompt() } }) {
+                        if hasSourceChanges {
+                            Button(action: { Task { await savePrompt() } }) {
                                 HStack(spacing: 4) {
-                                    if isSaving {
+                                    if isSavingSelectedPrompt {
                                         ProgressView().scaleEffect(0.4).frame(width: 10, height: 10)
                                     }
                                     Text("Save")
@@ -283,7 +291,7 @@ struct PromptsView: View {
                                 .cornerRadius(6)
                             }
                             .buttonStyle(.plain)
-                            .disabled(isSaving)
+                            .disabled(isSavingSelectedPrompt)
                             .padding(.trailing, 12)
                         }
                     }
@@ -334,9 +342,19 @@ struct PromptsView: View {
                         .foregroundColor(Theme.textTertiary)
                         .padding(20)
                 } else {
-                    Text("DISCOVERED INPUTS")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Theme.textTertiary)
+                    HStack(spacing: 8) {
+                        Text("DISCOVERED INPUTS")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Theme.textTertiary)
+                        if hasInputValueChanges {
+                            Text("UNSAVED VALUES")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(Theme.warning)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .themedPill(cornerRadius: 3)
+                        }
+                    }
 
                     ForEach(inputs) { input in
                         VStack(alignment: .leading, spacing: 4) {
@@ -437,10 +455,11 @@ struct PromptsView: View {
         selectedId = prompt.id
         source = prompt.source ?? ""
         originalSource = source
-        inputs = prompt.inputs ?? []
-        inputValues = [:]
+        let selectedInputs = Self.inputs(for: source, preferredInputs: prompt.inputs ?? [])
+        applyInputs(selectedInputs, resetValues: true)
         previewText = nil
         isPreviewing = false
+        savingPromptId = nil
         tab = .source
         sourceLoadGeneration += 1
         let loadSnapshot = PromptSourceLoadSnapshot(
@@ -467,14 +486,7 @@ struct PromptsView: View {
                     activeLoadGeneration: sourceLoadGeneration,
                     currentEditGeneration: sourceEditGeneration
                 ) else { return }
-                inputs = props
-                var defaults: [String: String] = [:]
-                for prop in props {
-                    if let def = prop.defaultValue {
-                        defaults[prop.name] = def
-                    }
-                }
-                inputValues = defaults
+                applyInputs(Self.inputs(for: source, preferredInputs: props), resetValues: true)
             } catch {
                 // Use what we have from the list
             }
@@ -482,9 +494,18 @@ struct PromptsView: View {
     }
 
     private func savePrompt() async {
-        guard let id = selectedId else { return }
+        guard let id = selectedId else {
+            savingPromptId = nil
+            return
+        }
         let capturedId = id
         let sourceToSave = source
+        savingPromptId = capturedId
+        defer {
+            if savingPromptId == capturedId {
+                savingPromptId = nil
+            }
+        }
         do {
             try await smithers.updatePrompt(capturedId, source: sourceToSave)
             // Only apply if the same prompt is still selected.
@@ -495,7 +516,6 @@ struct PromptsView: View {
             guard selectedId == capturedId else { return }
             saveError = error.localizedDescription
         }
-        isSaving = false
     }
 
     private func renderPreviewAfterDebounce(

@@ -179,12 +179,13 @@ final class RunStatusTests: XCTestCase {
 
     func testAllCases() {
         let cases = RunStatus.allCases
-        XCTAssertEqual(cases.count, 5)
+        XCTAssertEqual(cases.count, 6)
         XCTAssertTrue(cases.contains(.running))
         XCTAssertTrue(cases.contains(.waitingApproval))
         XCTAssertTrue(cases.contains(.finished))
         XCTAssertTrue(cases.contains(.failed))
         XCTAssertTrue(cases.contains(.cancelled))
+        XCTAssertTrue(cases.contains(.unknown))
     }
 
     func testRawValues() {
@@ -855,6 +856,7 @@ final class StatusPillColorMappingTests: XCTestCase {
                 case .finished: return "success"
                 case .failed: return "danger"
                 case .cancelled: return "textTertiary"
+                case .unknown: return "textTertiary"
                 }
             }()
             XCTAssertEqual(color, expectedColor,

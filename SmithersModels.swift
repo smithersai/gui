@@ -3336,23 +3336,23 @@ struct CronResponse: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
-        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .crons) {
+        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .crons) {
             self.crons = crons
             return
         }
-        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .schedules) {
+        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .schedules) {
             self.crons = crons
             return
         }
-        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .items) {
+        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .items) {
             self.crons = crons
             return
         }
-        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .results) {
+        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .results) {
             self.crons = crons
             return
         }
-        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .data) {
+        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .data) {
             self.crons = crons
             return
         }

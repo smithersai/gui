@@ -4505,12 +4505,15 @@ class SmithersClient: ObservableObject {
         return try decodeIssue(data)
     }
 
-    func closeIssue(number: Int, comment: String?) async throws {
+    func closeIssue(number: Int, comment: String?) async throws -> SmithersIssue {
         if UITestSupport.isEnabled {
-            guard let index = uiIssues.firstIndex(where: { $0.number == number }) else { return }
+            guard let index = uiIssues.firstIndex(where: { $0.number == number }) else {
+                throw SmithersError.notFound
+            }
             let issue = uiIssues[index]
-            uiIssues[index] = SmithersIssue(id: issue.id, number: issue.number, title: issue.title, body: issue.body, state: "closed", labels: issue.labels, assignees: issue.assignees, commentCount: issue.commentCount)
-            return
+            let updated = SmithersIssue(id: issue.id, number: issue.number, title: issue.title, body: issue.body, state: "closed", labels: issue.labels, assignees: issue.assignees, commentCount: issue.commentCount)
+            uiIssues[index] = updated
+            return updated
         }
 
         var args = ["issue", "close", "\(number)"]
@@ -4518,9 +4521,28 @@ class SmithersClient: ObservableObject {
             args += ["-c", comment]
         }
         let data = try await execJJHubJSONArgs(args)
-        if (try? decodeIssue(data)) == nil {
-            _ = try await getIssue(number: number)
+        if let issue = try? decodeIssue(data) {
+            return issue
         }
+        return try await getIssue(number: number)
+    }
+
+    func reopenIssue(number: Int) async throws -> SmithersIssue {
+        if UITestSupport.isEnabled {
+            guard let index = uiIssues.firstIndex(where: { $0.number == number }) else {
+                throw SmithersError.notFound
+            }
+            let issue = uiIssues[index]
+            let updated = SmithersIssue(id: issue.id, number: issue.number, title: issue.title, body: issue.body, state: "open", labels: issue.labels, assignees: issue.assignees, commentCount: issue.commentCount)
+            uiIssues[index] = updated
+            return updated
+        }
+
+        let data = try await execJJHubJSONArgs(["issue", "reopen", "\(number)"])
+        if let issue = try? decodeIssue(data) {
+            return issue
+        }
+        return try await getIssue(number: number)
     }
 
     func listWorkspaces() async throws -> [Workspace] {
