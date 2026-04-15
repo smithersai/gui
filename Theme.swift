@@ -33,6 +33,214 @@ struct Theme {
     static let synString = Color(hex: "#C3E88D")
     static let synFunction = Color(hex: "#82AAFF")
     static let synComment = Color(hex: "#676E95")
+
+    static func sidebarRowFill(isSelected: Bool, isHovered: Bool, defaultFill: Color = Color.clear) -> Color {
+        if isSelected { return sidebarSelected }
+        if isHovered { return sidebarHover }
+        return defaultFill
+    }
+}
+
+private struct ThemedSidebarRowBackground: ViewModifier {
+    let isSelected: Bool
+    let cornerRadius: CGFloat
+    let defaultFill: Color
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(Theme.sidebarRowFill(isSelected: isSelected, isHovered: isHovered, defaultFill: defaultFill))
+            .cornerRadius(cornerRadius)
+            .onHover { isHovered = $0 }
+    }
+}
+
+private struct ThemedPillBackground: ViewModifier {
+    let fill: Color
+    let border: Color
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background(fill)
+            .cornerRadius(cornerRadius)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(border, lineWidth: 1)
+            )
+    }
+}
+
+private struct ThemedDiffBlockBackground: ViewModifier {
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background(Theme.bubbleDiff)
+            .cornerRadius(cornerRadius)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(Theme.border, lineWidth: 1)
+            )
+    }
+}
+
+extension View {
+    func themedSidebarRowBackground(
+        isSelected: Bool,
+        cornerRadius: CGFloat = 0,
+        defaultFill: Color = Color.clear
+    ) -> some View {
+        modifier(ThemedSidebarRowBackground(isSelected: isSelected, cornerRadius: cornerRadius, defaultFill: defaultFill))
+    }
+
+    func themedPill(
+        fill: Color = Theme.pillBg,
+        border: Color = Theme.pillBorder,
+        cornerRadius: CGFloat = 4
+    ) -> some View {
+        modifier(ThemedPillBackground(fill: fill, border: border, cornerRadius: cornerRadius))
+    }
+
+    func themedDiffBlock(cornerRadius: CGFloat = 8) -> some View {
+        modifier(ThemedDiffBlockBackground(cornerRadius: cornerRadius))
+    }
+}
+
+struct SyntaxHighlightedText: View {
+    let text: String
+    let font: Font
+    let lineSpacing: CGFloat
+
+    init(
+        _ text: String,
+        font: Font = .system(size: 11, design: .monospaced),
+        lineSpacing: CGFloat = 2
+    ) {
+        self.text = text
+        self.font = font
+        self.lineSpacing = lineSpacing
+    }
+
+    var body: some View {
+        Text(Self.highlightedString(text))
+            .font(font)
+            .lineSpacing(lineSpacing)
+    }
+
+    static func highlightedString(_ source: String) -> AttributedString {
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+        var output = AttributedString()
+
+        for lineIndex in lines.indices {
+            if lineIndex != lines.startIndex {
+                output += colored("\n", Theme.textPrimary)
+            }
+            output += highlightedLine(String(lines[lineIndex]))
+        }
+
+        return output
+    }
+
+    private static let keywords: Set<String> = [
+        "async", "await", "case", "catch", "class", "const", "do", "else", "enum",
+        "export", "extends", "false", "final", "for", "from", "func", "function",
+        "guard", "if", "import", "in", "interface", "let", "nil", "null", "private",
+        "public", "return", "static", "struct", "switch", "throws", "true", "try",
+        "type", "var", "while",
+    ]
+
+    private static func highlightedLine(_ line: String) -> AttributedString {
+        var output = AttributedString()
+        var cursor = line.startIndex
+
+        while cursor < line.endIndex {
+            if line[cursor] == "#" {
+                output += colored(String(line[cursor...]), Theme.synComment)
+                break
+            }
+
+            if line[cursor] == "/", nextCharacter(in: line, after: cursor) == "/" {
+                output += colored(String(line[cursor...]), Theme.synComment)
+                break
+            }
+
+            if line[cursor] == "\"" || line[cursor] == "'" {
+                let start = cursor
+                let quote = line[cursor]
+                cursor = line.index(after: cursor)
+                var isEscaped = false
+
+                while cursor < line.endIndex {
+                    let char = line[cursor]
+                    cursor = line.index(after: cursor)
+
+                    if isEscaped {
+                        isEscaped = false
+                    } else if char == "\\" {
+                        isEscaped = true
+                    } else if char == quote {
+                        break
+                    }
+                }
+
+                output += colored(String(line[start..<cursor]), Theme.synString)
+                continue
+            }
+
+            if isIdentifierHead(line[cursor]) {
+                let start = cursor
+                cursor = line.index(after: cursor)
+                while cursor < line.endIndex, isIdentifierBody(line[cursor]) {
+                    cursor = line.index(after: cursor)
+                }
+
+                let token = String(line[start..<cursor])
+                if keywords.contains(token) {
+                    output += colored(token, Theme.synKeyword)
+                } else if isFunctionCall(in: line, after: cursor) {
+                    output += colored(token, Theme.synFunction)
+                } else {
+                    output += colored(token, Theme.textPrimary)
+                }
+                continue
+            }
+
+            let next = line.index(after: cursor)
+            output += colored(String(line[cursor..<next]), Theme.textPrimary)
+            cursor = next
+        }
+
+        return output
+    }
+
+    private static func colored(_ text: String, _ color: Color) -> AttributedString {
+        var attributed = AttributedString(text)
+        attributed.foregroundColor = color
+        return attributed
+    }
+
+    private static func nextCharacter(in line: String, after index: String.Index) -> Character? {
+        let next = line.index(after: index)
+        guard next < line.endIndex else { return nil }
+        return line[next]
+    }
+
+    private static func isFunctionCall(in line: String, after index: String.Index) -> Bool {
+        var cursor = index
+        while cursor < line.endIndex, line[cursor].isWhitespace {
+            cursor = line.index(after: cursor)
+        }
+        return cursor < line.endIndex && line[cursor] == "("
+    }
+
+    private static func isIdentifierHead(_ character: Character) -> Bool {
+        character == "_" || character.isLetter
+    }
+
+    private static func isIdentifierBody(_ character: Character) -> Bool {
+        isIdentifierHead(character) || character.isNumber
+    }
 }
 
 extension Color {
