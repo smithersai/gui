@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import AppKit
 import ViewInspector
 @testable import SmithersGUI
 
@@ -195,13 +196,15 @@ final class TerminalViewTests: XCTestCase {
     }
 
     // -------------------------------------------------------------------------
-    // TERMINAL_SCROLL_MODS_ZERO
-    // The scroll handler passes 0 for mods — verify 0 is a valid value.
+    // TERMINAL_SCROLL_MODS_PRECISION_MOMENTUM
+    // The scroll handler packs precision and momentum into ghostty scroll mods.
     // -------------------------------------------------------------------------
 
-    func test_TERMINAL_SCROLL_MODS_ZERO() {
-        // ghostty_input_mods_e is defined in CGhosttyKit (not available in test target).
-        // The scroll handler passes 0 for mods, which is valid. Verified by code inspection.
+    func test_TERMINAL_SCROLL_MODS_PRECISION_MOMENTUM_bitPacking() {
+        let precisionBit: Int32 = 0b0000_0001
+        let changedMomentumRaw: Int32 = 3
+        let packed = precisionBit | (changedMomentumRaw << 1)
+        XCTAssertEqual(packed, 0b0000_0111)
     }
 
     // -------------------------------------------------------------------------
@@ -240,20 +243,19 @@ final class TerminalViewTests: XCTestCase {
 
     func test_TERMINAL_MOUSE_Y_COORDINATE_FLIP_formula() {
         // AppKit Y is bottom-up; terminal expects top-down.
-        // Formula: flippedY = (bounds.height - pt.y) * scale
+        // Formula: flippedY = bounds.height - pt.y. Ghostty applies content
+        // scale internally when it receives the unscaled point coordinate.
         let boundsHeight: Double = 600
         let ptY: Double = 150
-        let scale: Double = 2.0
-        let flipped = (boundsHeight - ptY) * scale
-        XCTAssertEqual(flipped, 900.0,
-                       "Y flip: (600 - 150) * 2.0 = 900.0")
+        let flipped = boundsHeight - ptY
+        XCTAssertEqual(flipped, 450.0,
+                       "Y flip: 600 - 150 = 450")
     }
 
     func test_TERMINAL_MOUSE_Y_COORDINATE_FLIP_topEdge() {
         let boundsHeight: Double = 600
         let ptY: Double = 600 // top in AppKit = y == height
-        let scale: Double = 1.0
-        let flipped = (boundsHeight - ptY) * scale
+        let flipped = boundsHeight - ptY
         XCTAssertEqual(flipped, 0.0,
                        "Top of AppKit view should map to Y=0 in terminal coords")
     }
@@ -261,8 +263,7 @@ final class TerminalViewTests: XCTestCase {
     func test_TERMINAL_MOUSE_Y_COORDINATE_FLIP_bottomEdge() {
         let boundsHeight: Double = 600
         let ptY: Double = 0 // bottom in AppKit
-        let scale: Double = 1.0
-        let flipped = (boundsHeight - ptY) * scale
+        let flipped = boundsHeight - ptY
         XCTAssertEqual(flipped, 600.0,
                        "Bottom of AppKit view should map to Y=height in terminal coords")
     }
@@ -273,14 +274,13 @@ final class TerminalViewTests: XCTestCase {
     // -------------------------------------------------------------------------
 
     func test_TERMINAL_SURFACE_SET_SIZE_scalingMath() {
-        // setFrameSize computes:
-        //   width  = UInt32(Double(newSize.width) * scale)
-        //   height = UInt32(Double(newSize.height) * scale)
+        // syncSurfaceBackingMetrics computes backing pixels from bounds and
+        // scale, then rounds to the nearest physical pixel.
         let width: CGFloat = 800
         let height: CGFloat = 600
         let scale: Double = 2.0
-        let pixelW = UInt32(Double(width) * scale)
-        let pixelH = UInt32(Double(height) * scale)
+        let pixelW = UInt32((Double(width) * scale).rounded(.toNearestOrAwayFromZero))
+        let pixelH = UInt32((Double(height) * scale).rounded(.toNearestOrAwayFromZero))
         XCTAssertEqual(pixelW, 1600)
         XCTAssertEqual(pixelH, 1200)
     }
@@ -290,10 +290,17 @@ final class TerminalViewTests: XCTestCase {
         let width: CGFloat = 1920
         let height: CGFloat = 1080
         let scale: Double = 1.5
-        let pixelW = UInt32(Double(width) * scale)
-        let pixelH = UInt32(Double(height) * scale)
+        let pixelW = UInt32((Double(width) * scale).rounded(.toNearestOrAwayFromZero))
+        let pixelH = UInt32((Double(height) * scale).rounded(.toNearestOrAwayFromZero))
         XCTAssertEqual(pixelW, 2880)
         XCTAssertEqual(pixelH, 1620)
+    }
+
+    func test_TERMINAL_SURFACE_SET_SIZE_fractionalPixelRounding() {
+        let width: CGFloat = 333
+        let scale: Double = 1.5
+        let pixelW = UInt32((Double(width) * scale).rounded(.toNearestOrAwayFromZero))
+        XCTAssertEqual(pixelW, 500)
     }
 
     // -------------------------------------------------------------------------
@@ -344,14 +351,14 @@ final class TerminalViewTests: XCTestCase {
     // -------------------------------------------------------------------------
 
     func test_TERMINAL_AUTO_FOCUS_documentation() {
-        // TerminalSurfaceRepresentable.makeNSView dispatches:
+        // TerminalSurfaceRepresentable.makeNSView dispatches an initial focus:
         //   DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
         //       view.window?.makeFirstResponder(view)
         //   }
         //
-        // BUG NOTE: If the view is not yet in a window hierarchy when the
-        // dispatch fires, window will be nil and focus silently fails.
-        // Consider using onAppear or NSView.viewDidMoveToWindow instead.
+        // TerminalSurfaceView.viewDidMoveToWindow also requests focus when the
+        // native view is attached, so SwiftUI attachment timing does not leave
+        // the terminal without a first responder.
     }
 
     // -------------------------------------------------------------------------
@@ -368,17 +375,80 @@ final class TerminalViewTests: XCTestCase {
         //   key.composing = false
     }
 
-    func test_TERMINAL_MODIFIER_KEY_FORWARDING_flagsChangedAlwaysPress() {
-        // BUG: flagsChanged sets action = GHOSTTY_ACTION_PRESS unconditionally.
-        // When a modifier key is *released*, flagsChanged is also called, but
-        // the code still sends PRESS. This means ghostty never sees modifier
-        // key releases, which can cause stuck-modifier bugs.
-        //
-        // The correct implementation should detect press vs release by checking
-        // whether the specific modifier bit is set or cleared in the new
-        // modifierFlags compared to the previous state.
+    func test_TERMINAL_MODIFIER_KEY_FORWARDING_flagsChangedReportsRelease() {
+        // flagsChanged detects press vs release from the specific modifier bit
+        // for the physical key and also checks left/right device masks. This
+        // prevents releasing one side of Shift/Ctrl/Option/Command while the
+        // other side is still held from being reported as another press.
         //
         // CGhosttyKit constants not available in test target. Verified by inspection.
+    }
+
+    func test_TERMINAL_KEY_FORWARDING_POLICY_ctrlKeyEventsForward() {
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyDown,
+            modifierFlags: [.control]
+        ))
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyUp,
+            modifierFlags: [.control]
+        ))
+    }
+
+    func test_TERMINAL_KEY_FORWARDING_POLICY_altKeyEventsForward() {
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyDown,
+            modifierFlags: [.option]
+        ))
+    }
+
+    func test_TERMINAL_KEY_FORWARDING_POLICY_functionAndArrowKeyEquivalentsForward() {
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyDown,
+            modifierFlags: []
+        ))
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyDown,
+            modifierFlags: [.shift]
+        ))
+    }
+
+    func test_TERMINAL_KEY_FORWARDING_POLICY_commandShortcutsRemainForApp() {
+        XCTAssertFalse(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyDown,
+            modifierFlags: [.command]
+        ))
+    }
+
+    func test_TERMINAL_KEY_FORWARDING_POLICY_flagsChangedAlwaysForwardsModifiers() {
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .flagsChanged,
+            modifierFlags: [.command]
+        ))
+    }
+
+    func test_TERMINAL_KEY_FORWARDING_POLICY_controlSlashMapsToControlUnderscore() {
+        let equivalent = TerminalKeyForwardingPolicy.controlEquivalentCharacters(
+            charactersIgnoringModifiers: "/",
+            modifierFlags: [.control]
+        )
+        XCTAssertEqual(equivalent, "_")
+    }
+
+    func test_TERMINAL_KEY_FORWARDING_POLICY_controlReturnPreservesReturn() {
+        let equivalent = TerminalKeyForwardingPolicy.controlEquivalentCharacters(
+            charactersIgnoringModifiers: "\r",
+            modifierFlags: [.control]
+        )
+        XCTAssertEqual(equivalent, "\r")
+    }
+
+    func test_TERMINAL_KEY_FORWARDING_POLICY_commandControlSlashNotRemapped() {
+        let equivalent = TerminalKeyForwardingPolicy.controlEquivalentCharacters(
+            charactersIgnoringModifiers: "/",
+            modifierFlags: [.command, .control]
+        )
+        XCTAssertNil(equivalent)
     }
 
     // -------------------------------------------------------------------------
@@ -386,12 +456,13 @@ final class TerminalViewTests: XCTestCase {
     // -------------------------------------------------------------------------
 
     func test_TERMINAL_MOUSE_INPUT_documentation() {
-        // mouseDown → GHOSTTY_MOUSE_PRESS + GHOSTTY_MOUSE_LEFT + sendMousePos
-        // mouseUp   → GHOSTTY_MOUSE_RELEASE + GHOSTTY_MOUSE_LEFT
-        // rightMouseDown → GHOSTTY_MOUSE_PRESS + GHOSTTY_MOUSE_RIGHT + sendMousePos
-        // rightMouseUp   → GHOSTTY_MOUSE_RELEASE + GHOSTTY_MOUSE_RIGHT
-        // mouseMoved / mouseDragged → sendMousePos
-        // scrollWheel → ghostty_surface_mouse_scroll(deltaX, deltaY, 0)
+        // mouseDown / mouseUp send the current mouse position before the
+        // button action so SGR reports use the click location.
+        // right/other mouse buttons and left/right/other drags are forwarded.
+        // mouseEntered updates the position; mouseExited sends -1/-1 when no
+        // button is pressed.
+        // scrollWheel sends position, scaled precise deltas, and packed scroll
+        // precision/momentum mods.
         //
         // All verified by code inspection.  Integration tests require a live
         // NSView in a window hierarchy to synthesize NSEvents.
@@ -442,15 +513,16 @@ final class TerminalViewTests: XCTestCase {
 //   - Verify ghostty_surface_key is invoked with correct action/keycode/mods
 //
 // TERMINAL_MOUSE_INPUT:
-//   - Synthesize mouse events and call mouseDown/mouseUp/rightMouseDown/rightMouseUp
+//   - Synthesize mouse events and call mouseDown/mouseUp/rightMouseDown/rightMouseUp/otherMouseDown/otherMouseUp
 //   - Verify ghostty_surface_mouse_button called with correct args
+//   - Verify mouseEntered/mouseExited and all dragged variants send positions
 //
 // TERMINAL_SCROLL_WHEEL:
 //   - Synthesize scroll event, call scrollWheel(with:)
-//   - Verify ghostty_surface_mouse_scroll called with deltaX, deltaY, 0
+//   - Verify ghostty_surface_mouse_scroll called with deltaX, deltaY, and packed precision/momentum mods
 //
 // TERMINAL_DPI_SCALING:
-//   - Place view in a window, verify content scale matches backingScaleFactor
+//   - Place view in a window, verify layer contentsScale and surface content scale match backingScaleFactor
 //
 // TERMINAL_CLIPBOARD_OPERATIONS:
 //   - Trigger write_clipboard_cb and verify NSPasteboard.general content
@@ -462,7 +534,7 @@ final class TerminalViewTests: XCTestCase {
 //   - Resize view, verify ghostty_surface_set_size called with scaled pixels
 //
 // TERMINAL_SURFACE_SET_CONTENT_SCALE:
-//   - Change backingScaleFactor (mock), verify ghostty_surface_set_content_scale
+//   - Change backingScaleFactor (mock), verify ghostty_surface_set_content_scale and ghostty_surface_set_size
 //
 // TERMINAL_SURFACE_FREE_ON_DEINIT:
 //   - Create surface, nil out all references, verify dealloc + free
@@ -471,11 +543,8 @@ final class TerminalViewTests: XCTestCase {
 //   - Assert view.acceptsFirstResponder == true
 //   - Assert view.becomeFirstResponder() == true
 //
-// KNOWN BUGS:
-//   1. flagsChanged always sends GHOSTTY_ACTION_PRESS, even on modifier release.
-//      This causes stuck-modifier state in ghostty.
-//   2. Auto-focus in makeNSView uses asyncAfter(0.1s) which races with
-//      view-in-window timing.  If the view is not yet attached to a window,
-//      focus silently fails.
-//   3. read_clipboard_cb returns false, meaning paste-from-terminal-request
-//      is silently dropped.  This may break programs that query the clipboard.
+// RESIDUAL INTEGRATION COVERAGE:
+//   1. Auto-focus in makeNSView uses asyncAfter(0.1s), so a live-window
+//      integration test should continue to cover first-responder timing.
+//   2. Clipboard, DPI, keyboard, and mouse C calls need mockable Ghostty
+//      bindings or a live Ghostty surface for argument-level assertions.
