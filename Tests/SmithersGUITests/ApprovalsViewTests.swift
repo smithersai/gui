@@ -461,16 +461,16 @@ final class ApprovalsViewTests: XCTestCase {
         XCTAssertTrue(true, "BUG: Toggle icon shows current state, not what you'll switch to")
     }
 
-    // MARK: - BUG: approveNode/denyNode ignore iteration parameter
+    // MARK: - approveNode/denyNode iteration forwarding
 
-    /// BUG DOCUMENTED: SmithersClient.approveNode() and denyNode() accept an
-    /// `iteration` parameter but never use it in the CLI args array.
-    /// The parameter has a default value of 0 and is silently ignored.
-    func testApproveNodeIgnoresIteration() {
-        // func approveNode(runId: String, nodeId: String, iteration: Int = 0, note: String? = nil)
-        //   var args = ["approve", "--run", runId, nodeId]
-        //   // iteration is never added to args!
-        XCTAssertTrue(true, "BUG: iteration parameter is accepted but never passed to CLI")
+    func testApproveNodeForwardsIterationToCLIArgs() {
+        let args = SmithersClient.approveNodeCLIArgs(runId: "run-1", nodeId: "gate", iteration: 2)
+        XCTAssertEqual(args, ["approve", "run-1", "--node", "gate", "--iteration", "2"])
+    }
+
+    func testDenyNodeForwardsIterationToCLIArgs() {
+        let args = SmithersClient.denyNodeCLIArgs(runId: "run-1", nodeId: "gate", iteration: 2)
+        XCTAssertEqual(args, ["deny", "run-1", "--node", "gate", "--iteration", "2"])
     }
 
     // MARK: - BUG: error shadow in catch blocks
