@@ -40,6 +40,7 @@ private func commandMessage(
     cwd: String = "/tmp",
     output: String = "total 0",
     exitCode: Int = 0,
+    itemID: String? = nil,
     id: String = UUID().uuidString
 ) -> ChatMessage {
     ChatMessage(
@@ -47,7 +48,7 @@ private func commandMessage(
         type: .command,
         content: "",
         timestamp: "12:02 PM",
-        command: Command(cmd: cmd, cwd: cwd, output: output, exitCode: exitCode, running: false),
+        command: Command(itemID: itemID, cmd: cmd, cwd: cwd, output: output, exitCode: exitCode, running: false),
         diff: nil
     )
 }
@@ -74,6 +75,40 @@ private func diffMessage(
             snippet: snippet
         )
     )
+}
+
+private func projectSource(_ filename: String) throws -> String {
+    let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let projectDirectory = testsDirectory
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectDirectory.appendingPathComponent(filename)
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+final class ChatMessageDeduplicationTests: XCTestCase {
+
+    func testDeduplicatedChatMessagesKeepsLatestCommandForItemID() {
+        let started = commandMessage(output: "", itemID: "cmd-1", id: "c1")
+        let completed = commandMessage(output: "done", itemID: "cmd-1", id: "c2")
+        let status = statusMessage("status", id: "s1")
+
+        let deduped = deduplicatedChatMessages([started, status, completed])
+
+        XCTAssertEqual(deduped.count, 2)
+        XCTAssertEqual(deduped[0].id, "c2")
+        XCTAssertEqual(deduped[0].command?.output, "done")
+        XCTAssertEqual(deduped[1].id, "s1")
+    }
+
+    func testDeduplicatedChatMessagesLeavesCommandsWithoutItemID() {
+        let first = commandMessage(output: "a", id: "c1")
+        let second = commandMessage(output: "b", id: "c2")
+
+        let deduped = deduplicatedChatMessages([first, second])
+
+        XCTAssertEqual(deduped.map(\.id), ["c1", "c2"])
+    }
 }
 
 // MARK: - ChatView Welcome / Empty State Tests
@@ -513,6 +548,35 @@ final class MessageRowTests: XCTestCase {
         XCTAssertTrue(
             textStrings.contains(where: { $0.contains("+new line") }),
             "Diff snippet should be rendered. Found: \(textStrings)"
+        )
+    }
+}
+
+// MARK: - Text Selection Tests
+
+final class ChatViewTextSelectionTests: XCTestCase {
+
+    /// CHAT_GIT_DIFF_INLINE: Diff snippets should be selectable for copy/paste.
+    func testDiffSnippetEnablesTextSelection() throws {
+        let source = try projectSource("ChatView.swift")
+        XCTAssertNotNil(
+            source.range(
+                of: #"Text\(diff\.snippet\)[\s\S]{0,260}\.textSelection\(\.enabled\)"#,
+                options: .regularExpression
+            ),
+            "Diff snippet Text must apply .textSelection(.enabled)"
+        )
+    }
+
+    /// CHAT_COMMAND_OUTPUT_DISPLAY: Command output should be selectable for copy/paste.
+    func testCommandOutputEnablesTextSelection() throws {
+        let source = try projectSource("ChatView.swift")
+        XCTAssertNotNil(
+            source.range(
+                of: #"Text\(command\.output\)[\s\S]{0,260}\.textSelection\(\.enabled\)"#,
+                options: .regularExpression
+            ),
+            "Command output Text must apply .textSelection(.enabled)"
         )
     }
 }
