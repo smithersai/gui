@@ -105,6 +105,7 @@ struct SQLBrowserView: View {
                     .padding(.horizontal, 8)
                     .padding(.bottom, 10)
                 }
+                .refreshable { await refreshTables() }
             }
         }
         .background(Theme.base.opacity(0.35))
@@ -316,8 +317,7 @@ struct SQLBrowserView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Theme.sidebarSelected : Color.clear)
-            .cornerRadius(8)
+            .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 8)
         }
         .buttonStyle(.plain)
     }
