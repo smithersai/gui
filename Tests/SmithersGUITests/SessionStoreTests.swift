@@ -9,7 +9,7 @@ final class SessionStoreTests: XCTestCase {
     /// Build a session with a given timestamp, bypassing AgentService FFI.
     private func makeSession(
         id: String = UUID().uuidString,
-        title: String = "New Chat",
+        title: String = SessionStore.defaultChatTitle,
         preview: String = "",
         timestamp: Date = Date()
     ) -> Session {
@@ -26,11 +26,11 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertNotNil(UUID(uuidString: id), "Session id should be a valid UUID")
     }
 
-    // MARK: - PLATFORM_SESSION_DEFAULT_TITLE_NEW_CHAT
+    // MARK: - PLATFORM_SESSION_DEFAULT_TITLE
 
     func testNewSessionDefaultTitle() {
         let store = SessionStore()
-        XCTAssertEqual(store.sessions.first?.title, "New Chat")
+        XCTAssertEqual(store.sessions.first?.title, SessionStore.defaultChatTitle)
     }
 
     func testNewSessionEmptyPreview() {
@@ -50,6 +50,23 @@ final class SessionStoreTests: XCTestCase {
         let store = SessionStore()
         store.newSession()
         XCTAssertEqual(store.sessions.count, 2)
+    }
+
+    func testNewSessionCanReuseEmptyPlaceholder() {
+        let store = SessionStore()
+        let firstId = store.activeSessionId
+        store.newSession(reusingEmptyPlaceholder: true)
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(store.activeSessionId, firstId)
+    }
+
+    func testNewSessionCreatesAfterPlaceholderHasMessages() {
+        let store = SessionStore()
+        let firstId = store.activeSessionId
+        store.sendMessage("Start a real chat")
+        store.newSession(reusingEmptyPlaceholder: true)
+        XCTAssertEqual(store.sessions.count, 2)
+        XCTAssertNotEqual(store.activeSessionId, firstId)
     }
 
     func testNewSessionSetsActiveToNewest() {
@@ -270,6 +287,20 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(chat.preview, "My title and preview")
     }
 
+    func testRunTabsAppearInSidebarTabs() {
+        let store = SessionStore()
+        store.addRunTab(runId: "run-123456", title: "Deploy Preview", preview: "RUNNING")
+        let tabs = store.sidebarTabs()
+        XCTAssertTrue(tabs.contains { $0.id == "run:run-123456" && $0.title == "Deploy Preview" })
+    }
+
+    func testSidebarTabsSearchIncludesRunID() {
+        let store = SessionStore()
+        store.addRunTab(runId: "run-needle", title: "Deploy Preview", preview: "RUNNING")
+        let tabs = store.sidebarTabs(matching: "needle")
+        XCTAssertEqual(tabs.map(\.runId), ["run-needle"])
+    }
+
     // MARK: - Edge cases
 
     func testSendMessageToNonExistentSessionIsNoOp() {
@@ -277,7 +308,7 @@ final class SessionStoreTests: XCTestCase {
         store.activeSessionId = "nonexistent-id"
         // Should not crash
         store.sendMessage("Hello")
-        XCTAssertEqual(store.sessions.first?.title, "New Chat")
+        XCTAssertEqual(store.sessions.first?.title, SessionStore.defaultChatTitle)
     }
 
     func testSelectNonExistentSessionSetsIdButNoActiveSession() {
