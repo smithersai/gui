@@ -724,6 +724,8 @@ extension NavDestination {
             return "chat"
         case .dashboard:
             return "dashboard"
+        case .vcsDashboard:
+            return "vcsDashboard"
         case .agents:
             return "agents"
         case .changes:

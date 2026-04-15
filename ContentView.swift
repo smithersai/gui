@@ -335,12 +335,12 @@ struct ContentView: View {
                     .accessibilityIdentifier("view.chat.empty")
             }
         case .terminal(let id):
-            TerminalView(sessionId: id)
+            TerminalView(sessionId: id, onClose: { destination = .dashboard })
                 .id(id)
                 .logLifecycle("TerminalView")
                 .accessibilityIdentifier("view.terminal")
         case .terminalCommand(let binary, let workingDirectory, let name):
-            TerminalView(command: binary, workingDirectory: workingDirectory)
+            TerminalView(command: binary, workingDirectory: workingDirectory, onClose: { destination = .dashboard })
                 .id("\(binary)-\(workingDirectory)")
                 .accessibilityIdentifier("view.terminalCommand.\(name)")
         case .liveRun(let runId, let nodeId):
@@ -384,6 +384,13 @@ struct ContentView: View {
             )
                 .logLifecycle("DashboardView")
                 .accessibilityIdentifier("view.dashboard")
+        case .vcsDashboard:
+            VCSDashboardView(
+                smithers: smithers,
+                onNavigate: { destination = $0 }
+            )
+                .logLifecycle("VCSDashboardView")
+                .accessibilityIdentifier("view.vcsDashboard")
         case .agents:
             AgentsView(smithers: smithers)
                 .logLifecycle("AgentsView")
