@@ -120,7 +120,7 @@ struct RunInspectView: View {
             .accessibilityIdentifier("runinspect.cancelDenyButton")
         } message: {
             if let pendingDenyTask {
-                Text("Deny approval for \(pendingDenyTask.nodeId)\(pendingDenyTask.iteration.map { " iter \($0)" } ?? "") on run \(shortRunID)? This will fail the waiting gate.")
+                Text("Deny approval for \(pendingDenyTask.nodeId)\(iterationSuffix(for: pendingDenyTask)) on run \(shortRunID)? This will fail the waiting gate.")
             } else {
                 Text("Deny this approval? This will fail the waiting gate.")
             }
@@ -567,6 +567,11 @@ struct RunInspectView: View {
 
     private func isApprovalBlockedTask(_ task: RunTask) -> Bool {
         task.state == "blocked" || task.state == "waiting-approval"
+    }
+
+    private func iterationSuffix(for task: RunTask) -> String {
+        guard let iteration = task.iteration else { return "" }
+        return " iter \(iteration)"
     }
 
     private func iconButton(_ icon: String, color: Color, action: @escaping () -> Void) -> some View {

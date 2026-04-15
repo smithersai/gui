@@ -76,6 +76,12 @@ struct LandingsView: View {
         }
     }
 
+    private struct LandingDiffChunk: Identifiable {
+        let id: String
+        let title: String?
+        let diff: String
+    }
+
     private static func normalizedLandingState(_ state: String?) -> String {
         let value = state?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         switch value {
@@ -85,9 +91,51 @@ struct LandingsView: View {
             return "open"
         case "merged", "landed":
             return "merged"
-        default:
+        case "draft", "closed":
             return value
+        case "other":
+            return "other"
+        default:
+            return "other"
         }
+    }
+
+    private static func landingStateRequestFilter(_ state: String?) -> String? {
+        switch normalizedLandingState(state) {
+        case "all", "other":
+            return nil
+        default:
+            return state
+        }
+    }
+
+    private static func landingDiffChunks(from diff: String) -> [LandingDiffChunk] {
+        diff.components(separatedBy: "\n\n------------------------------------------------------------------------\n")
+            .enumerated()
+            .compactMap { index, rawChunk in
+                let trimmed = rawChunk.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+
+                var lines = trimmed.components(separatedBy: "\n")
+                let title: String?
+                if let first = lines.first,
+                   first.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("Change ") {
+                    title = first.trimmingCharacters(in: .whitespacesAndNewlines)
+                    lines.removeFirst()
+                    while let firstLine = lines.first,
+                          firstLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        lines.removeFirst()
+                    }
+                } else {
+                    title = nil
+                }
+
+                return LandingDiffChunk(
+                    id: "\(index):\(title ?? String(trimmed.prefix(32)))",
+                    title: title,
+                    diff: lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+                )
+            }
     }
 
     private var selectedLanding: Landing? {
@@ -149,6 +197,8 @@ struct LandingsView: View {
                 Button("Open") { stateFilter = "open" }
                 Button("Draft") { stateFilter = "draft" }
                 Button("Merged") { stateFilter = "merged" }
+                Button("Closed") { stateFilter = "closed" }
+                Button("Other") { stateFilter = "other" }
             } label: {
                 HStack(spacing: 4) {
                     Text(stateFilter?.capitalized ?? "All")
