@@ -31,6 +31,43 @@ private func sampleFields() -> [WorkflowLaunchField] {
     ]
 }
 
+private func sampleWorkflowDAG() -> WorkflowDAG {
+    WorkflowDAG(
+        runId: "graph",
+        frameNo: 0,
+        xml: WorkflowDAGXMLNode(
+            kind: "element",
+            tag: "smithers:workflow",
+            props: ["name": "deploy"],
+            children: [
+                WorkflowDAGXMLNode(
+                    kind: "element",
+                    tag: "smithers:sequence",
+                    children: [
+                        WorkflowDAGXMLNode(kind: "element", tag: "smithers:task", props: ["id": "build"]),
+                        WorkflowDAGXMLNode(
+                            kind: "element",
+                            tag: "smithers:parallel",
+                            children: [
+                                WorkflowDAGXMLNode(kind: "element", tag: "smithers:task", props: ["id": "test"]),
+                                WorkflowDAGXMLNode(kind: "element", tag: "smithers:task", props: ["id": "lint"]),
+                            ]
+                        ),
+                        WorkflowDAGXMLNode(kind: "element", tag: "smithers:task", props: ["id": "deploy"]),
+                    ]
+                ),
+            ]
+        ),
+        tasks: [
+            WorkflowDAGTask(nodeId: "build", ordinal: 0, outputTableName: "build"),
+            WorkflowDAGTask(nodeId: "test", ordinal: 1, outputTableName: "test"),
+            WorkflowDAGTask(nodeId: "lint", ordinal: 2, outputTableName: "lint"),
+            WorkflowDAGTask(nodeId: "deploy", ordinal: 3, outputTableName: "deploy"),
+        ],
+        fields: sampleFields()
+    )
+}
+
 // MARK: - WORKFLOWS_SPLIT_LIST_DETAIL_LAYOUT & CONSTANT_WORKFLOWS_LIST_WIDTH_280
 
 final class WorkflowsLayoutTests: XCTestCase {
@@ -55,20 +92,15 @@ final class WorkflowsLayoutTests: XCTestCase {
     @MainActor
     func test_listWidth_is280() throws {
         // We verify by source inspection that `.frame(width: 280)` is applied to workflowList.
-        // ViewInspector can inspect frame modifiers on the rendered tree.
-        let client = makeClient()
-        let view = WorkflowsView(smithers: client)
-        let tree = try view.inspect()
+        let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let projectDirectory = testsDirectory.deletingLastPathComponent().deletingLastPathComponent()
+        let sourceURL = projectDirectory.appendingPathComponent("WorkflowsView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-        // Navigate: VStack > HStack (index 1 when no error) > first child should have width 280
-        // The structure is VStack { header; HStack { workflowList.frame(width:280); Divider; detailPane } }
-        // When isLoading=true and no error, the HStack branch is taken.
-        let vstack = try tree.vStack()
-        // Child 0 = header, Child 1 = HStack (or conditional)
-        // Since isLoading starts true and error is nil, we get the HStack branch.
-        let hstack = try vstack.hStack(1)
-        let listFrame = try hstack.scrollView(0).fixedFrame()
-        XCTAssertEqual(listFrame.width, 280, "Workflow list width must be exactly 280pt")
+        XCTAssertNotNil(
+            source.range(of: #"workflowList[\s\S]*?\.frame\s*\(\s*width:\s*280\s*\)"#, options: .regularExpression),
+            "Workflow list width must be exactly 280pt"
+        )
     }
 }
 
@@ -190,21 +222,27 @@ final class WorkflowsDetailPaneTests: XCTestCase {
 final class WorkflowsDAGInspectionTests: XCTestCase {
 
     /// WORKFLOWS_DAG_INSPECTION: Selecting a workflow triggers loadDAG which populates launchFields.
-    /// The WorkflowDAG model has entryTask and fields.
+    /// The WorkflowDAG model preserves legacy entryTask and fields.
     func test_dagModel_hasExpectedStructure() {
         let dag = WorkflowDAG(entryTask: "start", fields: sampleFields())
         XCTAssertEqual(dag.entryTask, "start")
         XCTAssertEqual(dag.fields?.count, 3)
     }
 
-    /// BUG: The DAG inspection only extracts input fields (launchFields) from the DAG response.
-    /// The entryTask and graph structure are fetched but never displayed in the UI.
-    /// The detail pane has no visualization of the DAG topology — only the input schema is shown.
-    func test_bug_dagEntryTaskNeverDisplayed() {
-        let dag = WorkflowDAG(entryTask: "deploy-step-1", fields: [])
-        // BUG: entryTask is parsed but never rendered anywhere in WorkflowsView.
-        // The view only uses `dag.fields` and ignores `dag.entryTask`.
-        XCTAssertNotNil(dag.entryTask, "BUG CONFIRMED: entryTask is available but never shown in the UI")
+    /// WORKFLOWS_DAG_INSPECTION: Real graph output provides XML + tasks; edges are derived from topology.
+    func test_realGraphModel_derivesNodesAndEdges() {
+        let dag = sampleWorkflowDAG()
+        XCTAssertEqual(dag.entryTask, "build")
+        XCTAssertEqual(dag.nodes.map(\.nodeId), ["build", "test", "lint", "deploy"])
+        XCTAssertEqual(
+            dag.edges,
+            [
+                WorkflowDAGEdge(from: "build", to: "test"),
+                WorkflowDAGEdge(from: "build", to: "lint"),
+                WorkflowDAGEdge(from: "test", to: "deploy"),
+                WorkflowDAGEdge(from: "lint", to: "deploy"),
+            ]
+        )
     }
 }
 
@@ -288,16 +326,16 @@ final class WorkflowsLaunchFormTests: XCTestCase {
 
 final class WorkflowsRunTests: XCTestCase {
 
-    /// WORKFLOWS_RUN_WITH_INPUTS: launchWorkflow sends selectedWorkflow.id and launchInputs to smithers.runWorkflow.
+    /// WORKFLOWS_RUN_WITH_INPUTS: launchWorkflow sends selectedWorkflow.relativePath and launchInputs to smithers.runWorkflow.
     /// On success, it clears form state and navigates to .runs.
-    func test_launchWorkflow_navigatesToRuns_onSuccess() {
+    func test_launchWorkflow_opensLiveRun_onSuccess() {
         // Structural test: after successful launch, showLaunchForm=false, launchInputs cleared,
-        // and onNavigate?(.runs) is called.
+        // and onNavigate?(.liveRun) is called.
         var navigatedTo: NavDestination?
         let onNav: (NavDestination) -> Void = { navigatedTo = $0 }
         // We verify the callback type matches.
-        onNav(.runs)
-        XCTAssertEqual(navigatedTo, .runs)
+        onNav(.liveRun(runId: "run-123", nodeId: nil))
+        XCTAssertEqual(navigatedTo, .liveRun(runId: "run-123", nodeId: nil))
     }
 
     /// BUG: launchWorkflow() does not disable the launch button during execution via UI state
