@@ -282,7 +282,7 @@ struct IssuesView: View {
                         Text("Close")
                     }
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(Theme.textPrimary)
                     .padding(.horizontal, 12)
                     .frame(height: 30)
                     .background(Theme.accent)
@@ -384,10 +384,7 @@ struct IssuesView: View {
                         Divider().background(Theme.border)
 
                         if let body = issue.body, !body.isEmpty {
-                            Text(body)
-                                .font(.system(size: 12))
-                                .foregroundColor(Theme.textSecondary)
-                                .textSelection(.enabled)
+                            MarkdownContentView(content: body)
                         }
                     }
                     .padding(20)

@@ -310,11 +310,7 @@ struct TicketsView: View {
                     .frame(height: 48)
                     .border(Theme.border, edges: [.bottom])
 
-                    TextEditor(text: $detailContent)
-                        .font(.system(size: 12, design: .monospaced))
-                        .scrollContentBackground(.hidden)
-                        .background(Theme.base)
-                        .padding(1)
+                    MarkdownTextEditor(text: $detailContent)
                         .accessibilityIdentifier("tickets.detail.editor")
                 }
             } else {
