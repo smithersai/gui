@@ -116,6 +116,12 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertEqual(c?.id, "smithers.runs")
     }
 
+    func testSlashCmdSnapshots() {
+        let c = cmd(named: "snapshots")
+        XCTAssertNotNil(c)
+        XCTAssertEqual(c?.id, "smithers.snapshots")
+    }
+
     func testSlashCmdWorkflows() {
         let c = cmd(named: "workflows")
         XCTAssertNotNil(c)
@@ -248,6 +254,11 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertTrue(c?.aliases.contains("vcs") ?? false)
     }
 
+    func testAliasSnapshotsTimeline() {
+        let c = cmd(named: "snapshots")
+        XCTAssertTrue(c?.aliases.contains("timeline") ?? false)
+    }
+
     func testAliasIssuesTickets() {
         let c = cmd(named: "issues")
         XCTAssertTrue(c?.aliases.contains("tickets") ?? false)
@@ -284,7 +295,7 @@ final class SlashCommandsTests: XCTestCase {
 
     func testCategorySmithers() {
         let smithersCommands = builtIn.filter { $0.category == .smithers }
-        XCTAssertEqual(smithersCommands.count, 19)
+        XCTAssertEqual(smithersCommands.count, 20)
     }
 
     func testCategoryAction() {

@@ -508,7 +508,7 @@ final class ContentViewNavigationTests: XCTestCase {
     func testAllDestinationsRoutedInContentView() {
         // Verify all NavDestination cases are handled by checking each case maps to a view.
         // This is a compile-time guarantee from the exhaustive switch in ContentView,
-        // but we test the enum has exactly 20 static cases.
+        // but we test the enum has exactly 21 static cases.
         let all: [NavDestination] = [
             .chat, .dashboard, .agents, .changes, .runs, .snapshots, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,

@@ -232,16 +232,16 @@ final class ContentViewTests: XCTestCase {
     }
 
     // -------------------------------------------------------------------------
-    // PLATFORM_DESTINATION_ROUTING — all 20 static destinations
+    // PLATFORM_DESTINATION_ROUTING — all 21 static destinations
     // -------------------------------------------------------------------------
 
     func testNavDestinationEnumHasExactly20StaticCases() {
         let all: [NavDestination] = [
-            .chat, .terminal(), .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
+            .chat, .terminal(), .dashboard, .agents, .changes, .runs, .snapshots, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
-        XCTAssertEqual(all.count, 20)
+        XCTAssertEqual(all.count, 21)
     }
 
     func testNavDestinationHashable() {
@@ -306,6 +306,11 @@ final class ContentViewTests: XCTestCase {
     func testRunsDestinationLabel() {
         XCTAssertEqual(NavDestination.runs.label, "Runs")
         XCTAssertEqual(NavDestination.runs.icon, "play.circle")
+    }
+
+    func testSnapshotsDestinationLabel() {
+        XCTAssertEqual(NavDestination.snapshots.label, "Snapshots")
+        XCTAssertEqual(NavDestination.snapshots.icon, "camera")
     }
 
     func testWorkflowsDestinationLabel() {
@@ -410,14 +415,14 @@ final class ContentViewTests: XCTestCase {
         // .issues -> IssuesView
         // .workspaces -> WorkspacesView
         //
-        // Swift enforces exhaustive switch, so all 20 static routes are covered.
+        // Swift enforces exhaustive switch, so all 21 static routes are covered.
         // No default case means adding a new NavDestination case will cause a compiler error.
         let count = [
-            NavDestination.chat, .terminal(), .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
+            NavDestination.chat, .terminal(), .dashboard, .agents, .changes, .runs, .snapshots, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ].count
-        XCTAssertEqual(count, 20, "All 20 static destinations must be routed")
+        XCTAssertEqual(count, 21, "All 21 static destinations must be routed")
     }
 
     // -------------------------------------------------------------------------
@@ -717,7 +722,7 @@ final class NavDestinationRoutingTests: XCTestCase {
 
     func testAllDestinationsHaveUniqueLabels() {
         let all: [NavDestination] = [
-            .chat, .terminal(), .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
+            .chat, .terminal(), .dashboard, .agents, .changes, .runs, .snapshots, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
@@ -727,7 +732,7 @@ final class NavDestinationRoutingTests: XCTestCase {
 
     func testAllDestinationsHaveUniqueIcons() {
         let all: [NavDestination] = [
-            .chat, .terminal(), .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
+            .chat, .terminal(), .dashboard, .agents, .changes, .runs, .snapshots, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
@@ -743,13 +748,13 @@ final class NavDestinationRoutingTests: XCTestCase {
 
     func testSidebarSmithersNavOrder() {
         let smithersExpected: [NavDestination] = [
-            .dashboard, .agents, .runs, .workflows, .triggers, .approvals,
+            .dashboard, .agents, .runs, .snapshots, .workflows, .triggers, .approvals,
             .prompts, .scores, .memory, .search, .sql, .workspaces,
         ]
         let vcsExpected: [NavDestination] = [
             .changes, .jjhubWorkflows, .landings, .tickets, .issues,
         ]
-        XCTAssertEqual(smithersExpected.count, 12, "Smithers nav excludes chat, terminal, VCS, and tab routes")
+        XCTAssertEqual(smithersExpected.count, 13, "Smithers nav excludes chat, terminal, VCS, and tab routes")
         XCTAssertEqual(vcsExpected.count, 5, "VCS nav is split out from Smithers")
     }
 
