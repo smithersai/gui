@@ -14,6 +14,7 @@ struct LandingsView: View {
     @State private var loadGeneration = 0
     @State private var detailTab: DetailTab = .info
     @State private var actionError: String?
+    @State private var pendingLandTarget: Landing?
 
     @State private var showCreate = false
     @State private var newTitle = ""
@@ -178,6 +179,37 @@ struct LandingsView: View {
         }
         .background(Theme.surface1)
         .task(id: stateFilter) { await loadLandings() }
+        .confirmationDialog(
+            "Land Landing",
+            isPresented: Binding(
+                get: { pendingLandTarget != nil },
+                set: { if !$0 { pendingLandTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Land", role: .destructive) {
+                if let landing = pendingLandTarget {
+                    pendingLandTarget = nil
+                    Task { await landLanding(landing) }
+                }
+            }
+            .accessibilityIdentifier("landings.confirmLandButton")
+
+            Button("Cancel", role: .cancel) {
+                pendingLandTarget = nil
+            }
+            .accessibilityIdentifier("landings.cancelLandButton")
+        } message: {
+            if let landing = pendingLandTarget {
+                if let number = landing.number {
+                    Text("Land #\(number) \"\(landing.title)\"? This will merge it and cannot be undone.")
+                } else {
+                    Text("Land \"\(landing.title)\"? This will merge it and cannot be undone.")
+                }
+            } else {
+                Text("Land this landing? This will merge it and cannot be undone.")
+            }
+        }
         .sheet(item: $reviewAction) { action in
             reviewSheet(action)
         }
@@ -381,7 +413,7 @@ struct LandingsView: View {
                         Text("Create")
                     }
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(Theme.textPrimary)
                     .padding(.horizontal, 12)
                     .frame(height: 28)
                     .background(Theme.accent)
@@ -450,7 +482,7 @@ struct LandingsView: View {
                             .buttonStyle(.plain)
 
                             if canLandLanding(landing) {
-                                Button(action: { Task { await landLanding(landing) } }) {
+                                Button(action: { requestLandLanding(landing) }) {
                                     HStack(spacing: 4) {
                                         Image(systemName: "arrow.down.to.line")
                                         Text("Land")
@@ -628,7 +660,7 @@ struct LandingsView: View {
                         Text(action.submitLabel)
                     }
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(Theme.textPrimary)
                     .padding(.horizontal, 12)
                     .frame(height: 30)
                     .background(Theme.accent)
@@ -732,6 +764,10 @@ struct LandingsView: View {
     private func beginReview(_ action: ReviewAction) {
         reviewBody = ""
         reviewAction = action
+    }
+
+    private func requestLandLanding(_ landing: Landing) {
+        pendingLandTarget = landing
     }
 
     private func selectDetailTab(_ tab: DetailTab, landing: Landing) {
