@@ -2,9 +2,6 @@ import XCTest
 import ViewInspector
 @testable import SmithersGUI
 
-extension RunInspectView: @retroactive Inspectable {}
-extension SQLBrowserView: @retroactive Inspectable {}
-
 @MainActor
 final class HighCoverageViewRenderTests: XCTestCase {
     private func client() -> SmithersClient {
@@ -57,7 +54,7 @@ final class HighCoverageViewRenderTests: XCTestCase {
         assertText("No results yet. Run a query to see output.", existsIn: inspected)
     }
 
-    func testScoresViewInitialRenderCoversTabsSummaryMetricsAndAggregateHeaders() throws {
+    func testScoresViewInitialRenderCoversTabsSummaryMetricsAndPerScorerSection() throws {
         let inspected = try ScoresView(smithers: client()).inspect()
 
         assertText("Scores", existsIn: inspected)
@@ -71,8 +68,7 @@ final class HighCoverageViewRenderTests: XCTestCase {
         assertText("Avg duration", existsIn: inspected)
         assertText("Cache hit rate", existsIn: inspected)
         assertText("Est. cost", existsIn: inspected)
-        assertText("Scorer", existsIn: inspected)
-        assertText("Count", existsIn: inspected)
+        assertText("Per-scorer statistics", existsIn: inspected)
     }
 
     func testRunInspectViewInitialRenderCoversToolbarMetadataActionsAndLoadingState() throws {

@@ -352,6 +352,64 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(chat.preview, "My title and preview")
     }
 
+    func testPinnedChatSessionsSortBeforeNewerSessions() {
+        let store = SessionStore()
+        let pinnedId = store.activeSessionId!
+        store.sendMessage("Pinned topic")
+        store.toggleSessionPinned(pinnedId)
+
+        store.newSession()
+        store.sendMessage("Newer topic")
+
+        let tabs = store.sidebarTabs()
+        XCTAssertEqual(tabs.first?.chatSessionId, pinnedId)
+        XCTAssertEqual(tabs.first?.isPinned, true)
+        XCTAssertEqual(tabs.first?.group, "Pinned")
+    }
+
+    func testArchiveSessionHidesSessionAndMovesActiveSession() {
+        let store = SessionStore()
+        let firstId = store.activeSessionId!
+        store.sendMessage("Archive me")
+        store.newSession()
+        let secondId = store.activeSessionId!
+
+        store.archiveSession(secondId)
+
+        XCTAssertEqual(store.activeSessionId, firstId)
+        XCTAssertFalse(store.chatSessions().contains { $0.id == secondId })
+        XCTAssertTrue(store.sessions.first(where: { $0.id == secondId })?.isArchived ?? false)
+    }
+
+    func testUnreadSessionClearsWhenSelected() {
+        let store = SessionStore()
+        let firstId = store.activeSessionId!
+        store.newSession()
+
+        store.toggleSessionUnread(firstId)
+        XCTAssertTrue(store.sessions.first(where: { $0.id == firstId })?.isUnread ?? false)
+
+        store.selectSession(firstId)
+        XCTAssertFalse(store.sessions.first(where: { $0.id == firstId })?.isUnread ?? true)
+    }
+
+    func testForkSessionIntoLocalCopiesMessagesAndSelectsFork() {
+        let store = SessionStore()
+        let sourceId = store.activeSessionId!
+        store.sendMessage("Fork this thread")
+
+        let forkId = store.forkSessionIntoLocal(sourceId)
+
+        XCTAssertNotNil(forkId)
+        XCTAssertEqual(store.activeSessionId, forkId)
+        XCTAssertEqual(store.sessions.first?.agent.workingDirectory, store.sessionWorkingDirectory(sourceId))
+        XCTAssertTrue(
+            store.activeAgent?.messages.contains(where: {
+                $0.type == .user && $0.content == "Fork this thread"
+            }) ?? false
+        )
+    }
+
     func testRunTabsAppearInSidebarTabs() {
         let store = SessionStore()
         store.addRunTab(runId: "run-123456", title: "Deploy Preview", preview: "RUNNING")
@@ -554,6 +612,20 @@ private final class StubSessionPersistence: SessionPersisting {
     func createSession(id _: String, title _: String) throws {}
 
     func renameSession(id _: String, title _: String) throws {}
+
+    func updateSessionFlags(id: String, isPinned: Bool, isArchived: Bool, isUnread: Bool) throws {
+        guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let current = sessions[idx]
+        sessions[idx] = PersistedSessionSummary(
+            id: current.id,
+            title: current.title,
+            preview: current.preview,
+            updatedAt: current.updatedAt,
+            isPinned: isPinned,
+            isArchived: isArchived,
+            isUnread: isUnread
+        )
+    }
 
     func deleteSession(id: String) throws {
         sessions.removeAll { $0.id == id }

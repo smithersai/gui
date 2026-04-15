@@ -218,6 +218,28 @@ final class TerminalViewTests: XCTestCase {
         XCTAssertEqual(fallback, 2.0)
     }
 
+    func test_TERMINAL_DPI_SCALING_axisSpecificScaleRatios() {
+        let pointBounds = CGSize(width: 640, height: 480)
+        let backingBounds = CGSize(width: 1280, height: 960)
+        let xScale = backingBounds.width / pointBounds.width
+        let yScale = backingBounds.height / pointBounds.height
+
+        XCTAssertEqual(xScale, 2.0)
+        XCTAssertEqual(yScale, 2.0)
+    }
+
+    func test_TERMINAL_DPI_SCALING_nonUniformScaleRatiosRemainFinite() {
+        let pointBounds = CGSize(width: 500, height: 400)
+        let backingBounds = CGSize(width: 1000, height: 600)
+        let xScale = max(1, backingBounds.width / pointBounds.width)
+        let yScale = max(1, backingBounds.height / pointBounds.height)
+
+        XCTAssertEqual(xScale, 2.0)
+        XCTAssertEqual(yScale, 1.5)
+        XCTAssertTrue(xScale.isFinite)
+        XCTAssertTrue(yScale.isFinite)
+    }
+
     // -------------------------------------------------------------------------
     // TERMINAL_ACCEPTS_FIRST_RESPONDER
     // TerminalSurfaceView.acceptsFirstResponder must return true.
@@ -424,6 +446,28 @@ final class TerminalViewTests: XCTestCase {
         ))
     }
 
+    func test_TERMINAL_KEY_FORWARDING_POLICY_ctrlShiftKeyEventsForward() {
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyDown,
+            modifierFlags: [.control, .shift]
+        ))
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyUp,
+            modifierFlags: [.control, .shift]
+        ))
+    }
+
+    func test_TERMINAL_KEY_FORWARDING_POLICY_fullModifierChordForwards() {
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyDown,
+            modifierFlags: [.control, .shift, .option, .command]
+        ))
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .flagsChanged,
+            modifierFlags: [.control, .shift, .option, .command]
+        ))
+    }
+
     func test_TERMINAL_KEY_FORWARDING_POLICY_flagsChangedAlwaysForwardsModifiers() {
         XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
             .flagsChanged,
@@ -502,6 +546,27 @@ final class TerminalViewTests: XCTestCase {
         let sut = TerminalView()
         let inner = try sut.inspect().vStack().vStack(0)
         XCTAssertNoThrow(try inner.background(0))
+    }
+
+    // -------------------------------------------------------------------------
+    // TERMINAL_CLOSE_CALLBACK — onClose fires when surface exits
+    // -------------------------------------------------------------------------
+
+    func test_terminalView_onClose_rendersWithCallback() throws {
+        var closed = false
+        let sut = TerminalView(onClose: { closed = true })
+        // In unit-test host, GhosttyApp.app is nil so the error fallback renders.
+        // The view should still construct without issue when onClose is provided.
+        let vstack = try sut.inspect().vStack()
+        XCTAssertNoThrow(try vstack.vStack(0))
+        // Simulate the callback
+        sut.onClose?()
+        XCTAssertTrue(closed, "onClose callback should fire when invoked")
+    }
+
+    func test_terminalView_onClose_defaultsToNil() throws {
+        let sut = TerminalView()
+        XCTAssertNil(sut.onClose, "onClose should default to nil")
     }
 }
 

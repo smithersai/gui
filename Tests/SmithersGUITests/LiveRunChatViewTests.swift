@@ -1000,6 +1000,26 @@ final class LiveRunChatAppendStreamBlockTests: XCTestCase {
         XCTAssertEqual(logic.allBlocks[0].content, "Hello world")
     }
 
+    func testAppendStreamBlockCollapsesRetransmittedCumulativeAssistantChunk() {
+        var logic = LiveRunChatLogic(runId: "r1", nodeId: nil)
+        let block1 = makeBlock(id: "stream-1", content: "Hello world")
+        let block2 = makeBlock(id: "stream-1", content: "Hello worldHello world!")
+        logic.appendStreamBlock(block1)
+        logic.appendStreamBlock(block2)
+        XCTAssertEqual(logic.allBlocks.count, 1)
+        XCTAssertEqual(logic.allBlocks[0].content, "Hello world!")
+    }
+
+    func testAppendStreamBlockMergesOutOfOrderInteriorOverlapChunk() {
+        var logic = LiveRunChatLogic(runId: "r1", nodeId: nil)
+        let block1 = makeBlock(id: "stream-1", content: "Hello world, this is old")
+        let block2 = makeBlock(id: "stream-1", content: "world, this is new")
+        logic.appendStreamBlock(block1)
+        logic.appendStreamBlock(block2)
+        XCTAssertEqual(logic.allBlocks.count, 1)
+        XCTAssertEqual(logic.allBlocks[0].content, "Hello world, this is new")
+    }
+
     func testAppendStreamBlockNilIdNotDeduped() {
         var logic = LiveRunChatLogic(runId: "r1", nodeId: nil)
         let block1 = makeBlock(id: nil, content: "a")

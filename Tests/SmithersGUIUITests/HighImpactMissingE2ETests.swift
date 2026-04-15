@@ -200,6 +200,81 @@ final class HighImpactMissingE2ETests: SmithersGUIUITestCase {
         XCTAssertTrue(app.staticTexts["TEXT"].exists)
     }
 
+    func testSQLFixtureQueryExecutesAndRendersResultRows() {
+        navigate(to: "SQL Browser", expectedViewIdentifier: "view.sql")
+
+        XCTAssertTrue(app.staticTexts["_smithers_runs"].waitForExistence(timeout: 5))
+        app.staticTexts["_smithers_runs"].click()
+
+        let runQuery = app.buttons
+            .matching(NSPredicate(format: "label CONTAINS %@", "Run Query"))
+            .firstMatch
+        XCTAssertTrue(runQuery.waitForExistence(timeout: 5))
+        XCTAssertTrue(runQuery.isEnabled)
+        runQuery.click()
+
+        XCTAssertTrue(app.staticTexts["run_id"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["status"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["ui-run-running-001"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["finished"].waitForExistence(timeout: 5))
+    }
+
+    func testScoresMetricsTabShowsTokenLatencyAndCostFixtures() {
+        navigate(to: "Scores", expectedViewIdentifier: "view.scores")
+
+        let metricsTab = app.buttons
+            .matching(NSPredicate(format: "label == %@", "Metrics"))
+            .firstMatch
+        XCTAssertTrue(metricsTab.waitForExistence(timeout: 5))
+        metricsTab.click()
+
+        XCTAssertTrue(app.staticTexts["Token Usage"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Latency"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Cost Tracking"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["33.2K"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["812ms"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["$0.358800 USD"].waitForExistence(timeout: 5))
+    }
+
+    func testRunInspectorWaitingApprovalShowsActionableGateControls() {
+        navigate(to: "Runs", expectedViewIdentifier: "view.runs")
+
+        waitForElement("runs.inspect.ui-run-approval-001").click()
+        XCTAssertTrue(element("view.runinspect").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Release Gate"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["WAITING APPROVAL"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Deploy gate"].waitForExistence(timeout: 5))
+
+        let approve = waitForElement("runinspect.action.approve")
+        let deny = waitForElement("runinspect.action.deny")
+        XCTAssertTrue(approve.isEnabled)
+        XCTAssertTrue(deny.isEnabled)
+
+        deny.click()
+        waitForElement("runinspect.cancelDenyButton").click()
+        XCTAssertTrue(element("view.runinspect").waitForExistence(timeout: 5))
+    }
+
+    func testLiveRunChatShowsLatestAttemptTranscriptAndContextPane() {
+        navigate(to: "Runs", expectedViewIdentifier: "view.runs")
+
+        waitForElement("runs.chat.ui-run-active-001").click()
+        XCTAssertTrue(element("view.liveRun").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Live Run Chat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Second attempt is active with updated context."].waitForExistence(timeout: 5))
+
+        let contextButton = app.buttons["Context"]
+        XCTAssertTrue(contextButton.waitForExistence(timeout: 5))
+        contextButton.click()
+
+        XCTAssertTrue(app.staticTexts["Context"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Workflow"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Deploy Preview"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Status"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["running"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Blocks"].waitForExistence(timeout: 5))
+    }
+
     private func openWorkflowLaunchTab() {
         navigate(to: "Workflows", expectedViewIdentifier: "view.workflows")
         waitForElement("workflow.row.deploy-preview").click()

@@ -30,6 +30,13 @@ private func sampleLandings() -> [Landing] {
     ]
 }
 
+private func projectSource(_ filename: String) throws -> String {
+    let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let projectDirectory = testsDirectory.deletingLastPathComponent().deletingLastPathComponent()
+    let sourceURL = projectDirectory.appendingPathComponent(filename)
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
 @MainActor
 private func landingSplitLayout(
     in tree: InspectableView<some BaseViewType>
@@ -322,9 +329,20 @@ final class LandingsActionsTests: XCTestCase {
 
     /// LANDINGS_LAND: Land button calls reviewLanding with action "land".
     @MainActor
-    func test_landAction_callsReviewWithLand() throws {
-        // Verified by source: landLanding calls smithers.reviewLanding(number:action:"land",body:nil)
-        XCTAssertTrue(true, "Land action verified")
+    func test_landAction_requiresConfirmationDialog() throws {
+        let source = try projectSource("LandingsView.swift")
+        XCTAssertTrue(
+            source.contains("confirmationDialog(\n            \"Land Landing\""),
+            "Land action should require an explicit confirmation dialog"
+        )
+        XCTAssertTrue(
+            source.contains("Button(\"Cancel\", role: .cancel)"),
+            "Land confirmation should let users cancel"
+        )
+        XCTAssertTrue(
+            source.contains("Button(action: { requestLandLanding(landing) })"),
+            "Land button should request confirmation instead of executing immediately"
+        )
     }
 
     /// LANDINGS_APPROVE & LANDINGS_LAND: Both buttons hidden when state == "landed".

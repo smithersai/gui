@@ -82,6 +82,26 @@ final class SQLiteSessionPersistenceDirectTests: XCTestCase {
         XCTAssertEqual(try persistence.loadSessions().first?.preview, "")
     }
 
+    func testSessionFlagsArePersisted() throws {
+        try requireSQLite3()
+        let tempDirectory = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        let persistence = SQLiteSessionPersistence(workingDirectory: tempDirectory.path)
+
+        try persistence.createSession(id: "session-1", title: "Flagged")
+        try persistence.updateSessionFlags(
+            id: "session-1",
+            isPinned: true,
+            isArchived: true,
+            isUnread: true
+        )
+
+        let summary = try XCTUnwrap(persistence.loadSessions().first)
+        XCTAssertTrue(summary.isPinned)
+        XCTAssertTrue(summary.isArchived)
+        XCTAssertTrue(summary.isUnread)
+    }
+
     func testDeleteSessionRemovesSessionAndMessages() throws {
         try requireSQLite3()
         let tempDirectory = try makeTempDirectory()

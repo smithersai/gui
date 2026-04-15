@@ -264,9 +264,23 @@ final class ContentViewTests: XCTestCase {
 
     func testLiveRunRouteIsMappedOnce() throws {
         let source = try projectSource("ContentView.swift")
-        let liveRunCaseCount = source.components(separatedBy: "case .liveRun").count - 1
+        guard let destinationSwitchStart = source.range(of: "switch destination {"),
+              let runInspectCase = source.range(
+                  of: "case .runInspect",
+                  range: destinationSwitchStart.upperBound..<source.endIndex
+              ) else {
+            XCTFail("Could not locate detailContent destination switch in ContentView.swift")
+            return
+        }
 
-        XCTAssertEqual(liveRunCaseCount, 1, "ContentView should define exactly one .liveRun switch case")
+        let destinationSwitchPrefix = String(source[destinationSwitchStart.lowerBound..<runInspectCase.lowerBound])
+        let liveRunCaseCount = destinationSwitchPrefix.components(separatedBy: "case .liveRun").count - 1
+
+        XCTAssertEqual(
+            liveRunCaseCount,
+            1,
+            "ContentView detailContent switch should define exactly one .liveRun case before .runInspect"
+        )
         assertSource(
             source,
             matches: #"case\s+\.liveRun\(let\s+runId,\s*let\s+nodeId\):[\s\S]*?LiveRunChatView\s*\([\s\S]*?runId:\s*runId[\s\S]*?nodeId:\s*nodeId"#,
