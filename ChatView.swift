@@ -191,7 +191,7 @@ struct ChatView: View {
     }
 
     private var shouldShowTargetPicker: Bool {
-        smithers != nil && showTargetPicker
+        smithers != nil && showTargetPicker && agent.messages.isEmpty
     }
 
     private var headerBusy: Bool {
@@ -899,17 +899,15 @@ struct ChatView: View {
                                 .frame(height: 1)
                         }
 
-                        // Grid of agents
                         LazyVGrid(columns: [
-                            GridItem(.flexible(), spacing: 10),
-                            GridItem(.flexible(), spacing: 10),
-                        ], spacing: 10) {
+                            GridItem(.adaptive(minimum: 280), spacing: 12)
+                        ], spacing: 12) {
                             ForEach(externalTargets) { target in
                                 Button(action: { selectTarget(target) }) {
                                     HStack(spacing: 12) {
                                         ZStack {
                                             RoundedRectangle(cornerRadius: 8)
-                                                .fill(Color.white.opacity(0.04))
+                                                .fill(Theme.sidebarHover)
                                                 .frame(width: 36, height: 36)
                                             Image(systemName: agentIconName(target.name))
                                                 .font(.system(size: 14))
@@ -1004,9 +1002,9 @@ struct ChatView: View {
                     .accessibilityIdentifier("chat.target.refresh")
                 }
             }
-            .padding(.horizontal, 32)
+            .padding(.horizontal, 48)
             .padding(.bottom, 20)
-            .frame(maxWidth: 640)
+            .frame(maxWidth: 1024)
             .frame(maxWidth: .infinity)
         }
         .background(Theme.surface1)
