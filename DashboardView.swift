@@ -1213,6 +1213,20 @@ struct ApprovalRow: View {
 
 // MARK: - Shared UI Components
 
+struct RunElapsedText: View {
+    let run: RunSummary
+
+    var body: some View {
+        if run.status == .running || run.status == .waitingApproval {
+            TimelineView(.periodic(from: Date(), by: 1)) { _ in
+                Text(run.elapsedString)
+            }
+        } else {
+            Text(run.elapsedString)
+        }
+    }
+}
+
 struct StatCard: View {
     let title: String
     let value: String

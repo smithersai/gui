@@ -46,7 +46,7 @@ struct RunSummary: Identifiable, Codable {
     var elapsedString: String {
         guard let start = startedAt else { return "" }
         let end = finishedAt ?? Date()
-        let seconds = Int(end.timeIntervalSince(start))
+        let seconds = max(0, Int(end.timeIntervalSince(start)))
         if seconds < 60 { return "\(seconds)s" }
         if seconds < 3600 { return seconds % 60 == 0 ? "\(seconds / 60)m" : "\(seconds / 60)m \(seconds % 60)s" }
         return "\(seconds / 3600)h \(seconds / 60 % 60)m"

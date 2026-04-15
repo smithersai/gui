@@ -3753,11 +3753,13 @@ class SmithersClient: ObservableObject {
         for run in runs where run.status == .waitingApproval {
             if let inspection = try? await inspectRun(run.runId) {
                 for task in inspection.tasks where task.state == "blocked" || task.state == "waiting-approval" {
+                    let approvalID = task.iteration.map { "\(run.runId):\(task.nodeId):\($0)" } ?? "\(run.runId):\(task.nodeId)"
                     approvals.append(
                         Approval(
-                            id: "\(run.runId):\(task.nodeId)",
+                            id: approvalID,
                             runId: run.runId,
                             nodeId: task.nodeId,
+                            iteration: task.iteration,
                             workflowPath: run.workflowPath,
                             gate: task.label,
                             status: "pending",
@@ -3890,6 +3892,7 @@ class SmithersClient: ObservableObject {
                         id: decision.id,
                         runId: decision.runId,
                         nodeId: decision.nodeId,
+                        iteration: decision.iteration,
                         action: Self.normalizedApprovalStatus(decision.action),
                         note: decision.note,
                         reason: decision.reason,
@@ -3919,6 +3922,7 @@ class SmithersClient: ObservableObject {
                         id: decision.id,
                         runId: decision.runId,
                         nodeId: decision.nodeId,
+                        iteration: decision.iteration,
                         action: Self.normalizedApprovalStatus(decision.action),
                         note: decision.note,
                         reason: decision.reason,

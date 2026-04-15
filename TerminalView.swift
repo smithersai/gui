@@ -1292,9 +1292,33 @@ final class TerminalSurfaceRegistry {
             return existing
         }
 
-        let view = TerminalSurfaceView(app: app, command: command, workingDirectory: workingDirectory)
+        let view = TerminalSurfaceView(
+            app: app,
+            sessionId: sessionId,
+            command: command,
+            workingDirectory: workingDirectory
+        )
         views[sessionId] = view
         return view
+    }
+
+    func deregister(sessionId: String) {
+        guard let view = views.removeValue(forKey: sessionId) else { return }
+        view.shutdownSurface()
+    }
+
+    func deregister(sessionId: String, view: TerminalSurfaceView) {
+        guard views[sessionId] === view else { return }
+        views.removeValue(forKey: sessionId)
+        view.shutdownSurface()
+    }
+
+    func removeAll() {
+        let retainedViews = Array(views.values)
+        views.removeAll()
+        for view in retainedViews {
+            view.shutdownSurface()
+        }
     }
 }
 
@@ -1303,6 +1327,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
     var sessionId: String? = nil
     var command: String? = nil
     var workingDirectory: String? = nil
+    var layoutSize: CGSize = .zero
 
     func makeNSView(context: Context) -> TerminalSurfaceView {
         let view: TerminalSurfaceView
@@ -1324,7 +1349,17 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: TerminalSurfaceView, context: Context) {}
+    func updateNSView(_ nsView: TerminalSurfaceView, context: Context) {
+        nsView.synchronizeLayoutSize(layoutSize)
+    }
+
+    static func dismantleNSView(_ nsView: TerminalSurfaceView, coordinator: ()) {
+        if let sessionId = nsView.sessionId {
+            TerminalSurfaceRegistry.shared.deregister(sessionId: sessionId, view: nsView)
+        } else {
+            nsView.shutdownSurface()
+        }
+    }
 }
 
 // MARK: - Terminal Tab View
