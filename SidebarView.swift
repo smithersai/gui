@@ -48,8 +48,8 @@ enum NavDestination: Hashable {
     var icon: String {
         switch self {
         case .chat: return "message"
-        case .terminal: return "terminal"
-        case .terminalCommand(binary: _, workingDirectory: _, name: _): return "terminal"
+        case .terminal: return "terminal.fill"
+        case .terminalCommand(binary: _, workingDirectory: _, name: _): return "terminal.fill"
         case .dashboard: return "square.grid.2x2"
         case .agents: return "person.2"
         case .changes: return "point.3.connected.trianglepath.dotted"

@@ -17,15 +17,28 @@ struct ContentView: View {
     @StateObject private var smithers = SmithersClient()
     @State private var destination: NavDestination = .dashboard
     @State private var liveRunChatSelection: LiveRunChatSelection?
+    @State private var isLoading = true
 
     var body: some View {
-        HStack(spacing: 0) {
+        if isLoading {
+            VStack(spacing: 12) {
+                ProgressView()
+                    .scaleEffect(1.5)
+                Text("Connecting to Smithers...")
+                    .font(.system(size: 14))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.base)
+            .task {
+                await smithers.checkConnection()
+                isLoading = false
+            }
+        } else {
+        NavigationSplitView {
             SidebarView(store: store, destination: $destination)
-                .frame(width: 240)
-
-            Divider()
-                .background(Theme.border)
-
+                .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
+        } detail: {
             Group {
                 switch destination {
                 case .chat:
@@ -107,6 +120,7 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .navigationSplitViewStyle(.balanced)
         .sheet(item: $liveRunChatSelection) { selection in
             LiveRunChatView(
                 smithers: smithers,
@@ -129,9 +143,7 @@ struct ContentView: View {
             .opacity(0.01)
         }
         .accessibilityIdentifier("app.root")
-        .task {
-            await smithers.checkConnection()
-        }
+        } // end else (isLoading)
     }
 
     private func emptyState(_ message: String, icon: String) -> some View {
