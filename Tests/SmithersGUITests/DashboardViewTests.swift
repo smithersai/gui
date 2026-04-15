@@ -202,6 +202,13 @@ final class RunRowTests: XCTestCase {
         XCTAssertEqual(try text.string(), "7/10 nodes")
     }
 
+    func testRunRowDistinguishesFailedNodeCount() throws {
+        let run = makeRun(summary: ["total": 10, "finished": 7, "failed": 2])
+        let row = RunRow(run: run)
+        let text = try row.inspect().find(text: "7 succeeded, 2 failed / 10 nodes")
+        XCTAssertEqual(try text.string(), "7 succeeded, 2 failed / 10 nodes")
+    }
+
     /// BUG: When totalNodes is 0, the node count text should be hidden.
     /// The view correctly checks `run.totalNodes > 0` before showing it.
     func testRunRowHidesNodeCountWhenZeroTotal() throws {
@@ -334,6 +341,11 @@ final class ProgressBarTests: XCTestCase {
         let bar = ProgressBar(progress: 0.5)
         _ = try bar.inspect().geometryReader()
     }
+
+    func testProgressBarAcceptsFailedProgressSegment() throws {
+        let bar = ProgressBar(progress: 0.6, failedProgress: 0.2)
+        _ = try bar.inspect().geometryReader()
+    }
 }
 
 // MARK: - DashboardView Tab Tests (UI_TAB_BAR, DASHBOARD_*_TAB)
@@ -352,9 +364,9 @@ final class DashboardViewTabTests: XCTestCase {
         XCTAssertEqual(try overviewText.string(), "Overview")
     }
 
-    /// DASHBOARD_RUNS_TAB, DASHBOARD_WORKFLOWS_TAB, DASHBOARD_APPROVALS_TAB
+    /// DASHBOARD_RUNS_TAB, DASHBOARD_WORKFLOWS_TAB, DASHBOARD_APPROVALS_TAB, DASHBOARD_SESSIONS_TAB
     @MainActor
-    func testAllFourTabsArePresent() throws {
+    func testBaseDashboardTabsArePresent() throws {
         let client = makeClient()
         let view = DashboardView(smithers: client)
         let inspected = try view.inspect()
@@ -363,16 +375,21 @@ final class DashboardViewTabTests: XCTestCase {
         _ = try inspected.find(text: "Runs")
         _ = try inspected.find(text: "Workflows")
         _ = try inspected.find(text: "Approvals")
+        _ = try inspected.find(text: "Sessions")
     }
 
-    /// UI_TAB_BAR: DashboardTab enum should have exactly 4 cases in correct order.
+    /// UI_TAB_BAR: DashboardTab enum should include all dashboard destinations.
     func testDashboardTabEnumCases() {
         let allCases = DashboardView.DashboardTab.allCases
-        XCTAssertEqual(allCases.count, 4)
+        XCTAssertEqual(allCases.count, 8)
         XCTAssertEqual(allCases[0], .overview)
         XCTAssertEqual(allCases[1], .runs)
         XCTAssertEqual(allCases[2], .workflows)
         XCTAssertEqual(allCases[3], .approvals)
+        XCTAssertEqual(allCases[4], .sessions)
+        XCTAssertEqual(allCases[5], .landings)
+        XCTAssertEqual(allCases[6], .issues)
+        XCTAssertEqual(allCases[7], .workspaces)
     }
 
     func testDashboardTabRawValues() {
@@ -380,6 +397,10 @@ final class DashboardViewTabTests: XCTestCase {
         XCTAssertEqual(DashboardView.DashboardTab.runs.rawValue, "Runs")
         XCTAssertEqual(DashboardView.DashboardTab.workflows.rawValue, "Workflows")
         XCTAssertEqual(DashboardView.DashboardTab.approvals.rawValue, "Approvals")
+        XCTAssertEqual(DashboardView.DashboardTab.sessions.rawValue, "Sessions")
+        XCTAssertEqual(DashboardView.DashboardTab.landings.rawValue, "Landings")
+        XCTAssertEqual(DashboardView.DashboardTab.issues.rawValue, "Issues")
+        XCTAssertEqual(DashboardView.DashboardTab.workspaces.rawValue, "Workspaces")
     }
 
     /// DASHBOARD_OVERVIEW_TAB: Verify the header shows "Dashboard" text.
@@ -545,6 +566,50 @@ final class DashboardViewItemLimitingTests: XCTestCase {
         let runs = (0..<20).map { makeRun(id: "run-\($0)") }
         // runsContent would show all 20
         XCTAssertEqual(runs.count, 20)
+    }
+}
+
+// MARK: - Dashboard Ordering and Count Source Tests
+
+final class DashboardViewOrderingAndCountTests: XCTestCase {
+
+    func testRunsSortByStartedAtDescending() {
+        let runs = [
+            makeRun(id: "old", startedAtMs: 1_700_000_000_000),
+            makeRun(id: "newest", startedAtMs: 1_700_000_120_000),
+            makeRun(id: "middle", startedAtMs: 1_700_000_060_000),
+        ]
+
+        let sorted = runs.sortedByStartedAtDescending()
+
+        XCTAssertEqual(sorted.map(\.runId), ["newest", "middle", "old"])
+    }
+
+    func testRunsSortKeepsMissingStartedAtLast() {
+        let runs = [
+            makeRun(id: "missing-1", startedAtMs: nil),
+            makeRun(id: "newest", startedAtMs: 1_700_000_120_000),
+            makeRun(id: "missing-2", startedAtMs: nil),
+            makeRun(id: "old", startedAtMs: 1_700_000_000_000),
+        ]
+
+        let sorted = runs.sortedByStartedAtDescending()
+
+        XCTAssertEqual(sorted.map(\.runId), ["newest", "old", "missing-1", "missing-2"])
+    }
+
+    func testPendingApprovalCountUsesFilteredPendingApprovals() {
+        let approvals = [
+            makeApproval(id: "pending-lower", status: "pending"),
+            makeApproval(id: "pending-normalized", status: " Pending "),
+            makeApproval(id: "approved", status: "approved"),
+            makeApproval(id: "denied", status: "denied"),
+        ]
+
+        let pendingApprovals = approvals.filterPendingApprovals()
+
+        XCTAssertEqual(pendingApprovals.map(\.id), ["pending-lower", "pending-normalized"])
+        XCTAssertEqual(pendingApprovals.count, 2)
     }
 }
 
@@ -753,14 +818,12 @@ final class RunSummaryProgressTests: XCTestCase {
         XCTAssertEqual(run.finishedNodes, 0)
     }
 
-    /// BUG: progress counts only "finished" nodes, not "finished + failed".
-    /// A run with 10 total, 5 finished, 5 failed shows progress = 0.5
-    /// even though all nodes have completed (just some failed).
-    /// The progress bar will never reach 1.0 if any nodes fail.
-    func testBug_ProgressDoesNotIncludeFailedNodes() {
+    func testProgressIncludesFailedNodes() {
         let run = makeRun(summary: ["total": 10, "finished": 5, "failed": 5])
-        XCTAssertEqual(run.progress, 0.5, "BUG: progress is 0.5 even though all 10 nodes completed (5 finished + 5 failed)")
-        // Expected: progress should be 1.0 since all nodes are done
+        XCTAssertEqual(run.completedNodes, 10)
+        XCTAssertEqual(run.progress, 1.0, "Progress should include failed nodes as completed work")
+        XCTAssertEqual(run.finishedProgress, 0.5)
+        XCTAssertEqual(run.failedProgress, 0.5)
     }
 }
 
