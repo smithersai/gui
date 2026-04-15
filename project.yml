@@ -16,6 +16,8 @@ targets:
     sources:
       - AgentProtocol.swift
       - AgentService.swift
+      - AppLogger.swift
+      - CWDResolver.swift
       - AgentsView.swift
       - ApprovalsView.swift
       - ChangesView.swift
@@ -26,9 +28,12 @@ targets:
       - JJHubWorkflowsView.swift
       - LandingsView.swift
       - LiveRunChatView.swift
+      - LogViewerView.swift
       - MemoryView.swift
       - Models.swift
+      - NodeInspectView.swift
       - PromptsView.swift
+      - RunInspectView.swift
       - RunsView.swift
       - SQLBrowserView.swift
       - ScoresView.swift
@@ -39,8 +44,12 @@ targets:
       - SmithersClient.swift
       - SmithersModels.swift
       - TerminalView.swift
+      - TicketsView.swift
       - Theme.swift
+      - TriggersView.swift
       - UITestSupport.swift
+      - UnifiedDiffView.swift
+      - ViewLifecycleLogger.swift
       - WorkflowsView.swift
       - WorkspacesView.swift
     settings:
