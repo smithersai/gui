@@ -15,18 +15,25 @@ private final class MockSmithersClient: SmithersClient {
     var recallError: Error?
 
     /// Track call arguments for assertions.
+    var listNamespaces: [String?] = []
+    var listWorkflowPaths: [String?] = []
     var lastRecallQuery: String?
     var lastRecallNamespace: String?
+    var lastRecallWorkflowPath: String?
     var lastRecallTopK: Int?
 
-    override func listMemoryFacts(namespace: String? = nil) async throws -> [MemoryFact] {
+    override func listMemoryFacts(namespace: String? = nil, workflowPath: String? = nil) async throws -> [MemoryFact] {
+        listNamespaces.append(namespace)
+        listWorkflowPaths.append(workflowPath)
         if let err = listError { throw err }
-        return stubbedFacts
+        guard let namespace else { return stubbedFacts }
+        return stubbedFacts.filter { $0.namespace == namespace }
     }
 
-    override func recallMemory(query: String, namespace: String? = nil, topK: Int = 10) async throws -> [MemoryRecallResult] {
+    override func recallMemory(query: String, namespace: String? = nil, workflowPath: String? = nil, topK: Int = 10) async throws -> [MemoryRecallResult] {
         lastRecallQuery = query
         lastRecallNamespace = namespace
+        lastRecallWorkflowPath = workflowPath
         lastRecallTopK = topK
         if let err = recallError { throw err }
         return stubbedRecallResults
@@ -146,23 +153,52 @@ final class MemoryNamespaceFilterTests: XCTestCase {
         XCTAssertNoThrow(try hosted.find(text: "All Namespaces"))
     }
 
-    /// BUG: filteredFacts filters client-side only. The loadFacts() method
-    /// never passes namespaceFilter to smithers.listMemoryFacts(namespace:).
-    /// This means the server always returns ALL facts and filtering happens
-    /// in-memory, which is wasteful for large datasets.
-    func testBug_loadFactsIgnoresNamespaceFilter() async throws {
-        // Evidence: loadFacts() calls smithers.listMemoryFacts() with no arguments.
-        // It should call smithers.listMemoryFacts(namespace: namespaceFilter).
-        // The client-side `filteredFacts` computed property does filter, but
-        // the server-side parameter is never used, fetching unnecessary data.
+    func testNamespacesAreDerivedFromAllNamespaceFacts() {
+        let facts = [
+            makeFact(namespace: "workflow", key: "a"),
+            makeFact(namespace: "project", key: "b"),
+            makeFact(namespace: "workflow", key: "c"),
+        ]
+
+        XCTAssertEqual(
+            MemoryNamespaceFilterState.namespaces(from: facts),
+            ["project", "workflow"]
+        )
+    }
+
+    func testStaleNamespaceFilterResetsToAll() {
+        let facts = [
+            makeFact(namespace: "project", key: "a"),
+            makeFact(namespace: "workflow", key: "b"),
+        ]
+        let namespaces = MemoryNamespaceFilterState.namespaces(from: facts)
+
+        XCTAssertEqual(
+            MemoryNamespaceFilterState.validatedFilter("project", namespaces: namespaces),
+            "project"
+        )
+        XCTAssertNil(
+            MemoryNamespaceFilterState.validatedFilter("deleted", namespaces: namespaces),
+            "A selected namespace that is missing from the latest all-namespace list should reset to all"
+        )
+        XCTAssertNil(
+            MemoryNamespaceFilterState.validatedFilter(nil, namespaces: namespaces),
+            "The all-namespaces selection should stay selected"
+        )
+    }
+
+    func testMockListFactsFiltersByNamespace() async throws {
         let client = MockSmithersClient()
         client.stubbedFacts = [
             makeFact(namespace: "ns1", key: "a"),
             makeFact(namespace: "ns2", key: "b"),
         ]
-        // loadFacts always fetches everything
+
         let allFacts = try await client.listMemoryFacts(namespace: nil)
-        XCTAssertEqual(allFacts.count, 2, "All facts returned regardless of namespace filter state")
+        let ns1Facts = try await client.listMemoryFacts(namespace: "ns1")
+
+        XCTAssertEqual(allFacts.count, 2)
+        XCTAssertEqual(ns1Facts.map(\.key), ["a"])
     }
 }
 
@@ -220,16 +256,14 @@ final class MemorySemanticRecallTests: XCTestCase {
             "The namespace parameter is always nil, making MEMORY_RECALL_NAMESPACE_SCOPING broken.")
     }
 
-    /// BUG: doRecall() never passes a custom topK value. It always uses the
-    /// default of 10 from the SmithersClient method signature. There is no UI
-    /// control to adjust topK, making MEMORY_RECALL_TOP_K_PARAMETER non-functional.
-    func testBug_recallAlwaysUsesDefaultTopK() async throws {
+    /// Recall keeps the SmithersClient default when no custom topK value is supplied.
+    func testRecallUsesDefaultTopKWhenNoCustomValueProvided() async throws {
         let client = MockSmithersClient()
         client.stubbedRecallResults = []
 
         _ = try await client.recallMemory(query: "test")
         XCTAssertEqual(client.lastRecallTopK, 10,
-            "BUG: topK is always the default 10. No UI exists to change it.")
+            "Recall should use the default topK until the UI supplies a custom value.")
     }
 }
 
@@ -266,6 +300,15 @@ final class MemoryRecallTopKTests: XCTestCase {
         _ = try await client.recallMemory(query: "anything")
         XCTAssertEqual(client.lastRecallTopK, 10,
             "Default topK should be 10 per CONSTANT_RECALL_DEFAULT_TOP_K_10")
+    }
+
+    /// Custom topK values should be accepted by the recall API.
+    func testCustomTopKCanBePassedToRecallClient() async throws {
+        let client = MockSmithersClient()
+        client.stubbedRecallResults = []
+        _ = try await client.recallMemory(query: "anything", topK: 7)
+        XCTAssertEqual(client.lastRecallTopK, 7,
+            "Recall should preserve custom topK values for the CLI call")
     }
 }
 
