@@ -9,16 +9,19 @@ private func parseSSELines(_ raw: String) -> [SSEEvent] {
     var events: [SSEEvent] = []
     var eventType: String? = nil
     var dataLines: [String] = []
+    var runId: String? = nil
 
     func dispatch() {
         guard !dataLines.isEmpty else {
             eventType = nil
+            runId = nil
             return
         }
         let event = eventType?.isEmpty == true ? nil : eventType
-        events.append(SSEEvent(event: event, data: dataLines.joined(separator: "\n")))
+        events.append(SSEEvent(event: event, data: dataLines.joined(separator: "\n"), runId: runId))
         eventType = nil
         dataLines.removeAll(keepingCapacity: true)
+        runId = nil
     }
 
     for rawLine in raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
@@ -43,6 +46,8 @@ private func parseSSELines(_ raw: String) -> [SSEEvent] {
             eventType = value
         } else if field == "data" {
             dataLines.append(value)
+        } else if field == "runId" || field == "run_id" || field == "workflowRunId" || field == "workflow_run_id" {
+            runId = SSEEvent.normalizedRunId(value)
         }
     }
     // Flush remaining buffer (matches SmithersClient behavior)
@@ -164,6 +169,12 @@ final class SSEParserTests: XCTestCase {
         XCTAssertEqual(events[0].runId, "run-1")
     }
 
+    func testParsedEventUsesSSEFieldRunId() {
+        let raw = "event: message\nrunId: run-from-field\ndata: {\"type\":\"RunStarted\"}\n\n"
+        let events = parseSSELines(raw)
+        XCTAssertEqual(events[0].runId, "run-from-field")
+    }
+
     func testExtractsNestedRunIdFromEnvelope() {
         let json = """
         {"event":{"runId":"run-nested","type":"RunFinished"}}
@@ -195,6 +206,39 @@ final class SSEParserTests: XCTestCase {
         let event = SSEEvent.filtered(event: "message", data: json, expectedRunId: "target-run")
         XCTAssertEqual(event?.runId, "target-run")
         XCTAssertEqual(event?.data, json)
+    }
+
+    func testFilteredEventDropsMismatchedSSEFieldRunId() {
+        let json = "{\"type\":\"RunStarted\"}"
+        let event = SSEEvent.filtered(
+            event: "message",
+            data: json,
+            eventRunId: "other-run",
+            expectedRunId: "target-run"
+        )
+        XCTAssertNil(event)
+    }
+
+    func testFilteredEventUsesSSEFieldRunIdWhenPayloadRunIdMissing() {
+        let json = "{\"type\":\"RunStarted\"}"
+        let event = SSEEvent.filtered(
+            event: "message",
+            data: json,
+            eventRunId: "target-run",
+            expectedRunId: "target-run"
+        )
+        XCTAssertEqual(event?.runId, "target-run")
+    }
+
+    func testFilteredEventDropsWhenSSEAndPayloadRunIdsConflict() {
+        let json = "{\"runId\":\"payload-run\",\"type\":\"RunStarted\"}"
+        let event = SSEEvent.filtered(
+            event: "message",
+            data: json,
+            eventRunId: "field-run",
+            expectedRunId: "field-run"
+        )
+        XCTAssertNil(event)
     }
 }
 
@@ -550,7 +594,7 @@ final class SmithersClientCLICommandTests: XCTestCase {
         ])
     }
 
-    // CLI_MEMORY_RECALL — "memory recall <query> --format json --namespace <namespace> --topK <n> --workflow <path>"
+    // CLI_MEMORY_RECALL — "memory recall <query> --format json --namespace <namespace> --top-k <n> --workflow <path>"
     func testMemoryRecallCommandShape() {
         let query = "deployment steps"
         let topK = 5
@@ -564,7 +608,7 @@ final class SmithersClientCLICommandTests: XCTestCase {
             "memory", "recall", query,
             "--format", "json",
             "--namespace", "global:default",
-            "--topK", "5",
+            "--top-k", "5",
             "--workflow", ".smithers/workflows/implement.tsx",
         ])
     }
@@ -699,7 +743,7 @@ final class SmithersClientCLICommandTests: XCTestCase {
         XCTAssertEqual(results.count, 1)
         XCTAssertEqual(results[0].content, "remembered")
         let calls = try String(contentsOf: cli.calls, encoding: .utf8)
-        XCTAssertTrue(calls.contains("memory recall deploy --format json --topK 10"))
+        XCTAssertTrue(calls.contains("memory recall deploy --format json --top-k 10"))
         XCTAssertFalse(calls.contains("--namespace global:default"))
     }
 
@@ -733,6 +777,9 @@ final class SmithersClientCLICommandTests: XCTestCase {
     private func makeWorkflowCLI(
         listPayload: String = """
         {"workflows":[{"id":"deploy","displayName":"Deploy","entryFile":".smithers/workflows/deploy.yaml","sourceType":"local"}]}
+        """,
+        graphPayload: String = """
+        {"workflowId":".smithers/workflows/deploy.yaml","runId":"graph","tasks":[]}
         """
     ) throws -> (root: URL, bin: String, calls: URL) {
         let root = FileManager.default.temporaryDirectory
@@ -755,9 +802,55 @@ final class SmithersClientCLICommandTests: XCTestCase {
 
         if [ "$1" = "graph" ]; then
           cat <<'JSON'
-        {"workflowId":".smithers/workflows/deploy.yaml","runId":"graph","tasks":[]}
+        \(graphPayload)
         JSON
           exit 0
+        fi
+
+        if [ "$1" = "up" ]; then
+          cat <<'JSON'
+        {"runId":"run-from-relative-path"}
+        JSON
+          exit 0
+        fi
+
+        echo "unexpected command: $*" >&2
+        exit 2
+        """
+        try script.write(to: bin, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+        return (root, bin.path, calls)
+    }
+
+    private func makeWorkflowGraphFirstCLI() throws -> (root: URL, bin: String, calls: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SmithersClientWorkflowGraphFirstTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let calls = root.appendingPathComponent("calls.log")
+        let bin = root.appendingPathComponent("smithers")
+        let script = """
+        #!/bin/sh
+        CALLS='\(calls.path)'
+        printf '%s\\n' "$*" >> "$CALLS"
+
+        if [ "$1" = "workflow" ] && [ "$2" = "list" ]; then
+          cat <<'JSON'
+        {"workflows":[{"id":"deploy","displayName":"Deploy","entryFile":".smithers/workflows/deploy.yaml","sourceType":"local"}]}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "workflow" ] && [ "$2" = "graph" ]; then
+          cat <<'JSON'
+        {"workflow_id":".smithers/workflows/deploy.yaml","run_id":"graph","nodes":[{"id":"build","ordinal":0},{"id":"test","ordinal":1}],"edges":[{"source":"build","target":"test"}]}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "graph" ]; then
+          echo "legacy graph path should not be called" >&2
+          exit 3
         fi
 
         if [ "$1" = "up" ]; then
@@ -795,6 +888,76 @@ final class SmithersClientCLICommandTests: XCTestCase {
         let calls = try String(contentsOf: cli.calls, encoding: .utf8)
         XCTAssertTrue(calls.contains("graph .smithers/workflows/deploy.yaml --format json"))
         XCTAssertFalse(calls.contains("graph deploy --format json"))
+    }
+
+    func testGetWorkflowDAGBuildsLaunchFieldsFromInputSchema() async throws {
+        let cli = try makeWorkflowCLI(
+            graphPayload: """
+            {
+              "workflowId":".smithers/workflows/deploy.yaml",
+              "inputSchema":{
+                "type":"object",
+                "required":["dry_run","replicas"],
+                "properties":{
+                  "dry_run":{"type":"boolean","default":false},
+                  "replicas":{"type":"integer","default":3},
+                  "extra":{"type":"array","items":{"type":"string"}}
+                }
+              }
+            }
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let workflow = Workflow(
+            id: "deploy",
+            workspaceId: nil,
+            name: "Deploy",
+            relativePath: ".smithers/workflows/deploy.yaml",
+            status: nil,
+            updatedAt: nil
+        )
+
+        let dag = try await client.getWorkflowDAG(workflow)
+        let fieldsByKey = Dictionary(uniqueKeysWithValues: dag.launchFields.map { ($0.key, $0) })
+
+        XCTAssertEqual(fieldsByKey["dry_run"]?.type, "boolean")
+        XCTAssertEqual(fieldsByKey["dry_run"]?.defaultValue, "false")
+        XCTAssertTrue(fieldsByKey["dry_run"]?.required == true)
+
+        XCTAssertEqual(fieldsByKey["replicas"]?.type, "number")
+        XCTAssertEqual(fieldsByKey["replicas"]?.defaultValue, "3")
+        XCTAssertTrue(fieldsByKey["replicas"]?.required == true)
+
+        XCTAssertEqual(fieldsByKey["extra"]?.type, "array")
+        XCTAssertFalse(fieldsByKey["extra"]?.required == true)
+    }
+
+    func testGetWorkflowDAGPrefersWorkflowGraphCommandWhenAvailable() async throws {
+        let cli = try makeWorkflowGraphFirstCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let workflow = Workflow(
+            id: "deploy",
+            workspaceId: nil,
+            name: "Deploy",
+            relativePath: ".smithers/workflows/deploy.yaml",
+            status: nil,
+            updatedAt: nil
+        )
+
+        let dag = try await client.getWorkflowDAG(workflow)
+
+        XCTAssertEqual(dag.nodes.map(\.nodeId), ["build", "test"])
+        XCTAssertEqual(dag.edges, [WorkflowDAGEdge(from: "build", to: "test")])
+
+        let calls = try String(contentsOf: cli.calls, encoding: .utf8)
+            .split(separator: "\n")
+            .map(String.init)
+        XCTAssertTrue(calls.contains("workflow graph .smithers/workflows/deploy.yaml --format json"))
+        XCTAssertFalse(calls.contains("graph .smithers/workflows/deploy.yaml --format json"))
     }
 
     func testRunWorkflowUsesWorkflowRelativePath() async throws {
@@ -1171,6 +1334,28 @@ final class SmithersClientApprovalTransportTests: XCTestCase {
 
     private func readCalls(_ calls: URL) throws -> String {
         try String(contentsOf: calls, encoding: .utf8)
+    }
+
+    func testListRunsParsesRelativeStartedValuesFromCLI() async throws {
+        let cli = try makeTemporarySmithersCLI(body: """
+        if [ "$1" = "ps" ] && [ "$2" = "--format" ] && [ "$3" = "json" ]; then
+          cat <<'JSON'
+        {"runs":[{"id":"run-old","workflow":"old","status":"running","started":"2h ago"},{"id":"run-new","workflow":"new","status":"running","started":"15m ago"}]}
+        JSON
+          exit 0
+        fi
+        """)
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let runs = try await client.listRuns()
+
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertNotNil(runs.first(where: { $0.runId == "run-old" })?.startedAtMs)
+        XCTAssertNotNil(runs.first(where: { $0.runId == "run-new" })?.startedAtMs)
+
+        let sorted = runs.sortedByStartedAtDescending()
+        XCTAssertEqual(sorted.map(\.runId), ["run-new", "run-old"])
     }
 
     func testListPendingApprovalsUsesExecApprovalListWhenAvailable() async throws {
@@ -2415,6 +2600,65 @@ final class SmithersClientPromptTests: XCTestCase {
         XCTAssertTrue(prompt.inputs?.allSatisfy { $0.type == "string" } ?? false)
     }
 
+    func testGetPromptFilesystemDiscoversInputsFromMDXFrontmatter() async throws {
+        let source = """
+        ---
+        inputs:
+          - name: reviewer
+            type: string
+            default: codex
+          - name: prompt
+        props:
+          schema:
+            type: string
+          context: "repo-summary"
+        ---
+        # Review
+        <PromptFrame reviewer={reviewer} prompt={prompt} context={context} />
+        """
+        let setup = try makePromptClient(promptId: "review-frontmatter", source: source)
+        defer { try? FileManager.default.removeItem(at: setup.root) }
+
+        let prompt = try await setup.client.getPrompt("review-frontmatter")
+        let byName = Dictionary((prompt.inputs ?? []).map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+
+        XCTAssertEqual(prompt.inputs?.map(\.name), ["reviewer", "prompt", "schema", "context"])
+        XCTAssertEqual(byName["reviewer"]?.defaultValue, "codex")
+        XCTAssertEqual(byName["reviewer"]?.type, "string")
+        XCTAssertEqual(byName["schema"]?.type, "string")
+        XCTAssertEqual(byName["context"]?.defaultValue, "repo-summary")
+    }
+
+    func testGetPromptFilesystemDiscoversInputsFromMDXComponentProps() async throws {
+        let source = """
+        # Implement
+        <PromptFrame
+          prompt={prompt}
+          ticketId={ticketId}
+          fixedLabel="stable"
+        />
+        """
+        let setup = try makePromptClient(promptId: "component-props", source: source)
+        defer { try? FileManager.default.removeItem(at: setup.root) }
+
+        let prompt = try await setup.client.getPrompt("component-props")
+
+        XCTAssertEqual(prompt.inputs?.map(\.name), ["prompt", "ticketId"])
+    }
+
+    func testGetPromptFilesystemCombinesTemplateAndMDXComponentProps() async throws {
+        let source = """
+        Reviewer: {props.reviewer}
+        <PromptFrame prompt={prompt} />
+        """
+        let setup = try makePromptClient(promptId: "mixed-props", source: source)
+        defer { try? FileManager.default.removeItem(at: setup.root) }
+
+        let prompt = try await setup.client.getPrompt("mixed-props")
+
+        XCTAssertEqual(prompt.inputs?.map(\.name), ["reviewer", "prompt"])
+    }
+
     func testDiscoverPromptPropsFallsBackToPromptGetCLI() async throws {
         let cli = try makePromptCLI(scriptBody: """
         if [ "$1" = "prompt" ] && [ "$2" = "get" ] && [ "$3" = "plan" ] && [ "$4" = "--format" ] && [ "$5" = "json" ]; then
@@ -2527,6 +2771,18 @@ final class SmithersClientSSETransportTests: XCTestCase {
             fallbackPort: 7331
         )
         XCTAssertNil(invalidConfiguredURL, "A configured but invalid serverURL should not silently fall back to localhost")
+    }
+
+    func testResolvedHTTPTransportURLDefaultsToLocalhostWhenFallbackPortIsOmitted() {
+        let staticFallback = SmithersClient.resolvedHTTPTransportURL(
+            path: "/approval/list",
+            serverURL: nil
+        )
+        XCTAssertEqual(staticFallback?.absoluteString, "http://localhost:7331/approval/list")
+
+        let client = SmithersClient()
+        let instanceFallback = client.resolvedHTTPTransportURL(path: "/approval/list")
+        XCTAssertEqual(instanceFallback?.absoluteString, "http://localhost:7331/approval/list")
     }
 
     func testResolvedHTTPTransportURLUsesConfiguredServerURLForSSEAndHijackPaths() {

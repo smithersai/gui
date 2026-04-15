@@ -124,7 +124,7 @@ enum SmithersMemoryCLI {
             args += ["--namespace", namespace]
         }
         if topK > 0 {
-            args += ["--topK", "\(topK)"]
+            args += ["--top-k", "\(topK)"]
         }
         if let workflowPath = normalizedWorkflowPath(workflowPath) {
             args += ["--workflow", workflowPath]
@@ -271,6 +271,7 @@ class SmithersClient: ObservableObject {
     private static let noSQLTransportMessage =
         "no smithers transport available: SQL requires a running smithers server; start with: smithers up --serve"
     private nonisolated static let allRunsStreamRunId = "all-runs"
+    private nonisolated static let defaultHTTPTransportPort = 7331
     private static let costPerMInputTokens = 3.0
     private static let costPerMOutputTokens = 15.0
 
@@ -304,7 +305,11 @@ class SmithersClient: ObservableObject {
         self.streamSession = URLSession(configuration: Self.makeSSEURLSessionConfiguration())
     }
 
-    nonisolated static func resolvedHTTPTransportURL(path: String, serverURL: String?, fallbackPort: Int? = nil) -> URL? {
+    nonisolated static func resolvedHTTPTransportURL(
+        path: String,
+        serverURL: String?,
+        fallbackPort: Int? = SmithersClient.defaultHTTPTransportPort
+    ) -> URL? {
         let trimmedServerURL = serverURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         let baseURL: URL
 
@@ -335,7 +340,10 @@ class SmithersClient: ObservableObject {
         value.addingPercentEncoding(withAllowedCharacters: pathComponentAllowedCharacters) ?? value
     }
 
-    func resolvedHTTPTransportURL(path: String, fallbackPort: Int? = nil) -> URL? {
+    func resolvedHTTPTransportURL(
+        path: String,
+        fallbackPort: Int? = SmithersClient.defaultHTTPTransportPort
+    ) -> URL? {
         Self.resolvedHTTPTransportURL(path: path, serverURL: serverURL, fallbackPort: fallbackPort)
     }
 
@@ -677,7 +685,7 @@ class SmithersClient: ObservableObject {
         if await waitForProcessExit(process, timeoutSeconds: 0.5) { return }
 
         if process.isRunning {
-            Darwin.kill(process.processIdentifier, SIGKILL)
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
         }
         _ = await waitForProcessExit(process, timeoutSeconds: 0.5)
     }
@@ -1080,8 +1088,13 @@ class SmithersClient: ObservableObject {
             )
         }
 
-        // Use smithers graph to get the real rendered workflow XML and task list.
-        let data = try await exec("graph", workflowPath, "--format", "json")
+        // Prefer workflow graph on newer CLIs; fall back to legacy top-level graph command.
+        let data: Data
+        do {
+            data = try await exec("workflow", "graph", workflowPath, "--format", "json")
+        } catch {
+            data = try await exec("graph", workflowPath, "--format", "json")
+        }
         if let envelope = try? decodeCLIJSON(APIEnvelope<WorkflowDAG>.self, from: data),
            let dag = envelope.data,
            !dag.isEmpty {
@@ -1526,7 +1539,7 @@ class SmithersClient: ObservableObject {
 
     // MARK: - Run Streaming (HTTP — requires --serve)
 
-    func streamRunEvents(_ runId: String, port: Int = 7331) -> AsyncStream<SSEEvent> {
+    func streamRunEvents(_ runId: String, port: Int = SmithersClient.defaultHTTPTransportPort) -> AsyncStream<SSEEvent> {
         let filterRunId = Self.sseFilterRunId(runId)
         guard let url = resolvedHTTPTransportURL(path: Self.runEventsPath(runId: filterRunId), fallbackPort: port) else {
             return emptySSEStream()
@@ -1534,7 +1547,7 @@ class SmithersClient: ObservableObject {
         return sseStream(url: url, runId: filterRunId)
     }
 
-    func streamChat(_ runId: String, port: Int = 7331) -> AsyncStream<SSEEvent> {
+    func streamChat(_ runId: String, port: Int = SmithersClient.defaultHTTPTransportPort) -> AsyncStream<SSEEvent> {
         let encodedRunId = Self.encodedURLPathComponent(runId)
         let paths = [
             "/v1/runs/\(encodedRunId)/chat/stream",
@@ -1564,7 +1577,7 @@ class SmithersClient: ObservableObject {
         return components.string ?? "/events"
     }
 
-    func getChatOutput(_ runId: String, port: Int = 7331) async throws -> [ChatBlock] {
+    func getChatOutput(_ runId: String, port: Int = SmithersClient.defaultHTTPTransportPort) async throws -> [ChatBlock] {
         if UITestSupport.isEnabled {
             let now = UITestSupport.nowMs
             return [
@@ -1593,7 +1606,7 @@ class SmithersClient: ObservableObject {
         ], timeoutSeconds: 10)
     }
 
-    func hijackRun(_ runId: String, port: Int = 7331) async throws -> HijackSession {
+    func hijackRun(_ runId: String, port: Int = SmithersClient.defaultHTTPTransportPort) async throws -> HijackSession {
         if UITestSupport.isEnabled {
             return HijackSession(
                 runId: runId,
@@ -2741,9 +2754,34 @@ class SmithersClient: ObservableObject {
         let rendered: String?
     }
 
-    private static let promptInterpolationRegex = try! NSRegularExpression(
+    nonisolated private static let promptInterpolationRegex = try! NSRegularExpression(
         pattern: #"\{\s*props\.([A-Za-z_][A-Za-z0-9_]*)\s*\}"#
     )
+    nonisolated private static let promptInputNameRegex = try! NSRegularExpression(
+        pattern: #"^[A-Za-z_][A-Za-z0-9_]*$"#
+    )
+    nonisolated private static let mdxComponentTagRegex = try! NSRegularExpression(
+        pattern: #"<[A-Z][A-Za-z0-9_.:-]*\b[^>]*>"#,
+        options: [.dotMatchesLineSeparators]
+    )
+    nonisolated private static let mdxComponentPropsMemberRegex = try! NSRegularExpression(
+        pattern: #"[A-Za-z_][A-Za-z0-9_]*\s*=\s*\{\s*props\.([A-Za-z_][A-Za-z0-9_]*)\s*\}"#
+    )
+    nonisolated private static let mdxComponentPassThroughRegex = try! NSRegularExpression(
+        pattern: #"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}"#
+    )
+    nonisolated private static let frontmatterSectionKeys: Set<String> = ["inputs", "props", "parameters", "params", "variables", "args"]
+    nonisolated private static let frontmatterMetadataKeys: Set<String> = [
+        "title",
+        "description",
+        "tags",
+        "date",
+        "updated",
+        "slug",
+        "layout",
+        "author",
+        "summary",
+    ]
 
     private func promptsDirectoryPath() -> String {
         (cwd as NSString).appendingPathComponent(".smithers/prompts")
@@ -2851,24 +2889,456 @@ class SmithersClient: ObservableObject {
     }
 
     nonisolated static func discoverPromptInputs(in source: String) -> [PromptInput] {
-        let normalized = source
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        var seen = Set<String>()
-        var inputs: [PromptInput] = []
+        let normalized = normalizePromptSource(source)
+        let (frontmatter, body) = splitFrontmatter(from: normalized)
 
-        for line in normalized.components(separatedBy: "\n") {
-            let range = NSRange(line.startIndex..<line.endIndex, in: line)
-            let matches = promptInterpolationRegex.matches(in: line, range: range)
-            for match in matches {
-                guard let nameRange = Range(match.range(at: 1), in: line) else { continue }
-                let name = String(line[nameRange])
-                guard seen.insert(name).inserted else { continue }
-                inputs.append(PromptInput(name: name, type: "string", defaultValue: nil))
+        var order: [String] = []
+        var inputsByName: [String: PromptInput] = [:]
+
+        if let frontmatter {
+            for input in discoverPromptInputsFromFrontmatter(frontmatter) {
+                appendPromptInput(
+                    name: input.name,
+                    type: input.type ?? "string",
+                    defaultValue: input.defaultValue,
+                    order: &order,
+                    byName: &inputsByName
+                )
             }
         }
 
-        return inputs
+        let bodyRange = NSRange(body.startIndex..<body.endIndex, in: body)
+        for match in promptInterpolationRegex.matches(in: body, range: bodyRange) {
+            guard let nameRange = Range(match.range(at: 1), in: body) else { continue }
+            appendPromptInput(
+                name: String(body[nameRange]),
+                type: "string",
+                defaultValue: nil,
+                order: &order,
+                byName: &inputsByName
+            )
+        }
+
+        for input in discoverPromptInputsFromMDXComponents(in: body) {
+            appendPromptInput(
+                name: input.name,
+                type: input.type ?? "string",
+                defaultValue: input.defaultValue,
+                order: &order,
+                byName: &inputsByName
+            )
+        }
+
+        return order.compactMap { inputsByName[$0] }
+    }
+
+    nonisolated private static func discoverPromptInputsFromMDXComponents(in source: String) -> [PromptInput] {
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        let tags = mdxComponentTagRegex.matches(in: source, range: range)
+        guard !tags.isEmpty else { return [] }
+
+        var order: [String] = []
+        var inputsByName: [String: PromptInput] = [:]
+
+        for tagMatch in tags {
+            guard let tagRange = Range(tagMatch.range, in: source) else { continue }
+            let tag = String(source[tagRange])
+            let tagNSRange = NSRange(tag.startIndex..<tag.endIndex, in: tag)
+
+            for match in mdxComponentPropsMemberRegex.matches(in: tag, range: tagNSRange) {
+                guard let nameRange = Range(match.range(at: 1), in: tag) else { continue }
+                appendPromptInput(
+                    name: String(tag[nameRange]),
+                    type: "string",
+                    defaultValue: nil,
+                    order: &order,
+                    byName: &inputsByName
+                )
+            }
+
+            for match in mdxComponentPassThroughRegex.matches(in: tag, range: tagNSRange) {
+                guard let propRange = Range(match.range(at: 1), in: tag),
+                      let valueRange = Range(match.range(at: 2), in: tag) else { continue }
+                let propName = String(tag[propRange])
+                let valueName = String(tag[valueRange])
+                guard propName == valueName else { continue }
+                appendPromptInput(
+                    name: propName,
+                    type: "string",
+                    defaultValue: nil,
+                    order: &order,
+                    byName: &inputsByName
+                )
+            }
+        }
+
+        return order.compactMap { inputsByName[$0] }
+    }
+
+    nonisolated private static func discoverPromptInputsFromFrontmatter(_ frontmatter: String) -> [PromptInput] {
+        let lines = frontmatter.components(separatedBy: "\n")
+        guard !lines.isEmpty else { return [] }
+
+        var order: [String] = []
+        var inputsByName: [String: PromptInput] = [:]
+
+        var activeSection: String?
+        var sectionIndent = 0
+        var currentName: String?
+        var currentNameIndent = -1
+        var isTopLevelProp = false
+
+        for rawLine in lines {
+            let line = stripInlineYAMLComment(from: rawLine)
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            let indent = leadingIndent(in: line)
+
+            if let listItem = parseYAMLListItem(from: trimmed) {
+                guard activeSection != nil else { continue }
+                if let (key, value) = parseYAMLKeyValue(from: listItem),
+                   key.lowercased() == "name" {
+                    currentName = normalizedPromptInputName(from: value)
+                    currentNameIndent = indent
+                    if let currentName {
+                        appendPromptInput(
+                            name: currentName,
+                            type: "string",
+                            defaultValue: nil,
+                            order: &order,
+                            byName: &inputsByName
+                        )
+                    }
+                } else if let name = normalizedPromptInputName(from: listItem) {
+                    currentName = name
+                    currentNameIndent = indent
+                    appendPromptInput(
+                        name: name,
+                        type: "string",
+                        defaultValue: nil,
+                        order: &order,
+                        byName: &inputsByName
+                    )
+                } else {
+                    currentName = nil
+                    currentNameIndent = -1
+                }
+                continue
+            }
+
+            guard let (key, value) = parseYAMLKeyValue(from: trimmed) else { continue }
+            let loweredKey = key.lowercased()
+
+            if indent == 0 {
+                currentName = nil
+                currentNameIndent = -1
+                isTopLevelProp = false
+                activeSection = nil
+
+                if frontmatterSectionKeys.contains(loweredKey) {
+                    activeSection = loweredKey
+                    sectionIndent = indent
+                    if !value.isEmpty {
+                        parseInlineFrontmatterInputList(
+                            value,
+                            order: &order,
+                            byName: &inputsByName
+                        )
+                    }
+                    continue
+                }
+
+                guard !frontmatterMetadataKeys.contains(loweredKey),
+                      let name = normalizedPromptInputName(from: key) else {
+                    continue
+                }
+
+                isTopLevelProp = true
+                currentName = name
+                currentNameIndent = indent
+                appendPromptInput(
+                    name: name,
+                    type: "string",
+                    defaultValue: parseYAMLScalar(value),
+                    order: &order,
+                    byName: &inputsByName
+                )
+                continue
+            }
+
+            if activeSection != nil && indent <= sectionIndent {
+                activeSection = nil
+            }
+
+            if let activeSection {
+                if loweredKey == "name" {
+                    currentName = normalizedPromptInputName(from: value)
+                    currentNameIndent = indent
+                    if let currentName {
+                        appendPromptInput(
+                            name: currentName,
+                            type: "string",
+                            defaultValue: nil,
+                            order: &order,
+                            byName: &inputsByName
+                        )
+                    }
+                    continue
+                }
+
+                if let currentName, indent > currentNameIndent {
+                    if loweredKey == "type" {
+                        appendPromptInput(
+                            name: currentName,
+                            type: parseYAMLScalar(value) ?? "string",
+                            defaultValue: nil,
+                            order: &order,
+                            byName: &inputsByName
+                        )
+                        continue
+                    }
+                    if loweredKey == "default" || loweredKey == "defaultvalue" || loweredKey == "value" {
+                        appendPromptInput(
+                            name: currentName,
+                            type: nil,
+                            defaultValue: parseYAMLScalar(value),
+                            order: &order,
+                            byName: &inputsByName
+                        )
+                        continue
+                    }
+                }
+
+                if frontmatterSectionKeys.contains(activeSection),
+                   (currentName == nil || indent <= currentNameIndent),
+                   let nestedName = normalizedPromptInputName(from: key) {
+                    currentName = nestedName
+                    currentNameIndent = indent
+                    appendPromptInput(
+                        name: nestedName,
+                        type: "string",
+                        defaultValue: parseYAMLScalar(value),
+                        order: &order,
+                        byName: &inputsByName
+                    )
+                }
+                continue
+            }
+
+            guard isTopLevelProp, let currentName, indent > currentNameIndent else { continue }
+            if loweredKey == "type" {
+                appendPromptInput(
+                    name: currentName,
+                    type: parseYAMLScalar(value) ?? "string",
+                    defaultValue: nil,
+                    order: &order,
+                    byName: &inputsByName
+                )
+            } else if loweredKey == "default" || loweredKey == "defaultvalue" || loweredKey == "value" {
+                appendPromptInput(
+                    name: currentName,
+                    type: nil,
+                    defaultValue: parseYAMLScalar(value),
+                    order: &order,
+                    byName: &inputsByName
+                )
+            }
+        }
+
+        return order.compactMap { inputsByName[$0] }
+    }
+
+    nonisolated private static func parseInlineFrontmatterInputList(
+        _ value: String,
+        order: inout [String],
+        byName: inout [String: PromptInput]
+    ) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let rawItems: [String]
+        if trimmed.first == "[", trimmed.last == "]" {
+            rawItems = trimmed
+                .dropFirst()
+                .dropLast()
+                .split(separator: ",")
+                .map(String.init)
+        } else {
+            rawItems = trimmed.split(separator: ",").map(String.init)
+        }
+
+        for rawItem in rawItems {
+            if let (key, defaultRaw) = parseYAMLKeyValue(from: rawItem),
+               let name = normalizedPromptInputName(from: key) {
+                appendPromptInput(
+                    name: name,
+                    type: "string",
+                    defaultValue: parseYAMLScalar(defaultRaw),
+                    order: &order,
+                    byName: &byName
+                )
+                continue
+            }
+
+            guard let name = normalizedPromptInputName(from: rawItem) else { continue }
+            appendPromptInput(
+                name: name,
+                type: "string",
+                defaultValue: nil,
+                order: &order,
+                byName: &byName
+            )
+        }
+    }
+
+    nonisolated private static func splitFrontmatter(from source: String) -> (frontmatter: String?, body: String) {
+        let lines = source.components(separatedBy: "\n")
+        guard !lines.isEmpty else { return (nil, source) }
+
+        var firstLine = lines[0]
+        if firstLine.hasPrefix("\u{FEFF}") {
+            firstLine.removeFirst()
+        }
+        guard firstLine.trimmingCharacters(in: .whitespacesAndNewlines) == "---" else {
+            return (nil, source)
+        }
+
+        guard let closingIndex = lines.dropFirst().firstIndex(where: { line in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed == "---" || trimmed == "..."
+        }) else {
+            return (nil, source)
+        }
+
+        let frontmatter = lines[1..<closingIndex].joined(separator: "\n")
+        let body = lines[(closingIndex + 1)...].joined(separator: "\n")
+        return (frontmatter, body)
+    }
+
+    nonisolated private static func normalizePromptSource(_ source: String) -> String {
+        source
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    nonisolated private static func normalizedPromptInputName(from raw: String) -> String? {
+        guard let scalar = parseYAMLScalar(raw) else { return nil }
+        let candidate = scalar.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else { return nil }
+        guard isValidPromptInputName(candidate) else { return nil }
+        return candidate
+    }
+
+    nonisolated private static func isValidPromptInputName(_ name: String) -> Bool {
+        let range = NSRange(name.startIndex..<name.endIndex, in: name)
+        return promptInputNameRegex.firstMatch(in: name, range: range) != nil
+    }
+
+    nonisolated private static func appendPromptInput(
+        name: String,
+        type: String?,
+        defaultValue: String?,
+        order: inout [String],
+        byName: inout [String: PromptInput]
+    ) {
+        guard isValidPromptInputName(name) else { return }
+
+        let normalizedType = type?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let normalizedDefault = defaultValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let existing = byName[name] {
+            byName[name] = PromptInput(
+                name: name,
+                type: existing.type ?? normalizedType,
+                defaultValue: existing.defaultValue ?? normalizedDefault
+            )
+            return
+        }
+
+        order.append(name)
+        byName[name] = PromptInput(
+            name: name,
+            type: normalizedType,
+            defaultValue: normalizedDefault
+        )
+    }
+
+    nonisolated private static func parseYAMLKeyValue(from line: String) -> (String, String)? {
+        guard let separator = line.firstIndex(of: ":") else { return nil }
+        let key = String(line[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        let valueStart = line.index(after: separator)
+        let value = String(line[valueStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (key, value)
+    }
+
+    nonisolated private static func parseYAMLListItem(from line: String) -> String? {
+        guard line.hasPrefix("-") else { return nil }
+        let content = line.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+        return content.nilIfEmpty
+    }
+
+    nonisolated private static func leadingIndent(in line: String) -> Int {
+        var count = 0
+        for character in line {
+            if character == " " || character == "\t" {
+                count += 1
+                continue
+            }
+            break
+        }
+        return count
+    }
+
+    nonisolated private static func stripInlineYAMLComment(from line: String) -> String {
+        var isSingleQuoted = false
+        var isDoubleQuoted = false
+        var escaped = false
+
+        for (index, character) in line.enumerated() {
+            if escaped {
+                escaped = false
+                continue
+            }
+
+            if isDoubleQuoted, character == "\\" {
+                escaped = true
+                continue
+            }
+
+            if character == "'" && !isDoubleQuoted {
+                isSingleQuoted.toggle()
+                continue
+            }
+            if character == "\"" && !isSingleQuoted {
+                isDoubleQuoted.toggle()
+                continue
+            }
+            if character == "#", !isSingleQuoted, !isDoubleQuoted {
+                let end = line.index(line.startIndex, offsetBy: index)
+                return String(line[..<end]).trimmingCharacters(in: .whitespaces)
+            }
+        }
+
+        return line
+    }
+
+    nonisolated private static func parseYAMLScalar(_ raw: String) -> String? {
+        let trimmed = stripInlineYAMLComment(from: raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let lowered = trimmed.lowercased()
+        if lowered == "null" || lowered == "~" {
+            return nil
+        }
+
+        guard trimmed.count >= 2 else { return trimmed }
+        if (trimmed.hasPrefix("\"") && trimmed.hasSuffix("\""))
+            || (trimmed.hasPrefix("'") && trimmed.hasSuffix("'")) {
+            return String(trimmed.dropFirst().dropLast())
+        }
+        return trimmed
     }
 
     private func renderPromptTemplate(_ source: String, input: [String: String]) -> String {
@@ -3679,13 +4149,13 @@ class SmithersClient: ObservableObject {
             return Self.makeUIApprovals().filter { !uiResolvedApprovalIDs.contains($0.id) }
         }
 
-        if let approvals = try await listPendingApprovalsOverHTTP() {
+        if let approvals = try? await listPendingApprovalsOverHTTP() {
             return approvals
         }
-        if let approvals = try await listPendingApprovalsFromSQLite() {
+        if let approvals = try? await listPendingApprovalsFromSQLite() {
             return approvals
         }
-        if let approvals = try await listPendingApprovalsOverExec() {
+        if let approvals = try? await listPendingApprovalsOverExec() {
             return approvals
         }
         return try await listPendingApprovalsSynthetic()
@@ -5661,25 +6131,99 @@ class SmithersClient: ObservableObject {
     }
 
     private func decodeChatBlocks(from data: Data) throws -> [ChatBlock] {
+        let dataSize = data.count
+        AppLogger.network.debug("decodeChatBlocks", metadata: ["bytes": "\(dataSize)"])
+
         if let direct = try? decoder.decode([ChatBlock].self, from: data) {
+            AppLogger.network.debug("decodeChatBlocks matched: [ChatBlock]")
             return deduplicatedChatBlocks(direct)
         }
         if let wrapped = try? decoder.decode(ChatBlocksResponse.self, from: data) {
+            AppLogger.network.debug("decodeChatBlocks matched: ChatBlocksResponse")
             return deduplicatedChatBlocks(wrapped.blocks)
         }
         if let envelope = try? decoder.decode(APIEnvelope<[ChatBlock]>.self, from: data),
            envelope.ok,
            let payload = envelope.data {
+            AppLogger.network.debug("decodeChatBlocks matched: APIEnvelope")
             return deduplicatedChatBlocks(payload)
         }
         if let envelope = try? decoder.decode(DataEnvelope<[ChatBlock]>.self, from: data) {
+            AppLogger.network.debug("decodeChatBlocks matched: DataEnvelope")
             return deduplicatedChatBlocks(envelope.data)
         }
         if let lineMap = try? decoder.decode([String: String].self, from: data) {
+            AppLogger.network.debug("decodeChatBlocks matched: [String: String]", metadata: ["keys": "\(lineMap.count)"])
+            let parsed = parseLegacyChatMap(lineMap)
+            AppLogger.network.debug("decodeChatBlocks parseLegacyChatMap", metadata: ["blocks": "\(parsed.count)"])
+            if !parsed.isEmpty {
+                return deduplicatedChatBlocks(parsed)
+            }
+        }
+
+        // Handle JSON array of strings (["line0", "line1", ...])
+        if let lineArray = try? decoder.decode([String].self, from: data) {
+            var lineMap: [String: String] = [:]
+            for (i, line) in lineArray.enumerated() {
+                lineMap[String(i)] = line
+            }
             let parsed = parseLegacyChatMap(lineMap)
             if !parsed.isEmpty {
                 return deduplicatedChatBlocks(parsed)
             }
+        }
+
+        // Fallback: use JSONSerialization for mixed-type dictionaries or arrays
+        if let jsonObj = try? JSONSerialization.jsonObject(with: data) {
+            var lineMap: [String: String] = [:]
+            if let dict = jsonObj as? [String: Any] {
+                for (key, value) in dict {
+                    if let str = value as? String {
+                        lineMap[key] = str
+                    } else {
+                        lineMap[key] = String(describing: value)
+                    }
+                }
+            } else if let arr = jsonObj as? [Any] {
+                for (i, value) in arr.enumerated() {
+                    if let str = value as? String {
+                        lineMap[String(i)] = str
+                    } else {
+                        lineMap[String(i)] = String(describing: value)
+                    }
+                }
+            }
+            let parsed = parseLegacyChatMap(lineMap)
+            if !parsed.isEmpty {
+                return deduplicatedChatBlocks(parsed)
+            }
+        }
+
+        // Last resort: treat the raw data as newline-delimited text
+        let rawText = String(decoding: data, as: UTF8.self)
+        let rawLines = rawText.components(separatedBy: .newlines)
+        if !rawLines.isEmpty {
+            var lineMap: [String: String] = [:]
+            for (i, line) in rawLines.enumerated() {
+                lineMap[String(i)] = line
+            }
+            let parsed = parseLegacyChatMap(lineMap)
+            if !parsed.isEmpty {
+                return deduplicatedChatBlocks(parsed)
+            }
+        }
+
+        // Absolute fallback: return raw text as a single system block
+        if !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return [ChatBlock(
+                id: "raw-fallback",
+                runId: nil,
+                nodeId: nil,
+                attempt: 0,
+                role: "system",
+                content: rawText,
+                timestampMs: nil
+            )]
         }
 
         let snippet = String(decoding: data.prefix(200), as: UTF8.self)
@@ -5838,11 +6382,13 @@ class SmithersClient: ObservableObject {
     private struct ParsedSSEEvent {
         let event: String?
         let data: String
+        let runId: String?
     }
 
     private struct SSEParser {
         private var eventType: String?
         private var dataLines: [String] = []
+        private var runId: String?
 
         mutating func consume(_ rawLine: String) -> ParsedSSEEvent? {
             let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
@@ -5867,6 +6413,8 @@ class SmithersClient: ObservableObject {
                 eventType = value
             case "data":
                 dataLines.append(value)
+            case "runId", "run_id", "workflowRunId", "workflow_run_id":
+                runId = SSEEvent.normalizedRunId(value)
             case "id", "retry":
                 break
             default:
@@ -5884,6 +6432,7 @@ class SmithersClient: ObservableObject {
             defer {
                 eventType = nil
                 dataLines.removeAll(keepingCapacity: true)
+                runId = nil
             }
 
             guard !dataLines.isEmpty else {
@@ -5891,7 +6440,7 @@ class SmithersClient: ObservableObject {
             }
 
             let event = eventType?.isEmpty == true ? nil : eventType
-            return ParsedSSEEvent(event: event, data: dataLines.joined(separator: "\n"))
+            return ParsedSSEEvent(event: event, data: dataLines.joined(separator: "\n"), runId: runId)
         }
     }
 
@@ -5984,7 +6533,12 @@ class SmithersClient: ObservableObject {
                         var parser = SSEParser()
 
                         func emit(_ parsed: ParsedSSEEvent) {
-                            if let event = SSEEvent.filtered(event: parsed.event, data: parsed.data, expectedRunId: runId) {
+                            if let event = SSEEvent.filtered(
+                                event: parsed.event,
+                                data: parsed.data,
+                                eventRunId: parsed.runId,
+                                expectedRunId: runId
+                            ) {
                                 yieldedEvents += 1
                                 continuation.yield(event)
                             } else {
@@ -6207,6 +6761,10 @@ private func parseCLITimestampMs(_ value: String?) -> Int64? {
 
     if let date = DateFormatters.parseISO8601InternetDateTime(raw) {
         return Int64(date.timeIntervalSince1970 * 1000)
+    }
+
+    if let relativeMs = DateFormatters.parseRelativeAgoTimestampMs(raw) {
+        return relativeMs
     }
 
     return nil
