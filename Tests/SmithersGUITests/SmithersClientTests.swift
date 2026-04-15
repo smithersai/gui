@@ -132,6 +132,45 @@ final class SSEParserTests: XCTestCase {
         XCTAssertEqual(events[0].event, "typed")
         XCTAssertNil(events[1].event, "Event type should reset to nil after dispatch")
     }
+
+    func testParsedEventExtractsTopLevelRunId() {
+        let raw = "data: {\"runId\":\"run-1\",\"type\":\"RunStarted\"}\n\n"
+        let events = parseSSELines(raw)
+        XCTAssertEqual(events[0].runId, "run-1")
+    }
+
+    func testExtractsNestedRunIdFromEnvelope() {
+        let json = """
+        {"event":{"runId":"run-nested","type":"RunFinished"}}
+        """
+        XCTAssertEqual(SSEEvent.extractRunId(from: json), "run-nested")
+    }
+
+    func testExtractsSnakeCaseRunId() {
+        let json = """
+        {"data":{"run_id":"run-snake","type":"RunFinished"}}
+        """
+        XCTAssertEqual(SSEEvent.extractRunId(from: json), "run-snake")
+    }
+
+    func testFilteredEventDropsExplicitMismatchedRunId() {
+        let json = "{\"runId\":\"other-run\",\"type\":\"RunStarted\"}"
+        XCTAssertNil(SSEEvent.filtered(event: "message", data: json, expectedRunId: "target-run"))
+    }
+
+    func testFilteredEventKeepsMatchingRunId() {
+        let json = "{\"runId\":\"target-run\",\"type\":\"RunStarted\"}"
+        let event = SSEEvent.filtered(event: "message", data: json, expectedRunId: "target-run")
+        XCTAssertEqual(event?.runId, "target-run")
+        XCTAssertEqual(event?.data, json)
+    }
+
+    func testFilteredEventKeepsAndTagsMissingRunId() {
+        let json = "{\"type\":\"heartbeat\"}"
+        let event = SSEEvent.filtered(event: "message", data: json, expectedRunId: "target-run")
+        XCTAssertEqual(event?.runId, "target-run")
+        XCTAssertEqual(event?.data, json)
+    }
 }
 
 // MARK: - SmithersClient Initialization & Properties Tests
@@ -198,12 +237,16 @@ final class SmithersClientInitTests: XCTestCase {
 @MainActor
 final class SmithersClientTransportTests: XCTestCase {
 
-    // TRANSPORT_HTTP_TIMEOUT_15S — URLSession timeout is 15s
-    // We cannot directly inspect the private session, but we verify the client initializes
-    // without error (timeout is set in init).
+    // TRANSPORT_HTTP_TIMEOUT_15S — non-streaming URLSession timeout is 15s
     func testSessionTimeoutConfigured() {
-        let client = SmithersClient()
-        XCTAssertNotNil(client, "Client should initialize with 15s timeout config")
+        let config = SmithersClient.makeHTTPURLSessionConfiguration()
+        XCTAssertEqual(config.timeoutIntervalForRequest, 15)
+    }
+
+    func testSSESessionDoesNotUseShortRequestTimeout() {
+        let config = SmithersClient.makeSSEURLSessionConfiguration()
+        XCTAssertTrue(config.timeoutIntervalForRequest.isInfinite)
+        XCTAssertTrue(config.timeoutIntervalForResource.isInfinite)
     }
 
     // TRANSPORT_WRAPPED_VS_BARE_JSON — listWorkflows handles wrapped {"workflows":[...]}
@@ -265,6 +308,30 @@ final class SmithersClientTransportTests: XCTestCase {
         let bare = try JSONDecoder().decode([RunSummary].self, from: data)
         XCTAssertEqual(bare.count, 1)
         XCTAssertEqual(bare[0].status, .finished)
+    }
+
+    // TRANSPORT_CRON_LIST_WRAPPED_JSON — cron list returns {"crons":[...]}
+    func testWrappedCronResponseDecoding() throws {
+        let json = """
+        {"crons":[{"cronId":"c1","pattern":"*/15 * * * *","workflowPath":".smithers/workflows/debug.tsx","enabled":true,"createdAtMs":1776218840798,"lastRunAtMs":null,"nextRunAtMs":null,"errorJson":null}]}
+        """
+        let data = json.data(using: .utf8)!
+        let wrapped = try JSONDecoder().decode(CronResponse.self, from: data)
+        XCTAssertEqual(wrapped.crons.count, 1)
+        XCTAssertEqual(wrapped.crons[0].id, "c1")
+        XCTAssertEqual(wrapped.crons[0].workflowPath, ".smithers/workflows/debug.tsx")
+        XCTAssertTrue(wrapped.crons[0].enabled)
+    }
+
+    func testBareCronArrayDecoding() throws {
+        let json = """
+        [{"cronId":"c2","pattern":"0 * * * *","workflowPath":"hourly.ts","enabled":false,"createdAtMs":1000,"lastRunAtMs":null,"nextRunAtMs":2000,"errorJson":null}]
+        """
+        let data = json.data(using: .utf8)!
+        let bare = try JSONDecoder().decode([CronSchedule].self, from: data)
+        XCTAssertEqual(bare.count, 1)
+        XCTAssertEqual(bare[0].id, "c2")
+        XCTAssertEqual(bare[0].nextRunAtMs, 2_000)
     }
 
     // TRANSPORT_WRAPPED_VS_BARE_JSON — memory responses
@@ -356,75 +423,281 @@ final class SmithersClientCLICommandTests: XCTestCase {
         XCTAssertEqual(args[1], runId)
     }
 
-    // CLI_APPROVE — "approve --run <runId> <nodeId>"
+    // CLI_APPROVE — "approve <runId> --node <nodeId>"
     // TRANSPORT_APPROVE_NOTE_PARAMETER — optional --note
     func testApproveCommandShape() {
-        let runId = "run-1"
-        let nodeId = "node-a"
-        var args = ["approve", "--run", runId, nodeId]
-        XCTAssertEqual(args, ["approve", "--run", "run-1", "node-a"])
-
-        // With note
-        let note = "LGTM"
-        args += ["--note", note]
-        XCTAssertTrue(args.contains("--note"))
-        XCTAssertTrue(args.contains("LGTM"))
+        let args = SmithersClient.approveNodeCLIArgs(runId: "run-1", nodeId: "node-a")
+        XCTAssertEqual(args, ["approve", "run-1", "--node", "node-a"])
+        XCTAssertFalse(args.contains("--run"))
     }
 
-    // CLI_DENY — "deny --run <runId> <nodeId>"
+    // TRANSPORT_APPROVE_NOTE_PARAMETER — optional --note
+    func testApproveCommandShapeIncludesNote() {
+        let args = SmithersClient.approveNodeCLIArgs(runId: "run-1", nodeId: "node-a", note: "LGTM")
+        XCTAssertEqual(args, ["approve", "run-1", "--node", "node-a", "--note", "LGTM"])
+    }
+
+    // CLI_APPROVE_ITERATION — optional --iteration
+    func testApproveCommandShapeIncludesIterationWhenProvided() {
+        let args = SmithersClient.approveNodeCLIArgs(runId: "run-1", nodeId: "node-a", iteration: 2)
+        XCTAssertEqual(args, ["approve", "run-1", "--node", "node-a", "--iteration", "2"])
+    }
+
+    // CLI_DENY — "deny <runId> --node <nodeId>"
     // TRANSPORT_DENY_REASON_PARAMETER — optional --reason
     func testDenyCommandShape() {
-        let runId = "run-1"
-        let nodeId = "node-b"
-        var args = ["deny", "--run", runId, nodeId]
-        XCTAssertEqual(args, ["deny", "--run", "run-1", "node-b"])
-
-        let reason = "unsafe operation"
-        args += ["--reason", reason]
-        XCTAssertTrue(args.contains("--reason"))
-        XCTAssertTrue(args.contains("unsafe operation"))
+        let args = SmithersClient.denyNodeCLIArgs(runId: "run-1", nodeId: "node-b")
+        XCTAssertEqual(args, ["deny", "run-1", "--node", "node-b"])
+        XCTAssertFalse(args.contains("--run"))
     }
 
-    // CLI_MEMORY_LIST — "memory list --format json"
+    // TRANSPORT_DENY_REASON_PARAMETER — optional --reason
+    func testDenyCommandShapeIncludesReason() {
+        let args = SmithersClient.denyNodeCLIArgs(runId: "run-1", nodeId: "node-b", reason: "unsafe operation")
+        XCTAssertEqual(args, ["deny", "run-1", "--node", "node-b", "--reason", "unsafe operation"])
+    }
+
+    // CLI_DENY_ITERATION — optional --iteration
+    func testDenyCommandShapeIncludesIterationWhenProvided() {
+        let args = SmithersClient.denyNodeCLIArgs(runId: "run-1", nodeId: "node-b", iteration: 3)
+        XCTAssertEqual(args, ["deny", "run-1", "--node", "node-b", "--iteration", "3"])
+    }
+
+    // CLI_MEMORY_LIST — "memory list <namespace> --format json --workflow <path>"
     func testMemoryListCommandShape() {
-        var args = ["memory", "list", "--format", "json"]
-        XCTAssertEqual(args[0], "memory")
-        XCTAssertEqual(args[1], "list")
-
-        // With namespace
-        let ns = "project"
-        args += ["--namespace", ns]
-        XCTAssertTrue(args.contains("--namespace"))
-        XCTAssertTrue(args.contains("project"))
+        let args = SmithersMemoryCLI.listArgs(
+            namespace: "workflow:implement",
+            workflowPath: ".smithers/workflows/implement.tsx"
+        )
+        XCTAssertEqual(args, [
+            "memory", "list", "workflow:implement",
+            "--format", "json",
+            "--workflow", ".smithers/workflows/implement.tsx",
+        ])
+        XCTAssertFalse(args.contains("--namespace"))
     }
 
-    // CLI_MEMORY_RECALL — "memory recall <query> --format json --top-k <n>"
+    func testMemoryListCommandDefaultsNamespace() {
+        let args = SmithersMemoryCLI.listArgs(workflowPath: ".smithers/workflows/implement.tsx")
+        XCTAssertEqual(args[2], "global:default")
+    }
+
+    // CLI_MEMORY_RECALL — "memory recall <query> --format json --namespace <namespace> --top-k <n> --workflow <path>"
     func testMemoryRecallCommandShape() {
         let query = "deployment steps"
         let topK = 5
-        let args = ["memory", "recall", query, "--format", "json", "--top-k", "\(topK)"]
-        XCTAssertEqual(args[2], query)
-        XCTAssertEqual(args[6], "5")
+        let args = SmithersMemoryCLI.recallArgs(
+            query: query,
+            namespace: "global:default",
+            workflowPath: ".smithers/workflows/implement.tsx",
+            topK: topK
+        )
+        XCTAssertEqual(args, [
+            "memory", "recall", query,
+            "--format", "json",
+            "--namespace", "global:default",
+            "--top-k", "5",
+            "--workflow", ".smithers/workflows/implement.tsx",
+        ])
     }
 
-    // CLI_SCORES — "scores [runId] --format json"
+    private func makeMemoryCLI() throws -> (root: URL, bin: String, calls: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SmithersClientMemoryTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let calls = root.appendingPathComponent("calls.log")
+        let bin = root.appendingPathComponent("smithers")
+        let script = """
+        #!/bin/sh
+        CALLS='\(calls.path)'
+        printf '%s\\n' "$*" >> "$CALLS"
+
+        if [ "$1" = "memory" ] && [ "$2" = "list" ]; then
+          echo 'No facts found in namespace "workflow:implement".'
+          cat <<'JSON'
+        {"facts":[{"namespace":"workflow:implement","key":"language","valueJson":"{}","schemaSig":null,"createdAtMs":1000,"updatedAtMs":2000,"ttlMs":null}],"namespace":"workflow:implement"}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "memory" ] && [ "$2" = "recall" ]; then
+          echo 'No results found.'
+          cat <<'JSON'
+        {"query":"deploy","namespace":"global:default","results":[{"score":0.8,"content":"remembered","metadata":null}]}
+        JSON
+          exit 0
+        fi
+
+        echo "unexpected command: $*" >&2
+        exit 2
+        """
+        try script.write(to: bin, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+        return (root, bin.path, calls)
+    }
+
+    func testListMemoryFactsUsesPositionalNamespaceWorkflowAndWrappedJSON() async throws {
+        let cli = try makeMemoryCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let facts = try await client.listMemoryFacts(
+            namespace: "workflow:implement",
+            workflowPath: ".smithers/workflows/implement.tsx"
+        )
+
+        XCTAssertEqual(facts.count, 1)
+        XCTAssertEqual(facts[0].namespace, "workflow:implement")
+        XCTAssertEqual(facts[0].key, "language")
+        let calls = try String(contentsOf: cli.calls, encoding: .utf8)
+        XCTAssertTrue(calls.contains("memory list workflow:implement --format json --workflow .smithers/workflows/implement.tsx"))
+        XCTAssertFalse(calls.contains("--namespace workflow:implement"))
+    }
+
+    private func makeWorkflowCLI() throws -> (root: URL, bin: String, calls: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SmithersClientWorkflowTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let calls = root.appendingPathComponent("calls.log")
+        let bin = root.appendingPathComponent("smithers")
+        let script = """
+        #!/bin/sh
+        CALLS='\(calls.path)'
+        printf '%s\\n' "$*" >> "$CALLS"
+
+        if [ "$1" = "graph" ]; then
+          cat <<'JSON'
+        {"workflowId":".smithers/workflows/deploy.yaml","runId":"graph","tasks":[]}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "up" ]; then
+          cat <<'JSON'
+        {"runId":"run-from-relative-path"}
+        JSON
+          exit 0
+        fi
+
+        echo "unexpected command: $*" >&2
+        exit 2
+        """
+        try script.write(to: bin, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+        return (root, bin.path, calls)
+    }
+
+    func testGetWorkflowDAGUsesWorkflowRelativePath() async throws {
+        let cli = try makeWorkflowCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let workflow = Workflow(
+            id: "deploy",
+            workspaceId: nil,
+            name: "Deploy",
+            relativePath: ".smithers/workflows/deploy.yaml",
+            status: nil,
+            updatedAt: nil
+        )
+
+        let dag = try await client.getWorkflowDAG(workflow)
+
+        XCTAssertEqual(dag.workflowID, ".smithers/workflows/deploy.yaml")
+        let calls = try String(contentsOf: cli.calls, encoding: .utf8)
+        XCTAssertTrue(calls.contains("graph .smithers/workflows/deploy.yaml --format json"))
+        XCTAssertFalse(calls.contains("graph deploy --format json"))
+    }
+
+    func testRunWorkflowUsesWorkflowRelativePath() async throws {
+        let cli = try makeWorkflowCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let workflow = Workflow(
+            id: "deploy",
+            workspaceId: nil,
+            name: "Deploy",
+            relativePath: ".smithers/workflows/deploy.yaml",
+            status: nil,
+            updatedAt: nil
+        )
+
+        let result = try await client.runWorkflow(workflow)
+
+        XCTAssertEqual(result.runId, "run-from-relative-path")
+        let calls = try String(contentsOf: cli.calls, encoding: .utf8)
+        XCTAssertTrue(calls.contains("up .smithers/workflows/deploy.yaml -d --format json"))
+        XCTAssertFalse(calls.contains("up deploy -d --format json"))
+    }
+
+    func testRunWorkflowSerializesTypedInputs() async throws {
+        let cli = try makeWorkflowCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        _ = try await client.runWorkflow(
+            workflowPath: ".smithers/workflows/deploy.yaml",
+            inputs: [
+                "config": .object(["enabled": .bool(true)]),
+                "dry_run": .bool(false),
+                "replicas": .number(3),
+            ]
+        )
+
+        let calls = try String(contentsOf: cli.calls, encoding: .utf8)
+        guard let line = calls.split(separator: "\n").last else {
+            return XCTFail("Expected workflow command to be logged")
+        }
+        let parts = line.split(separator: " ").map(String.init)
+        guard let inputIndex = parts.firstIndex(of: "--input"), parts.indices.contains(inputIndex + 1) else {
+            return XCTFail("Expected --input JSON payload in \(line)")
+        }
+
+        let inputJSON = parts[inputIndex + 1]
+        let decoded = try JSONDecoder().decode([String: JSONValue].self, from: Data(inputJSON.utf8))
+        XCTAssertEqual(decoded["config"], .object(["enabled": .bool(true)]))
+        XCTAssertEqual(decoded["dry_run"], .bool(false))
+        XCTAssertEqual(decoded["replicas"], .number(3))
+        XCTAssertFalse(inputJSON.contains(#""false""#), "Boolean inputs must not be encoded as strings")
+        XCTAssertFalse(inputJSON.contains(#""3""#), "Number inputs must not be encoded as strings")
+    }
+
+    // CLI_SCORES — "scores <runId> --format json"
     func testScoresCommandShape() {
-        // Without runId
-        var args = ["scores", "--format", "json"]
-        XCTAssertEqual(args.count, 3)
-
-        // With runId
-        args = ["scores"]
         let runId = "run-xyz"
-        args.append(runId)
-        args += ["--format", "json"]
-        XCTAssertEqual(args[1], "run-xyz")
+        let args = ["scores", runId, "--format", "json"]
+        XCTAssertEqual(args, ["scores", "run-xyz", "--format", "json"])
     }
 
-    // TRANSPORT_WORKFLOW_DETACH_FLAG — "up <id> -d --format json"
+    func testListRecentScoresRejectsBlankRunId() async {
+        let client = SmithersClient(cwd: "/tmp")
+        do {
+            _ = try await client.listRecentScores(runId: " ")
+            XCTFail("Expected blank scores run ID to throw")
+        } catch SmithersError.cli(let message) {
+            XCTAssertTrue(message.contains("Run ID is required"))
+        } catch {
+            XCTFail("Expected SmithersError.cli, got \(error)")
+        }
+    }
+
+    func testListRecentScoresFixturesUseRequestedRunId() async throws {
+        setenv("SMITHERS_GUI_UITEST", "1", 1)
+        defer { unsetenv("SMITHERS_GUI_UITEST") }
+
+        let client = SmithersClient(cwd: "/tmp")
+        let scores = try await client.listRecentScores(runId: "run-xyz")
+        XCTAssertFalse(scores.isEmpty)
+        XCTAssertEqual(Set(scores.compactMap(\.runId)), ["run-xyz"])
+    }
+
+    // TRANSPORT_WORKFLOW_DETACH_FLAG — "up <path> -d --format json"
     func testRunWorkflowDetachFlag() {
-        let workflowId = "wf-1"
-        let args = ["up", workflowId, "-d", "--format", "json"]
+        let workflowPath = ".smithers/workflows/deploy.yaml"
+        let args = ["up", workflowPath, "-d", "--format", "json"]
         XCTAssertTrue(args.contains("-d"), "Must include detach flag")
         XCTAssertEqual(args[0], "up")
     }
@@ -441,22 +714,38 @@ final class SmithersClientCLICommandTests: XCTestCase {
     func testAllDataCommandsUseJsonFormat() {
         // All CLI data-fetching commands include --format json.
         // Verified by reading source for: listWorkflows, listRuns, inspectRun,
-        // listMemoryFacts, recallMemory, listRecentScores, runWorkflow, listSnapshots, listCrons
+        // listMemoryFacts, recallMemory, listRecentScores, runWorkflow, listSnapshots, listCrons, createCron
         let commands: [[String]] = [
             ["workflow", "list", "--format", "json"],
             ["ps", "--format", "json"],
             ["inspect", "RUN", "--format", "json"],
-            ["memory", "list", "--format", "json"],
-            ["memory", "recall", "Q", "--format", "json", "--top-k", "10"],
-            ["scores", "--format", "json"],
-            ["up", "WF", "-d", "--format", "json"],
+            SmithersMemoryCLI.listArgs(namespace: "global:default", workflowPath: ".smithers/workflows/implement.tsx"),
+            SmithersMemoryCLI.recallArgs(query: "Q", workflowPath: ".smithers/workflows/implement.tsx", topK: 10),
+            ["scores", "RUN", "--format", "json"],
+            ["up", ".smithers/workflows/deploy.yaml", "-d", "--format", "json"],
             ["timeline", "RUN", "--format", "json"],
             ["cron", "list", "--format", "json"],
+            ["cron", "add", "0 * * * *", ".smithers/workflows/hourly.tsx", "--format", "json"],
         ]
         for cmd in commands {
             XCTAssertTrue(cmd.contains("--format"), "Command \(cmd[0]) missing --format")
             XCTAssertTrue(cmd.contains("json"), "Command \(cmd[0]) missing json")
         }
+    }
+
+    // TRANSPORT_CRON_TOGGLE_ENABLE_DISABLE — toggle maps to enable/disable subcommands.
+    func testCronToggleEnableDisableCommandShape() {
+        let enableArgs = ["cron", "enable", "cron-123"]
+        XCTAssertEqual(enableArgs, ["cron", "enable", "cron-123"])
+
+        let disableArgs = ["cron", "disable", "cron-123"]
+        XCTAssertEqual(disableArgs, ["cron", "disable", "cron-123"])
+    }
+
+    // TRANSPORT_CRON_DELETE_COMMAND — delete uses `cron rm <id>`.
+    func testCronDeleteCommandShape() {
+        let args = ["cron", "rm", "cron-123"]
+        XCTAssertEqual(args, ["cron", "rm", "cron-123"])
     }
 
     // TRANSPORT_SMITHERS_BINARY_DISCOVERY — uses /usr/bin/env smithers
@@ -611,7 +900,8 @@ final class SmithersModelDecodingTests: XCTestCase {
         XCTAssertEqual(run.totalNodes, 10)
         XCTAssertEqual(run.finishedNodes, 3)
         XCTAssertEqual(run.failedNodes, 1)
-        XCTAssertEqual(run.progress, 0.3)
+        XCTAssertEqual(run.completedNodes, 4)
+        XCTAssertEqual(run.progress, 0.4)
         XCTAssertNotNil(run.startedAt)
         XCTAssertNil(run.finishedAt)
     }
@@ -657,6 +947,92 @@ final class SmithersModelDecodingTests: XCTestCase {
         XCTAssertEqual(inspection.tasks[0].state, "finished")
     }
 
+    func testCLIInspectResponseMapsToRunInspection() throws {
+        let json = """
+        {
+          "run": {
+            "id": "92e861d1-d3e7-4926-a087-91f9a9c1598c",
+            "workflow": "ticket-kanban",
+            "status": "running",
+            "started": "2026-04-15T01:05:15.093Z",
+            "elapsed": "1h 0m",
+            "error": {"message": "boom"}
+          },
+          "steps": [
+            {
+              "id": "0001-port-agents-view:implement",
+              "state": "finished",
+              "attempt": 1,
+              "label": "0001-port-agents-view:implement"
+            },
+            {
+              "id": "0008-port-triggers-and-crons:review:0",
+              "state": "in-progress",
+              "attempt": 1,
+              "label": "0008-port-triggers-and-crons:review:0"
+            },
+            {
+              "id": "release-gate",
+              "state": "waiting-approval",
+              "attempt": 0,
+              "label": "Release gate"
+            }
+          ],
+          "cta": {
+            "commands": [
+              {"command": "smithers logs 92e861d1-d3e7-4926-a087-91f9a9c1598c", "description": "Tail run logs"}
+            ]
+          }
+        }
+        """
+
+        let inspection = try SmithersClient.decodeRunInspection(from: json.data(using: .utf8)!)
+
+        XCTAssertEqual(inspection.run.runId, "92e861d1-d3e7-4926-a087-91f9a9c1598c")
+        XCTAssertEqual(inspection.run.workflowName, "ticket-kanban")
+        XCTAssertEqual(inspection.run.status, .running)
+        XCTAssertEqual(inspection.run.startedAtMs, 1_776_215_115_093)
+        XCTAssertEqual(inspection.run.summary?["total"], 3)
+        XCTAssertEqual(inspection.run.summary?["finished"], 1)
+        XCTAssertEqual(inspection.run.summary?["running"], 1)
+        XCTAssertEqual(inspection.run.summary?["waiting-approval"], 1)
+        XCTAssertTrue(inspection.run.errorJson?.contains("\"message\":\"boom\"") == true)
+
+        XCTAssertEqual(inspection.tasks.count, 3)
+        XCTAssertEqual(inspection.tasks[0].nodeId, "0001-port-agents-view:implement")
+        XCTAssertEqual(inspection.tasks[0].lastAttempt, 1)
+        XCTAssertEqual(inspection.tasks[1].state, "running")
+        XCTAssertEqual(inspection.tasks[2].label, "Release gate")
+    }
+
+    func testVerboseCLIInspectEnvelopeMapsToRunInspection() throws {
+        let json = """
+        {
+          "ok": true,
+          "data": {
+            "run": {
+              "id": "run-verbose",
+              "workflow": "ticket-kanban",
+              "status": "finished",
+              "started": "2026-04-15T01:05:15Z",
+              "finished": "2026-04-15T01:06:15Z"
+            },
+            "steps": [
+              {"id": "validate", "state": "finished", "attempt": 2, "label": "Validate"}
+            ]
+          }
+        }
+        """
+
+        let inspection = try SmithersClient.decodeRunInspection(from: json.data(using: .utf8)!)
+
+        XCTAssertEqual(inspection.run.runId, "run-verbose")
+        XCTAssertEqual(inspection.run.status, .finished)
+        XCTAssertEqual(inspection.run.finishedAtMs, 1_776_215_175_000)
+        XCTAssertEqual(inspection.tasks.first?.nodeId, "validate")
+        XCTAssertEqual(inspection.tasks.first?.lastAttempt, 2)
+    }
+
     func testWorkflowDecoding() throws {
         let json = """
         {"id":"w1","workspaceId":null,"name":"Test Flow","relativePath":"flow.ts","status":"active","updatedAt":null}
@@ -669,13 +1045,14 @@ final class SmithersModelDecodingTests: XCTestCase {
 
     func testWorkflowDAGDecoding() throws {
         let json = """
-        {"entryTask":"main","fields":[{"name":"Prompt","key":"prompt","type":"string","default":"hello"}]}
+        {"runId":"graph","frameNo":0,"xml":{"kind":"element","tag":"smithers:workflow","props":{"name":"main"},"children":[{"kind":"element","tag":"smithers:sequence","props":{},"children":[{"kind":"element","tag":"smithers:task","props":{"id":"main"},"children":[]}]}]},"tasks":[{"nodeId":"main","ordinal":0,"iteration":0,"outputTableName":"main","needsApproval":false,"approvalMode":"gate","retries":0,"timeoutMs":null,"heartbeatTimeoutMs":60000,"continueOnFail":false}]}
         """
         let dag = try JSONDecoder().decode(WorkflowDAG.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(dag.runId, "graph")
         XCTAssertEqual(dag.entryTask, "main")
-        XCTAssertEqual(dag.fields?.count, 1)
-        XCTAssertEqual(dag.fields?[0].key, "prompt")
-        XCTAssertEqual(dag.fields?[0].defaultValue, "hello")
+        XCTAssertEqual(dag.tasks.count, 1)
+        XCTAssertEqual(dag.tasks[0].nodeId, "main")
+        XCTAssertEqual(dag.edges, [])
     }
 
     func testLaunchResultDecoding() throws {
@@ -735,11 +1112,13 @@ final class SmithersModelDecodingTests: XCTestCase {
 
     func testCronScheduleDecoding() throws {
         let json = """
-        {"id":"c1","pattern":"0 * * * *","workflowPath":"hourly.ts","enabled":true}
+        {"cronId":"c1","pattern":"0 * * * *","workflowPath":"hourly.ts","enabled":true,"nextRunAtMs":1700003600000}
         """
         let cron = try JSONDecoder().decode(CronSchedule.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(cron.id, "c1")
         XCTAssertEqual(cron.pattern, "0 * * * *")
         XCTAssertTrue(cron.enabled)
+        XCTAssertEqual(cron.nextRunAtMs, 1_700_003_600_000)
     }
 
     func testSSEEventStruct() {
@@ -769,23 +1148,7 @@ final class AggregateScoresLogicTests: XCTestCase {
             makeScore(id: "5", scorerName: "latency", score: 0.7),
         ]
 
-        var byScorer: [String: [Double]] = [:]
-        for s in scores {
-            let name = s.scorerName ?? s.scorerId ?? "unknown"
-            byScorer[name, default: []].append(s.score)
-        }
-
-        let aggregates = byScorer.map { name, values in
-            let sorted = values.sorted()
-            return AggregateScore(
-                scorerName: name,
-                count: values.count,
-                mean: values.reduce(0, +) / Double(values.count),
-                min: sorted.first ?? 0,
-                max: sorted.last ?? 0,
-                p50: sorted.count > 0 ? sorted[sorted.count / 2] : nil
-            )
-        }.sorted(by: { $0.scorerName < $1.scorerName })
+        let aggregates = AggregateScore.aggregate(scores)
 
         let accuracy = aggregates.first(where: { $0.scorerName == "accuracy" })!
         XCTAssertEqual(accuracy.count, 3)
@@ -799,28 +1162,24 @@ final class AggregateScoresLogicTests: XCTestCase {
         XCTAssertEqual(latency.mean, 0.6, accuracy: 0.001)
         XCTAssertEqual(latency.min, 0.5)
         XCTAssertEqual(latency.max, 0.7)
-        XCTAssertEqual(latency.p50, 0.7) // sorted[1] for count=2
+        XCTAssertEqual(latency.p50, 0.6) // median of [0.5, 0.7]
     }
 
-    /// Test aggregation with nil scorerName falls back to scorerId then "unknown"
+    /// Test aggregation with nil scorerName falls back to scorerId then "Unknown"
     func testAggregateScoresFallbackNaming() {
         let scores: [ScoreRow] = [
             makeScore(id: "1", scorerId: "sid1", scorerName: nil, score: 0.5),
             makeScore(id: "2", scorerId: nil, scorerName: nil, score: 0.3),
         ]
 
-        var byScorer: [String: [Double]] = [:]
-        for s in scores {
-            let name = s.scorerName ?? s.scorerId ?? "unknown"
-            byScorer[name, default: []].append(s.score)
-        }
+        let aggregates = AggregateScore.aggregate(scores)
 
-        XCTAssertNotNil(byScorer["sid1"])
-        XCTAssertNotNil(byScorer["unknown"])
+        XCTAssertNotNil(aggregates.first { $0.scorerName == "sid1" })
+        XCTAssertNotNil(aggregates.first { $0.scorerName == "Unknown" })
     }
 
     private func makeScore(id: String, scorerId: String? = "sc", scorerName: String? = nil, score: Double) -> ScoreRow {
-        // We need to decode from JSON since ScoreRow has no memberwise init
+        // Decode from JSON to exercise the same model shape returned by the CLI.
         let json = """
         {"id":"\(id)","runId":"r1","nodeId":null,"iteration":null,"attempt":null,"scorerId":\(scorerId.map { "\"\($0)\"" } ?? "null"),"scorerName":\(scorerName.map { "\"\($0)\"" } ?? "null"),"source":"live","score":\(score),"reason":null,"metaJson":null,"latencyMs":null,"scoredAtMs":1000}
         """
@@ -828,125 +1187,423 @@ final class AggregateScoresLogicTests: XCTestCase {
     }
 }
 
-// MARK: - JJHub Stubs Tests (notAvailable errors)
+// MARK: - JJHub Client Tests
 
 @MainActor
 final class SmithersClientJJHubStubTests: XCTestCase {
+    private func makeTemporaryJJHubCLI() throws -> (root: URL, bin: String, calls: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SmithersClientJJHubTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-    func testLandingThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            _ = try await client.getLanding(number: 1)
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable(let msg) = error {
-                XCTAssertTrue(msg.contains("JJHub"))
-            } else {
-                XCTFail("Wrong error variant: \(error)")
-            }
-        } catch {
-            XCTFail("Wrong error type: \(error)")
-        }
+        let calls = root.appendingPathComponent("calls.txt")
+        let bin = root.appendingPathComponent("jjhub")
+        let script = """
+        #!/bin/sh
+        CALLS_FILE='\(calls.path)'
+        printf '%s\\n' "$*" >> "$CALLS_FILE"
+
+        if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+          cat <<'JSON'
+        [{"id":42,"number":10,"title":"Listed issue","body":"listed body","state":"open","labels":[{"id":1,"name":"bug","color":"ff0000"}],"assignees":[{"id":7,"login":"dev1"}],"comment_count":3}]
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+          cat <<'JSON'
+        {"id":42,"number":10,"title":"Viewed issue","body":"full body","state":"open","labels":[{"id":1,"name":"bug","color":"ff0000"}],"assignees":[{"id":7,"login":"dev1"}],"comment_count":4}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "issue" ] && [ "$2" = "create" ]; then
+          cat <<'JSON'
+        {"id":43,"number":11,"title":"Created issue","body":"created body","state":"open","labels":[],"assignees":[],"comment_count":0}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "issue" ] && [ "$2" = "close" ]; then
+          cat <<'JSON'
+        {"id":42,"number":10,"title":"Viewed issue","body":"full body","state":"closed","labels":[{"id":1,"name":"bug","color":"ff0000"}],"assignees":[{"id":7,"login":"dev1"}],"comment_count":4}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "list" ]; then
+          cat <<'JSON'
+        [{"id":"ws_123","repository_id":1,"user_id":7,"name":"Primary","status":"running","is_fork":false,"freestyle_vm_id":"vm_123","persistence":"sticky","idle_timeout_seconds":1800,"created_at":"2026-03-07T00:00:00Z","updated_at":"2026-03-07T01:00:00Z"}]
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "view" ]; then
+          cat <<'JSON'
+        {"id":"ws_123","repository_id":1,"user_id":7,"name":"Primary","status":"running","is_fork":false,"freestyle_vm_id":"vm_123","persistence":"sticky","idle_timeout_seconds":1800,"created_at":"2026-03-07T00:00:00Z","updated_at":"2026-03-07T01:00:00Z"}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "create" ]; then
+          cat <<'JSON'
+        {"id":"ws_created","repository_id":1,"user_id":7,"name":"Created Workspace","status":"running","is_fork":false,"freestyle_vm_id":"vm_created","persistence":"sticky","snapshot_id":"snap_123","idle_timeout_seconds":1800,"created_at":"2026-03-07T02:00:00Z","updated_at":"2026-03-07T02:00:00Z"}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "fork" ]; then
+          cat <<'JSON'
+        {"id":"ws_forked","repository_id":1,"user_id":7,"name":"Forked Workspace","status":"running","is_fork":true,"parent_workspace_id":"ws_123","freestyle_vm_id":"vm_forked","persistence":"sticky","idle_timeout_seconds":1800,"created_at":"2026-03-07T02:30:00Z","updated_at":"2026-03-07T02:30:00Z"}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "delete" ]; then
+          printf '{"status":"deleted","id":"%s"}\n' "$3"
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "suspend" ]; then
+          printf '{"id":"%s","name":"Primary","status":"suspended","created_at":"2026-03-07T00:00:00Z"}\n' "$3"
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "resume" ]; then
+          printf '{"id":"%s","name":"Primary","status":"running","created_at":"2026-03-07T00:00:00Z"}\n' "$3"
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "snapshot" ] && [ "$3" = "list" ]; then
+          cat <<'JSON'
+        [{"id":"snap_123","repository_id":1,"user_id":7,"name":"Morning","workspace_id":"ws_123","freestyle_snapshot_id":"fs_snap_123","created_at":"2026-03-07T03:00:00Z","updated_at":"2026-03-07T03:00:00Z"}]
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "snapshot" ] && [ "$3" = "view" ]; then
+          cat <<'JSON'
+        {"id":"snap_123","repository_id":1,"user_id":7,"name":"Morning","workspace_id":"ws_123","freestyle_snapshot_id":"fs_snap_123","created_at":"2026-03-07T03:00:00Z","updated_at":"2026-03-07T03:00:00Z"}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "snapshot" ] && [ "$3" = "create" ]; then
+          cat <<'JSON'
+        {"id":"snap_created","repository_id":1,"user_id":7,"name":"Nightly","workspace_id":"ws_123","freestyle_snapshot_id":"fs_snap_created","created_at":"2026-03-07T04:00:00Z","updated_at":"2026-03-07T04:00:00Z"}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "workspace" ] && [ "$2" = "snapshot" ] && [ "$3" = "delete" ]; then
+          printf '{"status":"deleted","id":"%s"}\n' "$4"
+          exit 0
+        fi
+
+        if [ "$1" = "land" ] && [ "$2" = "list" ]; then
+          cat <<'JSON'
+        [{"number":42,"title":"Listed landing","body":"listed body","state":"open","target_bookmark":"main","author":{"id":7,"login":"dev1"},"created_at":"2026-02-19T00:00:00Z"}]
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "land" ] && [ "$2" = "view" ]; then
+          cat <<'JSON'
+        {"landing":{"number":42,"title":"Viewed landing","body":"full body","state":"open","target_bookmark":"main","author":{"id":7,"login":"dev1"},"created_at":"2026-02-19T00:00:00Z"},"changes":[{"id":1,"landing_request_id":42,"change_id":"kseed001","position_in_stack":1,"created_at":"2026-02-19T00:00:00Z"}],"reviews":[]}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "land" ] && [ "$2" = "create" ]; then
+          cat <<'JSON'
+        {"number":77,"title":"Created landing","body":"created body","state":"open","target_bookmark":"main","author":{"id":7,"login":"dev1"},"created_at":"2026-02-19T00:00:00Z"}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "change" ] && [ "$2" = "diff" ]; then
+          printf 'diff --git a/file.swift b/file.swift\\n+landing change\\n'
+          exit 0
+        fi
+
+        if [ "$1" = "land" ] && [ "$2" = "review" ]; then
+          echo "reviewed"
+          exit 0
+        fi
+
+        if [ "$1" = "land" ] && [ "$2" = "land" ]; then
+          echo "landed"
+          exit 0
+        fi
+
+        if [ "$1" = "land" ] && [ "$2" = "checks" ]; then
+          printf 'ci/unit: pass\\nci/lint: pass\\n'
+          exit 0
+        fi
+
+        if [ "$1" = "search" ] && [ "$2" = "code" ]; then
+          cat <<'JSON'
+        {"items":[{"id":7,"repository":"alice/demo","file_path":"src/main.swift","text_matches":[{"content":"func main()","line_number":12}]}],"total_count":1,"page":1,"limit":30}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "search" ] && [ "$2" = "issues" ]; then
+          cat <<'JSON'
+        {"items":[{"id":10,"number":5,"title":"Bug report","state":"open","repository_name":"alice/demo"}],"total_count":1,"page":1,"limit":30}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "search" ] && [ "$2" = "repos" ]; then
+          cat <<'JSON'
+        {"items":[{"id":1,"owner":"alice","name":"demo","full_name":"alice/demo","description":"A demo repo","is_public":true,"topics":[]}],"total_count":1,"page":1,"limit":30}
+        JSON
+          exit 0
+        fi
+
+        echo "unexpected command: $*" >&2
+        exit 2
+        """
+        try script.write(to: bin, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+        return (root, bin.path, calls)
     }
 
-    func testLandingDiffThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            _ = try await client.landingDiff(number: 1)
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    private func readCalls(_ calls: URL) throws -> String {
+        try String(contentsOf: calls, encoding: .utf8)
     }
 
-    func testReviewLandingThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            try await client.reviewLanding(number: 1, action: "approve", body: nil)
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    func testListLandingsUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let landings = try await client.listLandings()
+
+        XCTAssertEqual(landings.count, 1)
+        XCTAssertEqual(landings[0].number, 42)
+        XCTAssertEqual(landings[0].title, "Listed landing")
+        XCTAssertEqual(landings[0].description, "listed body")
+        XCTAssertEqual(landings[0].targetBranch, "main")
+        XCTAssertEqual(landings[0].author, "dev1")
+        XCTAssertEqual(landings[0].id, "landing-42")
+        XCTAssertTrue(try readCalls(cli.calls).contains("land list -s all -L 100 --json --no-color"))
     }
 
-    func testGetIssueThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            _ = try await client.getIssue(number: 1)
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    func testGetLandingUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let landing = try await client.getLanding(number: 42)
+
+        XCTAssertEqual(landing.title, "Viewed landing")
+        XCTAssertEqual(landing.description, "full body")
+        XCTAssertEqual(landing.state, "open")
+        XCTAssertTrue(try readCalls(cli.calls).contains("land view 42 --json --no-color"))
     }
 
-    func testCreateIssueThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            _ = try await client.createIssue(title: "t", body: nil)
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    func testLandingDiffUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let diff = try await client.landingDiff(number: 42)
+
+        XCTAssertTrue(diff.contains("Change kseed001"))
+        XCTAssertTrue(diff.contains("+landing change"))
+        let calls = try readCalls(cli.calls)
+        XCTAssertTrue(calls.contains("land view 42 --json --no-color"))
+        XCTAssertTrue(calls.contains("change diff kseed001 --no-color"))
     }
 
-    func testCloseIssueThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            try await client.closeIssue(number: 1, comment: nil)
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    func testCreateLandingUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let landing = try await client.createLanding(title: " Created landing ", body: "created body", target: "main", stack: true)
+
+        XCTAssertEqual(landing.number, 77)
+        XCTAssertEqual(landing.title, "Created landing")
+        XCTAssertEqual(landing.state, "open")
+        let calls = try readCalls(cli.calls)
+        XCTAssertTrue(calls.contains("land create -t Created landing -b created body --target main --stack --json --no-color"))
     }
 
-    func testCreateWorkspaceThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            _ = try await client.createWorkspace(name: "ws")
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    func testReviewLandingUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        try await client.reviewLanding(number: 42, action: "approve", body: "LGTM")
+
+        XCTAssertTrue(try readCalls(cli.calls).contains("land review 42 -a -b LGTM --no-color"))
     }
 
-    func testDeleteWorkspaceThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            try await client.deleteWorkspace("ws1")
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    func testReviewLandingRequestChangesUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        try await client.reviewLanding(number: 42, action: "request_changes", body: "needs-work")
+
+        XCTAssertTrue(try readCalls(cli.calls).contains("land review 42 -r -b needs-work --no-color"))
     }
 
-    func testSuspendWorkspaceThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            try await client.suspendWorkspace("ws1")
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    func testLandLandingUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        try await client.landLanding(number: 42)
+
+        XCTAssertTrue(try readCalls(cli.calls).contains("land land 42 --no-color"))
     }
 
-    func testResumeWorkspaceThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            try await client.resumeWorkspace("ws1")
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    func testLandingChecksUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let checks = try await client.landingChecks(number: 42)
+
+        XCTAssertTrue(checks.contains("ci/unit: pass"))
+        XCTAssertTrue(try readCalls(cli.calls).contains("land checks 42 --no-color"))
     }
 
-    func testCreateWorkspaceSnapshotThrowsNotAvailable() async {
-        let client = SmithersClient()
-        do {
-            _ = try await client.createWorkspaceSnapshot(workspaceId: "ws1", name: "snap")
-            XCTFail("Should throw")
-        } catch let error as SmithersError {
-            if case .notAvailable = error {} else { XCTFail("Wrong variant") }
-        } catch { XCTFail("Wrong type") }
+    func testGetIssueUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let issue = try await client.getIssue(number: 10)
+
+        XCTAssertEqual(issue.title, "Viewed issue")
+        XCTAssertEqual(issue.body, "full body")
+        XCTAssertEqual(issue.assignees, ["dev1"])
+        XCTAssertTrue(try readCalls(cli.calls).contains("issue view 10 --json --no-color"))
+    }
+
+    func testCreateIssueUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let issue = try await client.createIssue(title: " Created issue ", body: "created body")
+
+        XCTAssertEqual(issue.number, 11)
+        XCTAssertEqual(issue.state, "open")
+        let calls = try readCalls(cli.calls)
+        XCTAssertTrue(calls.contains("issue create -t Created issue -b created body --json --no-color"))
+    }
+
+    func testCloseIssueUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        try await client.closeIssue(number: 10, comment: "done")
+
+        XCTAssertTrue(try readCalls(cli.calls).contains("issue close 10 -c done --json --no-color"))
+    }
+
+    func testCreateWorkspaceUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let workspace = try await client.createWorkspace(name: " Created Workspace ", snapshotId: " snap_123 ")
+
+        XCTAssertEqual(workspace.id, "ws_created")
+        XCTAssertEqual(workspace.status, "running")
+        XCTAssertEqual(workspace.createdAt, "2026-03-07T02:00:00Z")
+        let calls = try readCalls(cli.calls)
+        XCTAssertTrue(calls.contains("workspace create --name Created Workspace --snapshot snap_123 --json --no-color"))
+    }
+
+    func testViewWorkspaceUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let workspace = try await client.viewWorkspace(" ws_123 ")
+
+        XCTAssertEqual(workspace.id, "ws_123")
+        XCTAssertEqual(workspace.name, "Primary")
+        XCTAssertTrue(try readCalls(cli.calls).contains("workspace view ws_123 --json --no-color"))
+    }
+
+    func testForkWorkspaceUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let workspace = try await client.forkWorkspace(" ws_123 ", name: " Forked Workspace ")
+
+        XCTAssertEqual(workspace.id, "ws_forked")
+        XCTAssertEqual(workspace.name, "Forked Workspace")
+        XCTAssertTrue(try readCalls(cli.calls).contains("workspace fork ws_123 --name Forked Workspace --json --no-color"))
+    }
+
+    func testDeleteWorkspaceUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        try await client.deleteWorkspace(" ws_123 ")
+
+        XCTAssertTrue(try readCalls(cli.calls).contains("workspace delete ws_123 --no-color"))
+    }
+
+    func testSuspendResumeWorkspaceUseJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        try await client.suspendWorkspace(" ws_123 ")
+        try await client.resumeWorkspace(" ws_123 ")
+
+        let calls = try readCalls(cli.calls)
+        XCTAssertTrue(calls.contains("workspace suspend ws_123 --json --no-color"))
+        XCTAssertTrue(calls.contains("workspace resume ws_123 --json --no-color"))
+    }
+
+    func testCreateWorkspaceSnapshotUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let snapshot = try await client.createWorkspaceSnapshot(workspaceId: " ws_123 ", name: " Nightly ")
+
+        XCTAssertEqual(snapshot.id, "snap_created")
+        XCTAssertEqual(snapshot.workspaceId, "ws_123")
+        XCTAssertEqual(snapshot.createdAt, "2026-03-07T04:00:00Z")
+        let calls = try readCalls(cli.calls)
+        XCTAssertTrue(calls.contains("workspace snapshot create ws_123 --name Nightly --json --no-color"))
+    }
+
+    func testViewWorkspaceSnapshotUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let snapshot = try await client.viewWorkspaceSnapshot(" snap_123 ")
+
+        XCTAssertEqual(snapshot.id, "snap_123")
+        XCTAssertEqual(snapshot.workspaceId, "ws_123")
+        XCTAssertTrue(try readCalls(cli.calls).contains("workspace snapshot view snap_123 --json --no-color"))
+    }
+
+    func testDeleteWorkspaceSnapshotUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        try await client.deleteWorkspaceSnapshot(" snap_123 ")
+
+        XCTAssertTrue(try readCalls(cli.calls).contains("workspace snapshot delete snap_123 --no-color"))
     }
 
     // Empty-return stubs
@@ -956,46 +1613,90 @@ final class SmithersClientJJHubStubTests: XCTestCase {
         XCTAssertTrue(decisions.isEmpty)
     }
 
-    func testListLandingsReturnsEmpty() async throws {
-        let client = SmithersClient()
-        let landings = try await client.listLandings()
-        XCTAssertTrue(landings.isEmpty)
-    }
+    func testListIssuesUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
 
-    func testListIssuesReturnsEmpty() async throws {
-        let client = SmithersClient()
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
         let issues = try await client.listIssues()
-        XCTAssertTrue(issues.isEmpty)
+
+        XCTAssertEqual(issues.count, 1)
+        XCTAssertEqual(issues[0].title, "Listed issue")
+        XCTAssertEqual(issues[0].labels, ["bug"])
+        XCTAssertTrue(try readCalls(cli.calls).contains("issue list -s all -L 100 --json --no-color"))
     }
 
-    func testListWorkspacesReturnsEmpty() async throws {
-        let client = SmithersClient()
-        let ws = try await client.listWorkspaces()
-        XCTAssertTrue(ws.isEmpty)
+    func testListWorkspacesUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let workspaces = try await client.listWorkspaces()
+
+        XCTAssertEqual(workspaces.count, 1)
+        XCTAssertEqual(workspaces[0].id, "ws_123")
+        XCTAssertEqual(workspaces[0].status, "running")
+        XCTAssertEqual(workspaces[0].createdAt, "2026-03-07T00:00:00Z")
+        XCTAssertTrue(try readCalls(cli.calls).contains("workspace list -L 100 --json --no-color"))
     }
 
-    func testListWorkspaceSnapshotsReturnsEmpty() async throws {
-        let client = SmithersClient()
-        let snaps = try await client.listWorkspaceSnapshots()
-        XCTAssertTrue(snaps.isEmpty)
+    func testListWorkspaceSnapshotsUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let snapshots = try await client.listWorkspaceSnapshots()
+
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots[0].id, "snap_123")
+        XCTAssertEqual(snapshots[0].workspaceId, "ws_123")
+        XCTAssertEqual(snapshots[0].createdAt, "2026-03-07T03:00:00Z")
+        XCTAssertTrue(try readCalls(cli.calls).contains("workspace snapshot list -L 100 --json --no-color"))
     }
 
-    func testSearchCodeReturnsEmpty() async throws {
-        let client = SmithersClient()
-        let results = try await client.searchCode(query: "test")
-        XCTAssertTrue(results.isEmpty)
+    func testSearchCodeUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let results = try await client.searchCode(query: " fn main ", limit: 7)
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].id, "code-7")
+        XCTAssertEqual(results[0].title, "main.swift")
+        XCTAssertEqual(results[0].description, "alice/demo")
+        XCTAssertEqual(results[0].filePath, "src/main.swift")
+        XCTAssertEqual(results[0].lineNumber, 12)
+        XCTAssertEqual(results[0].snippet, "func main()")
+        XCTAssertTrue(try readCalls(cli.calls).contains("search code fn main --limit 7 --json --no-color"))
     }
 
-    func testSearchIssuesReturnsEmpty() async throws {
-        let client = SmithersClient()
-        let results = try await client.searchIssues(query: "test")
-        XCTAssertTrue(results.isEmpty)
+    func testSearchIssuesUsesJJHubCLIAndStateFilter() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let results = try await client.searchIssues(query: "bug", state: "open", limit: 9)
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].id, "issue-10")
+        XCTAssertEqual(results[0].title, "Bug report")
+        XCTAssertEqual(results[0].description, "#5 · open · alice/demo")
+        XCTAssertTrue(try readCalls(cli.calls).contains("search issues bug --limit 9 --state open --json --no-color"))
     }
 
-    func testSearchReposReturnsEmpty() async throws {
-        let client = SmithersClient()
-        let results = try await client.searchRepos(query: "test")
-        XCTAssertTrue(results.isEmpty)
+    func testSearchReposUsesJJHubCLI() async throws {
+        let cli = try makeTemporaryJJHubCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, jjhubBin: cli.bin)
+        let results = try await client.searchRepos(query: "demo", limit: 5)
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].id, "repo-1")
+        XCTAssertEqual(results[0].title, "alice/demo")
+        XCTAssertEqual(results[0].description, "A demo repo")
+        XCTAssertTrue(try readCalls(cli.calls).contains("search repos demo --limit 5 --json --no-color"))
     }
 }
 
@@ -1003,6 +1704,14 @@ final class SmithersClientJJHubStubTests: XCTestCase {
 
 @MainActor
 final class SmithersClientPromptTests: XCTestCase {
+    private func makePromptClient(promptId: String = "sample", source: String) throws -> (client: SmithersClient, root: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SmithersClientPromptTests-\(UUID().uuidString)", isDirectory: true)
+        let promptsDir = root.appendingPathComponent(".smithers/prompts", isDirectory: true)
+        try FileManager.default.createDirectory(at: promptsDir, withIntermediateDirectories: true)
+        try source.write(to: promptsDir.appendingPathComponent("\(promptId).mdx"), atomically: true, encoding: .utf8)
+        return (SmithersClient(cwd: root.path), root)
+    }
 
     /// Test that discoverPromptProps parses {props.xxx} patterns from MDX source
     func testDiscoverPromptPropsRegex() throws {
@@ -1038,12 +1747,135 @@ final class SmithersClientPromptTests: XCTestCase {
         let prompts = try await client.listPrompts()
         XCTAssertTrue(prompts.isEmpty)
     }
+
+    func testDiscoverPromptPropsFindsReferencesInsideMDXExpressions() async throws {
+        let source = """
+        # Feature Review
+
+        Prompt: {props.prompt}
+        {props.lastCommitHash ? `Since ${props.lastCommitHash}` : ""}
+        {JSON.stringify(props.existingFeatures ?? {}, null, 2)}
+        <Summary reviewer={props.reviewer} payload={props["summary-data"]} />
+        """
+        let setup = try makePromptClient(source: source)
+        defer { try? FileManager.default.removeItem(at: setup.root) }
+
+        let props = try await setup.client.discoverPromptProps("sample")
+
+        XCTAssertEqual(
+            props.map(\.name),
+            ["existingFeatures", "lastCommitHash", "prompt", "reviewer", "summary-data"]
+        )
+    }
+
+    func testDiscoverPromptPropsMergesFrontmatterDeclarations() async throws {
+        let source = """
+        ---
+        title: Release Prompt
+        description: Title and description are documentation, not prompt inputs.
+        props:
+          release:
+            type: string
+            default: "2026.04"
+          dryRun:
+            type: boolean
+            default: "true"
+          count: number
+        inputs:
+          - name: owner
+            type: string
+            default: "platform"
+          - label
+        ---
+
+        Body-only prop: {props.bodyOnly ? props.bodyOnly : ""}
+        """
+        let setup = try makePromptClient(source: source)
+        defer { try? FileManager.default.removeItem(at: setup.root) }
+
+        let props = try await setup.client.discoverPromptProps("sample")
+        let byName = Dictionary(uniqueKeysWithValues: props.map { ($0.name, $0) })
+
+        XCTAssertEqual(props.map(\.name), ["bodyOnly", "count", "dryRun", "label", "owner", "release"])
+        XCTAssertNil(byName["title"])
+        XCTAssertNil(byName["description"])
+        XCTAssertEqual(byName["release"]?.type, "string")
+        XCTAssertEqual(byName["release"]?.defaultValue, "2026.04")
+        XCTAssertEqual(byName["dryRun"]?.type, "boolean")
+        XCTAssertEqual(byName["dryRun"]?.defaultValue, "true")
+        XCTAssertEqual(byName["count"]?.type, "number")
+        XCTAssertEqual(byName["owner"]?.defaultValue, "platform")
+        XCTAssertEqual(byName["label"]?.type, "string")
+        XCTAssertEqual(byName["bodyOnly"]?.type, "string")
+    }
 }
 
 // MARK: - PLATFORM_SMITHERS_HTTP_SSE_TRANSPORT Tests
 
 @MainActor
 final class SmithersClientSSETransportTests: XCTestCase {
+
+    func testResolvedHTTPTransportURLFallsBackToLocalhostOnlyWhenServerURLIsMissing() {
+        let fallback = SmithersClient.resolvedHTTPTransportURL(
+            path: "/events",
+            serverURL: nil,
+            fallbackPort: 7331
+        )
+        XCTAssertEqual(fallback?.absoluteString, "http://localhost:7331/events")
+
+        let blankFallback = SmithersClient.resolvedHTTPTransportURL(
+            path: "/events",
+            serverURL: "  ",
+            fallbackPort: 7331
+        )
+        XCTAssertEqual(blankFallback?.absoluteString, "http://localhost:7331/events")
+
+        let invalidConfiguredURL = SmithersClient.resolvedHTTPTransportURL(
+            path: "/events",
+            serverURL: "not-a-url",
+            fallbackPort: 7331
+        )
+        XCTAssertNil(invalidConfiguredURL, "A configured but invalid serverURL should not silently fall back to localhost")
+    }
+
+    func testResolvedHTTPTransportURLUsesConfiguredServerURLForSSEAndHijackPaths() {
+        let eventURL = SmithersClient.resolvedHTTPTransportURL(
+            path: "/events",
+            serverURL: "http://smithers.example:9000",
+            fallbackPort: 7331
+        )
+        XCTAssertEqual(eventURL?.absoluteString, "http://smithers.example:9000/events")
+
+        let chatURL = SmithersClient.resolvedHTTPTransportURL(
+            path: "/v1/runs/run-1/chat/stream",
+            serverURL: "http://smithers.example:9000/api/",
+            fallbackPort: 7331
+        )
+        XCTAssertEqual(chatURL?.absoluteString, "http://smithers.example:9000/api/v1/runs/run-1/chat/stream")
+
+        let hijackURL = SmithersClient.resolvedHTTPTransportURL(
+            path: "/v1/runs/run-1/hijack",
+            serverURL: "http://smithers.example:9000",
+            fallbackPort: 7331
+        )
+        XCTAssertEqual(hijackURL?.absoluteString, "http://smithers.example:9000/v1/runs/run-1/hijack")
+    }
+
+    func testResolvedHTTPTransportURLReadsCurrentServerURLValue() {
+        let client = SmithersClient()
+
+        client.serverURL = "http://first.example:9000"
+        XCTAssertEqual(
+            client.resolvedHTTPTransportURL(path: "/events", fallbackPort: 7331)?.absoluteString,
+            "http://first.example:9000/events"
+        )
+
+        client.serverURL = "http://second.example:9444/api"
+        XCTAssertEqual(
+            client.resolvedHTTPTransportURL(path: "/events", fallbackPort: 7331)?.absoluteString,
+            "http://second.example:9444/api/events"
+        )
+    }
 
     // CONSTANT_SSE_DEFAULT_PORT_7331
     func testStreamRunEventsDefaultPort() {
@@ -1083,22 +1915,99 @@ final class SmithersClientSSETransportTests: XCTestCase {
 
 @MainActor
 final class SmithersClientConnectionTests: XCTestCase {
+    private func missingSmithersBinPath() -> String {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-smithers-\(UUID().uuidString)")
+            .path
+    }
 
-    // PLATFORM_SMITHERS_CONNECTION_CHECK — checkConnection with no server URL
-    func testCheckConnectionNoServerURL() async {
-        let client = SmithersClient()
-        // Without smithers binary available, cliAvailable should become false
+    private func makeTemporarySmithersCLI() throws -> (root: URL, bin: String) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SmithersClientConnectionTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let bin = root.appendingPathComponent("smithers")
+        let script = """
+        #!/bin/sh
+        if [ "$1" = "--version" ]; then
+          echo "smithers 0.0.0"
+          exit 0
+        fi
+        echo "unexpected command" >&2
+        exit 1
+        """
+        try script.write(to: bin, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+        return (root, bin.path)
+    }
+
+    // PLATFORM_SMITHERS_CONNECTION_CHECK — checkConnection with no server URL and no CLI
+    func testCheckConnectionNoServerURLWithoutCLI() async {
+        let client = SmithersClient(smithersBin: missingSmithersBinPath())
         await client.checkConnection()
-        // isConnected should remain false when no serverURL is set
+        XCTAssertFalse(client.cliAvailable)
         XCTAssertFalse(client.isConnected)
+    }
+
+    // PLATFORM_SMITHERS_CONNECTION_CHECK — CLI-only mode is connected when CLI responds
+    func testCheckConnectionNoServerURLWithAvailableCLI() async throws {
+        let cli = try makeTemporarySmithersCLI()
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        await client.checkConnection()
+
+        XCTAssertTrue(client.cliAvailable)
+        XCTAssertTrue(client.isConnected, "CLI-only transport should count as connected when the CLI probe succeeds")
     }
 
     // TRANSPORT_HTTP_HEALTH_CHECK — checkConnection checks /health endpoint
     func testCheckConnectionWithInvalidServerURL() async {
-        let client = SmithersClient()
+        let client = SmithersClient(smithersBin: missingSmithersBinPath())
         client.serverURL = "http://localhost:19999" // unlikely to be running
         await client.checkConnection()
         XCTAssertFalse(client.isConnected, "Should be false when server is not reachable")
+    }
+}
+
+@MainActor
+final class SmithersClientCronTransportTests: XCTestCase {
+    private func makeCronListCLI(output: String) throws -> (root: URL, bin: String) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SmithersClientCronTransportTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let bin = root.appendingPathComponent("smithers")
+        let script = """
+        #!/bin/sh
+        if [ "$1" = "cron" ] && [ "$2" = "list" ] && [ "$3" = "--format" ] && [ "$4" = "json" ]; then
+          cat <<'JSON'
+        \(output)
+        JSON
+          exit 0
+        fi
+        echo "unexpected command: $*" >&2
+        exit 1
+        """
+        try script.write(to: bin, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+        return (root, bin.path)
+    }
+
+    func testListCronsDecodesWrappedCLIResponse() async throws {
+        let cli = try makeCronListCLI(output: """
+        {"crons":[{"cronId":"c1","pattern":"*/15 * * * *","workflowPath":".smithers/workflows/debug.tsx","enabled":true,"createdAtMs":1776218840798,"lastRunAtMs":null,"nextRunAtMs":null,"errorJson":null}]}
+        """)
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let crons = try await client.listCrons()
+
+        XCTAssertEqual(crons.count, 1)
+        XCTAssertEqual(crons[0].id, "c1")
+        XCTAssertEqual(crons[0].pattern, "*/15 * * * *")
+        XCTAssertEqual(crons[0].workflowPath, ".smithers/workflows/debug.tsx")
+        XCTAssertTrue(crons[0].enabled)
     }
 }
 
@@ -1192,5 +2101,24 @@ final class RunSummaryComputedPropertyTests: XCTestCase {
         """
         let run = try JSONDecoder().decode(RunSummary.self, from: json.data(using: .utf8)!)
         XCTAssertEqual(run.id, "my-run-id")
+    }
+}
+
+@MainActor
+final class RunActionHookTests: XCTestCase {
+    func testRerunRunRejectsNonNumericRunID() async {
+        let client = SmithersClient()
+
+        do {
+            _ = try await client.rerunRun("ui-run-active-001")
+            XCTFail("Expected rerunRun to reject non-numeric run IDs")
+        } catch let error as SmithersError {
+            guard case .api(let message) = error else {
+                return XCTFail("Expected SmithersError.api, got \(error)")
+            }
+            XCTAssertTrue(message.contains("numeric run ID"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
     }
 }
