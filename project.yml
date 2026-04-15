@@ -18,6 +18,7 @@ targets:
       - AgentService.swift
       - AppLogger.swift
       - CWDResolver.swift
+      - DateFormatters.swift
       - CodexMCPStatus.swift
       - CodexModelSelection.swift
       - DeveloperDebugView.swift

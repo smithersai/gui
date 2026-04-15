@@ -14,6 +14,7 @@ struct WorkspacesView: View {
     @State private var actionInFlight: Set<String> = []
     @State private var deleteTarget: String?
     @State private var deleteSnapshotTarget: String?
+    @State private var selectedWorkspaceID: String?
 
     enum WSTab: String, CaseIterable {
         case workspaces = "Workspaces"
@@ -219,6 +220,7 @@ struct WorkspacesView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
+                        .background(selectedWorkspaceID == ws.id ? Theme.sidebarSelected : Color.clear)
                         .accessibilityIdentifier("workspace.row.\(ws.id)")
                         Divider().background(Theme.border)
                     }
@@ -415,6 +417,21 @@ struct WorkspacesView: View {
         DateFormatters.compactYearMonthDayHourMinute.string(from: Date())
     }
 
+    private static func restoredWorkspaceName(for snapshot: WorkspaceSnapshot) -> String {
+        let base = normalizedText(snapshot.name) ?? normalizedText(snapshot.id) ?? "snapshot"
+        if base.hasSuffix("-from-snapshot") {
+            return base
+        }
+        return "\(base)-from-snapshot"
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
     // MARK: - Actions
 
     private func loadData() async {
@@ -428,6 +445,10 @@ struct WorkspacesView: View {
                 let fetched = try await smithers.listWorkspaces()
                 guard generation == loadGeneration, tab == capturedTab else { return }
                 workspaces = fetched
+                if let selectedWorkspaceID,
+                   !fetched.contains(where: { $0.id == selectedWorkspaceID }) {
+                    self.selectedWorkspaceID = nil
+                }
             } else {
                 let fetched = try await smithers.listWorkspaceSnapshots()
                 guard generation == loadGeneration, tab == capturedTab else { return }
@@ -511,29 +532,46 @@ struct WorkspacesView: View {
 
     private func createWSFromSnapshot(_ snap: WorkspaceSnapshot) async {
         actionInFlight.insert(snap.id)
+        defer { actionInFlight.remove(snap.id) }
         do {
-            _ = try await smithers.createWorkspace(name: "", snapshotId: snap.id)
+            let workspace = try await smithers.createWorkspace(
+                name: Self.restoredWorkspaceName(for: snap),
+                snapshotId: snap.id
+            )
             tab = .workspaces
-            await loadData()
+            selectWorkspace(workspace, insertAtTop: true)
         } catch {
             self.error = error.localizedDescription
         }
-        actionInFlight.remove(snap.id)
     }
 
     private func openSnapshotWorkspace(_ snap: WorkspaceSnapshot) async {
         let workspaceId = snap.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !workspaceId.isEmpty else { return }
+        guard !workspaceId.isEmpty else {
+            self.error = "Cannot open snapshot workspace: missing workspace id"
+            return
+        }
 
         actionInFlight.insert(snap.id)
+        defer { actionInFlight.remove(snap.id) }
         do {
-            _ = try await smithers.viewWorkspace(workspaceId)
+            let workspace = try await smithers.viewWorkspace(workspaceId)
             tab = .workspaces
-            await loadData()
+            selectWorkspace(workspace, insertAtTop: true)
         } catch {
             self.error = error.localizedDescription
         }
-        actionInFlight.remove(snap.id)
+    }
+
+    private func selectWorkspace(_ workspace: Workspace, insertAtTop: Bool) {
+        selectedWorkspaceID = workspace.id
+        if let index = workspaces.firstIndex(where: { $0.id == workspace.id }) {
+            workspaces[index] = workspace
+        } else if insertAtTop {
+            workspaces.insert(workspace, at: 0)
+        } else {
+            workspaces.append(workspace)
+        }
     }
 
     private func deleteSnapshot(_ snapshotId: String) async {

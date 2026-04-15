@@ -441,18 +441,17 @@ struct IssuesView: View {
 
     private func createIssue() async {
         isCreating = true
+        defer { isCreating = false }
         error = nil
         do {
             let created = try await smithers.createIssue(title: newTitle, body: newBody.isEmpty ? nil : newBody)
             newTitle = ""
             newBody = ""
             showCreate = false
-            selectedId = created.id
-            await loadIssues(selectIssueNumber: created.number)
+            applyCreatedIssueLocally(created)
         } catch {
             self.error = error.localizedDescription
         }
-        isCreating = false
     }
 
     private func reopenIssue(_ issue: SmithersIssue) async {
@@ -460,21 +459,88 @@ struct IssuesView: View {
             self.error = "Cannot reopen issue: missing issue number"
             return
         }
-        // TODO: Call smithers.reopenIssue when backend support is available
-        self.error = "Reopen is not yet implemented for issue #\(num)"
+        error = nil
+        do {
+            let reopened = try await smithers.reopenIssue(number: num)
+            applyIssueMutationLocally(reopened)
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
-    private func closeIssue(_ issue: SmithersIssue) async {
+    private func beginCloseIssue(_ issue: SmithersIssue) {
+        closeComment = ""
+        closeTarget = issue
+    }
+
+    private func confirmCloseIssue(_ issue: SmithersIssue) async {
         guard let num = issue.number else {
             self.error = "Cannot close issue: missing issue number"
             return
         }
+        isClosing = true
+        defer { isClosing = false }
         error = nil
         do {
-            try await smithers.closeIssue(number: num, comment: nil)
-            await loadIssues(selectIssueNumber: num)
+            let comment = closeComment.trimmingCharacters(in: .whitespacesAndNewlines)
+            let closed = try await smithers.closeIssue(number: num, comment: comment.isEmpty ? nil : comment)
+            closeTarget = nil
+            closeComment = ""
+            applyIssueMutationLocally(closed)
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func applyCreatedIssueLocally(_ issue: SmithersIssue) {
+        if !issueMatchesCurrentFilter(issue) {
+            stateFilter = Self.normalizedIssueState(issue.state) == "closed" ? "closed" : "open"
+            issues = [issue]
+        } else {
+            upsertIssueLocally(issue, insertAtTop: true)
+        }
+        selectedId = issue.id
+    }
+
+    private func applyIssueMutationLocally(_ issue: SmithersIssue) {
+        upsertIssueLocally(issue, insertAtTop: false)
+        selectedId = issue.id
+    }
+
+    private func upsertIssueLocally(_ issue: SmithersIssue, insertAtTop: Bool) {
+        if let index = issues.firstIndex(where: { Self.sameIssue($0, issue) }) {
+            issues[index] = issue
+        } else if insertAtTop {
+            issues.insert(issue, at: 0)
+        } else {
+            issues.append(issue)
+        }
+    }
+
+    private func issueMatchesCurrentFilter(_ issue: SmithersIssue) -> Bool {
+        guard let stateFilter else { return true }
+        return Self.normalizedIssueState(issue.state) == Self.normalizedIssueState(stateFilter)
+    }
+
+    private static func sameIssue(_ lhs: SmithersIssue, _ rhs: SmithersIssue) -> Bool {
+        if lhs.id == rhs.id {
+            return true
+        }
+        if let lhsNumber = lhs.number, let rhsNumber = rhs.number {
+            return lhsNumber == rhsNumber
+        }
+        return false
+    }
+
+    private static func normalizedIssueState(_ state: String?) -> String {
+        let value = state?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        switch value {
+        case "open", "opened":
+            return "open"
+        case "closed", "close":
+            return "closed"
+        default:
+            return value
         }
     }
 

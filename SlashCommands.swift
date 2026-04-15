@@ -483,6 +483,15 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
                 action: .navigate(.runs)
             ),
             SlashCommandItem(
+                id: "smithers.snapshots",
+                name: "snapshots",
+                title: "Snapshots",
+                description: "Open timeline/snapshots browser.",
+                category: .smithers,
+                aliases: ["timeline"],
+                action: .navigate(.snapshots)
+            ),
+            SlashCommandItem(
                 id: "smithers.workflows",
                 name: "workflows",
                 title: "Workflows",

@@ -729,6 +729,8 @@ extension NavDestination {
             return "changes"
         case .runs:
             return "runs"
+        case .snapshots:
+            return "snapshots"
         case .workflows:
             return "workflows"
         case .triggers:

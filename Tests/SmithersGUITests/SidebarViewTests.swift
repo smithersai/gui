@@ -19,20 +19,20 @@ extension EdgeBorder: @retroactive Inspectable {}
 final class NavDestinationTests: XCTestCase {
 
     // PLATFORM_DESTINATION_ROUTING / NAV_DESTINATION_CHAT through NAV_DESTINATION_WORKSPACES
-    // All 20 static destinations must exist.
+    // All 21 static destinations must exist.
 
     func testAllTwentyStaticCasesExist() {
         let all: [NavDestination] = [
-            .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
+            .chat, .dashboard, .agents, .changes, .runs, .snapshots, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .terminal(), .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
-        XCTAssertEqual(all.count, 20, "There must be exactly 20 static NavDestination routes")
+        XCTAssertEqual(all.count, 21, "There must be exactly 21 static NavDestination routes")
     }
 
     func testLabelsAreNonEmpty() {
         let all: [NavDestination] = [
-            .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
+            .chat, .dashboard, .agents, .changes, .runs, .snapshots, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .terminal(), .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
@@ -43,7 +43,7 @@ final class NavDestinationTests: XCTestCase {
 
     func testIconsAreNonEmpty() {
         let all: [NavDestination] = [
-            .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
+            .chat, .dashboard, .agents, .changes, .runs, .snapshots, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .terminal(), .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
@@ -60,6 +60,7 @@ final class NavDestinationTests: XCTestCase {
         XCTAssertEqual(NavDestination.agents.label, "Agents")
         XCTAssertEqual(NavDestination.changes.label, "Changes")
         XCTAssertEqual(NavDestination.runs.label, "Runs")
+        XCTAssertEqual(NavDestination.snapshots.label, "Snapshots")
         XCTAssertEqual(NavDestination.workflows.label, "Workflows")
         XCTAssertEqual(NavDestination.triggers.label, "Triggers")
         XCTAssertEqual(NavDestination.jjhubWorkflows.label, "JJHub Workflows")
@@ -83,6 +84,7 @@ final class NavDestinationTests: XCTestCase {
         XCTAssertEqual(NavDestination.agents.icon, "person.2")
         XCTAssertEqual(NavDestination.changes.icon, "point.3.connected.trianglepath.dotted")
         XCTAssertEqual(NavDestination.runs.icon, "play.circle")
+        XCTAssertEqual(NavDestination.snapshots.icon, "camera")
         XCTAssertEqual(NavDestination.workflows.icon, "arrow.triangle.branch")
         XCTAssertEqual(NavDestination.triggers.icon, "clock.arrow.circlepath")
         XCTAssertEqual(NavDestination.jjhubWorkflows.icon, "point.3.filled.connected.trianglepath.dotted")
@@ -373,13 +375,13 @@ final class SidebarViewTests: XCTestCase {
     // PLATFORM_SIDEBAR_NAVIGATION - Smithers and VCS are split
     func testSmithersAndVCSNavSectionsAreSplit() {
         let smithersExpected: [NavDestination] = [
-            .dashboard, .agents, .runs, .workflows, .triggers, .approvals,
+            .dashboard, .agents, .runs, .snapshots, .workflows, .triggers, .approvals,
             .prompts, .scores, .memory, .search, .sql, .workspaces,
         ]
         let vcsExpected: [NavDestination] = [
             .changes, .jjhubWorkflows, .landings, .tickets, .issues,
         ]
-        XCTAssertEqual(smithersExpected.count, 12)
+        XCTAssertEqual(smithersExpected.count, 13)
         XCTAssertEqual(vcsExpected.count, 5)
     }
 
@@ -399,7 +401,7 @@ final class SidebarViewTests: XCTestCase {
 
         // All smithers nav labels should be present
         let expectedLabels = [
-            "Dashboard", "Agents", "Changes", "Runs", "Workflows", "Triggers", "JJHub Workflows", "Approvals",
+            "Dashboard", "Agents", "Changes", "Runs", "Snapshots", "Workflows", "Triggers", "JJHub Workflows", "Approvals",
             "Prompts", "Scores", "Memory", "Search", "SQL Browser",
             "Landings", "Tickets", "Issues", "Workspaces",
         ]
@@ -508,15 +510,15 @@ final class ContentViewNavigationTests: XCTestCase {
         // This is a compile-time guarantee from the exhaustive switch in ContentView,
         // but we test the enum has exactly 20 static cases.
         let all: [NavDestination] = [
-            .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
+            .chat, .dashboard, .agents, .changes, .runs, .snapshots, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .terminal(), .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
-        XCTAssertEqual(all.count, 20)
+        XCTAssertEqual(all.count, 21)
 
         // Verify each has a unique label (no duplicates would indicate a routing bug)
         let labels = Set(all.map(\.label))
-        XCTAssertEqual(labels.count, 20, "All 20 static destinations must have unique labels")
+        XCTAssertEqual(labels.count, 21, "All 21 static destinations must have unique labels")
     }
 
     // Test default destination is .chat

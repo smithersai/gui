@@ -2742,7 +2742,7 @@ class SmithersClient: ObservableObject {
     }
 
     private static let promptInterpolationRegex = try! NSRegularExpression(
-        pattern: #"\{props\.([A-Za-z_][A-Za-z0-9_]*)\}"#
+        pattern: #"\{\s*props\.([A-Za-z_][A-Za-z0-9_]*)\s*\}"#
     )
 
     private func promptsDirectoryPath() -> String {

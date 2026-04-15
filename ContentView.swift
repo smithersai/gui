@@ -7,6 +7,288 @@ private struct RunSnapshotsSelection: Identifiable, Equatable {
     var id: String { runId }
 }
 
+private struct SnapshotsRouteView: View {
+    @ObservedObject var smithers: SmithersClient
+    var onOpenRunSnapshots: (RunSummary) -> Void
+
+    @State private var runs: [RunSummary] = []
+    @State private var selectedRunId: String?
+    @State private var isLoading = true
+    @State private var error: String?
+
+    private var sortedRuns: [RunSummary] {
+        runs.sortedByStartedAtDescending()
+    }
+
+    private var selectedRun: RunSummary? {
+        if let selectedRunId,
+           let selected = sortedRuns.first(where: { $0.runId == selectedRunId }) {
+            return selected
+        }
+        return sortedRuns.first
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            content
+        }
+        .background(Theme.surface1)
+        .task { await loadRuns() }
+        .accessibilityIdentifier("view.snapshots")
+    }
+
+    private var header: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Timeline / Snapshots")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(Theme.textPrimary)
+                Text("Choose a run to inspect snapshots.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textTertiary)
+            }
+
+            Spacer()
+
+            if isLoading {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(width: 16, height: 16)
+            }
+
+            Button {
+                Task { await loadRuns() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10))
+                    Text("Refresh")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(Theme.textSecondary)
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(Theme.inputBg)
+                .cornerRadius(6)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("snapshots.refresh")
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 52)
+        .border(Theme.border, edges: [.bottom])
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if isLoading {
+            VStack(spacing: 8) {
+                ProgressView()
+                Text("Loading runs...")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error {
+            VStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 24))
+                    .foregroundColor(Theme.warning)
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                Button("Retry") {
+                    Task { await loadRuns() }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Theme.accent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(20)
+        } else if sortedRuns.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 24))
+                    .foregroundColor(Theme.textTertiary)
+                Text("No runs found")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.textTertiary)
+                Text("Run a workflow first, then open snapshots.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            HStack(spacing: 0) {
+                runList
+                    .frame(width: 340)
+                    .background(Theme.surface2)
+
+                Divider().background(Theme.border)
+
+                runDetail
+            }
+        }
+    }
+
+    private var runList: some View {
+        ScrollView {
+            VStack(spacing: 8) {
+                ForEach(sortedRuns) { run in
+                    let isSelected = run.runId == selectedRun?.runId
+                    Button {
+                        selectedRunId = run.runId
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(run.workflowName ?? run.runId)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Theme.textPrimary)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(run.status.label)
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(statusColor(run.status))
+                            }
+
+                            Text(run.runId)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(Theme.textTertiary)
+                                .lineLimit(1)
+
+                            if let startedAtMs = run.startedAtMs {
+                                Text(runInspectorRelativeDate(startedAtMs))
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 8, defaultFill: Theme.surface2)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("snapshots.run.\(runInspectorSafeID(run.runId))")
+                }
+            }
+            .padding(12)
+        }
+        .refreshable { await loadRuns() }
+    }
+
+    private var runDetail: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let selectedRun {
+                Text(selectedRun.workflowName ?? "Run \(String(selectedRun.runId.prefix(8)))")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(Theme.textPrimary)
+
+                detailRow("Run ID", selectedRun.runId)
+                detailRow("Status", selectedRun.status.label)
+                detailRow("Started", selectedRun.startedAtMs.map(runInspectorShortDate) ?? "-")
+                detailRow("Elapsed", selectedRun.elapsedString.isEmpty ? "-" : selectedRun.elapsedString)
+
+                Divider().background(Theme.border)
+
+                Text("Open Timeline")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Theme.textSecondary)
+                Text("Open the snapshots viewer for this run to inspect timeline frames, then fork or replay.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textTertiary)
+
+                Button {
+                    onOpenRunSnapshots(selectedRun)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Open Snapshots")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(Theme.textPrimary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .background(Theme.inputBg)
+                    .cornerRadius(7)
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.border, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("snapshots.open")
+
+                Spacer(minLength: 0)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 20))
+                        .foregroundColor(Theme.textTertiary)
+                    Text("Select a run")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .padding(16)
+    }
+
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(Theme.textTertiary)
+                .frame(width: 72, alignment: .leading)
+            Text(value)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
+            Spacer()
+        }
+    }
+
+    private func statusColor(_ status: RunStatus) -> Color {
+        switch status {
+        case .running:
+            return Theme.info
+        case .waitingApproval:
+            return Theme.warning
+        case .finished:
+            return Theme.success
+        case .failed, .cancelled:
+            return Theme.danger
+        case .unknown:
+            return Theme.textTertiary
+        }
+    }
+
+    private func loadRuns() async {
+        isLoading = true
+        error = nil
+
+        do {
+            let fetched = try await smithers.listRuns()
+            runs = fetched
+
+            let sorted = fetched.sortedByStartedAtDescending()
+            let availableRunIDs = Set(sorted.map(\.runId))
+            if let selectedRunId, availableRunIDs.contains(selectedRunId) {
+                self.selectedRunId = selectedRunId
+            } else {
+                self.selectedRunId = sorted.first?.runId
+            }
+        } catch {
+            runs = []
+            self.error = error.localizedDescription
+        }
+
+        isLoading = false
+    }
+}
+
 struct ContentView: View {
     @StateObject private var store = SessionStore()
     @StateObject private var smithers = SmithersClient()
@@ -128,6 +410,15 @@ struct ContentView: View {
             )
             .logLifecycle("RunsView")
             .accessibilityIdentifier("view.runs")
+        case .snapshots:
+            SnapshotsRouteView(
+                smithers: smithers,
+                onOpenRunSnapshots: { run in
+                    runSnapshotsSelection = RunSnapshotsSelection(runId: run.runId, workflowName: run.workflowName)
+                }
+            )
+            .logLifecycle("SnapshotsRouteView")
+            .accessibilityIdentifier("view.snapshots")
         case .workflows:
             WorkflowsView(
                 smithers: smithers,

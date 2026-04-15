@@ -54,6 +54,7 @@
 		936E7199903C80AD8A33AE95 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3DD6440C9F6629BE503E05FA /* Metal.framework */; };
 		964313B6989536FCBAE46BBF /* SQLBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74495EDF1269E4DFA99893AC /* SQLBrowserView.swift */; };
 		A0D5AA87D4D9E33CC8FEF3C8 /* CWDResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5A5E6DE9D7765FAF018C85 /* CWDResolver.swift */; };
+		DFA7E41A2F0B46E5A6C00301 /* DateFormatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFA7E41B2F0B46E5A6C00301 /* DateFormatters.swift */; };
 		A10918D56556DF381CDD8FBC /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12B6A0B98CFB227DDFE73E29 /* MetalKit.framework */; };
 		A866DEA5638161F9A357881E /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 44338B1B1002218C169AFD31 /* Security.framework */; };
 		A981F2BEC685C93B68D63AD8 /* NavigationE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E873048241F8F1D8C08AC4 /* NavigationE2ETests.swift */; };
@@ -130,6 +131,7 @@
 		74495EDF1269E4DFA99893AC /* SQLBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLBrowserView.swift; sourceTree = "<group>"; };
 		76D53762A177396CE80146A3 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
 		7A5A5E6DE9D7765FAF018C85 /* CWDResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CWDResolver.swift; sourceTree = "<group>"; };
+		DFA7E41B2F0B46E5A6C00301 /* DateFormatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateFormatters.swift; sourceTree = "<group>"; };
 		7F882EA0BF755DA40ACF0A4E /* DeveloperDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperDebugView.swift; sourceTree = "<group>"; };
 		815958F7C3477C3BA9F0F04E /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
 		86860F7DE886872C26CD5EC7 /* RunsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsView.swift; sourceTree = "<group>"; };
@@ -263,6 +265,7 @@
 				AD9CF099915D3BDD32A7D6AE /* ContentView.swift */,
 				7A5A5E6DE9D7765FAF018C85 /* CWDResolver.swift */,
 				56ECA74603B6F7EEC2A4D1AC /* DashboardView.swift */,
+				DFA7E41B2F0B46E5A6C00301 /* DateFormatters.swift */,
 				7F882EA0BF755DA40ACF0A4E /* DeveloperDebugView.swift */,
 				F1D4C19AD2E94E4BAE6C0111 /* FeedbackReporter.swift */,
 				B76EF781E9948490B6E8D522 /* GUINotifications.swift */,
@@ -390,6 +393,7 @@
 				4341FBF94CD9390704264955 /* ApprovalsView.swift in Sources */,
 				A0D5AA87D4D9E33CC8FEF3C8 /* CWDResolver.swift in Sources */,
 				DA05FBB58DE3A2597AD3D148 /* ChangesView.swift in Sources */,
+				DFA7E41A2F0B46E5A6C00301 /* DateFormatters.swift in Sources */,
 				7CF1B8128C375636553F59E8 /* ChatView.swift in Sources */,
 				C67049295736BE5E24F9DB61 /* CodexMCPStatus.swift in Sources */,
 				478F24753129BC58540FBDD9 /* CodexModelSelection.swift in Sources */,

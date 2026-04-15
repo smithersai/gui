@@ -624,6 +624,7 @@ struct WorkflowsView: View {
 
                 launchInputsSection
 
+                let launchDisabled = isLaunching || (isLoadingDAG && workflowDAG == nil) || !launchValidationErrors.isEmpty
                 HStack(spacing: 8) {
                     Button(action: { Task { await handleRunTapped() } }) {
                         HStack {
@@ -637,11 +638,11 @@ struct WorkflowsView: View {
                         .foregroundColor(Theme.textPrimary)
                         .frame(maxWidth: .infinity)
                         .frame(height: 36)
-                        .background(isLaunching ? Theme.accent.opacity(0.5) : Theme.accent)
+                        .background(launchDisabled ? Theme.accent.opacity(0.5) : Theme.accent)
                         .cornerRadius(8)
                     }
                     .buttonStyle(.plain)
-                    .disabled(isLaunching || (isLoadingDAG && workflowDAG == nil))
+                    .disabled(launchDisabled)
                     .accessibilityIdentifier("workflows.runButton")
                 }
 
@@ -955,8 +956,19 @@ struct WorkflowsView: View {
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .themedPill(cornerRadius: 4)
+                            if field.required {
+                                Text("required")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(Theme.warning)
+                            }
                         }
                         launchInputControl(for: field)
+                        if let validationError = launchValidationErrors[field.key] {
+                            Text(validationError)
+                                .font(.system(size: 10))
+                                .foregroundColor(Theme.danger)
+                                .accessibilityIdentifier("workflows.launchFieldError.\(field.key)")
+                        }
                     }
                 }
             }
@@ -970,7 +982,10 @@ struct WorkflowsView: View {
             Toggle(
                 isOn: Binding(
                     get: { booleanLaunchInputValue(for: field) },
-                    set: { launchInputs[field.key] = $0 ? "true" : "false" }
+                    set: {
+                        launchInputs[field.key] = $0 ? "true" : "false"
+                        refreshLaunchValidationErrors()
+                    }
                 )
             ) {
                 Text(booleanLaunchInputValue(for: field) ? "true" : "false")
@@ -1035,7 +1050,10 @@ struct WorkflowsView: View {
     private func launchTextBinding(for field: WorkflowLaunchField) -> Binding<String> {
         Binding(
             get: { launchInputs[field.key] ?? "" },
-            set: { launchInputs[field.key] = $0 }
+            set: {
+                launchInputs[field.key] = $0
+                refreshLaunchValidationErrors()
+            }
         )
     }
 
@@ -1210,6 +1228,7 @@ struct WorkflowsView: View {
         dagLoadError = nil
         showDAGDetails = false
         launchInputs = [:]
+        launchValidationErrors = [:]
         showRunConfirmation = false
         doctorIssues = []
         isRunningDoctor = false
@@ -1314,6 +1333,7 @@ struct WorkflowsView: View {
                 isLoadingDAG = false
                 dagLoadError = nil
                 launchInputs = [:]
+                launchValidationErrors = [:]
                 doctorIssues = []
             }
         } catch {
@@ -1336,10 +1356,12 @@ struct WorkflowsView: View {
             workflowDAG = dag
             launchFields = dag.launchFields
             applyLaunchDefaultsIfNeeded()
+            refreshLaunchValidationErrors()
         } catch {
             guard selectedWorkflow?.id == workflow.id else { return }
             workflowDAG = nil
             launchFields = []
+            launchValidationErrors = [:]
             dagLoadError = error.localizedDescription
         }
     }
@@ -1348,6 +1370,10 @@ struct WorkflowsView: View {
         guard selectedWorkflow != nil else { return }
         guard !isLaunching else { return }
         if isLoadingDAG && workflowDAG == nil {
+            return
+        }
+        refreshLaunchValidationErrors()
+        guard launchValidationErrors.isEmpty else {
             return
         }
 
@@ -1388,6 +1414,10 @@ struct WorkflowsView: View {
     private func launchWorkflow() async {
         guard let workflow = selectedWorkflow else { return }
         guard !isLaunching else { return }
+        refreshLaunchValidationErrors()
+        guard launchValidationErrors.isEmpty else {
+            return
+        }
         isLaunching = true
         runErrorByWorkflowID[workflow.id] = nil
         do {
@@ -1398,11 +1428,61 @@ struct WorkflowsView: View {
             applyLaunchDefaults(overwritingExistingValues: true)
             onRunStarted?(run.runId, workflow.name)
             onNavigate?(.liveRun(runId: run.runId, nodeId: nil))
+        } catch let error as WorkflowLaunchInputError {
+            runErrorByWorkflowID[workflow.id] = error.localizedDescription
         } catch {
             runErrorByWorkflowID[workflow.id] = error.localizedDescription
             lastRunStatusByWorkflowID[workflow.id] = .failed
         }
         isLaunching = false
+    }
+
+    private func refreshLaunchValidationErrors() {
+        launchValidationErrors = currentLaunchValidationErrors()
+    }
+
+    private func currentLaunchValidationErrors() -> [String: String] {
+        guard let fields = launchFields, !fields.isEmpty else { return [:] }
+
+        return fields.reduce(into: [:]) { errors, field in
+            if let error = launchValidationError(for: field) {
+                errors[field.key] = error.localizedDescription
+            }
+        }
+    }
+
+    private func launchValidationError(for field: WorkflowLaunchField) -> WorkflowLaunchInputError? {
+        let kind = WorkflowLaunchInputKind(field.type)
+        let rawValue = rawLaunchInputValue(for: field)
+        let trimmed = rawValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if field.required, kind != .boolean, trimmed.isEmpty {
+            return .missingRequired(field: field.name)
+        }
+
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        switch kind {
+        case .number:
+            guard let number = Double(trimmed), number.isFinite else {
+                return .invalidNumber(field: field.name, value: rawValue ?? "")
+            }
+            return nil
+        case .object, .array, .json:
+            do {
+                _ = try decodeLaunchJSON(trimmed, for: field, kind: kind)
+                return nil
+            } catch let error as WorkflowLaunchInputError {
+                return error
+            } catch {
+                return .invalidJSON(field: field.name, expected: kind.expectedDescription)
+            }
+        case .boolean, .string:
+            return nil
+        }
     }
 
     private func buildLaunchInputs() throws -> [String: JSONValue] {
@@ -1413,12 +1493,24 @@ struct WorkflowsView: View {
             let kind = WorkflowLaunchInputKind(field.type)
             switch kind {
             case .string:
-                guard let rawValue = rawLaunchInputValue(for: field) else { continue }
+                guard let rawValue = rawLaunchInputValue(for: field) else {
+                    if field.required { throw WorkflowLaunchInputError.missingRequired(field: field.name) }
+                    continue
+                }
+                if field.required && rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    throw WorkflowLaunchInputError.missingRequired(field: field.name)
+                }
                 inputs[field.key] = .string(rawValue)
             case .number:
-                guard let rawValue = rawLaunchInputValue(for: field) else { continue }
+                guard let rawValue = rawLaunchInputValue(for: field) else {
+                    if field.required { throw WorkflowLaunchInputError.missingRequired(field: field.name) }
+                    continue
+                }
                 let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { continue }
+                guard !trimmed.isEmpty else {
+                    if field.required { throw WorkflowLaunchInputError.missingRequired(field: field.name) }
+                    continue
+                }
                 guard let number = Double(trimmed), number.isFinite else {
                     throw WorkflowLaunchInputError.invalidNumber(field: field.name, value: rawValue)
                 }
@@ -1426,9 +1518,15 @@ struct WorkflowsView: View {
             case .boolean:
                 inputs[field.key] = .bool(booleanLaunchInputValue(for: field))
             case .object, .array, .json:
-                guard let rawValue = rawLaunchInputValue(for: field) else { continue }
+                guard let rawValue = rawLaunchInputValue(for: field) else {
+                    if field.required { throw WorkflowLaunchInputError.missingRequired(field: field.name) }
+                    continue
+                }
                 let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { continue }
+                guard !trimmed.isEmpty else {
+                    if field.required { throw WorkflowLaunchInputError.missingRequired(field: field.name) }
+                    continue
+                }
                 let value = try decodeLaunchJSON(trimmed, for: field, kind: kind)
                 inputs[field.key] = value
             }
@@ -1474,13 +1572,17 @@ struct WorkflowsView: View {
     }
 
     private func applyLaunchDefaults(overwritingExistingValues: Bool) {
-        guard let fields = launchFields, !fields.isEmpty else { return }
+        guard let fields = launchFields, !fields.isEmpty else {
+            launchValidationErrors = [:]
+            return
+        }
         for field in fields {
             guard let defaultValue = field.defaultValue else { continue }
             if overwritingExistingValues || launchInputs[field.key] == nil || launchInputs[field.key]?.isEmpty == true {
                 launchInputs[field.key] = defaultValue
             }
         }
+        refreshLaunchValidationErrors()
     }
 
     private func refreshLastRunStatus(_ workflows: [Workflow]) async {
