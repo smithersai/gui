@@ -104,6 +104,12 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertEqual(c?.id, "smithers.agents")
     }
 
+    func testSlashCmdChanges() {
+        let c = cmd(named: "changes")
+        XCTAssertNotNil(c)
+        XCTAssertEqual(c?.id, "smithers.changes")
+    }
+
     func testSlashCmdRuns() {
         let c = cmd(named: "runs")
         XCTAssertNotNil(c)
@@ -114,6 +120,12 @@ final class SlashCommandsTests: XCTestCase {
         let c = cmd(named: "workflows")
         XCTAssertNotNil(c)
         XCTAssertEqual(c?.id, "smithers.workflows")
+    }
+
+    func testSlashCmdTriggers() {
+        let c = cmd(named: "triggers")
+        XCTAssertNotNil(c)
+        XCTAssertEqual(c?.id, "smithers.triggers")
     }
 
     func testSlashCmdJJHubWorkflows() {
@@ -162,6 +174,12 @@ final class SlashCommandsTests: XCTestCase {
         let c = cmd(named: "landings")
         XCTAssertNotNil(c)
         XCTAssertEqual(c?.id, "smithers.landings")
+    }
+
+    func testSlashCmdTickets() {
+        let c = cmd(named: "tickets")
+        XCTAssertNotNil(c)
+        XCTAssertEqual(c?.id, "smithers.tickets")
     }
 
     func testSlashCmdIssues() {
@@ -224,6 +242,12 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertTrue(c?.aliases.contains("console") ?? false)
     }
 
+    func testAliasChangesVCS() {
+        let c = cmd(named: "changes")
+        XCTAssertTrue(c?.aliases.contains("change") ?? false)
+        XCTAssertTrue(c?.aliases.contains("vcs") ?? false)
+    }
+
     func testAliasIssuesTickets() {
         let c = cmd(named: "issues")
         XCTAssertTrue(c?.aliases.contains("tickets") ?? false)
@@ -249,7 +273,7 @@ final class SlashCommandsTests: XCTestCase {
 
     func testCategorySmithers() {
         let smithersCommands = builtIn.filter { $0.category == .smithers }
-        XCTAssertEqual(smithersCommands.count, 16)
+        XCTAssertEqual(smithersCommands.count, 19)
     }
 
     func testCategoryAction() {
@@ -507,6 +531,7 @@ final class SlashCommandsTests: XCTestCase {
         let text = SlashCommandRegistry.helpText(for: builtIn)
         XCTAssertTrue(text.contains("/model"))
         XCTAssertTrue(text.contains("/help"))
+        XCTAssertTrue(text.contains("/changes"))
         XCTAssertTrue(text.contains("/dashboard"))
     }
 
@@ -545,26 +570,14 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertTrue(text.contains("/workflow:deploy"))
     }
 
-    // MARK: - CONSTANT_HELP_TEXT_MAX_12_PER_CATEGORY
-
-    func testHelpTextMax12PerCategory() {
-        // Smithers has 13 commands; help text should show at most 12
+    func testHelpTextIncludesEveryBuiltInCommand() {
         let text = SlashCommandRegistry.helpText(for: builtIn)
-        let smithersSection = text.components(separatedBy: "\n\n")
-            .first { $0.hasPrefix("Smithers") }
-        XCTAssertNotNil(smithersSection)
-        // Count lines after the header
-        let lines = smithersSection!.components(separatedBy: "\n").dropFirst()
-        XCTAssertLessThanOrEqual(lines.count, 12)
-    }
-
-    func testHelpTextCodexHasAtMost12() {
-        let text = SlashCommandRegistry.helpText(for: builtIn)
-        let codexSection = text.components(separatedBy: "\n\n")
-            .first { $0.hasPrefix("Codex") }
-        XCTAssertNotNil(codexSection)
-        let lines = codexSection!.components(separatedBy: "\n").dropFirst()
-        XCTAssertLessThanOrEqual(lines.count, 12)
+        for command in builtIn {
+            XCTAssertTrue(
+                text.contains("\(command.displayName) - \(command.description)"),
+                "Missing \(command.displayName) from help text"
+            )
+        }
     }
 
     // MARK: - CHAT_PALETTE_MAX_8_RESULTS
@@ -616,10 +629,11 @@ final class SlashCommandsTests: XCTestCase {
     }
 
     func testActionRunWorkflow() {
-        let workflows = [Workflow(id: "deploy", workspaceId: nil, name: "Deploy", relativePath: nil, status: nil, updatedAt: nil)]
+        let workflows = [Workflow(id: "deploy", workspaceId: nil, name: "Deploy", relativePath: ".smithers/workflows/deploy.yaml", status: nil, updatedAt: nil)]
         let cmds = SlashCommandRegistry.workflowCommands(from: workflows)
-        if case .runWorkflow(let id) = cmds[0].action {
-            XCTAssertEqual(id, "deploy")
+        if case .runWorkflow(let workflow) = cmds[0].action {
+            XCTAssertEqual(workflow.id, "deploy")
+            XCTAssertEqual(workflow.relativePath, ".smithers/workflows/deploy.yaml")
         } else {
             XCTFail("Expected .runWorkflow action")
         }
