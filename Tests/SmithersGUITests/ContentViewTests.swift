@@ -16,6 +16,7 @@ extension ScoresView: @retroactive Inspectable {}
 extension MemoryView: @retroactive Inspectable {}
 extension SearchView: @retroactive Inspectable {}
 extension LandingsView: @retroactive Inspectable {}
+extension TicketsView: @retroactive Inspectable {}
 extension IssuesView: @retroactive Inspectable {}
 extension WorkspacesView: @retroactive Inspectable {}
 
@@ -231,16 +232,16 @@ final class ContentViewTests: XCTestCase {
     }
 
     // -------------------------------------------------------------------------
-    // PLATFORM_DESTINATION_ROUTING — all 17 destinations
+    // PLATFORM_DESTINATION_ROUTING — all 20 static destinations
     // -------------------------------------------------------------------------
 
-    func testNavDestinationEnumHasExactly17Cases() {
+    func testNavDestinationEnumHasExactly20StaticCases() {
         let all: [NavDestination] = [
-            .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows,
+            .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .workspaces,
+            .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
-        XCTAssertEqual(all.count, 17)
+        XCTAssertEqual(all.count, 20)
     }
 
     func testNavDestinationHashable() {
@@ -256,8 +257,20 @@ final class ContentViewTests: XCTestCase {
         let source = try projectSource("ContentView.swift")
         assertSource(
             source,
-            matches: #"case\s+\.dashboard:[\s\S]*?DashboardView\s*\(\s*smithers:\s*smithers\s*\)"#,
+            matches: #"case\s+\.dashboard:[\s\S]*?DashboardView\s*\(\s*smithers:\s*smithers[\s\S]*?\)"#,
             "The dashboard route should render DashboardView with the shared SmithersClient"
+        )
+    }
+
+    func testLiveRunRouteIsMappedOnce() throws {
+        let source = try projectSource("ContentView.swift")
+        let liveRunCaseCount = source.components(separatedBy: "case .liveRun").count - 1
+
+        XCTAssertEqual(liveRunCaseCount, 1, "ContentView should define exactly one .liveRun switch case")
+        assertSource(
+            source,
+            matches: #"case\s+\.liveRun\(let\s+runId,\s*let\s+nodeId\):[\s\S]*?LiveRunChatView\s*\([\s\S]*?runId:\s*runId[\s\S]*?nodeId:\s*nodeId"#,
+            "The .liveRun route should render LiveRunChatView with the selected run and node"
         )
     }
 
@@ -300,6 +313,20 @@ final class ContentViewTests: XCTestCase {
         XCTAssertEqual(NavDestination.workflows.icon, "arrow.triangle.branch")
     }
 
+    func testTriggersRouteRendersCorrectView() throws {
+        let source = try projectSource("ContentView.swift")
+        assertSource(
+            source,
+            matches: #"case\s+\.triggers:[\s\S]*?TriggersView\s*\(\s*smithers:\s*smithers\s*\)"#,
+            "The triggers route should render TriggersView with the shared SmithersClient"
+        )
+    }
+
+    func testTriggersDestinationLabel() {
+        XCTAssertEqual(NavDestination.triggers.label, "Triggers")
+        XCTAssertEqual(NavDestination.triggers.icon, "clock.arrow.circlepath")
+    }
+
     func testJJHubWorkflowsDestinationLabel() {
         XCTAssertEqual(NavDestination.jjhubWorkflows.label, "JJHub Workflows")
         XCTAssertEqual(NavDestination.jjhubWorkflows.icon, "point.3.filled.connected.trianglepath.dotted")
@@ -340,6 +367,11 @@ final class ContentViewTests: XCTestCase {
         XCTAssertEqual(NavDestination.landings.icon, "arrow.down.to.line")
     }
 
+    func testTicketsDestinationLabel() {
+        XCTAssertEqual(NavDestination.tickets.label, "Tickets")
+        XCTAssertEqual(NavDestination.tickets.icon, "ticket")
+    }
+
     func testIssuesDestinationLabel() {
         XCTAssertEqual(NavDestination.issues.label, "Issues")
         XCTAssertEqual(NavDestination.issues.icon, "exclamationmark.circle")
@@ -354,7 +386,7 @@ final class ContentViewTests: XCTestCase {
     // PLATFORM_DESTINATION_ROUTING — switch completeness
     // -------------------------------------------------------------------------
 
-    /// Verify the switch in ContentView covers all 17 cases. This is a compile-time
+    /// Verify the switch in ContentView covers all static cases. This is a compile-time
     /// guarantee in Swift (exhaustive switch), but we verify the routing map is correct.
     func testAllDestinationsAreMappedInSwitch() {
         // The switch in ContentView.body maps:
@@ -365,6 +397,7 @@ final class ContentViewTests: XCTestCase {
         // .changes -> ChangesView
         // .runs -> RunsView
         // .workflows -> WorkflowsView
+        // .triggers -> TriggersView
         // .jjhubWorkflows -> JJHubWorkflowsView
         // .approvals -> ApprovalsView
         // .prompts -> PromptsView
@@ -373,17 +406,18 @@ final class ContentViewTests: XCTestCase {
         // .search -> SearchView
         // .sql -> SQLBrowserView
         // .landings -> LandingsView
+        // .tickets -> TicketsView
         // .issues -> IssuesView
         // .workspaces -> WorkspacesView
         //
-        // Swift enforces exhaustive switch, so all 17 are covered.
+        // Swift enforces exhaustive switch, so all 20 static routes are covered.
         // No default case means adding a new NavDestination case will cause a compiler error.
         let count = [
-            NavDestination.chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows,
+            NavDestination.chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .workspaces,
+            .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ].count
-        XCTAssertEqual(count, 17, "All 17 destinations must be routed")
+        XCTAssertEqual(count, 20, "All 20 static destinations must be routed")
     }
 
     // -------------------------------------------------------------------------
@@ -469,12 +503,61 @@ final class ContentViewTests: XCTestCase {
     // PLATFORM_PULL_TO_REFRESH
     // -------------------------------------------------------------------------
 
-    /// BUG: ContentView has NO .refreshable modifier. Pull-to-refresh is completely
-    /// unimplemented. On macOS, this would typically be a refresh button or Cmd+R shortcut.
-    /// Neither exists.
-    func testPullToRefreshIsMissing_BUG() {
-        // Expected: .refreshable { } on the main content area, or a refresh button
-        // Actual: No refresh mechanism exists
+    func testPullToRefreshIsAvailableOnMajorScrollableViews() throws {
+        let expectedRefreshActions: [(String, [String])] = [
+            ("RunsView.swift", [".refreshable { await loadRuns() }"]),
+            ("WorkflowsView.swift", [".refreshable { await loadWorkflows() }"]),
+            ("ApprovalsView.swift", [".refreshable { await loadApprovals() }"]),
+            ("DashboardView.swift", [".refreshable { await loadAll() }"]),
+            ("MemoryView.swift", [
+                ".refreshable { await loadFacts() }",
+                ".refreshable { await doRecall() }",
+            ]),
+            ("ScoresView.swift", [".refreshable { await loadRunContextAndScores() }"]),
+            ("AgentsView.swift", [".refreshable { await loadAgents() }"]),
+            ("TriggersView.swift", [".refreshable { await loadCrons() }"]),
+            ("PromptsView.swift", [".refreshable { await loadPrompts() }"]),
+            ("JJHubWorkflowsView.swift", [".refreshable { await loadData() }"]),
+            ("ChangesView.swift", [
+                ".refreshable { await refresh(for: .changes) }",
+                ".refreshable { await refresh(for: .status) }",
+            ]),
+            ("LandingsView.swift", [".refreshable { await loadLandings() }"]),
+            ("TicketsView.swift", [".refreshable { await loadTickets() }"]),
+            ("IssuesView.swift", [".refreshable { await loadIssues() }"]),
+            ("WorkspacesView.swift", [".refreshable { await loadData() }"]),
+            ("SQLBrowserView.swift", [".refreshable { await refreshTables() }"]),
+            ("SearchView.swift", [".refreshable { await search() }"]),
+            ("RunInspectView.swift", [
+                ".refreshable { await loadInspection() }",
+                ".refreshable { await loadSnapshots() }",
+            ]),
+            ("LiveRunChatView.swift", [".refreshable { await refresh() }"]),
+        ]
+
+        for (filename, snippets) in expectedRefreshActions {
+            let source = try projectSource(filename)
+            for snippet in snippets {
+                XCTAssertTrue(
+                    source.contains(snippet),
+                    "\(filename) should include pull-to-refresh action: \(snippet)"
+                )
+            }
+        }
+
+        let dashboardSource = try projectSource("DashboardView.swift")
+        XCTAssertGreaterThanOrEqual(
+            dashboardSource.components(separatedBy: ".refreshable { await loadAll() }").count - 1,
+            4,
+            "Dashboard overview, runs, workflows, and approvals tabs should all be refreshable"
+        )
+
+        let workspacesSource = try projectSource("WorkspacesView.swift")
+        XCTAssertGreaterThanOrEqual(
+            workspacesSource.components(separatedBy: ".refreshable { await loadData() }").count - 1,
+            2,
+            "Workspaces and snapshots lists should both be refreshable"
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -634,9 +717,9 @@ final class NavDestinationRoutingTests: XCTestCase {
 
     func testAllDestinationsHaveUniqueLabels() {
         let all: [NavDestination] = [
-            .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows,
+            .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .workspaces,
+            .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
         let labels = all.map(\.label)
         XCTAssertEqual(Set(labels).count, labels.count, "All labels must be unique")
@@ -644,9 +727,9 @@ final class NavDestinationRoutingTests: XCTestCase {
 
     func testAllDestinationsHaveUniqueIcons() {
         let all: [NavDestination] = [
-            .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows,
+            .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .workspaces,
+            .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
         let icons = all.map(\.icon)
         XCTAssertEqual(Set(icons).count, icons.count, "All icons must be unique")
@@ -659,15 +742,15 @@ final class NavDestinationRoutingTests: XCTestCase {
     }
 
     func testSidebarSmithersNavOrder() {
-        // The sidebar lists smithers nav items in this order:
-        // dashboard, agents, changes, runs, workflows, jjhubWorkflows, approvals, prompts, scores, memory, search, sql, landings, issues, workspaces
-        // Verify this matches the enum order expectations
-        let expected: [NavDestination] = [
-            .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows, .approvals,
-            .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .workspaces,
+        let smithersExpected: [NavDestination] = [
+            .dashboard, .agents, .runs, .workflows, .triggers, .approvals,
+            .prompts, .scores, .memory, .search, .sql, .workspaces,
         ]
-        XCTAssertEqual(expected.count, 15, "Smithers nav section has 15 items (excludes chat and terminal)")
+        let vcsExpected: [NavDestination] = [
+            .changes, .jjhubWorkflows, .landings, .tickets, .issues,
+        ]
+        XCTAssertEqual(smithersExpected.count, 12, "Smithers nav excludes chat, terminal, VCS, and tab routes")
+        XCTAssertEqual(vcsExpected.count, 5, "VCS nav is split out from Smithers")
     }
 
     /// BUG: The sidebar CHAT section includes both .chat and .terminal, but terminal
