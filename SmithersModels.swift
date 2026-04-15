@@ -2534,7 +2534,14 @@ struct WorkspaceSnapshot: Identifiable, Codable {
         id = decodedID
         let camelWorkspaceId = Self.decodeString(from: container, forKey: .workspaceId)
         let snakeWorkspaceId = Self.decodeString(from: container, forKey: .workspaceIdSnake)
-        workspaceId = Self.normalizedText(camelWorkspaceId ?? snakeWorkspaceId) ?? ""
+        guard let decodedWorkspaceId = Self.normalizedText(camelWorkspaceId ?? snakeWorkspaceId) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .workspaceId,
+                in: container,
+                debugDescription: "Workspace snapshot workspaceId is required"
+            )
+        }
+        workspaceId = decodedWorkspaceId
         name = Self.normalizedText(try container.decodeIfPresent(String.self, forKey: .name))
         let camelCreatedAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
         let snakeCreatedAt = try container.decodeIfPresent(String.self, forKey: .createdAtSnake)

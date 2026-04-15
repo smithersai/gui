@@ -8,7 +8,8 @@ typedef struct CodexHandle CodexHandle;
 
 /// Callback type for receiving events.
 /// `event_json` is a UTF-8 JSON string (valid only during the callback).
-/// `user_data` is the pointer passed to codex_send.
+/// `user_data` is the pointer passed to codex_send. Callers must keep it
+/// valid until codex_destroy returns for the associated handle.
 typedef void (*CodexEventCallback)(const char *event_json, void *user_data);
 
 /// Create a new codex session.
@@ -48,11 +49,13 @@ CodexHandle *codex_create_with_options_and_cancellation(
 
 /// Send a prompt to codex. Blocks until the turn completes.
 /// Events are delivered via `callback`.
+/// The implementation may retain `user_data` for callbacks associated with
+/// the handle; release it only after codex_destroy returns.
 /// Returns 0 on success, -1 on failure.
 int32_t codex_send(CodexHandle *handle, const char *prompt,
                    CodexEventCallback callback, void *user_data);
 
-/// Cancel the current operation.
+/// Cancel the current operation. Safe to call while codex_send is active.
 void codex_cancel(CodexHandle *handle);
 
 /// Destroy a codex session and free all resources.
