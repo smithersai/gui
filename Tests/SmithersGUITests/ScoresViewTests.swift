@@ -188,15 +188,14 @@ final class ScoresColorCodingTests: XCTestCase {
         XCTAssertEqual(testScoreColor(0.1), Theme.danger, "0.1 should be red")
     }
 
-    /// BUG: Negative scores are not handled — they fall through to danger (red), which is
-    /// arguably correct, but there is no explicit guard or documentation for out-of-range values.
+    /// Out-of-range low scores are clamped into the low bucket.
     func test_negativeScoreDefaultsToRed() {
-        XCTAssertEqual(testScoreColor(-0.5), Theme.danger, "Negative scores default to red")
+        XCTAssertEqual(testScoreColor(-0.5), Theme.danger, "Negative scores should render red")
     }
 
-    /// BUG: Scores > 1.0 are treated as green. There is no clamping or validation.
+    /// Out-of-range high scores are clamped into the high bucket.
     func test_scoreAboveOneIsGreen() {
-        XCTAssertEqual(testScoreColor(1.5), Theme.success, "Scores > 1.0 are not validated")
+        XCTAssertEqual(testScoreColor(1.5), Theme.success, "Scores > 1.0 should render green")
     }
 
     // Helper uses the production color scale so tests do not duplicate thresholds.

@@ -277,7 +277,7 @@ final class SmithersModelsTests: XCTestCase {
 
     // MARK: - WorkflowStatus
 
-    func testWorkflowStatusHas4Variants() {
+    func testWorkflowStatusKnownVariants() {
         let cases: [WorkflowStatus] = [.draft, .active, .hot, .archived]
         XCTAssertEqual(cases.count, 4)
     }
@@ -287,12 +287,16 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(WorkflowStatus.active.rawValue, "active")
         XCTAssertEqual(WorkflowStatus.hot.rawValue, "hot")
         XCTAssertEqual(WorkflowStatus.archived.rawValue, "archived")
+        XCTAssertEqual(WorkflowStatus.unknown.rawValue, "unknown")
     }
 
     func testWorkflowStatusCodable() throws {
         let json = Data(#""hot""#.utf8)
         let decoded = try JSONDecoder().decode(WorkflowStatus.self, from: json)
         XCTAssertEqual(decoded, .hot)
+
+        let unknown = try JSONDecoder().decode(WorkflowStatus.self, from: Data(#""paused""#.utf8))
+        XCTAssertEqual(unknown, .unknown)
     }
 
     // MARK: - Workflow
