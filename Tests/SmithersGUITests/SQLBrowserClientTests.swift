@@ -118,10 +118,10 @@ final class SQLBrowserClientTests: XCTestCase {
         XCTAssertEqual(rows.count, 2)
         XCTAssertEqual(rows[0]["id"], "1")
         XCTAssertEqual(rows[0]["name"], "alpha")
-        XCTAssertEqual(rows[0]["active"], "true")
+        XCTAssertEqual(rows[0]["active"], "1")
         XCTAssertEqual(rows[1]["id"], "2")
         XCTAssertEqual(rows[1]["name"], "beta")
-        XCTAssertEqual(rows[1]["active"], "false")
+        XCTAssertEqual(rows[1]["active"], "0")
     }
 
     func testExecuteSQLMutationWithoutServerReturnsNoTransport() async throws {

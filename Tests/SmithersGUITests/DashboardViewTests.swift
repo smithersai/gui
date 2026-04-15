@@ -794,12 +794,11 @@ final class RunSummaryElapsedStringTests: XCTestCase {
         XCTAssertEqual(run.elapsedString, "1h 1m")
     }
 
-    /// BUG: elapsedString for exactly 60 seconds returns "1m 0s" instead of "1m".
-    /// This is not a bug per se, but the trailing "0s" is unnecessary.
+    /// elapsedString for exactly 60 seconds returns "1m" (no trailing "0s").
     func testElapsedStringExactlyOneMinute() {
         let now = Date()
         let startMs = Int64((now.timeIntervalSince1970 - 60) * 1000)
         let run = makeRun(startedAtMs: startMs, finishedAtMs: Int64(now.timeIntervalSince1970 * 1000))
-        XCTAssertEqual(run.elapsedString, "1m 0s", "Cosmetic: shows '1m 0s' rather than '1m'")
+        XCTAssertEqual(run.elapsedString, "1m")
     }
 }
