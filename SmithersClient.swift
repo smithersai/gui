@@ -1,5 +1,24 @@
 import Foundation
 
+private final class PipeOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    func snapshot() -> Data {
+        lock.lock()
+        let current = data
+        lock.unlock()
+        return current
+    }
+}
+
 /// Client for Smithers — uses the `smithers` CLI as primary transport (like the TUI),
 /// with optional HTTP fallback when a workflow is running with `--serve`.
 @MainActor
@@ -191,6 +210,61 @@ class SmithersClient: ObservableObject {
         ]
     }
 
+    private static func makeUIJJHubRepo() -> JJHubRepo {
+        JJHubRepo(
+            id: 101,
+            name: "gui",
+            fullName: "smithers/gui",
+            owner: "smithers",
+            description: "Smithers GUI fixture repo",
+            defaultBookmark: "main",
+            isPublic: false,
+            isArchived: false,
+            numIssues: 12,
+            numStars: 7,
+            createdAt: "2026-04-10T12:00:00Z",
+            updatedAt: "2026-04-14T12:00:00Z"
+        )
+    }
+
+    private static func makeUIJJHubWorkflows() -> [JJHubWorkflow] {
+        [
+            JJHubWorkflow(
+                id: 301,
+                repositoryID: 101,
+                name: "Deploy Preview",
+                path: ".jjhub/workflows/deploy-preview.yaml",
+                isActive: true,
+                createdAt: "2026-04-10T12:00:00Z",
+                updatedAt: "2026-04-14T12:00:00Z"
+            ),
+            JJHubWorkflow(
+                id: 302,
+                repositoryID: 101,
+                name: "Release Gate",
+                path: ".jjhub/workflows/release-gate.yaml",
+                isActive: false,
+                createdAt: "2026-04-11T12:00:00Z",
+                updatedAt: "2026-04-13T16:15:00Z"
+            ),
+        ]
+    }
+
+    private static func makeUIJJHubWorkflowRun(workflowID: Int, ref: String) -> JJHubWorkflowRun {
+        JJHubWorkflowRun(
+            id: 9_000 + workflowID,
+            workflowDefinitionID: workflowID,
+            status: "running",
+            triggerEvent: "manual",
+            triggerRef: ref,
+            triggerCommitSHA: "fixture-sha-\(workflowID)",
+            startedAt: "2026-04-14T12:30:00Z",
+            completedAt: nil,
+            sessionID: "ui-session-\(workflowID)",
+            steps: ["setup", "run"]
+        )
+    }
+
     // MARK: - CLI Execution
 
     private func exec(_ args: String...) async throws -> Data {
@@ -204,7 +278,7 @@ class SmithersClient: ObservableObject {
     private func execBinaryArgs(bin: String, args: [String], displayName: String) async throws -> Data {
         let cwd = self.cwd
         return try await withCheckedThrowingContinuation { continuation in
-            Task.detached { [cwd] in
+            Task.detached { [cwd, bin, args, displayName] in
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
                 process.arguments = [bin] + args
@@ -219,13 +293,31 @@ class SmithersClient: ObservableObject {
                 let errPipe = Pipe()
                 process.standardOutput = outPipe
                 process.standardError = errPipe
+                let stdoutCollector = PipeOutputCollector()
+                let stderrCollector = PipeOutputCollector()
+
+                outPipe.fileHandleForReading.readabilityHandler = { handle in
+                    stdoutCollector.append(handle.availableData)
+                }
+                errPipe.fileHandleForReading.readabilityHandler = { handle in
+                    stderrCollector.append(handle.availableData)
+                }
+                defer {
+                    outPipe.fileHandleForReading.readabilityHandler = nil
+                    errPipe.fileHandleForReading.readabilityHandler = nil
+                }
 
                 do {
                     try process.run()
                     process.waitUntilExit()
 
-                    let stdout = outPipe.fileHandleForReading.readDataToEndOfFile()
-                    let stderr = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    outPipe.fileHandleForReading.readabilityHandler = nil
+                    errPipe.fileHandleForReading.readabilityHandler = nil
+                    stdoutCollector.append(outPipe.fileHandleForReading.readDataToEndOfFile())
+                    stderrCollector.append(errPipe.fileHandleForReading.readDataToEndOfFile())
+
+                    let stdout = stdoutCollector.snapshot()
+                    let stderr = stderrCollector.snapshot()
 
                     if process.terminationStatus != 0 {
                         let message = Self.parseCLIErrorMessage(
@@ -489,9 +581,37 @@ class SmithersClient: ObservableObject {
 
     func listAgents() async throws -> [SmithersAgent] {
         if UITestSupport.isEnabled {
-            return [
-                SmithersAgent(id: "codex", name: "Codex", command: "codex", binaryPath: "/usr/bin/true", status: "binary-only", hasAuth: false, hasAPIKey: false, usable: true, roles: ["coding"], version: nil, authExpired: nil),
-            ]
+            return Self.knownAgents.map { manifest in
+                let id = manifest.id
+                let usable = id == "claude-code" || id == "codex" || id == "gemini" || id == "amp"
+                let hasAuth = id == "claude-code"
+                let hasAPIKey = id == "codex"
+
+                let status: String
+                if !usable {
+                    status = "unavailable"
+                } else if hasAuth {
+                    status = "likely-subscription"
+                } else if hasAPIKey {
+                    status = "api-key"
+                } else {
+                    status = "binary-only"
+                }
+
+                return SmithersAgent(
+                    id: id,
+                    name: manifest.name,
+                    command: manifest.command,
+                    binaryPath: usable ? "/usr/bin/\(manifest.command)" : "",
+                    status: status,
+                    hasAuth: hasAuth,
+                    hasAPIKey: hasAPIKey,
+                    usable: usable,
+                    roles: manifest.roles,
+                    version: nil,
+                    authExpired: nil
+                )
+            }
         }
 
         let fm = FileManager.default
@@ -608,7 +728,7 @@ class SmithersClient: ObservableObject {
         return try decoder.decode([ScoreRow].self, from: data)
     }
 
-    func aggregateScores(limit: Int = 50) async throws -> [AggregateScore] {
+    func aggregateScores(from scores: [ScoreRow]? = nil, limit: Int = 50) async throws -> [AggregateScore] {
         if UITestSupport.isEnabled {
             return [
                 AggregateScore(scorerName: "Quality", count: 2, mean: 0.91, min: 0.88, max: 0.94, p50: 0.91),
@@ -617,7 +737,7 @@ class SmithersClient: ObservableObject {
         }
 
         // Aggregate from the scores we have
-        let scores = try await listRecentScores()
+        let scores = try await { if let scores { return scores } else { return try await listRecentScores() } }()
         var byScorer: [String: [Double]] = [:]
         for s in scores {
             let name = s.scorerName ?? s.scorerId ?? "unknown"
@@ -631,12 +751,33 @@ class SmithersClient: ObservableObject {
                 mean: values.reduce(0, +) / Double(values.count),
                 min: sorted.first ?? 0,
                 max: sorted.last ?? 0,
-                p50: sorted.count > 0 ? sorted[sorted.count / 2] : nil
+                p50: sorted.count > 0 ? (sorted.count % 2 == 0 ? (sorted[sorted.count / 2 - 1] + sorted[sorted.count / 2]) / 2.0 : sorted[sorted.count / 2]) : nil
             )
         }
     }
 
     // MARK: - Prompts (read from filesystem)
+
+    private func promptPath(for promptId: String) throws -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "/\\:")
+        guard !promptId.isEmpty,
+              promptId != ".",
+              promptId != "..",
+              !promptId.contains(".."),
+              promptId.rangeOfCharacter(from: invalidCharacters) == nil
+        else {
+            throw SmithersError.api("Invalid prompt id")
+        }
+
+        let promptsDir = (cwd as NSString).appendingPathComponent(".smithers/prompts")
+        let path = (promptsDir as NSString).appendingPathComponent("\(promptId).mdx")
+        let standardizedPromptsDir = (promptsDir as NSString).standardizingPath
+        let standardizedPath = (path as NSString).standardizingPath
+        guard standardizedPath.hasPrefix(standardizedPromptsDir + "/") else {
+            throw SmithersError.api("Invalid prompt id")
+        }
+        return standardizedPath
+    }
 
     func listPrompts() async throws -> [SmithersPrompt] {
         if UITestSupport.isEnabled {
@@ -667,7 +808,7 @@ class SmithersClient: ObservableObject {
             return SmithersPrompt(id: promptId, entryFile: ".smithers/prompts/\(promptId).mdx", source: "Write release notes for {props.version}.", inputs: [PromptInput(name: "version", type: "string", defaultValue: nil)])
         }
 
-        let path = (cwd as NSString).appendingPathComponent(".smithers/prompts/\(promptId).mdx")
+        let path = try promptPath(for: promptId)
         let source = try String(contentsOfFile: path, encoding: .utf8)
         return SmithersPrompt(id: promptId, entryFile: ".smithers/prompts/\(promptId).mdx", source: source, inputs: nil)
     }
@@ -682,7 +823,7 @@ class SmithersClient: ObservableObject {
         guard let source = prompt.source else { return [] }
 
         var found: Set<String> = []
-        let pattern = try NSRegularExpression(pattern: "\\{\\s*props\\.(\\w+)\\s*\\}")
+        let pattern = try NSRegularExpression(pattern: "\\{\\s*props\\.([\\w.-]+)\\s*\\}")
         let matches = pattern.matches(in: source, range: NSRange(source.startIndex..., in: source))
         for match in matches {
             if let range = Range(match.range(at: 1), in: source) {
@@ -694,7 +835,7 @@ class SmithersClient: ObservableObject {
 
     func updatePrompt(_ promptId: String, source: String) async throws {
         if UITestSupport.isEnabled { return }
-        let path = (cwd as NSString).appendingPathComponent(".smithers/prompts/\(promptId).mdx")
+        let path = try promptPath(for: promptId)
         try source.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
@@ -710,7 +851,9 @@ class SmithersClient: ObservableObject {
         let prompt = try await getPrompt(promptId)
         var result = prompt.source ?? ""
         for (key, value) in input {
-            result = result.replacingOccurrences(of: "{props.\(key)}", with: value)
+            if let regex = try? NSRegularExpression(pattern: "\\{\\s*props\\.\(NSRegularExpression.escapedPattern(for: key))\\s*\\}") {
+                result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: NSRegularExpression.escapedTemplate(for: value))
+            }
         }
         return result
     }
@@ -754,18 +897,31 @@ class SmithersClient: ObservableObject {
     // MARK: - Changes / Status (JJHub)
 
     func getCurrentRepo() async throws -> JJHubRepo {
+        if UITestSupport.isEnabled {
+            return Self.makeUIJJHubRepo()
+        }
+
         let data = try await execJJHubJSONArgs(["repo", "view"])
         return try decoder.decode(JJHubRepo.self, from: data)
     }
 
     func listJJHubWorkflows(limit: Int = 100) async throws -> [JJHubWorkflow] {
+        if UITestSupport.isEnabled {
+            return Array(Self.makeUIJJHubWorkflows().prefix(max(0, limit)))
+        }
+
         let data = try await execJJHubJSONArgs(["workflow", "list", "-L", "\(limit)"])
         return try decoder.decode([JJHubWorkflow].self, from: data)
     }
 
     func triggerJJHubWorkflow(workflowID: Int, ref: String) async throws -> JJHubWorkflowRun {
-        var args = ["workflow", "run", "\(workflowID)"]
         let trimmedRef = ref.trimmingCharacters(in: .whitespacesAndNewlines)
+        let refToUse = trimmedRef.isEmpty ? "main" : trimmedRef
+        if UITestSupport.isEnabled {
+            return Self.makeUIJJHubWorkflowRun(workflowID: workflowID, ref: refToUse)
+        }
+
+        var args = ["workflow", "run", "\(workflowID)"]
         if !trimmedRef.isEmpty {
             args += ["--ref", trimmedRef]
         }
@@ -835,7 +991,11 @@ class SmithersClient: ObservableObject {
         }
 
         if let dbPath = resolvedSmithersDBPath() {
-            return try await listSQLTablesFromSQLite(dbPath: dbPath)
+            do {
+                return try await listSQLTablesFromSQLite(dbPath: dbPath)
+            } catch {
+                throw mapSQLTransportError(error)
+            }
         }
 
         let query = """
@@ -844,8 +1004,12 @@ class SmithersClient: ObservableObject {
           AND name NOT LIKE 'sqlite_%'
         ORDER BY name
         """
-        let data = try await exec("sql", "--query", query, "--format", "json")
-        return try parseTableInfoJSON(data)
+        do {
+            let data = try await exec("sql", "--query", query, "--format", "json")
+            return try parseTableInfoJSON(data)
+        } catch {
+            throw mapSQLTransportError(error)
+        }
     }
 
     func getSQLTableSchema(_ tableName: String) async throws -> SQLTableSchema {
@@ -869,16 +1033,24 @@ class SmithersClient: ObservableObject {
         }
 
         if let dbPath = resolvedSmithersDBPath() {
-            let query = "PRAGMA table_info(\(quoteSQLiteIdentifier(normalized)))"
-            let data = try await execSQLiteJSON(dbPath: dbPath, query: query)
-            let columns = try parseTableColumnsJSON(data)
-            return SQLTableSchema(tableName: normalized, columns: columns)
+            do {
+                let query = "PRAGMA table_info(\(quoteSQLiteIdentifier(normalized)))"
+                let data = try await execSQLiteJSON(dbPath: dbPath, query: query)
+                let columns = try parseTableColumnsJSON(data)
+                return SQLTableSchema(tableName: normalized, columns: columns)
+            } catch {
+                throw mapSQLTransportError(error)
+            }
         }
 
-        let query = "PRAGMA table_info(\(quoteSQLiteIdentifier(normalized)))"
-        let data = try await exec("sql", "--query", query, "--format", "json")
-        let columns = try parseTableColumnsJSON(data)
-        return SQLTableSchema(tableName: normalized, columns: columns)
+        do {
+            let query = "PRAGMA table_info(\(quoteSQLiteIdentifier(normalized)))"
+            let data = try await exec("sql", "--query", query, "--format", "json")
+            let columns = try parseTableColumnsJSON(data)
+            return SQLTableSchema(tableName: normalized, columns: columns)
+        } catch {
+            throw mapSQLTransportError(error)
+        }
     }
 
     func executeSQL(_ query: String) async throws -> SQLResult {
@@ -900,8 +1072,12 @@ class SmithersClient: ObservableObject {
         }
 
         if let dbPath = resolvedSmithersDBPath(), Self.isSafeReadOnlySQL(trimmed) {
-            let data = try await execSQLiteJSON(dbPath: dbPath, query: trimmed)
-            return try parseSQLResultFromObjectRows(data)
+            do {
+                let data = try await execSQLiteJSON(dbPath: dbPath, query: trimmed)
+                return try parseSQLResultFromObjectRows(data)
+            } catch {
+                throw mapSQLTransportError(error)
+            }
         }
 
         throw SmithersError.notAvailable(Self.noSQLTransportMessage)
@@ -1459,6 +1635,36 @@ class SmithersClient: ObservableObject {
         return normalized.hasPrefix("SELECT")
             || normalized.hasPrefix("PRAGMA")
             || normalized.hasPrefix("EXPLAIN")
+    }
+
+    private func mapSQLTransportError(_ error: Error) -> Error {
+        guard case let SmithersError.cli(message) = error else {
+            return error
+        }
+        if Self.isNoSQLTransportCLIMessage(message) {
+            return SmithersError.notAvailable(Self.noSQLTransportMessage)
+        }
+        return error
+    }
+
+    private static func isNoSQLTransportCLIMessage(_ message: String) -> Bool {
+        let normalized = message.lowercased()
+        if normalized.contains("failed to run sqlite3") {
+            return true
+        }
+        if normalized.contains("failed to run smithers") {
+            return true
+        }
+        if normalized.contains("unknown command") && normalized.contains("sql") {
+            return true
+        }
+        if normalized.contains("unrecognized") && normalized.contains("sql") {
+            return true
+        }
+        if normalized.contains("command not found") && normalized.contains("sql") {
+            return true
+        }
+        return false
     }
 
     private func quoteSQLiteIdentifier(_ name: String) -> String {

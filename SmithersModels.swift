@@ -45,7 +45,7 @@ struct RunSummary: Identifiable, Codable {
         let end = finishedAt ?? Date()
         let seconds = Int(end.timeIntervalSince(start))
         if seconds < 60 { return "\(seconds)s" }
-        if seconds < 3600 { return "\(seconds / 60)m \(seconds % 60)s" }
+        if seconds < 3600 { return seconds % 60 == 0 ? "\(seconds / 60)m" : "\(seconds / 60)m \(seconds % 60)s" }
         return "\(seconds / 3600)h \(seconds / 60 % 60)m"
     }
 
@@ -67,7 +67,10 @@ struct RunTask: Identifiable, Codable {
     let lastAttempt: Int?
     let updatedAtMs: Int64?
 
-    var id: String { nodeId }
+    var id: String {
+        guard let iteration else { return nodeId }
+        return "\(nodeId)-\(iteration)"
+    }
 }
 
 struct RunInspection: Codable {
@@ -144,7 +147,7 @@ struct Approval: Identifiable, Codable {
     var waitTime: String {
         let seconds = Int(Date().timeIntervalSince(requestedDate))
         if seconds < 60 { return "\(seconds)s" }
-        if seconds < 3600 { return "\(seconds / 60)m \(seconds % 60)s" }
+        if seconds < 3600 { return seconds % 60 == 0 ? "\(seconds / 60)m" : "\(seconds / 60)m \(seconds % 60)s" }
         return "\(seconds / 3600)h \(seconds / 60 % 60)m"
     }
 }
