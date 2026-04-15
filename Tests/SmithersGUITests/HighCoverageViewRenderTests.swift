@@ -11,9 +11,9 @@ final class HighCoverageViewRenderTests: XCTestCase {
         SmithersClient(cwd: NSTemporaryDirectory())
     }
 
-    private func assertText(
+    private func assertText<T: BaseViewType>(
         _ text: String,
-        existsIn inspected: InspectableView<ViewType.View<Any>>,
+        existsIn inspected: InspectableView<T>,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {

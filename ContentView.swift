@@ -359,6 +359,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         Task { @MainActor in
             AppNotifications.shared.stopRunEventMonitoring()
+            GhosttyApp.shared.shutdown()
         }
         AppLogger.lifecycle.info("Application will terminate")
     }

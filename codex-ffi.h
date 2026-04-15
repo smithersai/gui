@@ -25,6 +25,27 @@ CodexHandle *codex_create_with_options(const char *cwd,
                                        const char *approval_policy,
                                        const char *sandbox_mode);
 
+/// Create a cancellation token for `codex_create_with_options_and_cancellation`.
+/// Returns 0 on allocation failure.
+int64_t codex_create_cancellation_token_new(void);
+
+/// Cancel an in-flight create associated with `token_id`.
+void codex_create_cancellation_token_cancel(int64_t token_id);
+
+/// Free a create cancellation token.
+void codex_create_cancellation_token_free(int64_t token_id);
+
+/// Create a new codex session with optional model/reasoning/policy overrides,
+/// with cancellation support for the create phase.
+CodexHandle *codex_create_with_options_and_cancellation(
+    const char *cwd,
+    const char *model,
+    const char *reasoning_effort,
+    const char *approval_policy,
+    const char *sandbox_mode,
+    int64_t create_cancellation_token_id
+);
+
 /// Send a prompt to codex. Blocks until the turn completes.
 /// Events are delivered via `callback`.
 /// Returns 0 on success, -1 on failure.

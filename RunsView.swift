@@ -83,6 +83,10 @@ struct RunsView: View {
         let iteration: Int?
 
         var id: String { "\(runId):\(nodeId):\(iteration.map(String.init) ?? "nil")" }
+        var iterationSuffix: String {
+            guard let iteration else { return "" }
+            return " iter \(iteration)"
+        }
     }
 
     private var workflowChoices: [String] {
@@ -211,7 +215,7 @@ struct RunsView: View {
             .accessibilityIdentifier("runs.cancelDenyButton")
         } message: {
             if let pendingDenyNode {
-                Text("Deny approval for \(pendingDenyNode.nodeId)\(pendingDenyNode.iteration.map { " iter \($0)" } ?? "") on run \(String(pendingDenyNode.runId.prefix(8)))? This will fail the waiting gate.")
+                Text("Deny approval for \(pendingDenyNode.nodeId)\(pendingDenyNode.iterationSuffix) on run \(String(pendingDenyNode.runId.prefix(8)))? This will fail the waiting gate.")
             } else {
                 Text("Deny this approval? This will fail the waiting gate.")
             }
@@ -1147,8 +1151,11 @@ struct RunsView: View {
     }
 
     private func runStatus(from event: RunStreamEvent) -> RunStatus? {
-        if let raw = event.status?.lowercased(), let status = RunStatus(rawValue: raw) {
-            return status
+        if let raw = event.status {
+            let status = RunStatus.normalized(raw)
+            if status != .unknown {
+                return status
+            }
         }
 
         switch event.type.lowercased() {

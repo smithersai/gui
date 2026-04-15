@@ -324,6 +324,32 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertTrue(item.matches(String(item.name.prefix(3))))
     }
 
+    func testFuzzyMatchByNameSubsequence() {
+        let model = cmd(named: "model")!
+        XCTAssertTrue(model.matches("mdl"))
+        XCTAssertGreaterThan(model.score(for: "mdl"), 50)
+        XCTAssertLessThan(model.score(for: "mdl"), Int.max)
+    }
+
+    func testFuzzyMatchAcrossSeparators() {
+        let workflows = cmd(named: "jjhub-workflows")!
+        XCTAssertTrue(workflows.matches("jhwf"))
+    }
+
+    func testFuzzyMatchRejectsOutOfOrderSubsequence() {
+        let item = SlashCommandItem(
+            id: "test.abc",
+            name: "abc",
+            title: "Alpha",
+            description: "",
+            category: .action,
+            aliases: [],
+            action: .showHelp
+        )
+        XCTAssertTrue(item.matches("ac"))
+        XCTAssertFalse(item.matches("ca"))
+    }
+
     func testFuzzyMatchByDescriptionSubstring() {
         let model = cmd(named: "model")!
         XCTAssertTrue(model.matches("Choose"))
@@ -529,6 +555,18 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertEqual(match?.id, "smithers.agents")
     }
 
+    func testExactMatchDynamicPrefixedCommandStillWorksWhenAliasConflicts() {
+        let workflows = [
+            Workflow(id: "permissions", workspaceId: nil, name: "Permissions", relativePath: nil, status: nil, updatedAt: nil),
+        ]
+        let dynamic = SlashCommandRegistry.workflowCommands(from: workflows)
+        let commands = builtIn + dynamic
+
+        XCTAssertEqual(dynamic.first?.aliases, [])
+        XCTAssertEqual(SlashCommandRegistry.exactMatch(for: "/permissions", commands: commands)?.id, "codex.approvals")
+        XCTAssertEqual(SlashCommandRegistry.exactMatch(for: "/workflow:permissions", commands: commands)?.id, "workflow.permissions")
+    }
+
     // MARK: - SLASH_COMMAND_HELP_TEXT_GENERATION
 
     func testHelpTextContainsAllCategories() {
@@ -674,6 +712,33 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertEqual(result["other"], "world")
     }
 
+    func testKeyValueArgsQuotedValuesWithSpaces() {
+        let result = SlashCommandRegistry.keyValueArgs("title=\"release notes\" summary='ship notes'")
+        XCTAssertEqual(result["title"], "release notes")
+        XCTAssertEqual(result["summary"], "ship notes")
+    }
+
+    func testKeyValueArgsEmptyQuotedValue() {
+        let result = SlashCommandRegistry.keyValueArgs("name=\"\" other=value")
+        XCTAssertEqual(result["name"], "")
+        XCTAssertEqual(result["other"], "value")
+    }
+
+    func testKeyValueArgsEscapedQuotes() {
+        let result = SlashCommandRegistry.keyValueArgs("path=\"a \\\"quoted\\\" value\"")
+        XCTAssertEqual(result["path"], "a \"quoted\" value")
+    }
+
+    func testKeyValueArgsDuplicateKeysUseLastValue() {
+        let result = SlashCommandRegistry.keyValueArgs("name=old name=\"new value\"")
+        XCTAssertEqual(result["name"], "new value")
+    }
+
+    func testKeyValueArgsMalformedQuoteUsesBestEffortToken() {
+        let result = SlashCommandRegistry.keyValueArgs("title=\"release notes")
+        XCTAssertEqual(result["title"], "release notes")
+    }
+
     func testKeyValueArgsEmptyString() {
         let result = SlashCommandRegistry.keyValueArgs("")
         XCTAssertTrue(result.isEmpty)
@@ -714,5 +779,239 @@ final class SlashCommandsTests: XCTestCase {
     func testAllBuiltInCommandsHaveUniqueNames() {
         let names = builtIn.map(\.name)
         XCTAssertEqual(names.count, Set(names).count, "Duplicate names found")
+    }
+}
+
+final class SlashCommandDynamicRegistrationTests: XCTestCase {
+
+    func testWorkflowCommandsDeduplicateCommandNames() {
+        let workflows = [
+            Workflow(id: "deploy", workspaceId: nil, name: "Deploy", relativePath: "deploy.yml", status: nil, updatedAt: nil),
+            Workflow(id: "deploy", workspaceId: nil, name: "Duplicate Deploy", relativePath: "deploy-again.yml", status: nil, updatedAt: nil),
+        ]
+
+        let commands = SlashCommandRegistry.workflowCommands(from: workflows)
+
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?.id, "workflow.deploy")
+        XCTAssertEqual(commands.first?.name, "workflow:deploy")
+    }
+
+    func testDynamicCommandsSlugUnsafeIdentifiersAndHideUnsafeBareAlias() {
+        let workflows = [
+            Workflow(id: "release notes", workspaceId: nil, name: "Release Notes", relativePath: nil, status: nil, updatedAt: nil),
+        ]
+
+        let commands = SlashCommandRegistry.workflowCommands(from: workflows)
+
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?.name, "workflow:release-notes")
+        XCTAssertEqual(commands.first?.aliases, [])
+    }
+
+    func testDynamicCommandsSkipEmptyIdentifiers() {
+        let prompts = [
+            SmithersPrompt(id: "   ", entryFile: nil, source: nil, inputs: nil),
+            SmithersPrompt(id: "daily", entryFile: nil, source: nil, inputs: nil),
+        ]
+
+        let commands = SlashCommandRegistry.promptCommands(from: prompts)
+
+        XCTAssertEqual(commands.map(\.name), ["prompt:daily"])
+    }
+
+    func testDynamicCommandsReserveBareAliasesAcrossWorkflowsAndPrompts() {
+        let workflows = [
+            Workflow(id: "deploy", workspaceId: nil, name: "Deploy", relativePath: nil, status: nil, updatedAt: nil),
+        ]
+        let prompts = [
+            SmithersPrompt(id: "deploy", entryFile: nil, source: nil, inputs: nil),
+        ]
+
+        let commands = SlashCommandRegistry.dynamicCommands(workflows: workflows, prompts: prompts)
+
+        XCTAssertEqual(commands.workflows.first?.aliases, ["deploy"])
+        XCTAssertEqual(commands.prompts.first?.aliases, [])
+        XCTAssertEqual(commands.prompts.first?.name, "prompt:deploy")
+    }
+}
+
+final class SlashCommandExecutorTests: XCTestCase {
+
+    private var builtIn: [SlashCommandItem] { SlashCommandRegistry.builtInCommands }
+
+    private func command(named name: String) -> SlashCommandItem {
+        builtIn.first { $0.name == name }!
+    }
+
+    private func context(
+        input: String,
+        commands: [SlashCommandItem]? = nil,
+        chatReady: Bool = true,
+        developerDebugEnabled: Bool = true,
+        canNavigate: Bool = true,
+        canToggleDeveloperDebug: Bool = true,
+        canStartNewChat: Bool = true,
+        canTerminateApp: Bool = false
+    ) -> SlashCommandExecutionContext {
+        SlashCommandExecutionContext(
+            inputText: input,
+            commands: commands ?? builtIn,
+            chatReady: chatReady,
+            developerDebugEnabled: developerDebugEnabled,
+            canNavigate: canNavigate,
+            canToggleDeveloperDebug: canToggleDeveloperDebug,
+            canStartNewChat: canStartNewChat,
+            canTerminateApp: canTerminateApp,
+            statusText: "status text"
+        )
+    }
+
+    func testExecuteNavigationCommandTriggersNavigateAndStatus() {
+        var inputText: String?
+        var navigated: NavDestination?
+        var statuses: [String] = []
+        var effects = SlashCommandExecutionEffects()
+        effects.setInputText = { inputText = $0 }
+        effects.navigate = { navigated = $0 }
+        effects.appendStatusMessage = { statuses.append($0) }
+
+        SlashCommandExecutor.execute(
+            command(named: "dashboard"),
+            context: context(input: "/dashboard"),
+            effects: effects
+        )
+
+        XCTAssertEqual(inputText, "")
+        XCTAssertEqual(navigated, .dashboard)
+        XCTAssertEqual(statuses, ["Opened Dashboard."])
+    }
+
+    func testExecuteNavigationCommandReportsMissingNavigationCallback() {
+        var navigated: NavDestination?
+        var statuses: [String] = []
+        var effects = SlashCommandExecutionEffects()
+        effects.navigate = { navigated = $0 }
+        effects.appendStatusMessage = { statuses.append($0) }
+
+        SlashCommandExecutor.execute(
+            command(named: "dashboard"),
+            context: context(input: "/dashboard", canNavigate: false),
+            effects: effects
+        )
+
+        XCTAssertNil(navigated)
+        XCTAssertEqual(statuses, ["Navigation to Dashboard is not wired into this chat view."])
+    }
+
+    func testExecuteModelCommandShowsModelSelection() {
+        var inputText: String?
+        var showedModelSelection = false
+        var effects = SlashCommandExecutionEffects()
+        effects.setInputText = { inputText = $0 }
+        effects.showModelSelection = { showedModelSelection = true }
+
+        SlashCommandExecutor.execute(
+            command(named: "model"),
+            context: context(input: "/model"),
+            effects: effects
+        )
+
+        XCTAssertEqual(inputText, "")
+        XCTAssertTrue(showedModelSelection)
+    }
+
+    func testExecuteReviewCommandDispatchesPromptWithArgs() {
+        var inputText: String?
+        var sentPrompts: [String] = []
+        var effects = SlashCommandExecutionEffects()
+        effects.setInputText = { inputText = $0 }
+        effects.sendPromptIfReady = { sentPrompts.append($0) }
+
+        SlashCommandExecutor.execute(
+            command(named: "review"),
+            context: context(input: "/review persistence layer"),
+            effects: effects
+        )
+
+        XCTAssertEqual(inputText, "")
+        XCTAssertEqual(sentPrompts.count, 1)
+        XCTAssertTrue(sentPrompts[0].contains("Focus: persistence layer"))
+    }
+
+    func testExecuteInitCommandReportsAuthWhenChatNotReady() {
+        var sentPrompts: [String] = []
+        var statuses: [String] = []
+        var effects = SlashCommandExecutionEffects()
+        effects.sendPromptIfReady = { sentPrompts.append($0) }
+        effects.appendStatusMessage = { statuses.append($0) }
+
+        SlashCommandExecutor.execute(
+            command(named: "init"),
+            context: context(input: "/init", chatReady: false),
+            effects: effects
+        )
+
+        XCTAssertTrue(sentPrompts.isEmpty)
+        XCTAssertEqual(statuses, ["Codex is not authenticated. Use the auth panel above to sign in or add an API key."])
+    }
+
+    func testExecuteNewCommandUsesNewChatCallbackWhenAvailable() {
+        var startedNewChat = false
+        var clearedMessages = false
+        var effects = SlashCommandExecutionEffects()
+        effects.startNewChat = { startedNewChat = true }
+        effects.clearMessages = { clearedMessages = true }
+
+        SlashCommandExecutor.execute(
+            command(named: "new"),
+            context: context(input: "/new", canStartNewChat: true),
+            effects: effects
+        )
+
+        XCTAssertTrue(startedNewChat)
+        XCTAssertFalse(clearedMessages)
+    }
+
+    func testExecuteWorkflowCommandRoutesWorkflowAndRawArgs() {
+        let workflow = Workflow(id: "deploy", workspaceId: nil, name: "Deploy", relativePath: nil, status: nil, updatedAt: nil)
+        let command = SlashCommandRegistry.workflowCommands(from: [workflow])[0]
+        var routedWorkflow: Workflow?
+        var routedArgs: String?
+        var effects = SlashCommandExecutionEffects()
+        effects.runWorkflow = { workflow, args in
+            routedWorkflow = workflow
+            routedArgs = args
+        }
+
+        SlashCommandExecutor.execute(
+            command,
+            context: context(input: "/workflow:deploy title='release notes'", commands: builtIn + [command]),
+            effects: effects
+        )
+
+        XCTAssertEqual(routedWorkflow?.id, "deploy")
+        XCTAssertEqual(routedArgs, "title='release notes'")
+    }
+
+    func testExecutePromptCommandRoutesPromptAndRawArgs() {
+        let prompt = SmithersPrompt(id: "greet", entryFile: nil, source: nil, inputs: nil)
+        let command = SlashCommandRegistry.promptCommands(from: [prompt])[0]
+        var routedPromptId: String?
+        var routedArgs: String?
+        var effects = SlashCommandExecutionEffects()
+        effects.runSmithersPrompt = { promptId, args in
+            routedPromptId = promptId
+            routedArgs = args
+        }
+
+        SlashCommandExecutor.execute(
+            command,
+            context: context(input: "/prompt:greet name=Will", commands: builtIn + [command]),
+            effects: effects
+        )
+
+        XCTAssertEqual(routedPromptId, "greet")
+        XCTAssertEqual(routedArgs, "name=Will")
     }
 }

@@ -428,6 +428,7 @@ class GhosttyApp: ObservableObject {
         tickTimer = nil
 
         TerminalSurfaceRegistry.shared.removeAll()
+        callbacks.invalidate()
 
         if let app {
             ghostty_app_free(app)
@@ -439,7 +440,6 @@ class GhosttyApp: ObservableObject {
             self.config = nil
         }
 
-        callbacks.invalidate()
         ready = false
     }
 

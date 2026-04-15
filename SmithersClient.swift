@@ -6191,25 +6191,7 @@ private func parseCLITimestampMs(_ value: String?) -> Int64? {
 }
 
 private func normalizeCLIRunStatus(_ status: String?) -> RunStatus {
-    let normalized = status?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-        .replacingOccurrences(of: "_", with: "-")
-        .replacingOccurrences(of: " ", with: "-") ?? ""
-    switch normalized {
-    case RunStatus.waitingApproval.rawValue, "waitingapproval", "blocked", "paused":
-        return .waitingApproval
-    case RunStatus.finished.rawValue, "complete", "completed", "success", "succeeded", "done":
-        return .finished
-    case RunStatus.failed.rawValue, "failure", "error", "errored":
-        return .failed
-    case RunStatus.cancelled.rawValue, "canceled":
-        return .cancelled
-    case RunStatus.running.rawValue, "in-progress", "inprogress", "started":
-        return .running
-    default:
-        return .unknown
-    }
+    RunStatus.normalized(status)
 }
 
 private func makeRunTaskSummary(_ tasks: [RunTask]) -> [String: Int] {

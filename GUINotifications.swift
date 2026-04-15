@@ -402,8 +402,11 @@ final class AppNotifications: ObservableObject {
     }
 
     private func runStatus(from event: RunStreamEvent) -> RunStatus? {
-        if let raw = event.status?.lowercased(), let status = RunStatus(rawValue: raw) {
-            return status
+        if let raw = event.status {
+            let status = RunStatus.normalized(raw)
+            if status != .unknown {
+                return status
+            }
         }
 
         switch event.type.lowercased() {
