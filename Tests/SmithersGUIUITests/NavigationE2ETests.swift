@@ -8,6 +8,7 @@ final class NavigationE2ETests: SmithersGUIUITestCase {
             ("Dashboard", "view.dashboard"),
             ("Runs", "view.runs"),
             ("Workflows", "view.workflows"),
+            ("JJHub Workflows", "view.jjhubWorkflows"),
             ("Approvals", "view.approvals"),
             ("Prompts", "view.prompts"),
             ("Scores", "view.scores"),

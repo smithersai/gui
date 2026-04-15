@@ -1,8 +1,19 @@
 import XCTest
 
 final class ChatE2ETests: SmithersGUIUITestCase {
+    func testChatTargetPickerShowsSmithersAndExternalAgentOptions() {
+        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+
+        XCTAssertTrue(element("chat.targetPicker").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("chat.target.smithers").exists)
+        XCTAssertTrue(element("chat.target.codex").waitForExistence(timeout: 5))
+
+        chooseSmithersChatTargetIfNeeded()
+    }
+
     func testWelcomeStateMessageSendSlashPaletteAndSendStopToggle() {
         navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        chooseSmithersChatTargetIfNeeded()
 
         XCTAssertTrue(element("chat.emptyState").waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["What can I help you build?"].exists)

@@ -20,6 +20,7 @@ final class WorkspacesSessionKeyboardE2ETests: SmithersGUIUITestCase {
 
     func testNewChatCreatesSessionAndSessionSearchFindsIt() {
         navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "Session Search Needle")
         waitForElement("chat.sendButton").click()

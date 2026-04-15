@@ -39,6 +39,21 @@ class SmithersGUIUITestCase: XCTestCase {
         XCTAssertTrue(element(expectedViewIdentifier).waitForExistence(timeout: 5), "Missing view after navigating to \(label): \(expectedViewIdentifier)", file: file, line: line)
     }
 
+    func chooseSmithersChatTargetIfNeeded(file: StaticString = #filePath, line: UInt = #line) {
+        let picker = element("chat.targetPicker")
+        if picker.waitForExistence(timeout: 1.5) {
+            let smithersTarget = waitForElement("chat.target.smithers", timeout: 5, file: file, line: line)
+            smithersTarget.click()
+        }
+
+        XCTAssertTrue(
+            element("chat.surface").waitForExistence(timeout: 5),
+            "Chat surface should be visible after selecting Smithers target",
+            file: file,
+            line: line
+        )
+    }
+
     func typeInto(_ identifier: String, _ text: String, submit: Bool = false) {
         let field = waitForElement(identifier)
         field.click()
