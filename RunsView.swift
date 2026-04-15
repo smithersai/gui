@@ -2,15 +2,30 @@ import SwiftUI
 
 struct RunsView: View {
     @ObservedObject var smithers: SmithersClient
-    var onOpenLiveChat: ((String, String?) -> Void)? = nil
+    var onOpenLiveChat: ((RunSummary, String?) -> Void)? = nil
+    var onOpenRunInspector: ((RunSummary) -> Void)? = nil
+    var onOpenRunSnapshots: ((RunSummary) -> Void)? = nil
+    var onOpenTerminalCommand: ((String, String, String) -> Void)? = nil
+
     @State private var runs: [RunSummary] = []
     @State private var expandedRunIds: Set<String> = []
     @State private var inspections: [String: RunInspection] = [:]
     @State private var isLoading = true
     @State private var error: String?
 
+    @State private var actionMessage: String?
+    @State private var actionMessageColor: Color = Theme.textTertiary
+    @State private var streamMode: StreamMode?
+    @State private var streamTask: Task<Void, Never>?
+    @State private var pollingTask: Task<Void, Never>?
+    @State private var hijackingRunId: String?
+    @State private var pendingCancelRun: RunSummary?
+    @State private var pendingDenyNode: PendingDenyNode?
+    @State private var didShowPollingMessage = false
+
     // Filters
     @State private var statusFilter: RunStatus?
+    @State private var workflowFilter: String?
     @State private var searchText = ""
     @State private var dateFilter: DateFilter = .all
 
@@ -21,10 +36,84 @@ struct RunsView: View {
         case month = "This Month"
     }
 
+    private enum StreamMode {
+        case live
+        case polling
+
+        var label: String {
+            switch self {
+            case .live:
+                return "● Live"
+            case .polling:
+                return "○ Polling"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .live:
+                return Theme.success
+            case .polling:
+                return Theme.textTertiary
+            }
+        }
+    }
+
+    private struct RunStreamEvent: Decodable {
+        let type: String
+        let runId: String
+        let nodeId: String?
+        let iteration: Int?
+        let attempt: Int?
+        let status: String?
+        let timestampMs: Int64?
+        let seq: Int?
+    }
+
+    private struct RunStreamEnvelope: Decodable {
+        let event: RunStreamEvent?
+        let data: RunStreamEvent?
+    }
+
+    private struct PendingDenyNode: Identifiable {
+        let runId: String
+        let nodeId: String
+
+        var id: String { "\(runId):\(nodeId)" }
+    }
+
+    private var workflowChoices: [String] {
+        var names: [String] = []
+        var seen: Set<String> = []
+        for run in runs {
+            guard let name = run.workflowName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty else {
+                continue
+            }
+            let key = name.lowercased()
+            if seen.insert(key).inserted {
+                names.append(name)
+            }
+        }
+
+        if let workflowFilter,
+           !workflowFilter.isEmpty,
+           !names.contains(where: { $0.caseInsensitiveCompare(workflowFilter) == .orderedSame }) {
+            names.insert(workflowFilter, at: 0)
+        }
+
+        return names
+    }
+
     private var filteredRuns: [RunSummary] {
         var result = runs
         if let statusFilter {
             result = result.filter { $0.status == statusFilter }
+        }
+        if let workflowFilter, !workflowFilter.isEmpty {
+            result = result.filter {
+                ($0.workflowName ?? "").localizedCaseInsensitiveContains(workflowFilter)
+            }
         }
         if !searchText.isEmpty {
             result = result.filter {
@@ -52,10 +141,75 @@ struct RunsView: View {
         VStack(spacing: 0) {
             header
             filterBar
+            if let actionMessage {
+                actionBanner(message: actionMessage, color: actionMessageColor)
+            }
             runsList
         }
         .background(Theme.surface1)
-        .task { await loadRuns() }
+        .task {
+            await initializeRunsView()
+        }
+        .onDisappear {
+            stopLiveUpdates()
+        }
+        .confirmationDialog(
+            "Cancel Run",
+            isPresented: Binding(
+                get: { pendingCancelRun != nil },
+                set: { if !$0 { pendingCancelRun = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Cancel Run", role: .destructive) {
+                if let run = pendingCancelRun {
+                    pendingCancelRun = nil
+                    Task { await cancelRun(run.runId) }
+                }
+            }
+            .accessibilityIdentifier("runs.confirmCancelButton")
+
+            Button("Keep Running", role: .cancel) {
+                pendingCancelRun = nil
+            }
+            .accessibilityIdentifier("runs.dismissCancelButton")
+        } message: {
+            if let run = pendingCancelRun {
+                Text("Cancel run \(String(run.runId.prefix(8)))? This run is still active and will stop immediately.")
+            } else {
+                Text("Cancel this run? It will stop immediately.")
+            }
+        }
+        .confirmationDialog(
+            "Deny Approval",
+            isPresented: Binding(
+                get: { pendingDenyNode != nil },
+                set: { if !$0 { pendingDenyNode = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Deny Approval", role: .destructive) {
+                if let pendingDenyNode {
+                    self.pendingDenyNode = nil
+                    Task {
+                        await denyNode(runId: pendingDenyNode.runId, nodeId: pendingDenyNode.nodeId)
+                    }
+                }
+            }
+            .accessibilityIdentifier("runs.confirmDenyButton")
+
+            Button("Cancel", role: .cancel) {
+                pendingDenyNode = nil
+            }
+            .accessibilityIdentifier("runs.cancelDenyButton")
+        } message: {
+            if let pendingDenyNode {
+                Text("Deny approval for \(pendingDenyNode.nodeId) on run \(String(pendingDenyNode.runId.prefix(8)))? This will fail the waiting gate.")
+            } else {
+                Text("Deny this approval? This will fail the waiting gate.")
+            }
+        }
+        .accessibilityIdentifier("runs.root")
     }
 
     // MARK: - Header
@@ -65,18 +219,29 @@ struct RunsView: View {
             Text("Runs")
                 .font(.system(size: 15, weight: .bold))
                 .foregroundColor(Theme.textPrimary)
+
+            if let streamMode {
+                Text(streamMode.label)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(streamMode.color)
+                    .padding(.leading, 8)
+            }
+
             Spacer()
+
             if isLoading {
                 ProgressView()
                     .scaleEffect(0.5)
                     .frame(width: 16, height: 16)
             }
-            Button(action: { Task { await loadRuns() } }) {
+
+            Button(action: { Task { await loadRuns(showLoading: true, clearError: true) } }) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("runs.refresh")
         }
         .padding(.horizontal, 20)
         .frame(height: 48)
@@ -87,7 +252,6 @@ struct RunsView: View {
 
     private var filterBar: some View {
         HStack(spacing: 8) {
-            // Search
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 10))
@@ -103,7 +267,6 @@ struct RunsView: View {
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
             .frame(maxWidth: 200)
 
-            // Status filter
             Menu {
                 Button("All Statuses") { statusFilter = nil }
                 Divider()
@@ -125,8 +288,34 @@ struct RunsView: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("runs.filter.status")
 
-            // Date filter
+            Menu {
+                Button("All Workflows") { workflowFilter = nil }
+                if !workflowChoices.isEmpty {
+                    Divider()
+                    ForEach(workflowChoices, id: \.self) { workflow in
+                        Button(workflow) { workflowFilter = workflow }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(workflowFilter ?? "All Workflows")
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8))
+                }
+                .foregroundColor(Theme.textSecondary)
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(Theme.inputBg)
+                .cornerRadius(6)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("runs.filter.workflow")
+
             Menu {
                 ForEach(DateFilter.allCases, id: \.self) { df in
                     Button(df.rawValue) { dateFilter = df }
@@ -146,19 +335,25 @@ struct RunsView: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("runs.filter.date")
 
-            if statusFilter != nil || dateFilter != .all || !searchText.isEmpty {
-                Button(action: { statusFilter = nil; dateFilter = .all; searchText = "" }) {
+            if statusFilter != nil || workflowFilter != nil || dateFilter != .all || !searchText.isEmpty {
+                Button(action: {
+                    statusFilter = nil
+                    workflowFilter = nil
+                    dateFilter = .all
+                    searchText = ""
+                }) {
                     Text("Clear")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.accent)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("runs.filter.clear")
             }
 
             Spacer()
 
-            // Count
             Text("\(filteredRuns.count) run\(filteredRuns.count == 1 ? "" : "s")")
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textTertiary)
@@ -166,6 +361,21 @@ struct RunsView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
         .border(Theme.border, edges: [.bottom])
+    }
+
+    private func actionBanner(message: String, color: Color) -> some View {
+        HStack {
+            Text(message)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(color)
+                .lineLimit(2)
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 7)
+        .background(Theme.surface2)
+        .border(Theme.border, edges: [.bottom])
+        .accessibilityIdentifier("runs.actionMessage")
     }
 
     // MARK: - Runs List
@@ -180,7 +390,7 @@ struct RunsView: View {
                     Text(error)
                         .font(.system(size: 13))
                         .foregroundColor(Theme.textSecondary)
-                    Button("Retry") { Task { await loadRuns() } }
+                    Button("Retry") { Task { await loadRuns(showLoading: true, clearError: true) } }
                         .buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(Theme.accent)
@@ -197,7 +407,6 @@ struct RunsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // Group runs by status category
                 ScrollView {
                     VStack(spacing: 0) {
                         let active = filteredRuns.filter { $0.status == .running || $0.status == .waitingApproval }
@@ -216,6 +425,7 @@ struct RunsView: View {
                     }
                     .padding(20)
                 }
+                .refreshable { await loadRuns(showLoading: false, clearError: true) }
             }
         }
     }
@@ -269,7 +479,7 @@ struct RunsView: View {
                     Spacer()
 
                     if run.status == .running && run.totalNodes > 0 {
-                        ProgressBar(progress: run.progress)
+                        ProgressBar(progress: run.progress, failedProgress: run.failedProgress)
                             .frame(width: 80)
                         Text("\(Int((run.progress * 100).rounded()))%")
                             .font(.system(size: 10, design: .monospaced))
@@ -289,18 +499,54 @@ struct RunsView: View {
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if onOpenLiveChat != nil {
-                Button(action: { onOpenLiveChat?(run.runId, nil) }) {
-                    Image(systemName: "message")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Theme.accent)
-                        .frame(width: 22, height: 22)
-                        .background(Theme.accent.opacity(0.14))
-                        .cornerRadius(6)
+            HStack(spacing: 6) {
+                if onOpenLiveChat != nil {
+                    rowActionButton(
+                        icon: "message",
+                        color: Theme.accent,
+                        help: "Open live chat",
+                        accessibilityID: "runs.chat.\(runInspectorSafeID(run.runId))"
+                    ) {
+                        onOpenLiveChat?(run, nil)
+                    }
                 }
-                .buttonStyle(.plain)
-                .padding(.trailing, 14)
+
+                if onOpenRunInspector != nil {
+                    rowActionButton(
+                        icon: "sidebar.right",
+                        color: Theme.info,
+                        help: "Inspect run",
+                        accessibilityID: "runs.inspect.\(runInspectorSafeID(run.runId))"
+                    ) {
+                        onOpenRunInspector?(run)
+                    }
+                }
+
+                if onOpenRunSnapshots != nil {
+                    rowActionButton(
+                        icon: "clock.arrow.circlepath",
+                        color: Theme.info,
+                        help: "Open snapshots",
+                        accessibilityID: "runs.snapshots.\(runInspectorSafeID(run.runId))"
+                    ) {
+                        onOpenRunSnapshots?(run)
+                    }
+                }
+
+                if onOpenTerminalCommand != nil {
+                    rowActionButton(
+                        icon: hijackingRunId == run.runId ? "hourglass" : "arrow.trianglehead.branch",
+                        color: Theme.warning,
+                        help: "Hijack run",
+                        accessibilityID: "runs.hijack.\(runInspectorSafeID(run.runId))"
+                    ) {
+                        startHijack(for: run)
+                    }
+                    .disabled(hijackingRunId != nil)
+                    .opacity(hijackingRunId == nil ? 1 : 0.55)
+                }
             }
+            .padding(.trailing, 14)
         }
     }
 
@@ -308,10 +554,26 @@ struct RunsView: View {
 
     private func runDetail(_ run: RunSummary) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Action buttons
             HStack(spacing: 8) {
+                if onOpenRunInspector != nil {
+                    actionButton("Inspect", icon: "sidebar.right", color: Theme.info) {
+                        onOpenRunInspector?(run)
+                    }
+                }
+                if onOpenRunSnapshots != nil {
+                    actionButton("Snapshots", icon: "clock.arrow.circlepath", color: Theme.info) {
+                        onOpenRunSnapshots?(run)
+                    }
+                }
                 actionButton("Live Chat", icon: "message", color: Theme.accent) {
-                    onOpenLiveChat?(run.runId, nil)
+                    onOpenLiveChat?(run, nil)
+                }
+                if onOpenTerminalCommand != nil {
+                    actionButton(hijackingRunId == run.runId ? "Hijacking..." : "Hijack", icon: "arrow.trianglehead.branch", color: Theme.warning) {
+                        startHijack(for: run)
+                    }
+                    .disabled(hijackingRunId != nil)
+                    .opacity(hijackingRunId == nil ? 1 : 0.55)
                 }
                 if run.status == .waitingApproval {
                     if let inspection = inspections[run.runId],
@@ -320,7 +582,7 @@ struct RunsView: View {
                             Task { await approveNode(runId: run.runId, nodeId: blockedNode.nodeId) }
                         }
                         actionButton("Deny", icon: "xmark", color: Theme.danger) {
-                            Task { await denyNode(runId: run.runId, nodeId: blockedNode.nodeId) }
+                            requestDenyNode(runId: run.runId, nodeId: blockedNode.nodeId)
                         }
                     } else {
                         actionButton("Approve", icon: "checkmark", color: Theme.success) {}
@@ -331,15 +593,14 @@ struct RunsView: View {
                             .opacity(0.5)
                     }
                 }
-                if run.status == .running || run.status == .waitingApproval {
+                if !run.status.isTerminal {
                     actionButton("Cancel", icon: "stop.fill", color: Theme.danger) {
-                        Task { await cancelRun(run.runId) }
+                        requestCancel(for: run)
                     }
                 }
                 Spacer()
             }
 
-            // Node tasks
             if let inspection = inspections[run.runId] {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("NODES")
@@ -364,7 +625,7 @@ struct RunsView: View {
                                 .font(.system(size: 9, weight: .medium))
                                 .foregroundColor(nodeStateColor(task.state))
                             Button(action: {
-                                onOpenLiveChat?(run.runId, task.nodeId)
+                                onOpenLiveChat?(run, task.nodeId)
                             }) {
                                 Image(systemName: "message")
                                     .font(.system(size: 9, weight: .bold))
@@ -392,7 +653,6 @@ struct RunsView: View {
                 }
             }
 
-            // Error info
             if let errorJson = run.errorJson {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("ERROR")
@@ -411,7 +671,7 @@ struct RunsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 12)
-        .padding(.leading, 24) // indent under chevron
+        .padding(.leading, 24)
         .background(Theme.base.opacity(0.3))
     }
 
@@ -433,6 +693,26 @@ struct RunsView: View {
         .buttonStyle(.plain)
     }
 
+    private func rowActionButton(
+        icon: String,
+        color: Color,
+        help: String,
+        accessibilityID: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(color)
+                .frame(width: 22, height: 22)
+                .background(color.opacity(0.14))
+                .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityIdentifier(accessibilityID)
+    }
+
     private func nodeStateIcon(_ state: String) -> some View {
         let (icon, color): (String, Color) = {
             switch state {
@@ -440,8 +720,8 @@ struct RunsView: View {
             case "finished": return ("checkmark.circle.fill", Theme.success)
             case "failed": return ("xmark.circle.fill", Theme.danger)
             case "skipped": return ("minus.circle.fill", Theme.textTertiary)
-            case "blocked": return ("pause.circle.fill", Theme.warning)
-            default: return ("circle", Theme.textTertiary) // pending
+            case "blocked", "waiting-approval": return ("pause.circle.fill", Theme.warning)
+            default: return ("circle", Theme.textTertiary)
             }
         }()
         return Image(systemName: icon)
@@ -456,13 +736,20 @@ struct RunsView: View {
         case "finished": return Theme.success
         case "failed": return Theme.danger
         case "skipped": return Theme.textTertiary
-        case "blocked": return Theme.warning
+        case "blocked", "waiting-approval": return Theme.warning
         default: return Theme.textTertiary
         }
     }
 
     // MARK: - Actions
 
+    @MainActor
+    private func initializeRunsView() async {
+        await loadRuns(showLoading: true, clearError: true)
+        startLiveUpdates()
+    }
+
+    @MainActor
     private func toggleExpand(_ run: RunSummary) {
         if expandedRunIds.contains(run.id) {
             expandedRunIds.remove(run.id)
@@ -474,52 +761,361 @@ struct RunsView: View {
         }
     }
 
-    private func loadRuns() async {
-        isLoading = true
-        error = nil
-        do {
-            runs = try await smithers.listRuns()
-        } catch {
-            self.error = error.localizedDescription
-        }
-        isLoading = false
+    @MainActor
+    private func setActionMessage(_ message: String, color: Color) {
+        actionMessage = message
+        actionMessageColor = color
     }
 
+    @MainActor
+    private func requestCancel(for run: RunSummary) {
+        guard !run.status.isTerminal else { return }
+        pendingCancelRun = run
+    }
+
+    @MainActor
+    private func requestDenyNode(runId: String, nodeId: String) {
+        pendingDenyNode = PendingDenyNode(runId: runId, nodeId: nodeId)
+    }
+
+    @MainActor
+    private func loadRuns(showLoading: Bool = true, clearError: Bool = true) async {
+        if showLoading {
+            isLoading = true
+        }
+        if clearError {
+            error = nil
+        }
+
+        do {
+            runs = try await smithers.listRuns()
+            synchronizeCachedState()
+        } catch {
+            if runs.isEmpty || clearError {
+                self.error = error.localizedDescription
+            } else {
+                setActionMessage("Refresh error: \(error.localizedDescription)", color: Theme.warning)
+            }
+        }
+
+        if showLoading {
+            isLoading = false
+        }
+    }
+
+    @MainActor
+    private func synchronizeCachedState() {
+        let runIDs = Set(runs.map(\.runId))
+        expandedRunIds = expandedRunIds.intersection(runIDs)
+        inspections = inspections.filter { runIDs.contains($0.key) }
+    }
+
+    @MainActor
+    private func updateRunStatus(runId: String, status: RunStatus) {
+        guard let idx = runs.firstIndex(where: { $0.runId == runId }) else { return }
+        runs[idx] = runWithStatus(runs[idx], status: status, timestampMs: Int64(Date().timeIntervalSince1970 * 1000))
+    }
+
+    private func runWithStatus(_ run: RunSummary, status: RunStatus, timestampMs: Int64?) -> RunSummary {
+        let startedAtMs = run.startedAtMs ?? timestampMs
+        let finishedAtMs: Int64?
+
+        if status.isTerminal {
+            finishedAtMs = run.finishedAtMs ?? timestampMs
+        } else {
+            finishedAtMs = nil
+        }
+
+        return RunSummary(
+            runId: run.runId,
+            workflowName: run.workflowName,
+            workflowPath: run.workflowPath,
+            status: status,
+            startedAtMs: startedAtMs,
+            finishedAtMs: finishedAtMs,
+            summary: run.summary,
+            errorJson: run.errorJson
+        )
+    }
+
+    @MainActor
     private func loadInspection(_ runId: String) async {
         do {
             let inspection = try await smithers.inspectRun(runId)
             inspections[runId] = inspection
         } catch {
-            // Silently fail — row will show the error
+            // No-op: expanded rows can retry by collapsing/expanding.
         }
     }
 
+    @MainActor
+    private func refreshExpandedInspections() async {
+        for runId in expandedRunIds {
+            await loadInspection(runId)
+        }
+    }
+
+    @MainActor
     private func approveNode(runId: String, nodeId: String) async {
         do {
             try await smithers.approveNode(runId: runId, nodeId: nodeId)
-            await loadRuns()
-            for id in expandedRunIds { await loadInspection(id) }
+            setActionMessage("Approved run \(String(runId.prefix(8)))", color: Theme.success)
+            updateRunStatus(runId: runId, status: .running)
+            await refreshExpandedInspections()
+            await loadRuns(showLoading: false, clearError: false)
         } catch {
-            self.error = error.localizedDescription
+            setActionMessage("Approve error: \(error.localizedDescription)", color: Theme.danger)
         }
     }
 
+    @MainActor
     private func denyNode(runId: String, nodeId: String) async {
         do {
             try await smithers.denyNode(runId: runId, nodeId: nodeId)
-            await loadRuns()
-            for id in expandedRunIds { await loadInspection(id) }
+            setActionMessage("Denied run \(String(runId.prefix(8)))", color: Theme.success)
+            updateRunStatus(runId: runId, status: .failed)
+            await refreshExpandedInspections()
+            await loadRuns(showLoading: false, clearError: false)
         } catch {
-            self.error = error.localizedDescription
+            setActionMessage("Deny error: \(error.localizedDescription)", color: Theme.danger)
         }
     }
 
+    @MainActor
     private func cancelRun(_ runId: String) async {
         do {
             try await smithers.cancelRun(runId)
-            await loadRuns()
+            setActionMessage("Cancelled run \(String(runId.prefix(8)))", color: Theme.success)
+            updateRunStatus(runId: runId, status: .cancelled)
+            await loadRuns(showLoading: false, clearError: false)
         } catch {
-            self.error = error.localizedDescription
+            setActionMessage("Cancel error: \(error.localizedDescription)", color: Theme.danger)
+        }
+    }
+
+    @MainActor
+    private func startHijack(for run: RunSummary) {
+        guard hijackingRunId == nil else { return }
+        guard let onOpenTerminalCommand else {
+            setActionMessage("Terminal command hook is unavailable.", color: Theme.warning)
+            return
+        }
+
+        hijackingRunId = run.runId
+        setActionMessage("Starting hijack session...", color: Theme.accent)
+
+        Task { @MainActor in
+            defer { hijackingRunId = nil }
+
+            do {
+                let session = try await smithers.hijackRun(run.runId)
+                guard session.supportsResume else {
+                    setActionMessage("This agent does not support resumable hijack sessions.", color: Theme.warning)
+                    return
+                }
+
+                let binary = session.agentBinary.isEmpty ? session.agentEngine : session.agentBinary
+                let resumeArgs = session.resumeArgs()
+                guard !binary.isEmpty, !resumeArgs.isEmpty else {
+                    setActionMessage("Hijack session is missing resume details.", color: Theme.danger)
+                    return
+                }
+
+                let command = ([binary] + resumeArgs)
+                    .map(runInspectorShellQuote)
+                    .joined(separator: " ")
+                let workingDirectory = session.cwd.isEmpty ? FileManager.default.currentDirectoryPath : session.cwd
+
+                setActionMessage("Hijack ready for run \(String(run.runId.prefix(8))).", color: Theme.success)
+                onOpenTerminalCommand(command, workingDirectory, "Hijack \(String(run.runId.prefix(8)))")
+            } catch {
+                setActionMessage("Hijack error: \(error.localizedDescription)", color: Theme.danger)
+            }
+        }
+    }
+
+    // MARK: - Live updates / polling fallback
+
+    @MainActor
+    private func startLiveUpdates() {
+        stopLiveUpdates()
+
+        streamTask = Task {
+            while !Task.isCancelled {
+                var receivedEvents = false
+
+                for await event in smithers.streamRunEvents("all-runs") {
+                    if Task.isCancelled { return }
+                    receivedEvents = true
+
+                    await MainActor.run {
+                        streamMode = .live
+                        stopPollingFallback()
+                        didShowPollingMessage = false
+                        handleRunStreamEvent(event)
+                    }
+                }
+
+                if Task.isCancelled {
+                    return
+                }
+
+                if receivedEvents {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
+
+                await MainActor.run {
+                    startPollingFallback()
+                }
+                return
+            }
+        }
+    }
+
+    @MainActor
+    private func stopLiveUpdates() {
+        streamTask?.cancel()
+        streamTask = nil
+        stopPollingFallback()
+    }
+
+    @MainActor
+    private func startPollingFallback() {
+        guard pollingTask == nil else { return }
+
+        streamMode = .polling
+        if !didShowPollingMessage {
+            setActionMessage("Live stream unavailable. Polling every 5 seconds.", color: Theme.warning)
+            didShowPollingMessage = true
+        }
+
+        pollingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if Task.isCancelled { return }
+                await loadRuns(showLoading: false, clearError: false)
+            }
+        }
+    }
+
+    @MainActor
+    private func stopPollingFallback() {
+        pollingTask?.cancel()
+        pollingTask = nil
+    }
+
+    @MainActor
+    private func handleRunStreamEvent(_ event: SSEEvent) {
+        guard let runEvent = decodeRunStreamEvent(event) else { return }
+        let insertedRunId = applyRunEvent(runEvent)
+
+        if let insertedRunId {
+            Task { await enrichInsertedRun(insertedRunId) }
+        } else if expandedRunIds.contains(runEvent.runId), runEvent.type.caseInsensitiveCompare("NodeWaitingApproval") == .orderedSame {
+            Task { await loadInspection(runEvent.runId) }
+        }
+    }
+
+    private func decodeRunStreamEvent(_ event: SSEEvent) -> RunStreamEvent? {
+        let payload = event.data.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !payload.isEmpty,
+              let data = payload.data(using: .utf8) else {
+            return nil
+        }
+
+        if let direct = try? JSONDecoder().decode(RunStreamEvent.self, from: data), !direct.runId.isEmpty {
+            return direct
+        }
+
+        if let wrapped = try? JSONDecoder().decode(RunStreamEnvelope.self, from: data),
+           let nested = wrapped.event ?? wrapped.data,
+           !nested.runId.isEmpty {
+            return nested
+        }
+
+        return nil
+    }
+
+    @MainActor
+    private func applyRunEvent(_ event: RunStreamEvent) -> String? {
+        guard !event.runId.isEmpty else { return nil }
+
+        let type = event.type.lowercased()
+        let index = runs.firstIndex(where: { $0.runId == event.runId })
+
+        switch type {
+        case "runstatuschanged", "runfinished", "runfailed", "runcancelled", "runstarted":
+            guard let status = runStatus(from: event) else { return nil }
+
+            if let index {
+                runs[index] = runWithStatus(runs[index], status: status, timestampMs: event.timestampMs)
+            } else {
+                let stub = RunSummary(
+                    runId: event.runId,
+                    workflowName: nil,
+                    workflowPath: nil,
+                    status: status,
+                    startedAtMs: event.timestampMs,
+                    finishedAtMs: status.isTerminal ? event.timestampMs : nil,
+                    summary: nil,
+                    errorJson: nil
+                )
+                runs.insert(stub, at: 0)
+                return event.runId
+            }
+
+        case "nodewaitingapproval":
+            guard let index else { return nil }
+            runs[index] = runWithStatus(runs[index], status: .waitingApproval, timestampMs: event.timestampMs)
+
+        default:
+            break
+        }
+
+        return nil
+    }
+
+    private func runStatus(from event: RunStreamEvent) -> RunStatus? {
+        if let raw = event.status?.lowercased(), let status = RunStatus(rawValue: raw) {
+            return status
+        }
+
+        switch event.type.lowercased() {
+        case "runstarted":
+            return .running
+        case "runfinished":
+            return .finished
+        case "runfailed":
+            return .failed
+        case "runcancelled":
+            return .cancelled
+        default:
+            return nil
+        }
+    }
+
+    @MainActor
+    private func enrichInsertedRun(_ runId: String) async {
+        do {
+            let inspection = try await smithers.inspectRun(runId)
+            if let index = runs.firstIndex(where: { $0.runId == runId }) {
+                runs[index] = inspection.run
+            }
+            inspections[runId] = inspection
+        } catch {
+            await loadRuns(showLoading: false, clearError: false)
+        }
+    }
+}
+
+private extension RunStatus {
+    var isTerminal: Bool {
+        switch self {
+        case .finished, .failed, .cancelled:
+            return true
+        case .running, .waitingApproval:
+            return false
         }
     }
 }
