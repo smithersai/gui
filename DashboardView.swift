@@ -66,12 +66,20 @@ struct DashboardView: View {
         case workspaces = "Workspaces"
     }
 
+    private var sortedRuns: [RunSummary] {
+        runs.sortedByStartedAtDescending()
+    }
+
     private var activeRuns: [RunSummary] {
-        runs.filter { $0.status == .running || $0.status == .waitingApproval }
+        sortedRuns.filter { $0.status == .running || $0.status == .waitingApproval }
     }
 
     private var pendingApprovals: [Approval] {
         approvals.filterPendingApprovals()
+    }
+
+    private var pendingApprovalCount: Int {
+        pendingApprovals.count
     }
 
     private var openLandingsCount: Int {
@@ -107,22 +115,10 @@ struct DashboardView: View {
             // Tabs
             HStack(spacing: 0) {
                 ForEach(visibleTabs, id: \.self) { t in
-                    Button(action: { tab = t }) {
-                        Text(t.rawValue)
-                            .font(.system(size: 12, weight: tab == t ? .semibold : .regular))
-                            .foregroundColor(tab == t ? Theme.accent : Theme.textSecondary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
+                    DashboardTabButton(label: t.rawValue, isActive: tab == t) {
+                        withAnimation(.easeInOut(duration: 0.2)) { tab = t }
                     }
-                    .buttonStyle(.plain)
                     .accessibilityIdentifier("dashboard.tab.\(t.rawValue)")
-                    .overlay(alignment: .bottom) {
-                        if tab == t {
-                            Rectangle()
-                                .fill(Theme.accent)
-                                .frame(height: 2)
-                        }
-                    }
                 }
                 Spacer()
             }
@@ -132,24 +128,28 @@ struct DashboardView: View {
             if let error {
                 errorView(error)
             } else {
-                switch tab {
-                case .overview:
-                    overviewContent
-                case .runs:
-                    runsContent
-                case .workflows:
-                    workflowsContent
-                case .approvals:
-                    approvalsContent
-                case .sessions:
-                    sessionsContent
-                case .landings:
-                    landingsContent
-                case .issues:
-                    issuesContent
-                case .workspaces:
-                    workspacesContent
+                Group {
+                    switch tab {
+                    case .overview:
+                        overviewContent
+                    case .runs:
+                        runsContent
+                    case .workflows:
+                        workflowsContent
+                    case .approvals:
+                        approvalsContent
+                    case .sessions:
+                        sessionsContent
+                    case .landings:
+                        landingsContent
+                    case .issues:
+                        issuesContent
+                    case .workspaces:
+                        workspacesContent
+                    }
                 }
+                .transition(.opacity)
+                .id(tab)
             }
         }
         .background(Theme.surface1)
@@ -189,8 +189,8 @@ struct DashboardView: View {
                 }
                 if !pendingApprovals.isEmpty {
                     HeaderIndicator(
-                        text: "⚠ \(pendingApprovals.count) pending approval\(pendingApprovals.count == 1 ? "" : "s")",
-                        color: pendingApprovals.count >= 5 ? Theme.danger : Theme.warning
+                        text: "⚠ \(pendingApprovalCount) pending approval\(pendingApprovalCount == 1 ? "" : "s")",
+                        color: pendingApprovalCount >= 5 ? Theme.danger : Theme.warning
                     )
                     .accessibilityIdentifier("dashboard.indicator.pendingApprovals")
                 }
@@ -245,7 +245,7 @@ struct DashboardView: View {
                     )
                     StatCard(
                         title: "Pending Approvals",
-                        value: statValue(.approvals, pendingApprovals.count),
+                        value: statValue(.approvals, pendingApprovalCount),
                         icon: statIcon(.approvals, fallback: "checkmark.shield.fill"),
                         color: statColor(.approvals, fallback: Theme.warning)
                     )
@@ -287,11 +287,11 @@ struct DashboardView: View {
                     }
                 }
 
-                if !runs.isEmpty {
+                if !sortedRuns.isEmpty {
                     SectionCard(title: "Recent Runs") {
-                        ForEach(runs.prefix(5)) { run in
+                        ForEach(sortedRuns.prefix(5)) { run in
                             RunRow(run: run)
-                            if run.id != runs.prefix(5).last?.id {
+                            if run.id != sortedRuns.prefix(5).last?.id {
                                 Divider().background(Theme.border)
                             }
                         }
@@ -361,12 +361,12 @@ struct DashboardView: View {
 
                 if sourceErrors[.runs] != nil && runs.isEmpty && !isLoading {
                     emptySection("Unable to load runs", icon: "exclamationmark.triangle")
-                } else if runs.isEmpty && !isLoading {
+                } else if sortedRuns.isEmpty && !isLoading {
                     emptySection("No runs found", icon: "play.circle")
                 } else {
-                    ForEach(runs) { run in
+                    ForEach(sortedRuns) { run in
                         RunRow(run: run)
-                        if run.id != runs.last?.id {
+                        if run.id != sortedRuns.last?.id {
                             Divider().background(Theme.border)
                         }
                     }
@@ -706,50 +706,19 @@ struct DashboardView: View {
         enabled: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                    .foregroundColor(enabled ? Theme.accent : Theme.textTertiary)
-                    .frame(width: 16)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(enabled ? Theme.textPrimary : Theme.textTertiary)
-                    Text(subtitle)
-                        .font(.system(size: 10))
-                        .foregroundColor(Theme.textTertiary)
-                        .lineLimit(1)
-                }
-                Spacer()
-            }
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
+        DashboardActionRow(
+            icon: icon,
+            title: title,
+            subtitle: subtitle,
+            enabled: enabled,
+            action: action
+        )
         .accessibilityIdentifier(accessibilityID)
     }
 
     private func tabRouteButton(title: String, accessibilityID: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "arrowshape.turn.up.right")
-                    .font(.system(size: 10))
-                Text(title)
-                    .font(.system(size: 11, weight: .medium))
-                Spacer()
-            }
-            .foregroundColor(Theme.accent)
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(Theme.accent.opacity(0.12))
-            .cornerRadius(6)
-            .padding(.bottom, 10)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(accessibilityID)
+        TabRouteButton(title: title, action: action)
+            .accessibilityIdentifier(accessibilityID)
     }
 
     private func actionErrorBanner(_ message: String) -> some View {
@@ -872,6 +841,33 @@ struct DashboardView: View {
 
 // MARK: - Dashboard Helpers
 
+struct DashboardTabButton: View {
+    let label: String
+    let isActive: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 12, weight: isActive ? .semibold : .regular))
+                .foregroundColor(isActive ? Theme.accent : (isHovered ? Theme.textPrimary : Theme.textSecondary))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+        .background(isHovered && !isActive ? Color.white.opacity(0.03) : .clear)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(isActive ? Theme.accent : .clear)
+                .frame(height: 2)
+        }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .animation(.easeOut(duration: 0.15), value: isActive)
+        .onHover { isHovered = $0 }
+    }
+}
+
 struct HeaderIndicator: View {
     let text: String
     let color: Color
@@ -884,6 +880,87 @@ struct HeaderIndicator: View {
             .padding(.vertical, 4)
             .background(color.opacity(0.12))
             .cornerRadius(999)
+    }
+}
+
+struct TabRouteButton: View {
+    let title: String
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrowshape.turn.up.right")
+                    .font(.system(size: 10))
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                Spacer()
+                if isHovered {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 9))
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                }
+            }
+            .foregroundColor(Theme.accent)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(isHovered ? Theme.accent.opacity(0.18) : Theme.accent.opacity(0.12))
+            .cornerRadius(6)
+            .padding(.bottom, 10)
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+}
+
+struct DashboardActionRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    let enabled: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundColor(enabled ? Theme.accent : Theme.textTertiary)
+                    .frame(width: 16)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(enabled ? Theme.textPrimary : Theme.textTertiary)
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                        .lineLimit(1)
+                }
+                Spacer()
+
+                if isHovered && enabled {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundColor(Theme.textTertiary)
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered && enabled ? Color.white.opacity(0.03) : .clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -944,6 +1021,7 @@ struct LandingSummaryRow: View {
             Spacer()
         }
         .padding(.vertical, 8)
+        .themedRowHover()
     }
 
     private var normalizedState: String {
@@ -1001,6 +1079,7 @@ struct IssueSummaryRow: View {
             Spacer()
         }
         .padding(.vertical, 8)
+        .themedRowHover()
     }
 
     private var isOpen: Bool {
@@ -1048,6 +1127,7 @@ struct WorkspaceSummaryRow: View {
             Spacer()
         }
         .padding(.vertical, 8)
+        .themedRowHover()
     }
 
     private var statusColor: Color {
@@ -1083,6 +1163,7 @@ struct DashboardSessionRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 8)
+        .themedRowHover()
     }
 }
 
@@ -1124,6 +1205,7 @@ struct RunRow: View {
                 .foregroundColor(Theme.textTertiary)
         }
         .padding(.vertical, 8)
+        .themedRowHover()
     }
 
     private var nodeProgressText: String {
@@ -1170,6 +1252,7 @@ struct WorkflowRow: View {
             }
         }
         .padding(.vertical, 8)
+        .themedRowHover()
     }
 
     private func workflowStatusColor(_ status: WorkflowStatus) -> Color {
@@ -1208,6 +1291,7 @@ struct ApprovalRow: View {
                 .foregroundColor(Theme.textTertiary)
         }
         .padding(.vertical, 8)
+        .themedRowHover()
     }
 }
 
@@ -1232,6 +1316,7 @@ struct StatCard: View {
     let value: String
     let icon: String
     let color: Color
+    @State private var isHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1254,8 +1339,12 @@ struct StatCard: View {
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Theme.border, lineWidth: 1)
+                .stroke(isHovered ? color.opacity(0.35) : Theme.border, lineWidth: 1)
         )
+        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .shadow(color: isHovered ? color.opacity(0.10) : .clear, radius: 8, y: 2)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover { isHovered = $0 }
         .accessibilityIdentifier("dashboard.stat.\(title.replacingOccurrences(of: " ", with: ""))")
     }
 }
