@@ -163,13 +163,6 @@ struct SidebarView: View {
                             openCurrentChat()
                         }
 
-                        NavRow(
-                            icon: NavDestination.terminal().icon,
-                            label: NavDestination.terminal().label,
-                            isSelected: destination.isTerminal
-                        ) {
-                            openCurrentTerminal()
-                        }
                     }
 
                     SidebarSection(title: "TABS") {
@@ -454,11 +447,12 @@ struct CollapsibleSidebarSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Button(action: { isCollapsed.toggle() }) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isCollapsed.toggle() } }) {
                 HStack(spacing: 6) {
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    Image(systemName: "chevron.right")
                         .font(.system(size: 8, weight: .bold))
                         .frame(width: 10)
+                        .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                     Text(title)
                         .font(.system(size: 10, weight: .bold))
                     Spacer()
@@ -474,8 +468,10 @@ struct CollapsibleSidebarSection<Content: View>: View {
 
             if !isCollapsed {
                 content
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .clipped()
     }
 }
 
@@ -527,7 +523,7 @@ struct NewChatMenuRow: View {
                 Image(systemName: "plus")
                     .font(.system(size: 11))
                     .frame(width: 16)
-                Text("New Chat")
+                Text("New")
                     .font(.system(size: 12))
                     .lineLimit(1)
                 Spacer()
