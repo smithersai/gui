@@ -276,11 +276,10 @@ final class AgentTests: XCTestCase {
 
 final class JJChangeTests: XCTestCase {
 
-    /// JJChange derives its id from the file property.
+    /// JJChange derives its id from status and file so duplicate paths can coexist.
     func testIdDerivedFromFile() {
         let change = JJChange(file: "src/main.swift", status: "modified", additions: 5, deletions: 2)
-        XCTAssertEqual(change.id, "src/main.swift")
-        XCTAssertEqual(change.id, change.file)
+        XCTAssertEqual(change.id, "modified:src/main.swift")
     }
 
     func testInitAllFields() {
@@ -293,15 +292,13 @@ final class JJChangeTests: XCTestCase {
 
     func testEmptyFile() {
         let change = JJChange(file: "", status: "", additions: 0, deletions: 0)
-        XCTAssertEqual(change.id, "")
+        XCTAssertEqual(change.id, ":")
         XCTAssertEqual(change.file, "")
     }
 
-    /// BUG DOCUMENTATION: Two JJChange values with the same file path will have the same id,
-    /// which can cause SwiftUI List/ForEach rendering issues if both appear in the same collection.
-    func testDuplicateFilesMeanDuplicateIds() {
+    func testDuplicateFilesWithDifferentStatusesHaveDistinctIds() {
         let a = JJChange(file: "dup.swift", status: "added", additions: 1, deletions: 0)
         let b = JJChange(file: "dup.swift", status: "deleted", additions: 0, deletions: 1)
-        XCTAssertEqual(a.id, b.id, "Two JJChange with same file have same id -- potential SwiftUI bug")
+        XCTAssertNotEqual(a.id, b.id)
     }
 }

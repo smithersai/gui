@@ -261,9 +261,14 @@ final class AgentServiceTests: XCTestCase {
     }
 
     // workingDirectory returns the configured directory
-    func testWorkingDirectory() {
-        let svc = AgentService(workingDir: "/tmp/myproject")
-        XCTAssertEqual(svc.workingDirectory, "/tmp/myproject")
+    func testWorkingDirectory() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-service-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+
+        let svc = AgentService(workingDir: project.path)
+        XCTAssertEqual(svc.workingDirectory, project.path)
     }
 
     // sendMessage resets partialText (verified by sending two separate turns)
@@ -450,6 +455,28 @@ final class AgentServiceEventHandlingTests: XCTestCase {
         let event = try JSONDecoder().decode(CodexEvent.self, from: Data(json.utf8))
         let errorMsg = event.error?.message ?? event.message ?? "Unknown error"
         XCTAssertEqual(errorMsg, "Unknown error")
+    }
+
+    func testHandleEventTracksThreadID() throws {
+        let svc = makeServiceWithUserMessage()
+        let event = try JSONDecoder().decode(CodexEvent.self, from: Data("""
+        {"type":"turn.completed","thread_id":"thread_abc123"}
+        """.utf8))
+
+        svc.handleEvent(event)
+
+        XCTAssertEqual(svc.activeThreadID, "thread_abc123")
+    }
+
+    func testHandleEventTracksRecentErrorFromItemError() throws {
+        let svc = makeServiceWithUserMessage()
+        let event = try JSONDecoder().decode(CodexEvent.self, from: Data("""
+        {"type":"item.completed","item":{"id":"err-1","type":"error","message":"permission denied"}}
+        """.utf8))
+
+        svc.handleEvent(event)
+
+        XCTAssertEqual(svc.recentErrorMessage, "permission denied")
     }
 
     // CODEX_EVENT_NON_FATAL_ERROR_LOGGING — "error" type should not produce a message

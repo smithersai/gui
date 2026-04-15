@@ -6,6 +6,7 @@ struct AgentsView: View {
     @State private var agents: [SmithersAgent] = []
     @State private var isLoading = true
     @State private var error: String?
+    @State private var loadGeneration = 0
 
     private var availableAgents: [SmithersAgent] {
         agents.filter(\.usable)
@@ -180,11 +181,16 @@ struct AgentsView: View {
     }
 
     private func loadAgents() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         error = nil
         do {
-            agents = try await smithers.listAgents()
+            let fetched = try await smithers.listAgents()
+            guard generation == loadGeneration else { return }
+            agents = fetched
         } catch {
+            guard generation == loadGeneration else { return }
             self.error = error.localizedDescription
             agents = []
         }

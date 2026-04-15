@@ -27,6 +27,7 @@ enum CodexSlashCommand {
 enum SlashCommandAction {
     case codex(CodexSlashCommand)
     case navigate(NavDestination)
+    case toggleDeveloperDebug
     case clearChat
     case showHelp
     case runWorkflow(Workflow)
@@ -45,29 +46,221 @@ struct SlashCommandItem: Identifiable {
     var displayName: String { "/\(name)" }
 
     func matches(_ query: String) -> Bool {
-        let normalized = query.lowercased()
+        let normalized = query.normalizedSlashCommandQuery
         guard !normalized.isEmpty else { return true }
 
-        let haystacks = [name, title, description] + aliases
-        return haystacks.contains { $0.lowercased().contains(normalized) }
+        return score(for: normalized) < Int.max
     }
 
     func score(for query: String) -> Int {
-        let normalized = query.lowercased()
+        let normalized = query.normalizedSlashCommandQuery
         guard !normalized.isEmpty else { return 100 }
 
-        if name.lowercased() == normalized { return 0 }
-        if aliases.contains(where: { $0.lowercased() == normalized }) { return 1 }
-        if name.lowercased().hasPrefix(normalized) { return 10 }
-        if aliases.contains(where: { $0.lowercased().hasPrefix(normalized) }) { return 20 }
-        if title.lowercased().hasPrefix(normalized) { return 30 }
-        return 50
+        if name.normalizedSlashCommandQuery == normalized { return 0 }
+        if aliases.contains(where: { $0.normalizedSlashCommandQuery == normalized }) { return 1 }
+        if name.normalizedSlashCommandQuery.hasPrefix(normalized) { return 10 }
+        if aliases.contains(where: { $0.normalizedSlashCommandQuery.hasPrefix(normalized) }) { return 20 }
+        if title.normalizedSlashCommandQuery.hasPrefix(normalized) { return 30 }
+
+        let haystacks = [name, title, description] + aliases
+        if haystacks.contains(where: { $0.normalizedSlashCommandQuery.contains(normalized) }) {
+            return 50
+        }
+
+        let fuzzyScores = haystacks.compactMap {
+            Self.fuzzySubsequenceScore(query: normalized, candidate: $0.normalizedSlashCommandQuery)
+        }
+        guard let bestFuzzyScore = fuzzyScores.min() else { return Int.max }
+        return 60 + min(bestFuzzyScore, 1_000)
+    }
+
+    private static func fuzzySubsequenceScore(query: String, candidate: String) -> Int? {
+        guard !query.isEmpty else { return 0 }
+
+        let queryChars = Array(query)
+        let candidateChars = Array(candidate)
+        var queryIndex = 0
+        var positions: [Int] = []
+
+        for (candidateIndex, candidateChar) in candidateChars.enumerated() where queryIndex < queryChars.count {
+            guard candidateChar == queryChars[queryIndex] else { continue }
+            positions.append(candidateIndex)
+            queryIndex += 1
+        }
+
+        guard queryIndex == queryChars.count,
+              let first = positions.first,
+              let last = positions.last
+        else {
+            return nil
+        }
+
+        let span = last - first + 1
+        let gaps = span - positions.count
+        let adjacencyBonus = positions.dropFirst().enumerated().reduce(0) { total, pair in
+            let previousPosition = positions[pair.offset]
+            return total + (pair.element == previousPosition + 1 ? 1 : 0)
+        }
+        let boundaryBonus: Int
+        if first == 0 {
+            boundaryBonus = 8
+        } else if candidateChars.indices.contains(first - 1),
+                  Self.isSearchBoundary(candidateChars[first - 1]) {
+            boundaryBonus = 4
+        } else {
+            boundaryBonus = 0
+        }
+
+        return max(0, first + (gaps * 6) - adjacencyBonus - boundaryBonus)
+    }
+
+    private static func isSearchBoundary(_ character: Character) -> Bool {
+        character == "-" ||
+            character == "_" ||
+            character == "." ||
+            character == ":" ||
+            character == "/" ||
+            character.isWhitespace
     }
 }
 
 struct ParsedSlashCommand {
     let name: String
     let args: String
+}
+
+struct SlashCommandExecutionContext {
+    let inputText: String
+    let commands: [SlashCommandItem]
+    let chatReady: Bool
+    let developerDebugEnabled: Bool
+    let canNavigate: Bool
+    let canToggleDeveloperDebug: Bool
+    let canStartNewChat: Bool
+    let canTerminateApp: Bool
+    let helpText: String
+    let statusText: String
+}
+
+struct SlashCommandExecutionEffects {
+    var setInputText: (String) -> Void = { _ in }
+    var appendStatusMessage: (String) -> Void = { _ in }
+    var clearMessages: () -> Void = {}
+    var navigate: (NavDestination) -> Void = { _ in }
+    var toggleDeveloperDebug: () -> Void = {}
+    var startNewChat: () -> Void = {}
+    var sendPromptIfReady: (String) -> Void = { _ in }
+    var showGitDiff: () -> Void = {}
+    var refreshMentionCompletions: () -> Void = {}
+    var showModelSelection: () -> Void = {}
+    var showApprovalSelection: () -> Void = {}
+    var showMCPStatus: () -> Void = {}
+    var performCodexLogout: () -> Void = {}
+    var terminateApp: () -> Void = {}
+    var startFeedbackFlow: () -> Void = {}
+    var runWorkflow: (Workflow, String) -> Void = { _, _ in }
+    var runSmithersPrompt: (String, String) -> Void = { _, _ in }
+}
+
+enum SlashCommandExecutor {
+    static func execute(
+        _ command: SlashCommandItem,
+        context: SlashCommandExecutionContext,
+        effects: SlashCommandExecutionEffects
+    ) {
+        let args = SlashCommandRegistry.parse(context.inputText)?.args ?? ""
+
+        switch command.action {
+        case .codex(let codexCommand):
+            executeCodexCommand(codexCommand, args: args, context: context, effects: effects)
+        case .navigate(let destination):
+            effects.setInputText("")
+            if context.canNavigate {
+                effects.navigate(destination)
+                effects.appendStatusMessage("Opened \(destination.label).")
+            } else {
+                effects.appendStatusMessage("Navigation to \(destination.label) is not wired into this chat view.")
+            }
+        case .toggleDeveloperDebug:
+            effects.setInputText("")
+            if context.developerDebugEnabled, context.canToggleDeveloperDebug {
+                effects.toggleDeveloperDebug()
+                effects.appendStatusMessage("Toggled developer debug.")
+            } else {
+                effects.appendStatusMessage("Developer debug mode is not enabled for this launch.")
+            }
+        case .clearChat:
+            effects.setInputText("")
+            effects.clearMessages()
+        case .showHelp:
+            effects.setInputText("")
+            effects.appendStatusMessage(context.helpText)
+        case .runWorkflow(let workflow):
+            effects.setInputText("")
+            effects.runWorkflow(workflow, args)
+        case .runSmithersPrompt(let promptId):
+            effects.setInputText("")
+            effects.runSmithersPrompt(promptId, args)
+        }
+    }
+
+    private static func executeCodexCommand(
+        _ command: CodexSlashCommand,
+        args: String,
+        context: SlashCommandExecutionContext,
+        effects: SlashCommandExecutionEffects
+    ) {
+        switch command {
+        case .new:
+            effects.setInputText("")
+            if context.canStartNewChat {
+                effects.startNewChat()
+            } else {
+                effects.clearMessages()
+            }
+        case .initialize:
+            effects.setInputText("")
+            effects.sendPromptIfReady(SlashCommandRegistry.initPrompt)
+        case .review:
+            effects.setInputText("")
+            let suffix = args.isEmpty ? "" : "\n\nFocus: \(args)"
+            effects.sendPromptIfReady("Review my current changes and find issues. Prioritize bugs, regressions, and missing tests.\(suffix)")
+        case .compact:
+            effects.setInputText("")
+            effects.sendPromptIfReady("Summarize the important context from this conversation so we can continue with a shorter working history.")
+        case .diff:
+            effects.setInputText("")
+            effects.showGitDiff()
+        case .mention:
+            effects.setInputText("@")
+            effects.refreshMentionCompletions()
+        case .status:
+            effects.setInputText("")
+            effects.appendStatusMessage(context.statusText)
+        case .model:
+            effects.setInputText("")
+            effects.showModelSelection()
+        case .approvals:
+            effects.setInputText("")
+            effects.showApprovalSelection()
+        case .mcp:
+            effects.setInputText("")
+            effects.showMCPStatus()
+        case .logout:
+            effects.setInputText("")
+            effects.performCodexLogout()
+        case .quit:
+            effects.setInputText("")
+            if context.canTerminateApp {
+                effects.terminateApp()
+            } else {
+                effects.appendStatusMessage("Quit is only available on macOS.")
+            }
+        case .feedback:
+            effects.setInputText("")
+            effects.startFeedbackFlow()
+        }
+    }
 }
 
 enum SlashCommandRegistry {
@@ -403,7 +596,16 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
                 description: "Open the terminal pane.",
                 category: .smithers,
                 aliases: ["shell"],
-                action: .navigate(.terminal)
+                action: .navigate(.terminal(id: "default"))
+            ),
+            SlashCommandItem(
+                id: "action.debug",
+                name: "debug",
+                title: "Developer Debug",
+                description: "Toggle the developer debug panel.",
+                category: .action,
+                aliases: ["dev", "developer"],
+                action: .toggleDeveloperDebug
             ),
             SlashCommandItem(
                 id: "action.clear",
@@ -427,31 +629,23 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
     }
 
     static func workflowCommands(from workflows: [Workflow]) -> [SlashCommandItem] {
-        workflows.map { workflow in
-            SlashCommandItem(
-                id: "workflow.\(workflow.id)",
-                name: "workflow:\(workflow.id)",
-                title: workflow.name,
-                description: workflow.relativePath ?? "Run Smithers workflow.",
-                category: .workflow,
-                aliases: [workflow.id],
-                action: .runWorkflow(workflow)
-            )
-        }
+        var registration = DynamicCommandRegistrationState()
+        return workflowCommands(from: workflows, registration: &registration)
     }
 
     static func promptCommands(from prompts: [SmithersPrompt]) -> [SlashCommandItem] {
-        prompts.map { prompt in
-            SlashCommandItem(
-                id: "prompt.\(prompt.id)",
-                name: "prompt:\(prompt.id)",
-                title: prompt.id,
-                description: prompt.entryFile ?? "Send Smithers prompt.",
-                category: .prompt,
-                aliases: [prompt.id],
-                action: .runSmithersPrompt(prompt.id)
-            )
-        }
+        var registration = DynamicCommandRegistrationState()
+        return promptCommands(from: prompts, registration: &registration)
+    }
+
+    static func dynamicCommands(
+        workflows: [Workflow],
+        prompts: [SmithersPrompt]
+    ) -> (workflows: [SlashCommandItem], prompts: [SlashCommandItem]) {
+        var registration = DynamicCommandRegistrationState()
+        let workflowItems = workflowCommands(from: workflows, registration: &registration)
+        let promptItems = promptCommands(from: prompts, registration: &registration)
+        return (workflowItems, promptItems)
     }
 
     static func parse(_ input: String) -> ParsedSlashCommand? {
@@ -500,17 +694,83 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
     static func keyValueArgs(_ raw: String) -> [String: String] {
         var result: [String: String] = [:]
 
-        for token in raw.split(whereSeparator: { $0.isWhitespace }) {
-            let parts = token.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2, !parts[0].isEmpty else { continue }
-            result[parts[0]] = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        for token in quoteAwareTokens(raw) {
+            guard let separator = token.firstIndex(of: "=") else { continue }
+            let key = String(token[..<separator])
+            guard !key.isEmpty else { continue }
+            let valueStart = token.index(after: separator)
+            result[key] = String(token[valueStart...])
         }
 
         return result
     }
 
+    /// Splits `raw` on whitespace while respecting single quotes, double quotes, and backslash escapes.
+    static func quoteAwareTokens(_ raw: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var quote: Character?
+        var escaped = false
+        var tokenStarted = false
+
+        for char in raw {
+            if escaped {
+                current.append(char)
+                tokenStarted = true
+                escaped = false
+                continue
+            }
+
+            if char == "\\" {
+                escaped = true
+                tokenStarted = true
+                continue
+            }
+
+            if let activeQuote = quote {
+                if char == activeQuote {
+                    quote = nil
+                } else {
+                    current.append(char)
+                }
+                tokenStarted = true
+                continue
+            }
+
+            if char == "\"" || char == "'" {
+                quote = char
+                tokenStarted = true
+                continue
+            }
+
+            if char.isWhitespace {
+                if tokenStarted {
+                    tokens.append(current)
+                    current = ""
+                    tokenStarted = false
+                }
+                continue
+            }
+
+            current.append(char)
+            tokenStarted = true
+        }
+
+        if escaped {
+            current.append("\\")
+        }
+        if tokenStarted {
+            tokens.append(current)
+        }
+        return tokens
+    }
+
     static func helpText(for commands: [SlashCommandItem]) -> String {
-        let grouped = Dictionary(grouping: commands) { $0.category }
+        var seenNames: Set<String> = []
+        let uniqueCommands = commands.filter { command in
+            seenNames.insert(command.name.lowercased()).inserted
+        }
+        let grouped = Dictionary(grouping: uniqueCommands) { $0.category }
         let categories: [SlashCommandCategory] = [.codex, .smithers, .workflow, .prompt, .action]
 
         return categories.compactMap { category in
@@ -532,5 +792,100 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
         case .prompt: return 3
         case .action: return 4
         }
+    }
+
+    private static func workflowCommands(
+        from workflows: [Workflow],
+        registration: inout DynamicCommandRegistrationState
+    ) -> [SlashCommandItem] {
+        workflows.compactMap { workflow in
+            guard let suffix = commandIdentifier(from: workflow.id) else { return nil }
+            let name = "workflow:\(suffix)"
+            guard registration.reserveName(name) else { return nil }
+
+            return SlashCommandItem(
+                id: "workflow.\(suffix)",
+                name: name,
+                title: workflow.name,
+                description: workflow.relativePath ?? "Run Smithers workflow.",
+                category: .workflow,
+                aliases: registration.aliases(forRawIdentifier: workflow.id, commandIdentifier: suffix),
+                action: .runWorkflow(workflow)
+            )
+        }
+    }
+
+    private static func promptCommands(
+        from prompts: [SmithersPrompt],
+        registration: inout DynamicCommandRegistrationState
+    ) -> [SlashCommandItem] {
+        prompts.compactMap { prompt in
+            guard let suffix = commandIdentifier(from: prompt.id) else { return nil }
+            let name = "prompt:\(suffix)"
+            guard registration.reserveName(name) else { return nil }
+
+            return SlashCommandItem(
+                id: "prompt.\(suffix)",
+                name: name,
+                title: prompt.id,
+                description: prompt.entryFile ?? "Send Smithers prompt.",
+                category: .prompt,
+                aliases: registration.aliases(forRawIdentifier: prompt.id, commandIdentifier: suffix),
+                action: .runSmithersPrompt(prompt.id)
+            )
+        }
+    }
+
+    private static func commandIdentifier(from rawIdentifier: String) -> String? {
+        let trimmed = rawIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        var result = ""
+        var previousWasSeparator = false
+        for scalar in trimmed.lowercased().unicodeScalars {
+            if isCommandIdentifierScalar(scalar) {
+                result.unicodeScalars.append(scalar)
+                previousWasSeparator = false
+            } else if !previousWasSeparator {
+                result.append("-")
+                previousWasSeparator = true
+            }
+        }
+
+        let cleaned = result.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    private static func isCommandIdentifierScalar(_ scalar: UnicodeScalar) -> Bool {
+        (scalar.value >= 48 && scalar.value <= 57) ||
+            (scalar.value >= 97 && scalar.value <= 122) ||
+            scalar == "-" ||
+            scalar == "_" ||
+            scalar == "."
+    }
+
+    private struct DynamicCommandRegistrationState {
+        private var names: Set<String> = []
+        private var aliases: Set<String> = Set(
+            builtInCommands.flatMap { [$0.name] + $0.aliases }
+                .map(\.normalizedSlashCommandQuery)
+        )
+
+        mutating func reserveName(_ name: String) -> Bool {
+            names.insert(name.normalizedSlashCommandQuery).inserted
+        }
+
+        mutating func aliases(forRawIdentifier rawIdentifier: String, commandIdentifier: String) -> [String] {
+            let normalizedRaw = rawIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).normalizedSlashCommandQuery
+            guard normalizedRaw == commandIdentifier else { return [] }
+            guard aliases.insert(commandIdentifier).inserted else { return [] }
+            return [commandIdentifier]
+        }
+    }
+}
+
+private extension String {
+    var normalizedSlashCommandQuery: String {
+        trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }

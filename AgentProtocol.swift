@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // MARK: - Codex JSONL Event Types (matches codex-exec ThreadEvent format)
 
@@ -34,9 +35,20 @@ struct CodexItem: Decodable {
     let server: String?
     let tool: String?
     let message: String?
+    let details: String?
+    let input: String?
+    let output: String?
+    let name: String?
+    let path: String?
+    let url: String?
+    let format: String?
+    let prompt: String?
+    let symbol: String?
+    let arguments: String?
 
     enum CodingKeys: String, CodingKey {
         case id, type, text, command, status, changes, query, items, server, tool, message
+        case details, input, output, name, path, url, format, prompt, symbol, arguments
         case aggregatedOutput = "aggregated_output"
         case exitCode = "exit_code"
     }
@@ -65,8 +77,11 @@ struct CodexUsage: Decodable {
 }
 
 final class CodexJSONLLineBuffer: @unchecked Sendable {
+    private static let maxPendingBytes = 10 * 1024 * 1024
+
     private let lock = NSLock()
     private let decoder = JSONDecoder()
+    private let logger = os.Logger(subsystem: "com.smithers.gui", category: "codex-jsonl")
     private var pending = ""
 
     func append(_ chunk: String) -> [CodexEvent] {
@@ -76,7 +91,12 @@ final class CodexJSONLLineBuffer: @unchecked Sendable {
         defer { lock.unlock() }
 
         pending += chunk
-        return drainCompleteLines()
+        let events = drainCompleteLines()
+        if pending.utf8.count > Self.maxPendingBytes {
+            logger.warning("Codex JSONL pending buffer exceeded \(Self.maxPendingBytes, privacy: .public) bytes; dropping buffered data")
+            pending = ""
+        }
+        return events
     }
 
     func finish() -> [CodexEvent] {
@@ -109,6 +129,11 @@ final class CodexJSONLLineBuffer: @unchecked Sendable {
             return nil
         }
 
-        return try? decoder.decode(CodexEvent.self, from: data)
+        do {
+            return try decoder.decode(CodexEvent.self, from: data)
+        } catch {
+            logger.warning("Malformed Codex JSONL line dropped: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 }

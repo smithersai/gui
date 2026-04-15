@@ -48,6 +48,7 @@ class SmithersGUIUITestCase: XCTestCase {
         let smithersLabels: Set<String> = [
             "Dashboard", "Agents", "Runs", "Workflows", "Triggers", "Approvals",
             "Prompts", "Scores", "Memory", "Search", "SQL Browser", "Workspaces",
+            "Logs",
         ]
         let vcsLabels: Set<String> = [
             "Changes", "JJHub Workflows", "Landings", "Tickets", "Issues",

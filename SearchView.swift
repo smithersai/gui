@@ -3,17 +3,12 @@ import SwiftUI
 struct SearchView: View {
     @ObservedObject var smithers: SmithersClient
     @State private var query = ""
-    @State private var tab: SearchTab = .code
+    @State private var tab: SearchScope = .code
     @State private var results: [SearchResult] = []
     @State private var isSearching = false
     @State private var issueState: String? = nil
     @State private var error: String? = nil
-
-    enum SearchTab: String, CaseIterable {
-        case code = "Code"
-        case issues = "Issues"
-        case repos = "Repos"
-    }
+    @State private var searchGeneration = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -131,17 +126,7 @@ struct SearchView: View {
                                         .lineLimit(1)
                                 }
 
-                                if let snippet = result.snippet {
-                                    let displaySnippet: String = {
-                                        if let startLine = result.lineNumber {
-                                            return snippet
-                                                .components(separatedBy: "\n")
-                                                .enumerated()
-                                                .map { "L\(startLine + $0.offset): \($0.element)" }
-                                                .joined(separator: "\n")
-                                        }
-                                        return snippet
-                                    }()
+                                if let displaySnippet = result.displaySnippet {
                                     Text(displaySnippet)
                                         .font(.system(size: 11, design: .monospaced))
                                         .foregroundColor(Theme.textSecondary)
@@ -175,24 +160,24 @@ struct SearchView: View {
         .accessibilityIdentifier("search.root")
     }
 
-    private func tabButton(_ searchTab: SearchTab) -> some View {
+    private func tabButton(_ searchTab: SearchScope) -> some View {
         Button(action: {
             if tab != searchTab && searchTab != .issues {
                 issueState = nil
             }
             tab = searchTab
-            if !query.isEmpty {
+            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Task { await search() }
             }
         }) {
-            Text(searchTab.rawValue)
+            Text(searchTab.displayName)
                 .font(.system(size: 12, weight: tab == searchTab ? .semibold : .regular))
                 .foregroundColor(tab == searchTab ? Theme.accent : Theme.textSecondary)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("search.tab.\(searchTab.rawValue)")
+        .accessibilityIdentifier("search.tab.\(searchTab.displayName)")
         .overlay(alignment: .bottom) {
             if tab == searchTab {
                 Rectangle().fill(Theme.accent).frame(height: 2)
@@ -201,6 +186,8 @@ struct SearchView: View {
     }
 
     private func search() async {
+        searchGeneration += 1
+        let generation = searchGeneration
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
             results = []
@@ -209,19 +196,23 @@ struct SearchView: View {
             return
         }
         isSearching = true
-        defer { isSearching = false }
+        defer {
+            if generation == searchGeneration {
+                isSearching = false
+            }
+        }
         results = []
         self.error = nil
         do {
-            switch tab {
-            case .code:
-                results = try await smithers.searchCode(query: trimmedQuery)
-            case .issues:
-                results = try await smithers.searchIssues(query: trimmedQuery, state: issueState)
-            case .repos:
-                results = try await smithers.searchRepos(query: trimmedQuery)
-            }
+            let fetched = try await smithers.search(
+                query: trimmedQuery,
+                scope: tab,
+                issueState: issueState
+            )
+            guard generation == searchGeneration else { return }
+            results = fetched
         } catch {
+            guard generation == searchGeneration else { return }
             self.error = error.localizedDescription
             results = []
         }

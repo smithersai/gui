@@ -5,6 +5,32 @@ private struct DashboardLoadResult<Value> {
     let error: Error?
 }
 
+private enum DashboardDataSource: CaseIterable, Hashable {
+    case runs
+    case workflows
+    case approvals
+    case landings
+    case issues
+    case workspaces
+
+    var label: String {
+        switch self {
+        case .runs:
+            return "Runs"
+        case .workflows:
+            return "Workflows"
+        case .approvals:
+            return "Approvals"
+        case .landings:
+            return "Landings"
+        case .issues:
+            return "Issues"
+        case .workspaces:
+            return "Workspaces"
+        }
+    }
+}
+
 struct DashboardView: View {
     @ObservedObject var smithers: SmithersClient
     var sessionSnapshots: [ChatSession] = []
@@ -26,6 +52,8 @@ struct DashboardView: View {
     @State private var isInitializingSmithers = false
     @State private var error: String?
     @State private var initializationError: String?
+    @State private var sourceErrors: [DashboardDataSource: String] = [:]
+    @State private var loadGeneration = 0
 
     enum DashboardTab: String, CaseIterable {
         case overview = "Overview"
@@ -512,6 +540,8 @@ struct DashboardView: View {
     // MARK: - Data Loading
 
     private func loadAll() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         error = nil
 
@@ -526,6 +556,7 @@ struct DashboardView: View {
             async let approvalsResult = loadApprovals()
 
             let (loadedRuns, loadedWorkflows, loadedApprovals) = await (runsResult, workflowsResult, approvalsResult)
+            guard generation == loadGeneration else { return }
             runs = loadedRuns.value
             workflows = loadedWorkflows.value
             approvals = loadedApprovals.value
@@ -539,6 +570,7 @@ struct DashboardView: View {
 
         do {
             let repo = try await smithers.getCurrentRepo()
+            guard generation == loadGeneration else { return }
             repoName = repo.fullName ?? repo.name
             hasJJHubTransport = true
 
@@ -546,10 +578,12 @@ struct DashboardView: View {
             async let issuesResult = loadIssues()
             async let workspacesResult = loadWorkspaces()
             let (loadedLandings, loadedIssues, loadedWorkspaces) = await (landingsResult, issuesResult, workspacesResult)
+            guard generation == loadGeneration else { return }
             landings = loadedLandings.value
             issues = loadedIssues.value
             workspaces = loadedWorkspaces.value
         } catch {
+            guard generation == loadGeneration else { return }
             hasJJHubTransport = false
             repoName = nil
             landings = []
@@ -1083,7 +1117,7 @@ struct WorkflowRow: View {
         case .active: return Theme.success
         case .hot: return Theme.warning
         case .draft: return Theme.textTertiary
-        case .archived: return Theme.textTertiary
+        case .archived, .unknown: return Theme.textTertiary
         }
     }
 }
@@ -1199,7 +1233,7 @@ struct StatusPill: View {
         case .waitingApproval: return Theme.warning
         case .finished: return Theme.success
         case .failed: return Theme.danger
-        case .cancelled: return Theme.textTertiary
+        case .cancelled, .unknown: return Theme.textTertiary
         }
     }
 }

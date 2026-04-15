@@ -80,7 +80,7 @@ private struct LiveRunChatLogic {
     var tasks: [RunTask] = []
     var allBlocks: [ChatBlock] = []
     var attempts: [Int: [ChatBlock]] = [:]
-    var seenBlockIDs: Set<String> = []
+    var inFlightBlockIndexByLifecycleId: [String: Int] = [:]
     var currentAttempt = 0
     var maxAttempt = 0
     var newBlocksInLatest = 0
@@ -209,12 +209,14 @@ private struct LiveRunChatLogic {
             if replaceExistingStreamBlock(block, lifecycleId: lifecycleId) {
                 return
             }
-            seenBlockIDs.insert(lifecycleId)
         } else if replaceLastAnonymousAssistantStreamBlock(block) {
             return
         }
 
         allBlocks.append(block)
+        if let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty {
+            inFlightBlockIndexByLifecycleId[lifecycleId] = allBlocks.count - 1
+        }
         indexBlock(block)
 
         if block.attemptIndex > currentAttempt {
@@ -226,15 +228,14 @@ private struct LiveRunChatLogic {
     mutating func rebuildAttempts(with blocks: [ChatBlock]) {
         allBlocks = blocks
         attempts = [:]
-        seenBlockIDs = Set(
-            blocks
-                .compactMap(\.lifecycleId)
-                .filter { !$0.isEmpty }
-        )
+        inFlightBlockIndexByLifecycleId = [:]
         maxAttempt = 0
         currentAttempt = 0
 
-        for block in blocks {
+        for (index, block) in blocks.enumerated() {
+            if let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty {
+                inFlightBlockIndexByLifecycleId[lifecycleId] = index
+            }
             indexBlock(block)
         }
 
@@ -251,7 +252,10 @@ private struct LiveRunChatLogic {
     }
 
     mutating func replaceExistingStreamBlock(_ block: ChatBlock, lifecycleId: String) -> Bool {
-        guard let index = allBlocks.firstIndex(where: { $0.lifecycleId == lifecycleId }) else {
+        let mappedIndex = inFlightBlockIndexByLifecycleId[lifecycleId]
+            .flatMap { allBlocks.indices.contains($0) ? $0 : nil }
+        let searchIndex = mappedIndex ?? allBlocks.lastIndex(where: { $0.lifecycleId == lifecycleId })
+        guard let index = searchIndex else {
             return false
         }
 
@@ -259,6 +263,7 @@ private struct LiveRunChatLogic {
         allBlocks[index] = existing.canMergeAssistantStream(with: block)
             ? existing.mergingAssistantStream(with: block)
             : block
+        inFlightBlockIndexByLifecycleId[lifecycleId] = index
         rebuildAttemptIndexPreservingSelection()
         return true
     }
@@ -929,6 +934,21 @@ final class LiveRunChatAppendStreamBlockTests: XCTestCase {
         XCTAssertEqual(logic.allBlocks[0].content, "complete")
     }
 
+    func testAppendStreamBlockPrefersStableItemIdOverPerEventId() {
+        var logic = LiveRunChatLogic(runId: "r1", nodeId: nil)
+        let started = makeBlock(id: "evt-1", itemId: "cmd-1", role: "tool", content: "running")
+        let progress = makeBlock(id: "evt-2", itemId: "cmd-1", role: "tool", content: "still running")
+        let completed = makeBlock(id: "evt-3", itemId: "cmd-1", role: "tool", content: "complete")
+
+        logic.appendStreamBlock(started)
+        logic.appendStreamBlock(progress)
+        logic.appendStreamBlock(completed)
+
+        XCTAssertEqual(logic.allBlocks.count, 1)
+        XCTAssertEqual(logic.allBlocks[0].lifecycleId, "cmd-1")
+        XCTAssertEqual(logic.allBlocks[0].content, "complete")
+    }
+
     func testAppendStreamBlockMergesAssistantOverlapById() {
         var logic = LiveRunChatLogic(runId: "r1", nodeId: nil)
         let block1 = makeBlock(id: "stream-1", content: "Hello wor")
@@ -1064,7 +1084,7 @@ final class LiveRunChatRebuildAttemptsTests: XCTestCase {
         XCTAssertEqual(logic.newBlocksInLatest, 0)
     }
 
-    func testRebuildAttemptsTracksSeenIDs() {
+    func testRebuildAttemptsTracksLifecycleIndices() {
         var logic = LiveRunChatLogic(runId: "r1", nodeId: nil)
         let blocks = [
             makeBlock(id: "b1", content: "a"),
@@ -1073,17 +1093,17 @@ final class LiveRunChatRebuildAttemptsTests: XCTestCase {
             makeBlock(id: "b4", content: "d"),
         ]
         logic.rebuildAttempts(with: blocks)
-        XCTAssertTrue(logic.seenBlockIDs.contains("b1"))
-        XCTAssertTrue(logic.seenBlockIDs.contains("b4"))
-        XCTAssertFalse(logic.seenBlockIDs.contains(""))
-        XCTAssertEqual(logic.seenBlockIDs.count, 2)
+        XCTAssertEqual(logic.inFlightBlockIndexByLifecycleId["b1"], 0)
+        XCTAssertEqual(logic.inFlightBlockIndexByLifecycleId["b4"], 3)
+        XCTAssertNil(logic.inFlightBlockIndexByLifecycleId[""])
+        XCTAssertEqual(logic.inFlightBlockIndexByLifecycleId.count, 2)
     }
 
     func testRebuildAttemptsResetsState() {
         var logic = LiveRunChatLogic(runId: "r1", nodeId: nil)
         logic.allBlocks = [makeBlock(content: "old")]
         logic.attempts = [0: [makeBlock(content: "old")]]
-        logic.seenBlockIDs = ["old-id"]
+        logic.inFlightBlockIndexByLifecycleId = ["old-id": 0]
         logic.maxAttempt = 5
         logic.currentAttempt = 3
         logic.newBlocksInLatest = 10
@@ -1093,7 +1113,7 @@ final class LiveRunChatRebuildAttemptsTests: XCTestCase {
         XCTAssertEqual(logic.maxAttempt, 0)
         XCTAssertEqual(logic.currentAttempt, 0)
         XCTAssertEqual(logic.newBlocksInLatest, 0)
-        XCTAssertTrue(logic.seenBlockIDs.contains("new"))
+        XCTAssertEqual(logic.inFlightBlockIndexByLifecycleId["new"], 0)
     }
 
     func testRebuildAttemptsNilAttemptDefaultsToZero() {
@@ -1114,7 +1134,7 @@ final class HijackSessionResumeArgsTests: XCTestCase {
             runId: "r1", agentEngine: "codex", agentBinary: "",
             resumeToken: "tok-123", cwd: "/tmp", supportsResume: true
         )
-        XCTAssertEqual(session.resumeArgs(), ["--session-id", "tok-123"])
+        XCTAssertEqual(session.resumeArgs(), ["resume", "tok-123", "-C", "/tmp"])
     }
 
     func testResumeArgsGemini() {
@@ -1122,7 +1142,7 @@ final class HijackSessionResumeArgsTests: XCTestCase {
             runId: "r1", agentEngine: "gemini", agentBinary: "",
             resumeToken: "tok-456", cwd: "/tmp", supportsResume: true
         )
-        XCTAssertEqual(session.resumeArgs(), ["--session", "tok-456"])
+        XCTAssertEqual(session.resumeArgs(), ["--resume", "tok-456"])
     }
 
     func testResumeArgsDefault() {
@@ -1147,6 +1167,98 @@ final class HijackSessionResumeArgsTests: XCTestCase {
             resumeToken: "", cwd: "/tmp", supportsResume: true
         )
         XCTAssertEqual(session.resumeArgs(), [])
+    }
+
+    func testLaunchInvocationFallsBackToEngineBinary() {
+        let session = HijackSession(
+            runId: "r1", agentEngine: "codex", agentBinary: "",
+            resumeToken: "tok", cwd: "/repo", supportsResume: true
+        )
+
+        XCTAssertEqual(
+            session.launchInvocation(defaultWorkingDirectory: "/fallback"),
+            HijackLaunchInvocation(
+                executable: "codex",
+                arguments: ["resume", "tok", "-C", "/repo"],
+                workingDirectory: "/repo"
+            )
+        )
+    }
+
+    func testDecodesCurrentSmithersCLIHijackLaunchSpec() throws {
+        let json = """
+        {
+          "runId": "run-1",
+          "engine": "codex",
+          "mode": "native-cli",
+          "nodeId": "plan",
+          "attempt": 1,
+          "iteration": 0,
+          "resume": "session-123",
+          "cwd": "/repo",
+          "launch": {
+            "command": "codex",
+            "args": ["resume", "session-123", "-C", "/repo"],
+            "cwd": "/repo"
+          },
+          "resumeCommand": "smithers up workflow.tsx --resume --run-id run-1"
+        }
+        """
+        let session = try JSONDecoder().decode(HijackSession.self, from: Data(json.utf8))
+
+        XCTAssertEqual(session.runId, "run-1")
+        XCTAssertEqual(session.agentEngine, "codex")
+        XCTAssertEqual(session.agentBinary, "codex")
+        XCTAssertEqual(session.resumeToken, "session-123")
+        XCTAssertTrue(session.supportsResume)
+        XCTAssertEqual(
+            session.launchInvocation(defaultWorkingDirectory: "/fallback"),
+            HijackLaunchInvocation(
+                executable: "codex",
+                arguments: ["resume", "session-123", "-C", "/repo"],
+                workingDirectory: "/repo"
+            )
+        )
+    }
+
+    func testConversationModeHijackDoesNotCreateNativeLaunchInvocation() throws {
+        let json = """
+        {
+          "runId": "run-1",
+          "engine": "openai-sdk",
+          "mode": "conversation",
+          "resume": null,
+          "messageCount": 2,
+          "cwd": "/repo",
+          "launch": null
+        }
+        """
+        let session = try JSONDecoder().decode(HijackSession.self, from: Data(json.utf8))
+
+        XCTAssertEqual(session.agentEngine, "openai-sdk")
+        XCTAssertFalse(session.supportsResume)
+        XCTAssertNil(session.launchInvocation(defaultWorkingDirectory: "/fallback"))
+    }
+
+    func testWrappedHijackSessionDoesNotDecodeAsEmptyDirectSession() throws {
+        let json = """
+        {
+          "ok": true,
+          "data": {
+            "runId": "run-1",
+            "agentEngine": "claude-code",
+            "agentBinary": "claude",
+            "resumeToken": "session-123",
+            "cwd": "/repo",
+            "supportsResume": true
+          }
+        }
+        """
+        let data = Data(json.utf8)
+
+        XCTAssertThrowsError(try JSONDecoder().decode(HijackSession.self, from: data))
+        let envelope = try JSONDecoder().decode(APIEnvelope<HijackSession>.self, from: data)
+        XCTAssertEqual(envelope.data?.launchInvocation(defaultWorkingDirectory: "/fallback")?.executable, "claude")
     }
 }
 

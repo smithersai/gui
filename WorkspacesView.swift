@@ -7,6 +7,7 @@ struct WorkspacesView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var tab: WSTab = .workspaces
+    @State private var loadGeneration = 0
     @State private var showCreate = false
     @State private var newName = ""
     @State private var isCreating = false
@@ -411,23 +412,29 @@ struct WorkspacesView: View {
     }
 
     private static func snapshotTimestamp() -> String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyyMMdd-HHmm"
-        return fmt.string(from: Date())
+        DateFormatters.compactYearMonthDayHourMinute.string(from: Date())
     }
 
     // MARK: - Actions
 
     private func loadData() async {
+        loadGeneration += 1
+        let generation = loadGeneration
+        let capturedTab = tab
         isLoading = true
         error = nil
         do {
-            if tab == .workspaces {
-                workspaces = try await smithers.listWorkspaces()
+            if capturedTab == .workspaces {
+                let fetched = try await smithers.listWorkspaces()
+                guard generation == loadGeneration, tab == capturedTab else { return }
+                workspaces = fetched
             } else {
-                snapshots = try await smithers.listWorkspaceSnapshots()
+                let fetched = try await smithers.listWorkspaceSnapshots()
+                guard generation == loadGeneration, tab == capturedTab else { return }
+                snapshots = fetched
             }
         } catch {
+            guard generation == loadGeneration else { return }
             self.error = error.localizedDescription
         }
         isLoading = false

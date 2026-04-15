@@ -264,6 +264,17 @@ final class SlashCommandsTests: XCTestCase {
         XCTAssertTrue(c?.aliases.contains("commands") ?? false)
     }
 
+    func testDebugCommandTogglesDeveloperPanel() {
+        let c = cmd(named: "debug")
+        XCTAssertEqual(c?.id, "action.debug")
+        XCTAssertTrue(c?.aliases.contains("dev") ?? false)
+        if case .toggleDeveloperDebug = c?.action {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Expected /debug to toggle developer debug")
+        }
+    }
+
     // MARK: - SLASH_COMMAND_CATEGORY_*
 
     func testCategoryCodex() {
@@ -278,7 +289,7 @@ final class SlashCommandsTests: XCTestCase {
 
     func testCategoryAction() {
         let actionCommands = builtIn.filter { $0.category == .action }
-        XCTAssertEqual(actionCommands.count, 2)
+        XCTAssertEqual(actionCommands.count, 3)
     }
 
     func testCategoryWorkflowFromWorkflows() {

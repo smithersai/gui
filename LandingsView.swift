@@ -11,6 +11,7 @@ struct LandingsView: View {
     @State private var isLoading = true
     @State private var error: String?
     @State private var stateFilter: String?
+    @State private var loadGeneration = 0
     @State private var detailTab: DetailTab = .info
     @State private var actionError: String?
 
@@ -75,6 +76,20 @@ struct LandingsView: View {
         }
     }
 
+    private static func normalizedLandingState(_ state: String?) -> String {
+        let value = state?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        switch value {
+        case "", "all":
+            return "all"
+        case "open", "ready":
+            return "open"
+        case "merged", "landed":
+            return "merged"
+        default:
+            return value
+        }
+    }
+
     private var selectedLanding: Landing? {
         if let selectedNumber {
             if let detailLanding, detailLanding.number == selectedNumber {
@@ -96,10 +111,11 @@ struct LandingsView: View {
     }
 
     private var filteredLandings: [Landing] {
-        if let filter = stateFilter {
-            return landings.filter { $0.state == filter }
+        let normalizedFilter = Self.normalizedLandingState(stateFilter)
+        guard normalizedFilter != "all" else {
+            return landings
         }
-        return landings
+        return landings.filter { Self.normalizedLandingState($0.state) == normalizedFilter }
     }
 
     var body: some View {
@@ -579,13 +595,14 @@ struct LandingsView: View {
     }
 
     private func landingStateIcon(_ state: String?) -> some View {
+        let normalizedState = Self.normalizedLandingState(state)
         let (icon, color): (String, Color) = {
-            switch state {
-            case "merged", "landed":
+            switch normalizedState {
+            case "merged":
                 return ("checkmark.circle.fill", Theme.success)
             case "closed":
                 return ("xmark.circle.fill", Theme.textTertiary)
-            case "open", "ready":
+            case "open":
                 return ("circle.fill", Theme.accent)
             case "draft":
                 return ("circle.dashed", Theme.info)
@@ -601,10 +618,10 @@ struct LandingsView: View {
     }
 
     private func landingStateColor(_ state: String) -> Color {
-        switch state {
-        case "merged", "landed":
+        switch Self.normalizedLandingState(state) {
+        case "merged":
             return Theme.success
-        case "open", "ready":
+        case "open":
             return Theme.accent
         case "draft":
             return Theme.info
@@ -616,17 +633,8 @@ struct LandingsView: View {
     }
 
     private func formattedDate(_ iso: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let display = DateFormatter()
-        display.dateStyle = .medium
-        display.timeStyle = .short
-        if let date = formatter.date(from: iso) {
-            return display.string(from: date)
-        }
-        formatter.formatOptions = [.withInternetDateTime]
-        if let date = formatter.date(from: iso) {
-            return display.string(from: date)
+        if let date = DateFormatters.parseISO8601InternetDateTime(iso) {
+            return DateFormatters.localizedMediumDateShortTime.string(from: date)
         }
         return iso
     }
@@ -643,21 +651,12 @@ struct LandingsView: View {
     }
 
     private func isTerminalLandingState(_ state: String?) -> Bool {
-        switch state {
-        case "merged", "landed", "closed":
-            return true
-        default:
-            return false
-        }
+        let normalizedState = Self.normalizedLandingState(state)
+        return normalizedState == "merged" || normalizedState == "closed"
     }
 
     private func canLandLanding(_ landing: Landing) -> Bool {
-        switch landing.state {
-        case "open", "ready":
-            return true
-        default:
-            return false
-        }
+        Self.normalizedLandingState(landing.state) == "open"
     }
 
     private func isSelected(_ landing: Landing) -> Bool {
@@ -847,14 +846,20 @@ struct LandingsView: View {
     }
 
     private func loadLandings() async {
+        loadGeneration += 1
+        let generation = loadGeneration
+        let capturedNumber = selectedNumber
         isLoading = true
         error = nil
 
         do {
             let loaded = try await smithers.listLandings(state: stateFilter)
+            guard generation == loadGeneration else { return }
+            _ = capturedNumber // Acknowledge the capture; selection guard is done via generation.
             landings = loaded
             synchronizeSelection(with: loaded)
         } catch {
+            guard generation == loadGeneration else { return }
             self.error = error.localizedDescription
         }
 

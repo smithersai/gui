@@ -56,6 +56,23 @@ private func makeAggregate(
     )
 }
 
+private func makeRunSummary(
+    runId: String,
+    workflowName: String? = nil,
+    status: RunStatus = .running
+) -> RunSummary {
+    RunSummary(
+        runId: runId,
+        workflowName: workflowName,
+        workflowPath: nil,
+        status: status,
+        startedAtMs: nil,
+        finishedAtMs: nil,
+        summary: nil,
+        errorJson: nil
+    )
+}
+
 // MARK: - SCORES_SUMMARY_TAB / SCORES_RECENT_TAB
 
 @MainActor
@@ -64,18 +81,46 @@ final class ScoresViewTabTests: XCTestCase {
     /// SCORES_SUMMARY_TAB: The view defaults to the Summary tab.
     func test_defaultTabIsSummary() throws {
         let client = SmithersClient(cwd: "/tmp")
-        let view = ScoresView(smithers: client)
+        _ = ScoresView(smithers: client)
         // The ScoreTab enum default is .summary
         XCTAssertEqual(ScoresView.ScoreTab.summary.rawValue, "Summary")
+        XCTAssertEqual(ScoresView.ScoreTab.metrics.rawValue, "Metrics")
         XCTAssertEqual(ScoresView.ScoreTab.recent.rawValue, "Recent")
     }
 
     /// SCORES_SUMMARY_TAB / SCORES_RECENT_TAB: Both tabs exist in allCases.
     func test_scoreTabAllCases() {
         let cases = ScoresView.ScoreTab.allCases
-        XCTAssertEqual(cases.count, 2)
+        XCTAssertEqual(cases.count, 3)
         XCTAssertEqual(cases[0], .summary)
-        XCTAssertEqual(cases[1], .recent)
+        XCTAssertEqual(cases[1], .metrics)
+        XCTAssertEqual(cases[2], .recent)
+    }
+}
+
+final class ScoresRunSelectionTests: XCTestCase {
+    func test_resolveActiveRunIdUsesSelectedRunWhenAvailable() {
+        let runs = [
+            makeRunSummary(runId: "run-1"),
+            makeRunSummary(runId: "run-2"),
+        ]
+        let resolved = ScoresView.resolveActiveRunId(selectedRunId: "run-2", runs: runs)
+        XCTAssertEqual(resolved, "run-2")
+    }
+
+    func test_resolveActiveRunIdFallsBackToFirstRunWhenSelectionMissing() {
+        let runs = [
+            makeRunSummary(runId: "run-1"),
+            makeRunSummary(runId: "run-2"),
+        ]
+        let resolved = ScoresView.resolveActiveRunId(selectedRunId: "unknown-run", runs: runs)
+        XCTAssertEqual(resolved, "run-1")
+    }
+
+    func test_resolveActiveRunIdTrimsSelection() {
+        let runs = [makeRunSummary(runId: "run-2")]
+        let resolved = ScoresView.resolveActiveRunId(selectedRunId: "  run-2  ", runs: runs)
+        XCTAssertEqual(resolved, "run-2")
     }
 }
 

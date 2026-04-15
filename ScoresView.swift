@@ -6,9 +6,16 @@ struct ScoresView: View {
     @State private var selectedRunId: String?
     @State private var scores: [ScoreRow] = []
     @State private var aggregates: [AggregateScore] = []
+    @State private var tokenMetrics: TokenMetrics?
+    @State private var latencyMetrics: LatencyMetrics?
+    @State private var costReport: CostReport?
     @State private var isLoading = true
+    @State private var metricsLoading = false
     @State private var error: String?
+    @State private var metricsError: String?
     @State private var tab: ScoreTab = .summary
+    @State private var loadGeneration = 0
+    @State private var metricsGeneration = 0
 
     init(smithers: SmithersClient, initialRunId: String? = nil) {
         self.smithers = smithers
@@ -17,7 +24,24 @@ struct ScoresView: View {
 
     enum ScoreTab: String, CaseIterable {
         case summary = "Summary"
+        case metrics = "Metrics"
         case recent = "Recent"
+    }
+
+    static func normalizedRunId(_ runId: String?) -> String? {
+        guard let runId = runId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !runId.isEmpty else {
+            return nil
+        }
+        return runId
+    }
+
+    static func resolveActiveRunId(selectedRunId: String?, runs: [RunSummary]) -> String? {
+        if let selectedRunId = normalizedRunId(selectedRunId),
+           runs.contains(where: { $0.runId == selectedRunId }) {
+            return selectedRunId
+        }
+        return runs.first?.runId
     }
 
     var body: some View {
@@ -29,7 +53,7 @@ struct ScoresView: View {
                     .foregroundColor(Theme.textPrimary)
                 Spacer()
                 runSelector
-                if isLoading {
+                if isLoading || metricsLoading {
                     ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
                 }
                 Button(action: { Task { await loadRunContextAndScores() } }) {
@@ -71,64 +95,318 @@ struct ScoresView: View {
             } else {
                 switch tab {
                 case .summary: summaryContent
+                case .metrics: metricsContent
                 case .recent: recentContent
                 }
             }
         }
         .background(Theme.surface1)
         .task { await loadRunContextAndScores() }
+        .refreshable { await loadRunContextAndScores() }
     }
 
     // MARK: - Summary Tab
 
     private var summaryContent: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                if aggregates.isEmpty && !isLoading {
-                    emptyView("No scorer data")
-                } else {
-                    // Table header
-                    HStack(spacing: 0) {
-                        tableHeader("Scorer", width: 140)
-                        tableHeader("Count", width: 60)
-                        tableHeader("Mean", width: 60)
-                        tableHeader("Min", width: 60)
-                        tableHeader("Max", width: 60)
-                        tableHeader("P50", width: 60)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Theme.surface2)
-                    .border(Theme.border, edges: [.bottom])
+            VStack(alignment: .leading, spacing: 16) {
+                summaryMetricsPanel
 
-                    ForEach(aggregates) { agg in
+                VStack(spacing: 0) {
+                    if aggregates.isEmpty && !isLoading {
+                        emptyView("No scorer data")
+                    } else {
+                        // Table header
                         HStack(spacing: 0) {
-                            Text(agg.scorerName)
-                                .frame(width: 140, alignment: .leading)
-                            Text("\(agg.count)")
-                                .frame(width: 60, alignment: .trailing)
-                            scoreCell(agg.mean, width: 60)
-                            scoreCell(agg.min, width: 60)
-                            scoreCell(agg.max, width: 60)
-                            if let p50 = agg.p50 {
-                                scoreCell(p50, width: 60)
-                            } else {
-                                Text("—")
-                                    .frame(width: 60, alignment: .trailing)
-                                    .foregroundColor(Theme.textTertiary)
-                            }
+                            tableHeader("Scorer", width: 140)
+                            tableHeader("Count", width: 60)
+                            tableHeader("Mean", width: 60)
+                            tableHeader("Min", width: 60)
+                            tableHeader("Max", width: 60)
+                            tableHeader("P50", width: 60)
                             Spacer()
                         }
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(Theme.textPrimary)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                        Divider().background(Theme.border)
+                        .background(Theme.surface2)
+                        .border(Theme.border, edges: [.bottom])
+
+                        ForEach(aggregates) { agg in
+                            HStack(spacing: 0) {
+                                Text(agg.scorerName)
+                                    .frame(width: 140, alignment: .leading)
+                                Text("\(agg.count)")
+                                    .frame(width: 60, alignment: .trailing)
+                                scoreCell(agg.mean, width: 60)
+                                scoreCell(agg.min, width: 60)
+                                scoreCell(agg.max, width: 60)
+                                if let p50 = agg.p50 {
+                                    scoreCell(p50, width: 60)
+                                } else {
+                                    Text("—")
+                                        .frame(width: 60, alignment: .trailing)
+                                        .foregroundColor(Theme.textTertiary)
+                                }
+                                Spacer()
+                            }
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(Theme.textPrimary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            Divider().background(Theme.border)
+                        }
                     }
                 }
             }
             .padding(20)
+        }
+    }
+
+    private var summaryMetricsPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(summaryTitle)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Theme.textPrimary)
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], alignment: .leading, spacing: 10) {
+                summaryMetricTile(title: "Evaluations", value: "\(scores.count)")
+                summaryMetricTile(title: "Mean score", value: String(format: "%.2f", meanScore))
+                summaryMetricTile(title: "Tokens", value: summaryTokenValue)
+                summaryMetricTile(title: "Avg duration", value: summaryDurationValue)
+                summaryMetricTile(title: "Cache hit rate", value: summaryCacheHitRate)
+                summaryMetricTile(title: "Est. cost", value: summaryCostValue)
+            }
+
+            if metricsLoading {
+                Text("Loading token, latency, and cost metrics…")
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.textTertiary)
+            } else if let metricsError {
+                Text("Metrics unavailable: \(metricsError)")
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.warning)
+                    .lineLimit(2)
+            }
+        }
+        .padding(14)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+    }
+
+    private func summaryMetricTile(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10))
+                .foregroundColor(Theme.textTertiary)
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - Metrics Tab
+
+    private var metricsContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if metricsLoading {
+                    Text("Loading metrics…")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                if let metricsError {
+                    Text("Error loading metrics: \(metricsError)")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.warning)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.surface2)
+                        .cornerRadius(8)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+                }
+
+                metricsTokenSection
+                metricsLatencySection
+                metricsCostSection
+                metricsSummarySection
+            }
+            .padding(20)
+        }
+    }
+
+    private var metricsTokenSection: some View {
+        metricsSection(title: "Token Usage") {
+            if let tokenMetrics {
+                detailRow(label: "Total", value: formatTokenCount(tokenMetrics.totalTokens))
+                detailRow(label: "Input", value: formatTokenCount(tokenMetrics.totalInputTokens))
+                detailRow(label: "Output", value: formatTokenCount(tokenMetrics.totalOutputTokens))
+                if tokenMetrics.cacheReadTokens > 0 || tokenMetrics.cacheWriteTokens > 0 {
+                    detailRow(label: "Cache read", value: formatTokenCount(tokenMetrics.cacheReadTokens))
+                    detailRow(label: "Cache write", value: formatTokenCount(tokenMetrics.cacheWriteTokens))
+                    if let hitRate = tokenMetrics.cacheHitRate {
+                        detailRow(label: "Cache hit %", value: String(format: "%.1f%%", hitRate * 100))
+                    }
+                }
+
+                if !tokenMetrics.byPeriod.isEmpty {
+                    Divider().background(Theme.border)
+                        .padding(.vertical, 6)
+                    tokenByPeriodTable(tokenMetrics.byPeriod)
+                }
+            } else {
+                emptyDetailText("No token data available.")
+            }
+        }
+    }
+
+    private var metricsLatencySection: some View {
+        metricsSection(title: "Latency") {
+            if let latencyMetrics, latencyMetrics.count > 0 {
+                detailRow(label: "Count", value: "\(latencyMetrics.count) nodes")
+                detailRow(label: "Mean", value: formatDurationMs(latencyMetrics.meanMs))
+                detailRow(label: "Min", value: formatDurationMs(latencyMetrics.minMs))
+                detailRow(label: "P50", value: formatDurationMs(latencyMetrics.p50Ms))
+                detailRow(label: "P95", value: formatDurationMs(latencyMetrics.p95Ms))
+                detailRow(label: "Max", value: formatDurationMs(latencyMetrics.maxMs))
+            } else {
+                emptyDetailText("No latency data available.")
+            }
+        }
+    }
+
+    private var metricsCostSection: some View {
+        metricsSection(title: "Cost Tracking") {
+            if let costReport {
+                detailRow(label: "Total", value: String(format: "$%.6f USD", costReport.totalCostUSD))
+                detailRow(label: "Input", value: String(format: "$%.6f USD", costReport.inputCostUSD))
+                detailRow(label: "Output", value: String(format: "$%.6f USD", costReport.outputCostUSD))
+                if costReport.runCount > 0 {
+                    detailRow(label: "Runs", value: "\(costReport.runCount)")
+                    detailRow(label: "Per run", value: String(format: "$%.6f USD", costReport.totalCostUSD / Double(costReport.runCount)))
+                }
+
+                if !costReport.byPeriod.isEmpty {
+                    Divider().background(Theme.border)
+                        .padding(.vertical, 6)
+                    costByPeriodTable(costReport.byPeriod)
+                }
+            } else {
+                emptyDetailText("No cost data available.")
+            }
+        }
+    }
+
+    private var metricsSummarySection: some View {
+        metricsSection(title: "Summaries") {
+            if let summary = periodCostSummary {
+                detailRow(label: "Daily cost (today)", value: String(format: "$%.6f USD", summary.dailyCost))
+                detailRow(label: "Weekly cost (7d)", value: String(format: "$%.6f USD (%d runs)", summary.weeklyCost, summary.weeklyRuns))
+            } else if let costReport {
+                detailRow(label: "Aggregate total", value: String(format: "$%.6f USD (%d runs)", costReport.totalCostUSD, costReport.runCount))
+                emptyDetailText("Per-period breakdown not available.")
+            } else {
+                emptyDetailText("No summary data available.")
+            }
+        }
+    }
+
+    private func metricsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Theme.textPrimary)
+            content()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+    }
+
+    private func detailRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(Theme.textTertiary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(Theme.textPrimary)
+        }
+    }
+
+    private func emptyDetailText(_ message: String) -> some View {
+        Text(message)
+            .font(.system(size: 10))
+            .foregroundColor(Theme.textTertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func tokenByPeriodTable(_ periods: [TokenPeriodBatch]) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Period")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Input")
+                    .frame(width: 90, alignment: .trailing)
+                Text("Output")
+                    .frame(width: 90, alignment: .trailing)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(Theme.textTertiary)
+            .padding(.bottom, 4)
+
+            ForEach(Array(periods.enumerated()), id: \.offset) { _, period in
+                HStack {
+                    Text(truncate(period.label, limit: 30))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(formatTokenCount(period.inputTokens))
+                        .frame(width: 90, alignment: .trailing)
+                    Text(formatTokenCount(period.outputTokens))
+                        .frame(width: 90, alignment: .trailing)
+                }
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(Theme.textPrimary)
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func costByPeriodTable(_ periods: [CostPeriodBatch]) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Period")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Total")
+                    .frame(width: 120, alignment: .trailing)
+                Text("Runs")
+                    .frame(width: 60, alignment: .trailing)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(Theme.textTertiary)
+            .padding(.bottom, 4)
+
+            ForEach(Array(periods.enumerated()), id: \.offset) { _, period in
+                HStack {
+                    Text(truncate(period.label, limit: 20))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(String(format: "$%.6f", period.totalCostUSD))
+                        .frame(width: 120, alignment: .trailing)
+                    Text("\(period.runCount)")
+                        .frame(width: 60, alignment: .trailing)
+                }
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(Theme.textPrimary)
+                .padding(.vertical, 2)
+            }
         }
     }
 
@@ -192,6 +470,56 @@ struct ScoresView: View {
             return "Run \(shortRunId(selectedRunId))"
         }
         return runs.isEmpty ? "No runs" : "Select run"
+    }
+
+    private var summaryTitle: String {
+        selectedRunId == nil ? "Summary" : "Run Summary"
+    }
+
+    private var meanScore: Double {
+        guard !scores.isEmpty else { return 0 }
+        return scores.reduce(0) { $0 + $1.score } / Double(scores.count)
+    }
+
+    private var summaryTokenValue: String {
+        guard let tokenMetrics else { return "—" }
+        return formatTokenCount(tokenMetrics.totalTokens)
+    }
+
+    private var summaryDurationValue: String {
+        guard let latencyMetrics, latencyMetrics.count > 0 else { return "—" }
+        return formatDurationMs(latencyMetrics.meanMs)
+    }
+
+    private var periodCostSummary: (dailyCost: Double, weeklyCost: Double, weeklyRuns: Int)? {
+        guard let costReport, !costReport.byPeriod.isEmpty else { return nil }
+
+        let todayLabel = Self.periodFormatter.string(from: Date())
+        let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? .distantPast
+        var dailyCost = 0.0
+        var weeklyCost = 0.0
+        var weeklyRuns = 0
+
+        for period in costReport.byPeriod {
+            if period.label == todayLabel {
+                dailyCost += period.totalCostUSD
+            }
+            if let periodDate = Self.periodFormatter.date(from: period.label), periodDate >= weekAgo {
+                weeklyCost += period.totalCostUSD
+                weeklyRuns += period.runCount
+            }
+        }
+        return (dailyCost: dailyCost, weeklyCost: weeklyCost, weeklyRuns: weeklyRuns)
+    }
+
+    private var summaryCacheHitRate: String {
+        guard let tokenMetrics, let hitRate = tokenMetrics.cacheHitRate else { return "—" }
+        return String(format: "%.1f%%", hitRate * 100)
+    }
+
+    private var summaryCostValue: String {
+        guard let costReport else { return "—" }
+        return String(format: "$%.4f", costReport.totalCostUSD)
     }
 
     private var runSelector: some View {
@@ -268,9 +596,7 @@ struct ScoresView: View {
     }
 
     private func scoreColor(_ value: Double) -> Color {
-        if value >= 0.8 { return Theme.success }
-        if value >= 0.5 { return Theme.warning }
-        return Theme.danger
+        ScoreColorScale.color(for: value)
     }
 
     private static let dateFormatter: DateFormatter = {
@@ -280,8 +606,43 @@ struct ScoresView: View {
         return fmt
     }()
 
+    private static let periodFormatter: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = .current
+        fmt.dateFormat = "yyyy-MM-dd"
+        return fmt
+    }()
+
     private func formatDate(_ date: Date) -> String {
         Self.dateFormatter.string(from: date)
+    }
+
+    private func formatTokenCount(_ value: Int64) -> String {
+        switch value {
+        case 1_000_000...:
+            return String(format: "%.2fM", Double(value) / 1_000_000)
+        case 1_000...:
+            return String(format: "%.1fK", Double(value) / 1_000)
+        default:
+            return "\(value)"
+        }
+    }
+
+    private func formatDurationMs(_ ms: Double) -> String {
+        switch ms {
+        case 60_000...:
+            return String(format: "%.1fm", ms / 60_000)
+        case 1_000...:
+            return String(format: "%.2fs", ms / 1_000)
+        default:
+            return String(format: "%.0fms", ms)
+        }
+    }
+
+    private func truncate(_ value: String, limit: Int) -> String {
+        guard value.count > limit, limit > 3 else { return value }
+        return String(value.prefix(limit - 3)) + "..."
     }
 
     private func emptyView(_ message: String) -> some View {
@@ -312,58 +673,101 @@ struct ScoresView: View {
     }
 
     private func loadRunContextAndScores() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         error = nil
+        var metricsRunId = Self.normalizedRunId(selectedRunId)
         do {
             let loadedRuns = try await smithers.listRuns()
+            guard generation == loadGeneration else { return }
             runs = loadedRuns
 
             let runId = selectedRunId(afterLoading: loadedRuns)
             selectedRunId = runId
-            guard let runId else {
+            metricsRunId = runId
+            if let runId {
+                let recentScores = try await smithers.listRecentScores(runId: runId)
+                guard generation == loadGeneration else { return }
+                scores = recentScores
+                aggregates = try await smithers.aggregateScores(from: recentScores)
+            } else {
                 scores = []
                 aggregates = []
-                isLoading = false
-                return
             }
-
-            let recentScores = try await smithers.listRecentScores(runId: runId)
-            scores = recentScores
-            aggregates = try await smithers.aggregateScores(from: recentScores)
         } catch {
+            guard generation == loadGeneration else { return }
             self.error = error.localizedDescription
             scores = []
             aggregates = []
         }
         isLoading = false
+
+        await loadMetrics(for: metricsRunId)
+    }
+
+    private func loadMetrics(for runId: String?) async {
+        metricsGeneration += 1
+        let generation = metricsGeneration
+        let filters = metricsFilter(for: runId)
+        metricsLoading = true
+        metricsError = nil
+        tokenMetrics = nil
+        latencyMetrics = nil
+        costReport = nil
+        defer {
+            if generation == metricsGeneration {
+                metricsLoading = false
+            }
+        }
+
+        do {
+            async let tokenTask = smithers.getTokenUsageMetrics(filters: filters)
+            async let latencyTask = smithers.getLatencyMetrics(filters: filters)
+            async let costTask = smithers.getCostTracking(filters: filters)
+            let (loadedTokenMetrics, loadedLatencyMetrics, loadedCostReport) = try await (tokenTask, latencyTask, costTask)
+            guard generation == metricsGeneration else { return }
+            tokenMetrics = loadedTokenMetrics
+            latencyMetrics = loadedLatencyMetrics
+            costReport = loadedCostReport
+        } catch {
+            guard generation == metricsGeneration else { return }
+            metricsError = error.localizedDescription
+        }
+    }
+
+    private func metricsFilter(for runId: String?) -> MetricsFilter {
+        MetricsFilter(runId: Self.normalizedRunId(runId))
     }
 
     private func selectedRunId(afterLoading loadedRuns: [RunSummary]) -> String? {
-        if let selectedRunId {
-            let trimmedRunId = selectedRunId.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedRunId.isEmpty {
-                return trimmedRunId
-            }
-        }
-        return loadedRuns.first?.runId
+        Self.resolveActiveRunId(selectedRunId: selectedRunId, runs: loadedRuns)
     }
 
     private func selectRun(_ runId: String) async {
+        guard let runId = Self.normalizedRunId(runId) else { return }
         guard selectedRunId != runId else { return }
         selectedRunId = runId
         await loadScores(for: runId)
+        guard selectedRunId == runId else { return }
+        await loadMetrics(for: runId)
     }
 
     private func loadScores(for runId: String) async {
+        guard let runId = Self.normalizedRunId(runId) else { return }
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         error = nil
         scores = []
         aggregates = []
         do {
             let recentScores = try await smithers.listRecentScores(runId: runId)
+            guard generation == loadGeneration else { return }
             scores = recentScores
             aggregates = try await smithers.aggregateScores(from: recentScores)
         } catch {
+            guard generation == loadGeneration else { return }
             self.error = error.localizedDescription
         }
         isLoading = false

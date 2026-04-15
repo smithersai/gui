@@ -20,12 +20,18 @@ enum NavDestination: Hashable {
     case landings
     case tickets
     case issues
-    case terminal
+    case terminal(id: String = "default")
     case terminalCommand(binary: String, workingDirectory: String, name: String)
     case liveRun(runId: String, nodeId: String?)
     case runInspect(runId: String, workflowName: String?)
     case workspaces
     case logs
+
+    var isTerminal: Bool {
+        if case .terminal = self { return true }
+        if case .terminalCommand = self { return true }
+        return false
+    }
 
     var label: String {
         switch self {
@@ -89,18 +95,28 @@ enum NavDestination: Hashable {
 struct SidebarView: View {
     @ObservedObject var store: SessionStore
     @Binding var destination: NavDestination
+    @Binding private var developerDebugPanelVisible: Bool
     @State private var searchText: String = ""
-    @State private var smithersCollapsed = true
+    @State private var smithersCollapsed = false
     @State private var vcsCollapsed = true
+    @State private var renameSessionID: String?
+    @State private var renameSessionTitle: String = ""
+    @State private var deleteSessionID: String?
+    @State private var deleteSessionTitle: String = ""
+    private let developerDebugAvailable: Bool
 
     init(
         store: SessionStore,
         destination: Binding<NavDestination>,
-        smithersCollapsed: Bool = true,
+        developerDebugPanelVisible: Binding<Bool> = .constant(false),
+        developerDebugAvailable: Bool = DeveloperDebugMode.isEnabled,
+        smithersCollapsed: Bool = false,
         vcsCollapsed: Bool = true
     ) {
         self.store = store
         self._destination = destination
+        self._developerDebugPanelVisible = developerDebugPanelVisible
+        self.developerDebugAvailable = developerDebugAvailable
         self._smithersCollapsed = State(initialValue: smithersCollapsed)
         self._vcsCollapsed = State(initialValue: vcsCollapsed)
     }
@@ -133,7 +149,7 @@ struct SidebarView: View {
                     SidebarSection(title: "CHAT") {
                         NewChatMenuRow(
                             newChatAction: startNewChat,
-                            terminalAction: { destination = .terminal }
+                            terminalAction: startNewTerminal
                         )
 
                         NavRow(
@@ -145,11 +161,11 @@ struct SidebarView: View {
                         }
 
                         NavRow(
-                            icon: NavDestination.terminal.icon,
-                            label: NavDestination.terminal.label,
-                            isSelected: destination == .terminal
+                            icon: NavDestination.terminal().icon,
+                            label: NavDestination.terminal().label,
+                            isSelected: destination.isTerminal
                         ) {
-                            destination = .terminal
+                            openCurrentTerminal()
                         }
                     }
 
@@ -182,21 +198,78 @@ struct SidebarView: View {
                             }
                         }
                     }
+
+                    if developerDebugAvailable {
+                        SidebarSection(title: "DEVELOPER") {
+                            NavRow(
+                                icon: "wrench.and.screwdriver",
+                                label: "Developer Debug",
+                                isSelected: developerDebugPanelVisible
+                            ) {
+                                developerDebugPanelVisible.toggle()
+                                AppLogger.ui.info(
+                                    "Developer debug panel toggled",
+                                    metadata: ["visible": String(developerDebugPanelVisible)]
+                                )
+                            }
+                        }
+                    }
                 }
             }
+        }
+        .alert("Rename Session", isPresented: renameAlertBinding) {
+            TextField("Session title", text: $renameSessionTitle)
+            Button("Cancel", role: .cancel) {
+                renameSessionID = nil
+                renameSessionTitle = ""
+            }
+            Button("Save") {
+                if let sessionID = renameSessionID {
+                    store.renameSession(sessionID, to: renameSessionTitle)
+                }
+                renameSessionID = nil
+                renameSessionTitle = ""
+            }
+        } message: {
+            Text("Enter a new title for this session.")
+        }
+        .alert("Delete Session?", isPresented: deleteAlertBinding) {
+            Button("Cancel", role: .cancel) {
+                deleteSessionID = nil
+                deleteSessionTitle = ""
+            }
+            Button("Delete", role: .destructive) {
+                if let sessionID = deleteSessionID {
+                    store.deleteSession(sessionID)
+                }
+                deleteSessionID = nil
+                deleteSessionTitle = ""
+            }
+        } message: {
+            Text("This permanently removes \"\(deleteSessionTitle)\" and its chat history.")
         }
         .background(Theme.sidebarBg)
         .accessibilityIdentifier("sidebar")
     }
 
     private func startNewChat() {
-        store.newSession(reusingEmptyPlaceholder: true)
+        store.newSession(reusingEmptyPlaceholder: false)
         destination = .chat
+    }
+
+    private func startNewTerminal() {
+        let terminalId = store.addTerminalTab()
+        destination = .terminal(id: terminalId)
     }
 
     private func openCurrentChat() {
         _ = store.ensureActiveSession()
         destination = .chat
+    }
+
+    private func openCurrentTerminal() {
+        let terminalId = store.ensureTerminalTab()
+        destination = .terminal(id: terminalId)
     }
 
     private var tabList: some View {
@@ -249,6 +322,21 @@ struct SidebarView: View {
                         ) {
                             selectTab(tab)
                         }
+                        .contextMenu {
+                            if tab.kind == .chat, let sessionID = tab.chatSessionId {
+                                Button("Load Session") {
+                                    store.loadSessionFromPersistence(sessionID)
+                                    destination = .chat
+                                }
+                                Button("Rename Session…") {
+                                    beginRenameSession(sessionID: sessionID, currentTitle: tab.title)
+                                }
+                                Button("Delete Session", role: .destructive) {
+                                    beginDeleteSession(sessionID: sessionID, currentTitle: tab.title)
+                                }
+                                .disabled(!store.canDeleteSession(sessionID))
+                            }
+                        }
                     }
                 }
             }
@@ -265,6 +353,10 @@ struct SidebarView: View {
         case .run:
             if let runId = tab.runId {
                 destination = .liveRun(runId: runId, nodeId: nil)
+            }
+        case .terminal:
+            if let terminalId = tab.terminalId {
+                destination = .terminal(id: terminalId)
             }
         }
     }
@@ -285,7 +377,46 @@ struct SidebarView: View {
                 return runId == tab.runId
             }
             return false
+        case .terminal:
+            if case .terminal(let terminalId) = destination {
+                return terminalId == tab.terminalId
+            }
+            return false
         }
+    }
+
+    private var renameAlertBinding: Binding<Bool> {
+        Binding(
+            get: { renameSessionID != nil },
+            set: { presented in
+                if !presented {
+                    renameSessionID = nil
+                    renameSessionTitle = ""
+                }
+            }
+        )
+    }
+
+    private var deleteAlertBinding: Binding<Bool> {
+        Binding(
+            get: { deleteSessionID != nil },
+            set: { presented in
+                if !presented {
+                    deleteSessionID = nil
+                    deleteSessionTitle = ""
+                }
+            }
+        )
+    }
+
+    private func beginRenameSession(sessionID: String, currentTitle: String) {
+        renameSessionID = sessionID
+        renameSessionTitle = currentTitle
+    }
+
+    private func beginDeleteSession(sessionID: String, currentTitle: String) {
+        deleteSessionID = sessionID
+        deleteSessionTitle = currentTitle
     }
 }
 
@@ -380,11 +511,14 @@ struct NewChatMenuRow: View {
     var body: some View {
         Menu {
             Button(action: terminalAction) {
-                Label("Terminal", systemImage: NavDestination.terminal.icon)
+                Label("Terminal", systemImage: NavDestination.terminal().icon)
             }
+            .accessibilityIdentifier("sidebar.newTerminal")
+
             Button(action: newChatAction) {
                 Label("New Chat", systemImage: NavDestination.chat.icon)
             }
+            .accessibilityIdentifier("sidebar.newChatMenuItem")
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "plus")

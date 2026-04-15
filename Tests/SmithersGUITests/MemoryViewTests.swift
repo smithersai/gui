@@ -30,6 +30,14 @@ private final class MockSmithersClient: SmithersClient {
         return stubbedFacts.filter { $0.namespace == namespace }
     }
 
+    override func listAllMemoryFacts(namespace: String? = nil, workflowPath: String? = nil) async throws -> [MemoryFact] {
+        listNamespaces.append(namespace)
+        listWorkflowPaths.append(workflowPath)
+        if let err = listError { throw err }
+        guard let namespace else { return stubbedFacts }
+        return stubbedFacts.filter { $0.namespace == namespace }
+    }
+
     override func recallMemory(query: String, namespace: String? = nil, workflowPath: String? = nil, topK: Int = 10) async throws -> [MemoryRecallResult] {
         lastRecallQuery = query
         lastRecallNamespace = namespace
@@ -196,6 +204,20 @@ final class MemoryNamespaceFilterTests: XCTestCase {
 
         let allFacts = try await client.listMemoryFacts(namespace: nil)
         let ns1Facts = try await client.listMemoryFacts(namespace: "ns1")
+
+        XCTAssertEqual(allFacts.count, 2)
+        XCTAssertEqual(ns1Facts.map(\.key), ["a"])
+    }
+
+    func testMockListAllFactsFiltersByNamespace() async throws {
+        let client = MockSmithersClient()
+        client.stubbedFacts = [
+            makeFact(namespace: "ns1", key: "a"),
+            makeFact(namespace: "ns2", key: "b"),
+        ]
+
+        let allFacts = try await client.listAllMemoryFacts()
+        let ns1Facts = try await client.listAllMemoryFacts(namespace: "ns1")
 
         XCTAssertEqual(allFacts.count, 2)
         XCTAssertEqual(ns1Facts.map(\.key), ["a"])

@@ -6,6 +6,7 @@ struct TriggersView: View {
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var actionError: String?
+    @State private var loadGeneration = 0
 
     @State private var showCreateForm = false
     @State private var newPattern = ""
@@ -419,27 +420,25 @@ struct TriggersView: View {
         }
     }
 
-    private static let timestampFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter
-    }()
-
     private static func formatTimestamp(_ ms: Int64?) -> String {
         guard let ms else { return "-" }
         let date = Date(timeIntervalSince1970: Double(ms) / 1000)
-        return timestampFormatter.string(from: date)
+        return DateFormatters.yearMonthDayHourMinute.string(from: date)
     }
 
     // MARK: - Actions
 
     private func loadCrons() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         loadError = nil
         do {
-            crons = try await smithers.listCrons()
+            let fetched = try await smithers.listCrons()
+            guard generation == loadGeneration else { return }
+            crons = fetched
         } catch {
+            guard generation == loadGeneration else { return }
             loadError = error.localizedDescription
         }
         isLoading = false

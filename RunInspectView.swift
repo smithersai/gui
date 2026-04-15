@@ -18,6 +18,8 @@ struct RunInspectView: View {
 
     @State private var hijacking = false
     @State private var rerunning = false
+    @State private var approvalActionInFlight = false
+    @State private var pendingDenyTask: RunTask?
 
     @State private var nodeInspectSelection: RunTask?
     @State private var showingSnapshots = false
@@ -39,6 +41,10 @@ struct RunInspectView: View {
         return tasks[selectedTaskIndex]
     }
 
+    private var blockedApprovalTask: RunTask? {
+        tasks.first(where: isApprovalBlockedTask)
+    }
+
     private var shortRunID: String {
         String(runId.prefix(8))
     }
@@ -58,7 +64,7 @@ struct RunInspectView: View {
         case .waitingApproval: return Theme.warning
         case .finished: return Theme.success
         case .failed: return Theme.danger
-        case .cancelled: return Theme.textTertiary
+        case .cancelled, .unknown: return Theme.textTertiary
         }
     }
 
@@ -91,6 +97,33 @@ struct RunInspectView: View {
         .background(Theme.surface1)
         .task(id: runId) {
             await loadInspection()
+        }
+        .confirmationDialog(
+            "Deny Approval",
+            isPresented: Binding(
+                get: { pendingDenyTask != nil },
+                set: { if !$0 { pendingDenyTask = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Deny Approval", role: .destructive) {
+                if let pendingDenyTask {
+                    self.pendingDenyTask = nil
+                    Task { await denyNode(pendingDenyTask) }
+                }
+            }
+            .accessibilityIdentifier("runinspect.confirmDenyButton")
+
+            Button("Cancel", role: .cancel) {
+                pendingDenyTask = nil
+            }
+            .accessibilityIdentifier("runinspect.cancelDenyButton")
+        } message: {
+            if let pendingDenyTask {
+                Text("Deny approval for \(pendingDenyTask.nodeId)\(pendingDenyTask.iteration.map { " iter \($0)" } ?? "") on run \(shortRunID)? This will fail the waiting gate.")
+            } else {
+                Text("Deny this approval? This will fail the waiting gate.")
+            }
         }
         .sheet(item: $nodeInspectSelection) { task in
             NodeInspectView(
@@ -170,8 +203,8 @@ struct RunInspectView: View {
                 if let finished = inspection?.run.finishedAtMs {
                     metadataPill("Finished", runInspectorShortDate(finished))
                 }
-                if let elapsed = inspection?.run.elapsedString, !elapsed.isEmpty {
-                    metadataPill("Elapsed", elapsed)
+                if let run = inspection?.run, !run.elapsedString.isEmpty {
+                    elapsedMetadataPill(run)
                 }
             }
             .padding(.horizontal, 16)
@@ -204,6 +237,17 @@ struct RunInspectView: View {
         .background(Theme.inputBg)
         .cornerRadius(6)
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private func elapsedMetadataPill(_ run: RunSummary) -> some View {
+        if run.status == .running || run.status == .waitingApproval {
+            TimelineView(.periodic(from: Date(), by: 1)) { _ in
+                metadataPill("Elapsed", run.elapsedString)
+            }
+        } else {
+            metadataPill("Elapsed", run.elapsedString)
+        }
     }
 
     private var actionBar: some View {
@@ -239,6 +283,33 @@ struct RunInspectView: View {
             .disabled(rerunning)
             .opacity(rerunning ? 0.55 : 1)
             .accessibilityIdentifier("runinspect.action.rerun")
+
+            if inspection?.run.status == .waitingApproval {
+                if let blockedApprovalTask {
+                    actionPill(approvalActionInFlight ? "Approving..." : "Approve", icon: "checkmark", color: Theme.success) {
+                        Task { await approveNode(blockedApprovalTask) }
+                    }
+                    .disabled(approvalActionInFlight)
+                    .opacity(approvalActionInFlight ? 0.55 : 1)
+                    .accessibilityIdentifier("runinspect.action.approve")
+
+                    actionPill("Deny", icon: "xmark", color: Theme.danger) {
+                        pendingDenyTask = blockedApprovalTask
+                    }
+                    .disabled(approvalActionInFlight)
+                    .opacity(approvalActionInFlight ? 0.55 : 1)
+                    .accessibilityIdentifier("runinspect.action.deny")
+                } else {
+                    actionPill("Approve", icon: "checkmark", color: Theme.success) {}
+                        .disabled(true)
+                        .opacity(0.5)
+                        .accessibilityIdentifier("runinspect.action.approve")
+                    actionPill("Deny", icon: "xmark", color: Theme.danger) {}
+                        .disabled(true)
+                        .opacity(0.5)
+                        .accessibilityIdentifier("runinspect.action.deny")
+                }
+            }
 
             Spacer()
 
@@ -494,6 +565,10 @@ struct RunInspectView: View {
         return parts.joined(separator: " · ")
     }
 
+    private func isApprovalBlockedTask(_ task: RunTask) -> Bool {
+        task.state == "blocked" || task.state == "waiting-approval"
+    }
+
     private func iconButton(_ icon: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
@@ -546,13 +621,16 @@ struct RunInspectView: View {
     private func loadInspection() async {
         isLoading = true
         error = nil
+        defer {
+            isLoading = false
+        }
+
         do {
             inspection = try await smithers.inspectRun(runId)
             clampSelection()
         } catch {
             self.error = error.localizedDescription
         }
-        isLoading = false
     }
 
     private func clampSelection() {
@@ -570,7 +648,7 @@ struct RunInspectView: View {
 
     private func openLiveChat(runId: String, nodeId: String?) {
         guard let onOpenLiveChat else {
-            setActionMessage("Live chat hook is unavailable.", color: Theme.warning)
+            setActionMessage("Live chat hook is unavailable.", color: Theme.warning, level: .warning)
             return
         }
 
@@ -583,12 +661,12 @@ struct RunInspectView: View {
     private func startHijack() {
         guard !hijacking else { return }
         guard let onOpenTerminalCommand else {
-            setActionMessage("Terminal command hook is unavailable.", color: Theme.warning)
+            setActionMessage("Terminal command hook is unavailable.", color: Theme.warning, level: .warning)
             return
         }
 
         hijacking = true
-        setActionMessage("Starting hijack session...", color: Theme.accent)
+        setActionMessage("Starting hijack session...", color: Theme.accent, level: .info)
 
         Task { @MainActor in
             defer { hijacking = false }
@@ -596,35 +674,32 @@ struct RunInspectView: View {
             do {
                 let session = try await smithers.hijackRun(runId)
                 guard session.supportsResume else {
-                    setActionMessage("This agent does not support resumable hijack sessions.", color: Theme.warning)
+                    setActionMessage("This agent does not support resumable hijack sessions.", color: Theme.warning, level: .warning)
                     return
                 }
 
-                let binary = session.agentBinary.isEmpty ? session.agentEngine : session.agentBinary
-                let resumeArgs = session.resumeArgs()
-                guard !binary.isEmpty, !resumeArgs.isEmpty else {
-                    setActionMessage("Hijack session is missing resume details.", color: Theme.danger)
+                guard let invocation = session.launchInvocation() else {
+                    setActionMessage("Hijack session is missing resume details.", color: Theme.danger, level: .error)
                     return
                 }
 
-                let command = ([binary] + resumeArgs)
+                let command = ([invocation.executable] + invocation.arguments)
                     .map(runInspectorShellQuote)
                     .joined(separator: " ")
-                let workingDirectory = session.cwd.isEmpty ? FileManager.default.currentDirectoryPath : session.cwd
 
                 onClose()
                 DispatchQueue.main.async {
-                    onOpenTerminalCommand(command, workingDirectory, "Hijack \(shortRunID)")
+                    onOpenTerminalCommand(command, invocation.workingDirectory, "Hijack \(shortRunID)")
                 }
             } catch {
-                setActionMessage("Hijack error: \(error.localizedDescription)", color: Theme.danger)
+                setActionMessage("Hijack error: \(error.localizedDescription)", color: Theme.danger, level: .error)
             }
         }
     }
 
     private func openWatchHook() {
         guard let onOpenTerminalCommand else {
-            setActionMessage("Terminal command hook is unavailable.", color: Theme.warning)
+            setActionMessage("Terminal command hook is unavailable.", color: Theme.warning, level: .warning)
             return
         }
 
@@ -639,23 +714,54 @@ struct RunInspectView: View {
         guard !rerunning else { return }
 
         rerunning = true
-        setActionMessage("Triggering JJHub rerun...", color: Theme.accent)
+        setActionMessage("Triggering JJHub rerun...", color: Theme.accent, level: .info)
 
         Task { @MainActor in
             defer { rerunning = false }
 
             do {
                 let message = try await smithers.rerunRun(runId)
-                setActionMessage(message, color: Theme.success)
+                setActionMessage(message, color: Theme.success, level: .success)
             } catch {
-                setActionMessage(error.localizedDescription, color: Theme.danger)
+                setActionMessage(error.localizedDescription, color: Theme.danger, level: .error)
             }
         }
     }
 
-    private func setActionMessage(_ message: String, color: Color) {
+    private func approveNode(_ task: RunTask) async {
+        guard !approvalActionInFlight else { return }
+
+        approvalActionInFlight = true
+        defer { approvalActionInFlight = false }
+
+        do {
+            try await smithers.approveNode(runId: runId, nodeId: task.nodeId, iteration: task.iteration)
+            setActionMessage("Approved \(task.nodeId) on run \(shortRunID)", color: Theme.success, level: .approval)
+            await loadInspection()
+        } catch {
+            setActionMessage("Approve error: \(error.localizedDescription)", color: Theme.danger, level: .error)
+        }
+    }
+
+    private func denyNode(_ task: RunTask) async {
+        guard !approvalActionInFlight else { return }
+
+        approvalActionInFlight = true
+        defer { approvalActionInFlight = false }
+
+        do {
+            try await smithers.denyNode(runId: runId, nodeId: task.nodeId, iteration: task.iteration)
+            setActionMessage("Denied \(task.nodeId) on run \(shortRunID)", color: Theme.success, level: .approval)
+            await loadInspection()
+        } catch {
+            setActionMessage("Deny error: \(error.localizedDescription)", color: Theme.danger, level: .error)
+        }
+    }
+
+    private func setActionMessage(_ message: String, color: Color, level: GUINotificationLevel) {
         actionMessage = message
         actionMessageColor = color
+        AppNotifications.shared.post(title: "Run Inspector", message: message, level: level)
     }
 }
 
@@ -964,9 +1070,9 @@ struct RunSnapshotsSheet: View {
         Task { @MainActor in
             do {
                 let run = try await smithers.forkRun(snapshotId: snapshot.id)
-                setActionMessage("Forked run \(String(run.runId.prefix(8))) from snapshot.", color: Theme.success)
+                setActionMessage("Forked run \(String(run.runId.prefix(8))) from snapshot.", color: Theme.success, level: .runUpdate)
             } catch {
-                setActionMessage("Fork failed: \(error.localizedDescription)", color: Theme.danger)
+                setActionMessage("Fork failed: \(error.localizedDescription)", color: Theme.danger, level: .error)
             }
         }
     }
@@ -977,16 +1083,17 @@ struct RunSnapshotsSheet: View {
         Task { @MainActor in
             do {
                 let run = try await smithers.replayRun(snapshotId: snapshot.id)
-                setActionMessage("Replayed run as \(String(run.runId.prefix(8))).", color: Theme.success)
+                setActionMessage("Replayed run as \(String(run.runId.prefix(8))).", color: Theme.success, level: .runUpdate)
             } catch {
-                setActionMessage("Replay failed: \(error.localizedDescription)", color: Theme.danger)
+                setActionMessage("Replay failed: \(error.localizedDescription)", color: Theme.danger, level: .error)
             }
         }
     }
 
-    private func setActionMessage(_ message: String, color: Color) {
+    private func setActionMessage(_ message: String, color: Color, level: GUINotificationLevel) {
         actionMessage = message
         actionMessageColor = color
+        AppNotifications.shared.post(title: "Run Snapshots", message: message, level: level)
     }
 }
 

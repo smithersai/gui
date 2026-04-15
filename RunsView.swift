@@ -10,6 +10,8 @@ struct RunsView: View {
     @State private var runs: [RunSummary] = []
     @State private var expandedRunIds: Set<String> = []
     @State private var inspections: [String: RunInspection] = [:]
+    @State private var inspectionErrors: [String: String] = [:]
+    @State private var loadingInspectionRunIds: Set<String> = []
     @State private var isLoading = true
     @State private var error: String?
 
@@ -78,8 +80,9 @@ struct RunsView: View {
     private struct PendingDenyNode: Identifiable {
         let runId: String
         let nodeId: String
+        let iteration: Int?
 
-        var id: String { "\(runId):\(nodeId)" }
+        var id: String { "\(runId):\(nodeId):\(iteration.map(String.init) ?? "nil")" }
     }
 
     private var workflowChoices: [String] {
@@ -192,7 +195,11 @@ struct RunsView: View {
                 if let pendingDenyNode {
                     self.pendingDenyNode = nil
                     Task {
-                        await denyNode(runId: pendingDenyNode.runId, nodeId: pendingDenyNode.nodeId)
+                        await denyNode(
+                            runId: pendingDenyNode.runId,
+                            nodeId: pendingDenyNode.nodeId,
+                            iteration: pendingDenyNode.iteration
+                        )
                     }
                 }
             }
@@ -204,7 +211,7 @@ struct RunsView: View {
             .accessibilityIdentifier("runs.cancelDenyButton")
         } message: {
             if let pendingDenyNode {
-                Text("Deny approval for \(pendingDenyNode.nodeId) on run \(String(pendingDenyNode.runId.prefix(8)))? This will fail the waiting gate.")
+                Text("Deny approval for \(pendingDenyNode.nodeId)\(pendingDenyNode.iteration.map { " iter \($0)" } ?? "") on run \(String(pendingDenyNode.runId.prefix(8)))? This will fail the waiting gate.")
             } else {
                 Text("Deny this approval? This will fail the waiting gate.")
             }
@@ -259,6 +266,7 @@ struct RunsView: View {
                 TextField("Search runs...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
+                    .accessibilityIdentifier("runs.filter.search")
             }
             .padding(.horizontal, 8)
             .frame(height: 28)
@@ -411,7 +419,8 @@ struct RunsView: View {
                     VStack(spacing: 0) {
                         let active = filteredRuns.filter { $0.status == .running || $0.status == .waitingApproval }
                         let completed = filteredRuns.filter { $0.status == .finished }
-                        let failed = filteredRuns.filter { $0.status == .failed || $0.status == .cancelled }
+                        let failed = filteredRuns.filter { $0.status == .failed }
+                        let cancelled = filteredRuns.filter { $0.status == .cancelled }
 
                         if !active.isEmpty {
                             runSection("ACTIVE", runs: active)
@@ -422,10 +431,13 @@ struct RunsView: View {
                         if !failed.isEmpty {
                             runSection("FAILED", runs: failed)
                         }
+                        if !cancelled.isEmpty {
+                            runSection("CANCELLED", runs: cancelled)
+                        }
                     }
                     .padding(20)
                 }
-                .refreshable { await loadRuns(showLoading: false, clearError: true) }
+                .refreshable { await loadRuns() }
             }
         }
     }
@@ -478,7 +490,7 @@ struct RunsView: View {
 
                     Spacer()
 
-                    if run.status == .running && run.totalNodes > 0 {
+                    if shouldShowProgress(for: run) {
                         ProgressBar(progress: run.progress, failedProgress: run.failedProgress)
                             .frame(width: 80)
                         Text("\(Int((run.progress * 100).rounded()))%")
@@ -487,7 +499,7 @@ struct RunsView: View {
                             .frame(width: 32, alignment: .trailing)
                     }
 
-                    Text(run.elapsedString)
+                    RunElapsedText(run: run)
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(Theme.textTertiary)
                         .frame(width: 60, alignment: .trailing)
@@ -577,14 +589,19 @@ struct RunsView: View {
                 }
                 if run.status == .waitingApproval {
                     if let inspection = inspections[run.runId],
-                       let blockedNode = inspection.tasks.first(where: { $0.state == "blocked" || $0.state == "waiting-approval" }) {
+                       let blockedNode = inspection.tasks.first(where: isApprovalBlockedTask) {
                         actionButton("Approve", icon: "checkmark", color: Theme.success) {
-                            Task { await approveNode(runId: run.runId, nodeId: blockedNode.nodeId) }
+                            Task { await approveNode(runId: run.runId, nodeId: blockedNode.nodeId, iteration: blockedNode.iteration) }
                         }
                         actionButton("Deny", icon: "xmark", color: Theme.danger) {
-                            requestDenyNode(runId: run.runId, nodeId: blockedNode.nodeId)
+                            requestDenyNode(runId: run.runId, nodeId: blockedNode.nodeId, iteration: blockedNode.iteration)
                         }
                     } else {
+                        if inspectionErrors[run.runId] != nil {
+                            actionButton("Retry Nodes", icon: "arrow.clockwise", color: Theme.warning) {
+                                Task { await loadInspection(run.runId) }
+                            }
+                        }
                         actionButton("Approve", icon: "checkmark", color: Theme.success) {}
                             .disabled(true)
                             .opacity(0.5)
@@ -642,7 +659,26 @@ struct RunsView: View {
                         }
                     }
                 }
-            } else {
+            } else if let inspectionError = inspectionErrors[run.runId] {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.warning)
+                    Text("Unable to load nodes: \(inspectionError)")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(2)
+                    Spacer()
+                    Button("Retry") {
+                        Task { await loadInspection(run.runId) }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Theme.accent)
+                    .accessibilityIdentifier("runs.retryInspection.\(runInspectorSafeID(run.runId))")
+                }
+                .padding(.vertical, 4)
+            } else if loadingInspectionRunIds.contains(run.runId) {
                 HStack {
                     ProgressView()
                         .scaleEffect(0.5)
@@ -650,6 +686,19 @@ struct RunsView: View {
                     Text("Loading nodes...")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textTertiary)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Text("Nodes are not loaded.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                    Button("Load Nodes") {
+                        Task { await loadInspection(run.runId) }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Theme.accent)
+                    .accessibilityIdentifier("runs.loadInspection.\(runInspectorSafeID(run.runId))")
                 }
             }
 
@@ -713,6 +762,14 @@ struct RunsView: View {
         .accessibilityIdentifier(accessibilityID)
     }
 
+    private func shouldShowProgress(for run: RunSummary) -> Bool {
+        run.totalNodes > 0 && (run.status == .running || run.status == .waitingApproval)
+    }
+
+    private func isApprovalBlockedTask(_ task: RunTask) -> Bool {
+        task.state == "blocked" || task.state == "waiting-approval"
+    }
+
     private func nodeStateIcon(_ state: String) -> some View {
         let (icon, color): (String, Color) = {
             switch state {
@@ -762,9 +819,10 @@ struct RunsView: View {
     }
 
     @MainActor
-    private func setActionMessage(_ message: String, color: Color) {
+    private func setActionMessage(_ message: String, color: Color, level: GUINotificationLevel) {
         actionMessage = message
         actionMessageColor = color
+        AppNotifications.shared.post(title: "Runs", message: message, level: level)
     }
 
     @MainActor
@@ -774,8 +832,8 @@ struct RunsView: View {
     }
 
     @MainActor
-    private func requestDenyNode(runId: String, nodeId: String) {
-        pendingDenyNode = PendingDenyNode(runId: runId, nodeId: nodeId)
+    private func requestDenyNode(runId: String, nodeId: String, iteration: Int?) {
+        pendingDenyNode = PendingDenyNode(runId: runId, nodeId: nodeId, iteration: iteration)
     }
 
     @MainActor
@@ -794,7 +852,7 @@ struct RunsView: View {
             if runs.isEmpty || clearError {
                 self.error = error.localizedDescription
             } else {
-                setActionMessage("Refresh error: \(error.localizedDescription)", color: Theme.warning)
+                setActionMessage("Refresh error: \(error.localizedDescription)", color: Theme.warning, level: .warning)
             }
         }
 
@@ -808,6 +866,8 @@ struct RunsView: View {
         let runIDs = Set(runs.map(\.runId))
         expandedRunIds = expandedRunIds.intersection(runIDs)
         inspections = inspections.filter { runIDs.contains($0.key) }
+        inspectionErrors = inspectionErrors.filter { runIDs.contains($0.key) }
+        loadingInspectionRunIds = loadingInspectionRunIds.intersection(runIDs)
     }
 
     @MainActor
@@ -840,11 +900,18 @@ struct RunsView: View {
 
     @MainActor
     private func loadInspection(_ runId: String) async {
+        guard !loadingInspectionRunIds.contains(runId) else { return }
+        loadingInspectionRunIds.insert(runId)
+        inspectionErrors[runId] = nil
+        defer {
+            loadingInspectionRunIds.remove(runId)
+        }
+
         do {
             let inspection = try await smithers.inspectRun(runId)
             inspections[runId] = inspection
         } catch {
-            // No-op: expanded rows can retry by collapsing/expanding.
+            inspectionErrors[runId] = error.localizedDescription
         }
     }
 
@@ -856,28 +923,28 @@ struct RunsView: View {
     }
 
     @MainActor
-    private func approveNode(runId: String, nodeId: String) async {
+    private func approveNode(runId: String, nodeId: String, iteration: Int?) async {
         do {
-            try await smithers.approveNode(runId: runId, nodeId: nodeId)
-            setActionMessage("Approved run \(String(runId.prefix(8)))", color: Theme.success)
+            try await smithers.approveNode(runId: runId, nodeId: nodeId, iteration: iteration)
+            setActionMessage("Approved run \(String(runId.prefix(8)))", color: Theme.success, level: .approval)
             updateRunStatus(runId: runId, status: .running)
             await refreshExpandedInspections()
             await loadRuns(showLoading: false, clearError: false)
         } catch {
-            setActionMessage("Approve error: \(error.localizedDescription)", color: Theme.danger)
+            setActionMessage("Approve error: \(error.localizedDescription)", color: Theme.danger, level: .error)
         }
     }
 
     @MainActor
-    private func denyNode(runId: String, nodeId: String) async {
+    private func denyNode(runId: String, nodeId: String, iteration: Int?) async {
         do {
-            try await smithers.denyNode(runId: runId, nodeId: nodeId)
-            setActionMessage("Denied run \(String(runId.prefix(8)))", color: Theme.success)
+            try await smithers.denyNode(runId: runId, nodeId: nodeId, iteration: iteration)
+            setActionMessage("Denied run \(String(runId.prefix(8)))", color: Theme.success, level: .approval)
             updateRunStatus(runId: runId, status: .failed)
             await refreshExpandedInspections()
             await loadRuns(showLoading: false, clearError: false)
         } catch {
-            setActionMessage("Deny error: \(error.localizedDescription)", color: Theme.danger)
+            setActionMessage("Deny error: \(error.localizedDescription)", color: Theme.danger, level: .error)
         }
     }
 
@@ -885,11 +952,11 @@ struct RunsView: View {
     private func cancelRun(_ runId: String) async {
         do {
             try await smithers.cancelRun(runId)
-            setActionMessage("Cancelled run \(String(runId.prefix(8)))", color: Theme.success)
+            setActionMessage("Cancelled run \(String(runId.prefix(8)))", color: Theme.success, level: .runUpdate)
             updateRunStatus(runId: runId, status: .cancelled)
             await loadRuns(showLoading: false, clearError: false)
         } catch {
-            setActionMessage("Cancel error: \(error.localizedDescription)", color: Theme.danger)
+            setActionMessage("Cancel error: \(error.localizedDescription)", color: Theme.danger, level: .error)
         }
     }
 
@@ -897,12 +964,12 @@ struct RunsView: View {
     private func startHijack(for run: RunSummary) {
         guard hijackingRunId == nil else { return }
         guard let onOpenTerminalCommand else {
-            setActionMessage("Terminal command hook is unavailable.", color: Theme.warning)
+            setActionMessage("Terminal command hook is unavailable.", color: Theme.warning, level: .warning)
             return
         }
 
         hijackingRunId = run.runId
-        setActionMessage("Starting hijack session...", color: Theme.accent)
+        setActionMessage("Starting hijack session...", color: Theme.accent, level: .info)
 
         Task { @MainActor in
             defer { hijackingRunId = nil }
@@ -910,26 +977,23 @@ struct RunsView: View {
             do {
                 let session = try await smithers.hijackRun(run.runId)
                 guard session.supportsResume else {
-                    setActionMessage("This agent does not support resumable hijack sessions.", color: Theme.warning)
+                    setActionMessage("This agent does not support resumable hijack sessions.", color: Theme.warning, level: .warning)
                     return
                 }
 
-                let binary = session.agentBinary.isEmpty ? session.agentEngine : session.agentBinary
-                let resumeArgs = session.resumeArgs()
-                guard !binary.isEmpty, !resumeArgs.isEmpty else {
-                    setActionMessage("Hijack session is missing resume details.", color: Theme.danger)
+                guard let invocation = session.launchInvocation() else {
+                    setActionMessage("Hijack session is missing resume details.", color: Theme.danger, level: .error)
                     return
                 }
 
-                let command = ([binary] + resumeArgs)
+                let command = ([invocation.executable] + invocation.arguments)
                     .map(runInspectorShellQuote)
                     .joined(separator: " ")
-                let workingDirectory = session.cwd.isEmpty ? FileManager.default.currentDirectoryPath : session.cwd
 
-                setActionMessage("Hijack ready for run \(String(run.runId.prefix(8))).", color: Theme.success)
-                onOpenTerminalCommand(command, workingDirectory, "Hijack \(String(run.runId.prefix(8)))")
+                setActionMessage("Hijack ready for run \(String(run.runId.prefix(8))).", color: Theme.success, level: .success)
+                onOpenTerminalCommand(command, invocation.workingDirectory, "Hijack \(String(run.runId.prefix(8)))")
             } catch {
-                setActionMessage("Hijack error: \(error.localizedDescription)", color: Theme.danger)
+                setActionMessage("Hijack error: \(error.localizedDescription)", color: Theme.danger, level: .error)
             }
         }
     }
@@ -986,7 +1050,7 @@ struct RunsView: View {
 
         streamMode = .polling
         if !didShowPollingMessage {
-            setActionMessage("Live stream unavailable. Polling every 5 seconds.", color: Theme.warning)
+            setActionMessage("Live stream unavailable. Polling every 5 seconds.", color: Theme.warning, level: .warning)
             didShowPollingMessage = true
         }
 
@@ -1049,6 +1113,7 @@ struct RunsView: View {
             guard let status = runStatus(from: event) else { return nil }
 
             if let index {
+                guard shouldApplyStatusTransition(from: runs[index].status, to: status) else { return nil }
                 runs[index] = runWithStatus(runs[index], status: status, timestampMs: event.timestampMs)
             } else {
                 let stub = RunSummary(
@@ -1067,6 +1132,7 @@ struct RunsView: View {
 
         case "nodewaitingapproval":
             guard let index else { return nil }
+            guard shouldApplyStatusTransition(from: runs[index].status, to: .waitingApproval) else { return nil }
             runs[index] = runWithStatus(runs[index], status: .waitingApproval, timestampMs: event.timestampMs)
 
         default:
@@ -1074,6 +1140,10 @@ struct RunsView: View {
         }
 
         return nil
+    }
+
+    private func shouldApplyStatusTransition(from current: RunStatus, to next: RunStatus) -> Bool {
+        !current.isTerminal || next.isTerminal
     }
 
     private func runStatus(from event: RunStreamEvent) -> RunStatus? {
@@ -1114,7 +1184,7 @@ private extension RunStatus {
         switch self {
         case .finished, .failed, .cancelled:
             return true
-        case .running, .waitingApproval:
+        case .running, .waitingApproval, .unknown:
             return false
         }
     }

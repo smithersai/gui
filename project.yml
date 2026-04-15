@@ -18,6 +18,11 @@ targets:
       - AgentService.swift
       - AppLogger.swift
       - CWDResolver.swift
+      - CodexMCPStatus.swift
+      - CodexModelSelection.swift
+      - DeveloperDebugView.swift
+      - GUINotifications.swift
+      - SessionPersistenceStore.swift
       - AgentsView.swift
       - ApprovalsView.swift
       - ChangesView.swift
@@ -25,6 +30,7 @@ targets:
       - ContentView.swift
       - DashboardView.swift
       - IssuesView.swift
+      - FeedbackReporter.swift
       - JJHubWorkflowsView.swift
       - LandingsView.swift
       - LiveRunChatView.swift

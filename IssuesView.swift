@@ -12,6 +12,7 @@ struct IssuesView: View {
     @State private var newBody = ""
     @State private var isCreating = false
     @State private var detailLoadingIds: Set<String> = []
+    @State private var loadGeneration = 0
 
     private var selectedIssue: SmithersIssue? {
         issues.first { $0.id == selectedId }
@@ -35,7 +36,7 @@ struct IssuesView: View {
         }
         .background(Theme.surface1)
         .accessibilityIdentifier("issues.root")
-        .task { await loadIssues() }
+        .task(id: stateFilter) { await loadIssues() }
     }
 
     // MARK: - Header
@@ -81,7 +82,7 @@ struct IssuesView: View {
     }
 
     private func stateButton(_ label: String, state: String?) -> some View {
-        Button(action: { stateFilter = state; Task { await loadIssues() } }) {
+        Button(action: { stateFilter = state }) {
             Text(label)
                 .font(.system(size: 11, weight: stateFilter == state ? .semibold : .regular))
                 .foregroundColor(stateFilter == state ? Theme.accent : Theme.textSecondary)
@@ -277,6 +278,7 @@ struct IssuesView: View {
                                     .themedPill(cornerRadius: 6)
                                 }
                                 .buttonStyle(.plain)
+                                .disabled(true)
                             }
                         }
 
@@ -348,12 +350,16 @@ struct IssuesView: View {
     // MARK: - Actions
 
     private func loadIssues(selectIssueNumber preferredIssueNumber: Int? = nil) async {
+        loadGeneration += 1
+        let generation = loadGeneration
+        let requestedState = stateFilter
         isLoading = true
         error = nil
         let previousSelectedId = selectedId
         let previousSelectedNumber = issues.first(where: { $0.id == previousSelectedId })?.number
         do {
-            let refreshedIssues = try await smithers.listIssues(state: stateFilter)
+            let refreshedIssues = try await smithers.listIssues(state: requestedState)
+            guard generation == loadGeneration, requestedState == stateFilter else { return }
             issues = refreshedIssues
 
             if let previousSelectedId, refreshedIssues.contains(where: { $0.id == previousSelectedId }) {
@@ -365,8 +371,10 @@ struct IssuesView: View {
                 selectedId = nil
             }
         } catch {
+            guard generation == loadGeneration else { return }
             self.error = error.localizedDescription
         }
+        guard generation == loadGeneration else { return }
         isLoading = false
     }
 

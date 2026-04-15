@@ -24,6 +24,8 @@ struct MemoryView: View {
     @State private var recallQuery = ""
     @State private var recallTopK = 10
     @State private var isRecalling = false
+    @State private var hasAttemptedRecall = false
+    @State private var recallGeneration = 0
     @State private var mode: ViewMode = .list
     @State private var selectedFact: MemoryFact?
     @State private var factsLoadID = 0
@@ -72,15 +74,11 @@ struct MemoryView: View {
                         factList
                     }
                 case .recall:
-                    if let err = recallError {
-                        errorView(err)
-                    } else {
-                        recallView
-                    }
+                    recallView
             }
         }
         .background(Theme.surface1)
-        .task(id: namespaceFilter) { await loadFacts() }
+        .task { await loadFacts() }
     }
 
     // MARK: - Header
@@ -111,7 +109,11 @@ struct MemoryView: View {
     private var toolbar: some View {
         HStack(spacing: 8) {
             // Mode toggle
-            Button(action: { mode = .list; selectedFact = nil; recallError = nil }) {
+            Button(action: {
+                mode = .list
+                selectedFact = nil
+                recallError = nil
+            }) {
                 Text("Facts")
                     .font(.system(size: 11, weight: mode == .list ? .semibold : .regular))
                     .foregroundColor(mode == .list ? Theme.accent : Theme.textSecondary)
@@ -121,7 +123,14 @@ struct MemoryView: View {
             }
             .buttonStyle(.plain)
 
-            Button(action: { mode = .recall; listError = nil }) {
+            Button(action: {
+                mode = .recall
+                listError = nil
+                recallError = nil
+                recallQuery = ""
+                recallResults = []
+                hasAttemptedRecall = false
+            }) {
                 Text("Recall")
                     .font(.system(size: 11, weight: mode == .recall ? .semibold : .regular))
                     .foregroundColor(mode == .recall ? Theme.accent : Theme.textSecondary)
@@ -208,11 +217,11 @@ struct MemoryView: View {
                                 Text(fact.key)
                                     .frame(width: 120, alignment: .leading)
                                     .foregroundColor(Theme.textPrimary)
-                                Text(fact.valueJson)
+                                Text(factValuePreview(fact.valueJson, maxLen: 60))
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .foregroundColor(Theme.textSecondary)
                                     .lineLimit(1)
-                                Text(shortDate(fact.updatedAt))
+                                Text(factAge(fact.updatedAtMs))
                                     .frame(width: 100, alignment: .trailing)
                                     .foregroundColor(Theme.textTertiary)
                             }
@@ -229,6 +238,7 @@ struct MemoryView: View {
             .padding(.horizontal, 20)
             .padding(.top, 12)
         }
+        .refreshable { await loadFacts() }
     }
 
     // MARK: - Fact Detail
@@ -250,10 +260,10 @@ struct MemoryView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     metaRow("Namespace", fact.namespace)
                     metaRow("Key", fact.key)
-                    metaRow("Created", formatDate(fact.createdAt))
-                    metaRow("Updated", formatDate(fact.updatedAt))
+                    metaRow("Updated", detailTimestamp(fact.updatedAtMs, includeAge: true))
+                    metaRow("Created", detailTimestamp(fact.createdAtMs))
                     if let ttl = fact.ttlMs {
-                        metaRow("TTL", String(format: "%.1fs", Double(ttl) / 1000.0))
+                        metaRow("TTL", "\(ttl)ms")
                     }
                 }
 
@@ -263,7 +273,7 @@ struct MemoryView: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(Theme.textTertiary)
 
-                Text(prettyJSON(fact.valueJson))
+                Text(formatFactValue(fact.valueJson))
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundColor(Theme.textPrimary)
                     .textSelection(.enabled)
@@ -301,31 +311,49 @@ struct MemoryView: View {
                         .foregroundColor(Theme.textPrimary)
                         .padding(.horizontal, 14)
                         .frame(height: 32)
-                        .background(recallQuery.isEmpty ? Theme.accent.opacity(0.5) : Theme.accent)
+                        .background(recallQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Theme.accent.opacity(0.5) : Theme.accent)
                         .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
-                .disabled(recallQuery.isEmpty)
+                .disabled(recallQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(20)
+
+            Text("Semantic recall in: \(namespaceFilter ?? "all namespaces")")
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
 
             // Results
             ScrollView {
                 VStack(spacing: 0) {
-                    if recallResults.isEmpty && !isRecalling {
+                    if let recallError {
+                        VStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 24))
+                                .foregroundColor(Theme.warning)
+                            Text(recallError)
+                                .font(.system(size: 12))
+                                .foregroundColor(Theme.textSecondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 150)
+                    } else if recallResults.isEmpty && !isRecalling {
                         VStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
                                 .font(.system(size: 24))
                                 .foregroundColor(Theme.textTertiary)
-                            Text("Enter a query to search memory")
+                            Text(hasAttemptedRecall ? "No results found." : "Enter a query to search memory")
                                 .font(.system(size: 12))
                                 .foregroundColor(Theme.textTertiary)
                         }
                         .frame(maxWidth: .infinity, minHeight: 150)
                     } else {
-                        ForEach(Array(recallResults.enumerated()), id: \.offset) { index, result in
+                        ForEach(Array(recallResults.enumerated()), id: \.offset) { _, result in
                             HStack(alignment: .top, spacing: 12) {
-                                Text(String(format: "%.2f", result.score))
+                                Text(String(format: "%.3f", result.score))
                                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                                     .foregroundColor(scoreColor(result.score))
                                     .frame(width: 40)
@@ -335,11 +363,6 @@ struct MemoryView: View {
                                         .font(.system(size: 12))
                                         .foregroundColor(Theme.textPrimary)
                                         .textSelection(.enabled)
-                                    if let meta = result.metadata {
-                                        Text(meta)
-                                            .font(.system(size: 10, design: .monospaced))
-                                            .foregroundColor(Theme.textTertiary)
-                                    }
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -350,6 +373,7 @@ struct MemoryView: View {
                 }
                 .padding(.horizontal, 20)
             }
+            .refreshable { await doRecall() }
         }
     }
 
@@ -403,32 +427,56 @@ struct MemoryView: View {
     }
 
     private func scoreColor(_ value: Double) -> Color {
-        if value >= 0.8 { return Theme.success }
-        if value >= 0.5 { return Theme.warning }
-        return Theme.danger
+        ScoreColorScale.color(for: value)
     }
 
-    private func shortDate(_ date: Date) -> String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "MM/dd HH:mm"
-        return fmt.string(from: date)
-    }
-
-    private func formatDate(_ date: Date) -> String {
-        let fmt = DateFormatter()
-        fmt.dateStyle = .medium
-        fmt.timeStyle = .medium
-        return fmt.string(from: date)
-    }
-
-    private func prettyJSON(_ json: String) -> String {
-        guard let data = json.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data),
-              let pretty = try? JSONSerialization.data(withJSONObject: obj, options: .prettyPrinted),
-              let str = String(data: pretty, encoding: .utf8) else {
-            return json
+    private func factValuePreview(_ valueJSON: String, maxLen: Int) -> String {
+        let maxLen = max(maxLen, 1)
+        var value = valueJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return "" }
+        if value.count >= 2, value.first == "\"", value.last == "\"" {
+            value = String(value.dropFirst().dropLast())
         }
-        return str
+        guard value.count > maxLen else { return value }
+        if maxLen <= 3 {
+            return String(value.prefix(maxLen))
+        }
+        return String(value.prefix(maxLen - 3)) + "..."
+    }
+
+    private func factAge(_ updatedAtMs: Int64) -> String {
+        guard updatedAtMs > 0 else { return "" }
+        let updatedAt = Date(timeIntervalSince1970: Double(updatedAtMs) / 1000)
+        let seconds = max(0, Int(Date().timeIntervalSince(updatedAt)))
+        if seconds < 60 { return "\(seconds)s ago" }
+        if seconds < 3_600 { return "\(seconds / 60)m ago" }
+        if seconds < 86_400 { return "\(seconds / 3_600)h ago" }
+        return "\(seconds / 86_400)d ago"
+    }
+
+    private func detailTimestamp(_ timestampMs: Int64, includeAge: Bool = false) -> String {
+        guard timestampMs > 0 else { return "-" }
+        let date = Date(timeIntervalSince1970: Double(timestampMs) / 1000)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let base = formatter.string(from: date)
+        guard includeAge else { return base }
+        let age = factAge(timestampMs)
+        return age.isEmpty ? base : "\(base) (\(age))"
+    }
+
+    private func formatFactValue(_ valueJSON: String) -> String {
+        let trimmed = valueJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "(empty)" }
+        guard
+            let data = trimmed.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+            let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .fragmentsAllowed]),
+            let output = String(data: pretty, encoding: .utf8)
+        else {
+            return trimmed
+        }
+        return output
     }
 
     private func errorView(_ message: String) -> some View {
@@ -446,7 +494,6 @@ struct MemoryView: View {
     private func loadFacts() async {
         factsLoadID += 1
         let loadID = factsLoadID
-        let requestedNamespace = namespaceFilter
         isLoading = true
         listError = nil
         defer {
@@ -456,30 +503,26 @@ struct MemoryView: View {
         }
 
         do {
-            let allFacts = try await smithers.listMemoryFacts(namespace: nil, workflowPath: workflowPath)
+            let allFacts = try await smithers.listAllMemoryFacts(workflowPath: workflowPath)
             guard factsLoadID == loadID, !Task.isCancelled else { return }
 
             allNamespaceFacts = allFacts
 
             let availableNamespaces = MemoryNamespaceFilterState.namespaces(from: allFacts)
+            let currentNamespace = namespaceFilter
             let validNamespace = MemoryNamespaceFilterState.validatedFilter(
-                requestedNamespace,
+                currentNamespace,
                 namespaces: availableNamespaces
             )
-            if validNamespace != namespaceFilter {
+            if validNamespace != currentNamespace {
                 namespaceFilter = validNamespace
             }
 
-            let loadedFacts: [MemoryFact]
-            if let validNamespace {
-                loadedFacts = try await smithers.listMemoryFacts(namespace: validNamespace, workflowPath: workflowPath)
-                guard factsLoadID == loadID, !Task.isCancelled else { return }
-            } else {
-                loadedFacts = allFacts
-            }
-
-            facts = loadedFacts
-            if let selectedFact, !loadedFacts.contains(where: { $0.id == selectedFact.id }) {
+            facts = allFacts
+            let visibleFacts = validNamespace.map { namespace in
+                allFacts.filter { $0.namespace == namespace }
+            } ?? allFacts
+            if let selectedFact, !visibleFacts.contains(where: { $0.id == selectedFact.id }) {
                 self.selectedFact = nil
             }
         } catch {
@@ -489,14 +532,36 @@ struct MemoryView: View {
     }
 
     private func doRecall() async {
-        guard !recallQuery.isEmpty else { return }
+        recallGeneration += 1
+        let generation = recallGeneration
+        let trimmedQuery = recallQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            recallError = nil
+            recallResults = []
+            isRecalling = false
+            return
+        }
+        hasAttemptedRecall = true
         recallError = nil
+        recallResults = []
         isRecalling = true
+        defer {
+            if generation == recallGeneration {
+                isRecalling = false
+            }
+        }
         do {
-            recallResults = try await smithers.recallMemory(query: recallQuery, namespace: namespaceFilter, workflowPath: workflowPath, topK: recallTopK)
+            let fetched = try await smithers.recallMemory(
+                query: trimmedQuery,
+                namespace: namespaceFilter,
+                workflowPath: workflowPath,
+                topK: recallTopK
+            )
+            guard generation == recallGeneration else { return }
+            recallResults = fetched
         } catch {
+            guard generation == recallGeneration else { return }
             self.recallError = error.localizedDescription
         }
-        isRecalling = false
     }
 }

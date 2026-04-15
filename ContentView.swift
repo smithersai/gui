@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var destination: NavDestination = .dashboard
     @State private var runSnapshotsSelection: RunSnapshotsSelection?
     @State private var isLoading = true
+    @State private var developerDebugPanelVisible = DeveloperDebugMode.isEnabled
 
     @ViewBuilder
     private var detailContent: some View {
@@ -22,24 +23,39 @@ struct ContentView: View {
                 ChatView(
                     agent: agent,
                     onSend: { store.sendMessage($0) },
+                    onSendRequest: { request in
+                        store.sendMessage(request.prompt, displayText: request.displayText)
+                    },
                     smithers: smithers,
                     onNavigate: { destination = $0 },
+                    onToggleDeveloperDebug: toggleDeveloperDebugPanel,
                     onNewChat: {
-                        store.newSession(reusingEmptyPlaceholder: true)
+                        store.newSession(reusingEmptyPlaceholder: false)
                         destination = .chat
                     },
                     onRunStarted: { runId, title in
                         openRunTab(runId: runId, title: title, preview: "Workflow run")
+                    },
+                    codexModelSelection: store.activeCodexSelection ?? store.codexSelectionDefaults,
+                    onApplyCodexModelSelection: { selection in
+                        store.applyCodexSelection(selection)
+                    },
+                    codexApprovalSelection: store.activeCodexApprovalSelection ?? store.codexApprovalDefaults,
+                    onApplyCodexApprovalSelection: { selection in
+                        store.applyCodexApprovalSelection(selection)
                     }
                 )
                 .id(store.activeSessionId)
+                .logLifecycle("ChatView")
                 .accessibilityIdentifier("view.chat")
             } else {
                 emptyState("No active session", icon: "message")
                     .accessibilityIdentifier("view.chat.empty")
             }
-        case .terminal:
-            TerminalView()
+        case .terminal(let id):
+            TerminalView(sessionId: id)
+                .id(id)
+                .logLifecycle("TerminalView")
                 .accessibilityIdentifier("view.terminal")
         case .terminalCommand(let binary, let workingDirectory, let name):
             TerminalView(command: binary, workingDirectory: workingDirectory)
@@ -53,6 +69,7 @@ struct ContentView: View {
                 onClose: { destination = .runs }
             )
             .id("live-run-\(runId)-\(nodeId ?? "all")")
+            .logLifecycle("LiveRunChatView")
             .accessibilityIdentifier("view.liveRun")
         case .runInspect(let runId, let workflowName):
             RunInspectView(
@@ -68,6 +85,7 @@ struct ContentView: View {
                 onClose: { destination = .runs }
             )
             .id("run-inspect-\(runId)")
+            .logLifecycle("RunInspectView")
             .accessibilityIdentifier("view.runinspect")
         case .dashboard:
             DashboardView(
@@ -82,12 +100,15 @@ struct ContentView: View {
                     store.autoPopulateActiveRunTabs(runs)
                 }
             )
+                .logLifecycle("DashboardView")
                 .accessibilityIdentifier("view.dashboard")
         case .agents:
             AgentsView(smithers: smithers)
+                .logLifecycle("AgentsView")
                 .accessibilityIdentifier("view.agents")
         case .changes:
             ChangesView(smithers: smithers)
+                .logLifecycle("ChangesView")
                 .accessibilityIdentifier("view.changes")
         case .runs:
             RunsView(
@@ -105,6 +126,7 @@ struct ContentView: View {
                     destination = .terminalCommand(binary: command, workingDirectory: workingDirectory, name: name)
                 }
             )
+            .logLifecycle("RunsView")
             .accessibilityIdentifier("view.runs")
         case .workflows:
             WorkflowsView(
@@ -114,43 +136,60 @@ struct ContentView: View {
                     openRunTab(runId: runId, title: title, preview: "Workflow run")
                 }
             )
+            .logLifecycle("WorkflowsView")
             .accessibilityIdentifier("view.workflows")
         case .triggers:
             TriggersView(smithers: smithers)
+                .logLifecycle("TriggersView")
                 .accessibilityIdentifier("view.triggers")
         case .jjhubWorkflows:
             JJHubWorkflowsView(smithers: smithers)
+                .logLifecycle("JJHubWorkflowsView")
                 .accessibilityIdentifier("view.jjhubWorkflows")
         case .approvals:
             ApprovalsView(smithers: smithers)
+                .logLifecycle("ApprovalsView")
                 .accessibilityIdentifier("view.approvals")
         case .prompts:
             PromptsView(smithers: smithers)
+                .logLifecycle("PromptsView")
                 .accessibilityIdentifier("view.prompts")
         case .scores:
             ScoresView(smithers: smithers)
+                .logLifecycle("ScoresView")
                 .accessibilityIdentifier("view.scores")
         case .memory:
             MemoryView(smithers: smithers)
+                .logLifecycle("MemoryView")
                 .accessibilityIdentifier("view.memory")
         case .search:
             SearchView(smithers: smithers)
+                .logLifecycle("SearchView")
                 .accessibilityIdentifier("view.search")
         case .sql:
             SQLBrowserView(smithers: smithers)
+                .logLifecycle("SQLBrowserView")
                 .accessibilityIdentifier("view.sql")
         case .landings:
             LandingsView(smithers: smithers)
+                .logLifecycle("LandingsView")
                 .accessibilityIdentifier("view.landings")
         case .tickets:
             TicketsView(smithers: smithers)
+                .logLifecycle("TicketsView")
                 .accessibilityIdentifier("view.tickets")
         case .issues:
             IssuesView(smithers: smithers)
+                .logLifecycle("IssuesView")
                 .accessibilityIdentifier("view.issues")
         case .workspaces:
             WorkspacesView(smithers: smithers)
+                .logLifecycle("WorkspacesView")
                 .accessibilityIdentifier("view.workspaces")
+        case .logs:
+            LogViewerView()
+                .logLifecycle("LogViewerView")
+                .accessibilityIdentifier("view.logs")
         }
     }
 
@@ -166,40 +205,91 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.base)
             .task {
+                let logStats = await AppLogger.fileWriter.stats()
+                AppLogger.lifecycle.info("File logging ready", metadata: [
+                    "path": logStats.fileURL.path,
+                    "entries": String(logStats.entryCount),
+                    "size_bytes": String(logStats.sizeBytes)
+                ])
+                AppLogger.lifecycle.info("App launching, checking connection")
                 await smithers.checkConnection()
+                AppLogger.lifecycle.info("Connection check complete", metadata: [
+                    "connected": String(smithers.isConnected),
+                    "cliAvailable": String(smithers.cliAvailable)
+                ])
+                AppNotifications.shared.beginRunEventMonitoring(smithers: smithers)
                 isLoading = false
             }
         } else {
-            NavigationSplitView {
-                SidebarView(store: store, destination: $destination)
+            HStack(spacing: 0) {
+                NavigationSplitView {
+                    SidebarView(
+                        store: store,
+                        destination: $destination,
+                        developerDebugPanelVisible: $developerDebugPanelVisible,
+                        developerDebugAvailable: DeveloperDebugMode.isEnabled
+                    )
                     .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
-            } detail: {
-                detailContent
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .navigationSplitViewStyle(.balanced)
-            .sheet(item: $runSnapshotsSelection) { selection in
-                RunSnapshotsSheet(
-                    smithers: smithers,
-                    runId: selection.runId,
-                    nodeIdFilter: nil,
-                    onClose: { runSnapshotsSelection = nil }
-                )
-                .frame(minWidth: 840, minHeight: 520)
-            }
-            .frame(minWidth: 800, minHeight: 600)
-            .background(Theme.base)
-            .overlay(alignment: .topLeading) {
-                Button("New Chat") {
-                    store.newSession(reusingEmptyPlaceholder: true)
-                    destination = .chat
+                } detail: {
+                    Group {
+                        detailContent
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
-                .keyboardShortcut("n", modifiers: [.command])
-                .accessibilityIdentifier("shortcut.newChat")
-                .frame(width: 1, height: 1)
-                .opacity(0.01)
+                .navigationSplitViewStyle(.balanced)
+                .sheet(item: $runSnapshotsSelection) { selection in
+                    RunSnapshotsSheet(
+                        smithers: smithers,
+                        runId: selection.runId,
+                        nodeIdFilter: nil,
+                        onClose: { runSnapshotsSelection = nil }
+                    )
+                    .frame(minWidth: 840, minHeight: 520)
+                }
+                .frame(minWidth: 800, minHeight: 600)
+                .background(Theme.base)
+                .overlay(alignment: .topLeading) {
+                    VStack(spacing: 0) {
+                        Button("New Chat") {
+                            store.newSession(reusingEmptyPlaceholder: true)
+                            destination = .chat
+                        }
+                        .keyboardShortcut("n", modifiers: [.command])
+                        .accessibilityIdentifier("shortcut.newChat")
+                        .frame(width: 1, height: 1)
+                        .opacity(0.01)
+
+                        if DeveloperDebugMode.isEnabled {
+                            Button("Toggle Developer Debug") {
+                                toggleDeveloperDebugPanel()
+                            }
+                            .keyboardShortcut("d", modifiers: [.command, .shift])
+                            .accessibilityIdentifier("shortcut.toggleDeveloperDebug")
+                            .frame(width: 1, height: 1)
+                            .opacity(0.01)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("app.root")
+                .onChange(of: destination) { _, newValue in
+                    AppLogger.ui.debug("Navigate to \(newValue.label)")
+                }
+
+                if developerDebugPanelVisible && DeveloperDebugMode.isEnabled {
+                    DeveloperDebugPanel(
+                        store: store,
+                        smithers: smithers,
+                        destination: destination,
+                        onClose: { developerDebugPanelVisible = false },
+                        onOpenLogs: { destination = .logs }
+                    )
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
-            .accessibilityIdentifier("app.root")
+            .overlay(alignment: .topTrailing) {
+                AppToastOverlay()
+            }
+            .background(Theme.base)
         } // end else (isLoading)
     }
 
@@ -220,6 +310,15 @@ struct ContentView: View {
     private func openRunTab(runId: String, title: String?, preview: String, nodeId: String? = nil) {
         store.addRunTab(runId: runId, title: title, preview: preview)
         destination = .liveRun(runId: runId, nodeId: nodeId)
+    }
+
+    private func toggleDeveloperDebugPanel() {
+        guard DeveloperDebugMode.isEnabled else { return }
+        developerDebugPanelVisible.toggle()
+        AppLogger.ui.info(
+            "Developer debug panel toggled",
+            metadata: ["visible": String(developerDebugPanelVisible)]
+        )
     }
 
     private func emptyState(_ message: String, icon: String) -> some View {
@@ -254,5 +353,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        AppLogger.lifecycle.info("Application did finish launching")
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Task { @MainActor in
+            AppNotifications.shared.stopRunEventMonitoring()
+        }
+        AppLogger.lifecycle.info("Application will terminate")
     }
 }

@@ -16,6 +16,7 @@ struct SQLBrowserView: View {
     @State private var isLoadingSchema = false
     @State private var isExecuting = false
     @State private var tablesError: String?
+    @State private var queryGeneration = 0
 
     private var selectedTable: SQLTableInfo? {
         guard let selectedTableName else { return nil }
@@ -473,12 +474,17 @@ struct SQLBrowserView: View {
         let trimmed = queryText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        queryGeneration += 1
+        let generation = queryGeneration
         isExecuting = true
         queryError = nil
 
         do {
-            result = try await smithers.executeSQL(trimmed)
+            let fetched = try await smithers.executeSQL(trimmed)
+            guard generation == queryGeneration else { return }
+            result = fetched
         } catch {
+            guard generation == queryGeneration else { return }
             result = nil
             queryError = error.localizedDescription
         }

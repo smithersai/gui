@@ -16,7 +16,7 @@ struct LiveRunChatView: View {
 
     @State private var allBlocks: [ChatBlock] = []
     @State private var attempts: [Int: [ChatBlock]] = [:]
-    @State private var seenBlockIDs: Set<String> = []
+    @State private var inFlightBlockIndexByLifecycleId: [String: Int] = [:]
     @State private var currentAttempt = 0
     @State private var maxAttempt = 0
     @State private var newBlocksInLatest = 0
@@ -27,7 +27,10 @@ struct LiveRunChatView: View {
     @State private var blocksError: String?
 
     @State private var streamTask: Task<Void, Never>?
+    @State private var streamGeneration = UUID()
     @State private var streamDone = false
+    @State private var bufferingInitialStream = false
+    @State private var initialStreamBuffer: [ChatBlock] = []
 
     @State private var follow = true
     @State private var showContextPane = false
@@ -316,16 +319,16 @@ struct LiveRunChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if loadingRun || loadingBlocks {
-                        loadingBody
-                    } else if let bodyError {
-                        errorBody(bodyError)
-                    } else if displayBlocks.isEmpty {
-                        emptyBody
-                    } else {
+                    if !displayBlocks.isEmpty {
                         ForEach(displayBlocks, id: \.stableId) { block in
                             transcriptBlockRow(block)
                         }
+                    } else if loadingRun || loadingBlocks {
+                        loadingBody
+                    } else if let bodyError {
+                        errorBody(bodyError)
+                    } else {
+                        emptyBody
                     }
 
                     if isStreamingIndicatorVisible {
@@ -560,8 +563,9 @@ struct LiveRunChatView: View {
     }
 
     private func loadAll() async {
-        await loadRun()
-        await loadBlocks()
+        async let runResult: () = loadRun()
+        async let blocksResult: () = loadBlocks()
+        _ = await (runResult, blocksResult)
     }
 
     private func loadRun() async {
@@ -581,30 +585,51 @@ struct LiveRunChatView: View {
         loadingBlocks = true
         blocksError = nil
         streamDone = false
+        bufferingInitialStream = true
+        initialStreamBuffer = []
+
+        // Start streaming immediately so messages appear while initial load is in progress
+        startStreaming()
 
         do {
             var blocks = try await smithers.getChatOutput(runId)
             blocks = blocks.filter(matchesNodeFilter)
+            let bufferedBlocks = initialStreamBuffer
+            bufferingInitialStream = false
+            initialStreamBuffer = []
             rebuildAttempts(with: blocks)
-            startStreaming()
+            for block in bufferedBlocks {
+                appendStreamBlock(block)
+            }
         } catch {
-            blocksError = error.localizedDescription
+            bufferingInitialStream = false
+            initialStreamBuffer = []
+            // Only show error if we also have no streamed blocks
+            if allBlocks.isEmpty {
+                blocksError = error.localizedDescription
+            }
         }
 
         loadingBlocks = false
     }
 
     private func startStreaming() {
-        stopStreaming()
+        streamTask?.cancel()
+        streamTask = nil
+        let generation = UUID()
+        streamGeneration = generation
+        streamDone = false
         streamTask = Task {
             for await event in smithers.streamChat(runId) {
                 if Task.isCancelled { break }
                 guard let block = decodeStreamEvent(event) else { continue }
                 await MainActor.run {
+                    guard streamGeneration == generation, !Task.isCancelled else { return }
                     appendStreamBlock(block)
                 }
             }
             await MainActor.run {
+                guard streamGeneration == generation, !Task.isCancelled else { return }
                 streamDone = true
             }
         }
@@ -613,6 +638,9 @@ struct LiveRunChatView: View {
     private func stopStreaming() {
         streamTask?.cancel()
         streamTask = nil
+        streamGeneration = UUID()
+        bufferingInitialStream = false
+        initialStreamBuffer = []
     }
 
     private func decodeStreamEvent(_ event: SSEEvent) -> ChatBlock? {
@@ -630,6 +658,10 @@ struct LiveRunChatView: View {
 
     private func appendStreamBlock(_ block: ChatBlock) {
         guard matchesNodeFilter(block) else { return }
+        if bufferingInitialStream {
+            initialStreamBuffer.append(block)
+        }
+
         if let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty {
             if replaceExistingStreamBlock(block, lifecycleId: lifecycleId) {
                 if follow {
@@ -637,7 +669,6 @@ struct LiveRunChatView: View {
                 }
                 return
             }
-            seenBlockIDs.insert(lifecycleId)
         } else if replaceLastAnonymousAssistantStreamBlock(block) {
             if follow {
                 scrollRequest = UUID()
@@ -646,6 +677,9 @@ struct LiveRunChatView: View {
         }
 
         allBlocks.append(block)
+        if let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty {
+            inFlightBlockIndexByLifecycleId[lifecycleId] = allBlocks.count - 1
+        }
         indexBlock(block)
 
         if block.attemptIndex > currentAttempt {
@@ -661,15 +695,14 @@ struct LiveRunChatView: View {
     private func rebuildAttempts(with blocks: [ChatBlock]) {
         allBlocks = blocks
         attempts = [:]
-        seenBlockIDs = Set(
-            blocks
-                .compactMap(\.lifecycleId)
-                .filter { !$0.isEmpty }
-        )
+        inFlightBlockIndexByLifecycleId = [:]
         maxAttempt = 0
         currentAttempt = 0
 
-        for block in blocks {
+        for (index, block) in blocks.enumerated() {
+            if let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty {
+                inFlightBlockIndexByLifecycleId[lifecycleId] = index
+            }
             indexBlock(block)
         }
 
@@ -689,7 +722,10 @@ struct LiveRunChatView: View {
     }
 
     private func replaceExistingStreamBlock(_ block: ChatBlock, lifecycleId: String) -> Bool {
-        guard let index = allBlocks.firstIndex(where: { $0.lifecycleId == lifecycleId }) else {
+        let mappedIndex = inFlightBlockIndexByLifecycleId[lifecycleId]
+            .flatMap { allBlocks.indices.contains($0) ? $0 : nil }
+        let searchIndex = mappedIndex ?? allBlocks.lastIndex(where: { $0.lifecycleId == lifecycleId })
+        guard let index = searchIndex else {
             return false
         }
 
@@ -697,6 +733,7 @@ struct LiveRunChatView: View {
         allBlocks[index] = existing.canMergeAssistantStream(with: block)
             ? existing.mergingAssistantStream(with: block)
             : block
+        inFlightBlockIndexByLifecycleId[lifecycleId] = index
         rebuildAttemptIndexPreservingSelection()
         return true
     }
@@ -752,7 +789,7 @@ struct LiveRunChatView: View {
                 }
 
                 do {
-                    try launchHijackSession(session)
+                    try await launchHijackSession(session)
                     hijackReturned = true
                     promptResumeAutomation = true
                     appendStatusBlock("--------- HIJACK SESSION LAUNCHED ---------")
@@ -796,17 +833,14 @@ struct LiveRunChatView: View {
         }
     }
 
-    private func launchHijackSession(_ session: HijackSession) throws {
-        let binary = session.agentBinary.isEmpty ? session.agentEngine : session.agentBinary
-        let resumeArgs = session.resumeArgs()
-        guard !binary.isEmpty, !resumeArgs.isEmpty else {
+    private func launchHijackSession(_ session: HijackSession) async throws {
+        guard let invocation = session.launchInvocation() else {
             throw SmithersError.api("Hijack session is missing resume details")
         }
 
         #if os(macOS)
-        let cwd = session.cwd.isEmpty ? FileManager.default.currentDirectoryPath : session.cwd
-        let quotedArgs = resumeArgs.map(shellQuote).joined(separator: " ")
-        let command = "cd \(shellQuote(cwd)); \(shellQuote(binary)) \(quotedArgs)"
+        let quotedArgs = invocation.arguments.map(shellQuote).joined(separator: " ")
+        let command = "cd \(shellQuote(invocation.workingDirectory)); \(shellQuote(invocation.executable)) \(quotedArgs)"
         let script = """
         tell application "Terminal"
             activate
@@ -814,23 +848,56 @@ struct LiveRunChatView: View {
         end tell
         """
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
-        let stderr = Pipe()
-        process.standardError = stderr
-
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let errText = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw SmithersError.cli(errText.isEmpty ? "Failed to launch hijack terminal session" : errText)
-        }
+        try await Self.runHijackLaunchScript(script)
         #else
         throw SmithersError.notAvailable("Hijack handoff is only available on macOS")
         #endif
     }
+
+    #if os(macOS)
+    private nonisolated static func runHijackLaunchScript(_ script: String) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", script]
+
+            let stdout = Pipe()
+            let stderr = Pipe()
+            process.standardOutput = stdout
+            process.standardError = stderr
+
+            let stdoutCollector = HijackProcessOutputBuffer()
+            let stderrCollector = HijackProcessOutputBuffer()
+            stdout.fileHandleForReading.readabilityHandler = { handle in
+                stdoutCollector.append(handle.availableData)
+            }
+            stderr.fileHandleForReading.readabilityHandler = { handle in
+                stderrCollector.append(handle.availableData)
+            }
+            defer {
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
+            }
+
+            try process.run()
+            process.waitUntilExit()
+
+            stdout.fileHandleForReading.readabilityHandler = nil
+            stderr.fileHandleForReading.readabilityHandler = nil
+            stdoutCollector.append(stdout.fileHandleForReading.readDataToEndOfFile())
+            stderrCollector.append(stderr.fileHandleForReading.readDataToEndOfFile())
+
+            guard process.terminationStatus == 0 else {
+                let errText = String(decoding: stderrCollector.snapshot(), as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let outText = String(decoding: stdoutCollector.snapshot(), as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let message = errText.isEmpty ? outText : errText
+                throw SmithersError.cli(message.isEmpty ? "Failed to launch hijack terminal session" : message)
+            }
+        }.value
+    }
+    #endif
 
     private func shellQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
@@ -843,6 +910,27 @@ struct LiveRunChatView: View {
         return "\"\(escaped)\""
     }
 }
+
+#if os(macOS)
+private final class HijackProcessOutputBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    func snapshot() -> Data {
+        lock.lock()
+        let current = data
+        lock.unlock()
+        return current
+    }
+}
+#endif
 
 private struct StreamBlockEnvelope: Decodable {
     let block: ChatBlock?

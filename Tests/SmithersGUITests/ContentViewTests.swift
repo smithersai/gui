@@ -237,7 +237,7 @@ final class ContentViewTests: XCTestCase {
 
     func testNavDestinationEnumHasExactly20StaticCases() {
         let all: [NavDestination] = [
-            .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
+            .chat, .terminal(), .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
@@ -284,8 +284,8 @@ final class ContentViewTests: XCTestCase {
     }
 
     func testTerminalDestinationLabel() {
-        XCTAssertEqual(NavDestination.terminal.label, "Terminal")
-        XCTAssertEqual(NavDestination.terminal.icon, "terminal.fill")
+        XCTAssertEqual(NavDestination.terminal().label, "Terminal")
+        XCTAssertEqual(NavDestination.terminal().icon, "terminal.fill")
     }
 
     func testDashboardDestinationLabel() {
@@ -413,7 +413,7 @@ final class ContentViewTests: XCTestCase {
         // Swift enforces exhaustive switch, so all 20 static routes are covered.
         // No default case means adding a new NavDestination case will cause a compiler error.
         let count = [
-            NavDestination.chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
+            NavDestination.chat, .terminal(), .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ].count
@@ -428,7 +428,7 @@ final class ContentViewTests: XCTestCase {
         let source = try projectSource("ContentView.swift")
         assertSource(
             source,
-            matches: #"NavigationSplitView\s*\{[\s\S]*?SidebarView\s*\(\s*store:\s*store,\s*destination:\s*\$destination\s*\)[\s\S]*?\}\s*detail:\s*\{[\s\S]*?Group\s*\{"#,
+            matches: #"NavigationSplitView\s*\{[\s\S]*?SidebarView\s*\([\s\S]*?store:\s*store,[\s\S]*?destination:\s*\$destination[\s\S]*?\)[\s\S]*?\}\s*detail:\s*\{[\s\S]*?Group\s*\{"#,
             "ContentView should render SidebarView and a detail Group inside NavigationSplitView"
         )
     }
@@ -717,7 +717,7 @@ final class NavDestinationRoutingTests: XCTestCase {
 
     func testAllDestinationsHaveUniqueLabels() {
         let all: [NavDestination] = [
-            .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
+            .chat, .terminal(), .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
@@ -727,7 +727,7 @@ final class NavDestinationRoutingTests: XCTestCase {
 
     func testAllDestinationsHaveUniqueIcons() {
         let all: [NavDestination] = [
-            .chat, .terminal, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
+            .chat, .terminal(), .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows,
             .approvals, .prompts, .scores, .memory, .search, .sql,
             .landings, .tickets, .issues, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
@@ -737,7 +737,7 @@ final class NavDestinationRoutingTests: XCTestCase {
 
     /// NavDestination.terminal uses "terminal.fill" which is a valid SF Symbol.
     func testTerminalIconIsValidSFSymbol() {
-        XCTAssertEqual(NavDestination.terminal.icon, "terminal.fill",
+        XCTAssertEqual(NavDestination.terminal().icon, "terminal.fill",
                        "Terminal icon should be 'terminal.fill'")
     }
 

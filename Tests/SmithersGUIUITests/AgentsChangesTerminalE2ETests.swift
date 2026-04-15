@@ -141,6 +141,40 @@ final class ChangesE2ETests: SmithersGUIUITestCase {
 // MARK: - Terminal E2E Tests
 
 final class TerminalE2ETests: SmithersGUIUITestCase {
+    private func terminalTabCount() -> Int {
+        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "tab.terminal:")
+        return app.buttons.matching(predicate).count
+    }
+
+    private func terminalTabIdentifiers() -> Set<String> {
+        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "tab.terminal:")
+        let tabs = app.buttons.matching(predicate).allElementsBoundByIndex
+        return Set(tabs.map(\.identifier))
+    }
+
+    private func openNewTerminalFromMenu(file: StaticString = #filePath, line: UInt = #line) {
+        let before = terminalTabCount()
+        waitForElement("sidebar.newChat", file: file, line: line).click()
+
+        let identifiedMenuItem = element("sidebar.newTerminal")
+        if identifiedMenuItem.waitForExistence(timeout: 2) {
+            identifiedMenuItem.click()
+        } else {
+            let menuItem = app.menuItems["Terminal"]
+            XCTAssertTrue(menuItem.waitForExistence(timeout: 2), "Missing New > Terminal menu item", file: file, line: line)
+            menuItem.click()
+        }
+
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate { [weak self] _, _ in
+                guard let self else { return false }
+                return self.terminalTabCount() >= before + 1
+            },
+            object: nil
+        )
+        wait(for: [expectation], timeout: 5)
+        XCTAssertTrue(element("view.terminal").waitForExistence(timeout: 5), file: file, line: line)
+    }
 
     func testTerminalViewLoads() {
         navigate(to: "Terminal", expectedViewIdentifier: "view.terminal")
@@ -175,6 +209,14 @@ final class TerminalE2ETests: SmithersGUIUITestCase {
         XCTAssertTrue(terminalNav.waitForExistence(timeout: 5))
         terminalNav.click()
         XCTAssertTrue(element("view.terminal").waitForExistence(timeout: 5))
+    }
+
+    func testNewMenuCreatesMultipleTerminalTabs() {
+        openNewTerminalFromMenu()
+        openNewTerminalFromMenu()
+
+        XCTAssertGreaterThanOrEqual(terminalTabCount(), 2)
+        XCTAssertGreaterThanOrEqual(terminalTabIdentifiers().count, 2)
     }
 }
 

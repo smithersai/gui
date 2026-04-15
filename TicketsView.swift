@@ -372,9 +372,9 @@ struct TicketsView: View {
                 if !hasUnsavedChanges {
                     applySelection(ticketId: selectedId)
                 }
-            } else if let first = tickets.first {
+            } else if let first = tickets.first, !hasUnsavedChanges {
                 applySelection(ticketId: first.id)
-            } else {
+            } else if !hasUnsavedChanges {
                 selectedId = nil
                 detailContent = ""
                 originalContent = ""
@@ -417,24 +417,29 @@ struct TicketsView: View {
     private func saveSelectedTicket() async {
         guard let ticket = selectedTicket else { return }
 
+        let capturedId = ticket.id
+        let contentToSave = detailContent
         isSaving = true
         error = nil
         defer { isSaving = false }
 
         do {
-            let updated = try await smithers.updateTicket(ticket.id, content: detailContent)
-            if let index = tickets.firstIndex(where: { $0.id == ticket.id }) {
+            let updated = try await smithers.updateTicket(capturedId, content: contentToSave)
+            // Only apply if the same ticket is still selected.
+            guard selectedId == capturedId else { return }
+            if let index = tickets.firstIndex(where: { $0.id == capturedId }) {
                 let normalized = Ticket(
                     id: updated.id,
-                    content: updated.content ?? detailContent,
+                    content: updated.content ?? contentToSave,
                     status: updated.status,
                     createdAtMs: updated.createdAtMs,
                     updatedAtMs: updated.updatedAtMs
                 )
                 tickets[index] = normalized
             }
-            originalContent = detailContent
+            originalContent = contentToSave
         } catch {
+            guard selectedId == capturedId else { return }
             self.error = error.localizedDescription
         }
     }

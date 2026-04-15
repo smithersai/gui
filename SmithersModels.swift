@@ -9,6 +9,7 @@ enum RunStatus: String, Codable, CaseIterable {
     case finished
     case failed
     case cancelled
+    case unknown
 
     var label: String {
         switch self {
@@ -17,6 +18,7 @@ enum RunStatus: String, Codable, CaseIterable {
         case .finished: return "FINISHED"
         case .failed: return "FAILED"
         case .cancelled: return "CANCELLED"
+        case .unknown: return "UNKNOWN"
         }
     }
 }
@@ -109,6 +111,318 @@ struct RunInspection: Codable {
     let tasks: [RunTask]
 }
 
+extension RunStatus {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        self = Self.fromCLIStatus(raw)
+    }
+
+    fileprivate static func fromCLIStatus(_ value: String?) -> RunStatus {
+        switch normalizedInspectToken(value) {
+        case "waiting-approval", "waitingapproval", "blocked", "paused":
+            return .waitingApproval
+        case "finished", "complete", "completed", "success", "succeeded", "done":
+            return .finished
+        case "failed", "failure", "error", "errored":
+            return .failed
+        case "cancelled", "canceled":
+            return .cancelled
+        case "running", "in-progress", "inprogress", "started":
+            return .running
+        default:
+            return .unknown
+        }
+    }
+}
+
+extension RunSummary {
+    enum CodingKeys: String, CodingKey {
+        case runId
+        case id
+        case workflowName
+        case workflow
+        case workflowPath
+        case status
+        case startedAtMs
+        case started
+        case finishedAtMs
+        case finished
+        case summary
+        case errorJson
+        case error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let runId = try container.decodeIfPresent(String.self, forKey: .runId)
+            ?? container.decodeIfPresent(String.self, forKey: .id)
+        guard let runId, !runId.isEmpty else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.runId,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected run identifier")
+            )
+        }
+
+        self.runId = runId
+        self.workflowName = normalizeInspectString(
+            try container.decodeIfPresent(String.self, forKey: .workflowName)
+                ?? container.decodeIfPresent(String.self, forKey: .workflow)
+        )
+        self.workflowPath = normalizeInspectString(try container.decodeIfPresent(String.self, forKey: .workflowPath))
+        let status = try container.decodeIfPresent(String.self, forKey: .status)
+        self.status = RunStatus.fromCLIStatus(status)
+
+        let started = try container.decodeIfPresent(String.self, forKey: .started)
+        self.startedAtMs = container.decodeLossyInt64(forKey: .startedAtMs)
+            ?? parseInspectTimestampMs(started)
+
+        let finished = try container.decodeIfPresent(String.self, forKey: .finished)
+        self.finishedAtMs = container.decodeLossyInt64(forKey: .finishedAtMs)
+            ?? parseInspectTimestampMs(finished)
+
+        self.summary = decodeRunSummaryMap(container, forKey: .summary)
+
+        if let errorJson = normalizeInspectString(try container.decodeIfPresent(String.self, forKey: .errorJson)) {
+            self.errorJson = errorJson
+        } else if let errorValue = try? container.decodeIfPresent(JSONValue.self, forKey: .error) {
+            self.errorJson = errorValue.compactJSONString
+        } else {
+            self.errorJson = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(runId, forKey: .runId)
+        try container.encodeIfPresent(workflowName, forKey: .workflowName)
+        try container.encodeIfPresent(workflowPath, forKey: .workflowPath)
+        try container.encode(status.rawValue, forKey: .status)
+        try container.encodeIfPresent(startedAtMs, forKey: .startedAtMs)
+        try container.encodeIfPresent(finishedAtMs, forKey: .finishedAtMs)
+        try container.encodeIfPresent(summary, forKey: .summary)
+        try container.encodeIfPresent(errorJson, forKey: .errorJson)
+    }
+}
+
+extension RunTask {
+    enum CodingKeys: String, CodingKey {
+        case nodeId
+        case id
+        case label
+        case iteration
+        case state
+        case lastAttempt
+        case attempt
+        case updatedAtMs
+        case updatedAt
+        case startedAtMs
+        case startedAt
+        case finishedAtMs
+        case finishedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        let rawNodeId = try container.decodeIfPresent(String.self, forKey: .nodeId)
+            ?? container.decodeIfPresent(String.self, forKey: .id)
+        guard let rawNodeId, !rawNodeId.isEmpty else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.nodeId,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected inspect step id")
+            )
+        }
+
+        let explicitIteration = container.decodeLossyInt(forKey: .iteration)
+        let parsedNode = parseInspectNodeID(rawNodeId, fallbackIteration: explicitIteration)
+
+        self.nodeId = parsedNode.nodeId
+        self.label = normalizeInspectString(try container.decodeIfPresent(String.self, forKey: .label))
+        self.iteration = parsedNode.iteration
+        self.state = normalizeInspectTaskState(try container.decodeIfPresent(String.self, forKey: .state))
+
+        self.lastAttempt = container.decodeLossyInt(forKey: .lastAttempt)
+            ?? container.decodeLossyInt(forKey: .attempt)
+
+        let updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        let finishedAt = try container.decodeIfPresent(String.self, forKey: .finishedAt)
+        let startedAt = try container.decodeIfPresent(String.self, forKey: .startedAt)
+        self.updatedAtMs = container.decodeLossyInt64(forKey: .updatedAtMs)
+            ?? parseInspectTimestampMs(updatedAt)
+            ?? container.decodeLossyInt64(forKey: .finishedAtMs)
+            ?? parseInspectTimestampMs(finishedAt)
+            ?? container.decodeLossyInt64(forKey: .startedAtMs)
+            ?? parseInspectTimestampMs(startedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(nodeId, forKey: .nodeId)
+        try container.encodeIfPresent(label, forKey: .label)
+        try container.encodeIfPresent(iteration, forKey: .iteration)
+        try container.encode(state, forKey: .state)
+        try container.encodeIfPresent(lastAttempt, forKey: .lastAttempt)
+        try container.encodeIfPresent(updatedAtMs, forKey: .updatedAtMs)
+    }
+}
+
+extension RunInspection {
+    enum CodingKeys: String, CodingKey {
+        case run
+        case tasks
+        case steps
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let run = try container.decode(RunSummary.self, forKey: .run)
+        let tasks = try container.decodeIfPresent([RunTask].self, forKey: .tasks)
+            ?? container.decodeIfPresent([RunTask].self, forKey: .steps)
+            ?? []
+
+        self.tasks = tasks
+        if run.summary == nil {
+            self.run = RunSummary(
+                runId: run.runId,
+                workflowName: run.workflowName,
+                workflowPath: run.workflowPath,
+                status: run.status,
+                startedAtMs: run.startedAtMs,
+                finishedAtMs: run.finishedAtMs,
+                summary: summarizeInspectTasks(tasks),
+                errorJson: run.errorJson
+            )
+        } else {
+            self.run = run
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(run, forKey: .run)
+        try container.encode(tasks, forKey: .tasks)
+    }
+}
+
+private func normalizeInspectString(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+        return nil
+    }
+    return (trimmed == "—" || trimmed == "-") ? nil : trimmed
+}
+
+private func normalizedInspectToken(_ value: String?) -> String {
+    normalizeInspectString(value)?
+        .lowercased()
+        .replacingOccurrences(of: "_", with: "-")
+        .replacingOccurrences(of: " ", with: "-")
+        ?? ""
+}
+
+private func normalizeInspectTaskState(_ state: String?) -> String {
+    switch normalizedInspectToken(state) {
+    case "in-progress", "inprogress", "started":
+        return "running"
+    case "waitingapproval", "waiting-approval":
+        return "waiting-approval"
+    case "complete", "completed", "done", "succeeded", "success":
+        return "finished"
+    case "error", "errored":
+        return "failed"
+    default:
+        let normalized = normalizedInspectToken(state)
+        return normalized.isEmpty ? "pending" : normalized
+    }
+}
+
+private func parseInspectTimestampMs(_ value: String?) -> Int64? {
+    guard let raw = normalizeInspectString(value) else { return nil }
+    if let ms = Int64(raw) {
+        return ms
+    }
+    if let date = DateFormatters.parseISO8601InternetDateTime(raw) {
+        return Int64(date.timeIntervalSince1970 * 1000)
+    }
+    return nil
+}
+
+private func parseInspectNodeID(_ rawNodeId: String, fallbackIteration: Int?) -> (nodeId: String, iteration: Int?) {
+    guard fallbackIteration == nil else {
+        return (rawNodeId, fallbackIteration)
+    }
+    guard let splitIndex = rawNodeId.lastIndex(of: ":"),
+          splitIndex < rawNodeId.index(before: rawNodeId.endIndex) else {
+        return (rawNodeId, nil)
+    }
+
+    let base = String(rawNodeId[..<splitIndex])
+    let suffix = String(rawNodeId[rawNodeId.index(after: splitIndex)...])
+    guard !base.isEmpty, let iteration = Int(suffix) else {
+        return (rawNodeId, nil)
+    }
+    return (base, iteration)
+}
+
+private func jsonValueString(_ value: JSONValue?) -> String? {
+    guard let value else { return nil }
+    switch value {
+    case .string(let string):
+        return string
+    case .number(let number):
+        let int = Int64(number)
+        if Double(int) == number {
+            return String(int)
+        }
+        return String(number)
+    case .bool(let bool):
+        return bool ? "true" : "false"
+    default:
+        return nil
+    }
+}
+
+private func cronWorkflowPathString(_ value: JSONValue?) -> String? {
+    guard let value else { return nil }
+    switch value {
+    case .object(let object):
+        return jsonValueString(object["workflowPath"])
+            ?? jsonValueString(object["workflow_path"])
+            ?? jsonValueString(object["path"])
+    default:
+        return jsonValueString(value)
+    }
+}
+
+private func summarizeInspectTasks(_ tasks: [RunTask]) -> [String: Int] {
+    var summary = ["total": tasks.count]
+    for task in tasks {
+        summary[task.state, default: 0] += 1
+    }
+    return summary
+}
+
+private func decodeRunSummaryMap<K: CodingKey>(
+    _ container: KeyedDecodingContainer<K>,
+    forKey key: K
+) -> [String: Int]? {
+    if let value = try? container.decodeIfPresent([String: Int].self, forKey: key) {
+        return value
+    }
+    if let value = try? container.decodeIfPresent([String: String].self, forKey: key) {
+        return value.reduce(into: [:]) { partialResult, pair in
+            guard let intValue = Int(pair.value) else { return }
+            partialResult[pair.key] = intValue
+        }
+    }
+    if let value = try? container.decodeIfPresent([String: Double].self, forKey: key) {
+        return value.reduce(into: [:]) { partialResult, pair in
+            partialResult[pair.key] = Int(pair.value)
+        }
+    }
+    return nil
+}
+
 // MARK: - Agent Types
 
 struct SmithersAgent: Identifiable, Codable {
@@ -125,10 +439,43 @@ struct SmithersAgent: Identifiable, Codable {
     let authExpired: Bool?
 }
 
+struct CodexAuthState: Equatable {
+    let hasCodexCLI: Bool
+    let codexCLIPath: String?
+    let hasAuthFile: Bool
+    let hasAPIKey: Bool
+    let authFilePath: String
+
+    var isReady: Bool {
+        hasAuthFile || hasAPIKey
+    }
+
+    var modeLabel: String {
+        switch (hasAuthFile, hasAPIKey) {
+        case (true, true):
+            return "ChatGPT + API key"
+        case (true, false):
+            return "ChatGPT"
+        case (false, true):
+            return "API key"
+        case (false, false):
+            return "Not configured"
+        }
+    }
+}
+
 // MARK: - Workflow Types
 
 enum WorkflowStatus: String, Codable {
-    case draft, active, hot, archived
+    case draft, active, hot, archived, unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        self = WorkflowStatus(rawValue: raw) ?? .unknown
+    }
 }
 
 struct Workflow: Identifiable, Codable {
@@ -138,6 +485,91 @@ struct Workflow: Identifiable, Codable {
     let relativePath: String?
     let status: WorkflowStatus?
     let updatedAt: String?
+
+    /// Canonical on-disk workflow file path used by smithers graph/up commands.
+    var filePath: String? {
+        Self.normalizedPath(relativePath)
+    }
+
+    init(
+        id: String,
+        workspaceId: String?,
+        name: String,
+        relativePath: String?,
+        status: WorkflowStatus?,
+        updatedAt: String?
+    ) {
+        self.id = id
+        self.workspaceId = Self.normalizedText(workspaceId)
+        self.name = Self.normalizedText(name) ?? id
+        self.relativePath = Self.normalizedPath(relativePath)
+        self.status = status
+        self.updatedAt = Self.normalizedText(updatedAt)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, workspaceId, name, relativePath, status, updatedAt
+        case workspaceIdSnake = "workspace_id"
+        case displayName
+        case entryFile
+        case path
+        case workflowPath
+        case workflowPathSnake = "workflow_path"
+        case updatedAtSnake = "updated_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decode(String.self, forKey: .id)
+
+        let camelWorkspaceId = try container.decodeIfPresent(String.self, forKey: .workspaceId)
+        let snakeWorkspaceId = try container.decodeIfPresent(String.self, forKey: .workspaceIdSnake)
+        workspaceId = Self.normalizedText(camelWorkspaceId ?? snakeWorkspaceId)
+
+        let decodedName = try container.decodeIfPresent(String.self, forKey: .name)
+        let decodedDisplayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        name = Self.normalizedText(decodedName ?? decodedDisplayName) ?? id
+
+        let decodedRelativePath = try container.decodeIfPresent(String.self, forKey: .relativePath)
+        let decodedEntryFile = try container.decodeIfPresent(String.self, forKey: .entryFile)
+        let decodedPath = try container.decodeIfPresent(String.self, forKey: .path)
+        let decodedWorkflowPath = try container.decodeIfPresent(String.self, forKey: .workflowPath)
+        let decodedWorkflowPathSnake = try container.decodeIfPresent(String.self, forKey: .workflowPathSnake)
+        relativePath = Self.normalizedPath(
+            decodedRelativePath
+                ?? decodedEntryFile
+                ?? decodedPath
+                ?? decodedWorkflowPath
+                ?? decodedWorkflowPathSnake
+        )
+
+        status = try container.decodeIfPresent(WorkflowStatus.self, forKey: .status)
+
+        let camelUpdatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        let snakeUpdatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAtSnake)
+        updatedAt = Self.normalizedText(camelUpdatedAt ?? snakeUpdatedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(workspaceId, forKey: .workspaceId)
+        try container.encode(name, forKey: .name)
+        try container.encodeIfPresent(relativePath, forKey: .relativePath)
+        try container.encodeIfPresent(status, forKey: .status)
+        try container.encodeIfPresent(updatedAt, forKey: .updatedAt)
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func normalizedPath(_ value: String?) -> String? {
+        normalizedText(value)
+    }
 }
 
 struct WorkflowLaunchField: Codable {
@@ -145,17 +577,20 @@ struct WorkflowLaunchField: Codable {
     let key: String
     let type: String?       // string, number, boolean
     let defaultValue: String?
+    let required: Bool
 
     enum CodingKeys: String, CodingKey {
-        case name, label, key, type
+        case name, label, key, type, required
+        case isRequired
         case defaultValue = "default"
     }
 
-    init(name: String, key: String, type: String?, defaultValue: String?) {
+    init(name: String, key: String, type: String?, defaultValue: String?, required: Bool = false) {
         self.name = name
         self.key = key
         self.type = type
         self.defaultValue = defaultValue
+        self.required = required
     }
 
     init(from decoder: Decoder) throws {
@@ -172,6 +607,9 @@ struct WorkflowLaunchField: Codable {
         } else {
             defaultValue = nil
         }
+        required = container.decodeLossyBool(forKey: .required)
+            ?? container.decodeLossyBool(forKey: .isRequired)
+            ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -180,6 +618,9 @@ struct WorkflowLaunchField: Codable {
         try container.encode(key, forKey: .key)
         try container.encodeIfPresent(type, forKey: .type)
         try container.encodeIfPresent(defaultValue, forKey: .defaultValue)
+        if required {
+            try container.encode(required, forKey: .required)
+        }
     }
 }
 
@@ -226,7 +667,7 @@ struct WorkflowDAGTask: Identifiable, Codable {
     let prompt: String?
     let parallelGroupId: String?
 
-    var id: String { nodeId }
+    var id: String { "\(nodeId):\(iteration ?? 0)" }
 
     enum CodingKeys: String, CodingKey {
         case nodeId, ordinal, iteration, outputTableName, needsApproval, approvalMode
@@ -563,6 +1004,7 @@ struct Approval: Identifiable, Codable {
     let id: String
     let runId: String
     let nodeId: String
+    let iteration: Int?
     let workflowPath: String?
     let gate: String?
     let status: String          // pending, approved, denied
@@ -570,7 +1012,123 @@ struct Approval: Identifiable, Codable {
     let requestedAt: Int64
     let resolvedAt: Int64?
     let resolvedBy: String?
-    let source: String? = nil   // http, sqlite, exec, synthetic
+    let source: String?         // http, sqlite, exec, synthetic
+
+    init(
+        id: String,
+        runId: String,
+        nodeId: String,
+        iteration: Int? = nil,
+        workflowPath: String? = nil,
+        gate: String? = nil,
+        status: String,
+        payload: String? = nil,
+        requestedAt: Int64,
+        resolvedAt: Int64? = nil,
+        resolvedBy: String? = nil,
+        source: String? = nil
+    ) {
+        self.id = id
+        self.runId = runId
+        self.nodeId = nodeId
+        self.iteration = iteration
+        self.workflowPath = workflowPath
+        self.gate = gate
+        self.status = status
+        self.payload = payload
+        self.requestedAt = requestedAt
+        self.resolvedAt = resolvedAt
+        self.resolvedBy = resolvedBy
+        self.source = source
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case runId
+        case nodeId
+        case iteration
+        case attempt
+        case workflowPath
+        case gate
+        case status
+        case payload
+        case requestedAt
+        case requestedAtMs
+        case resolvedAt
+        case resolvedAtMs
+        case resolvedBy
+        case decidedAt
+        case decidedAtMs
+        case decidedBy
+        case source
+        case transportSource
+
+        case runIDSnake = "run_id"
+        case nodeIDSnake = "node_id"
+        case workflowPathSnake = "workflow_path"
+        case requestedAtSnake = "requested_at"
+        case requestedAtMsSnake = "requested_at_ms"
+        case resolvedAtSnake = "resolved_at"
+        case resolvedAtMsSnake = "resolved_at_ms"
+        case resolvedBySnake = "resolved_by"
+        case decidedAtSnake = "decided_at"
+        case decidedAtMsSnake = "decided_at_ms"
+        case decidedBySnake = "decided_by"
+        case transportSourceSnake = "transport_source"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        runId = try container.decodeIfPresent(String.self, forKey: .runId)
+            ?? container.decode(String.self, forKey: .runIDSnake)
+        nodeId = try container.decodeIfPresent(String.self, forKey: .nodeId)
+            ?? container.decode(String.self, forKey: .nodeIDSnake)
+        iteration = container.decodeLossyInt(forKey: .iteration)
+            ?? container.decodeLossyInt(forKey: .attempt)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+            ?? "\(runId):\(nodeId):\(iteration ?? 0)"
+        workflowPath = try container.decodeIfPresent(String.self, forKey: .workflowPath)
+            ?? container.decodeIfPresent(String.self, forKey: .workflowPathSnake)
+        gate = try container.decodeIfPresent(String.self, forKey: .gate)
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "pending"
+        payload = try container.decodeIfPresent(String.self, forKey: .payload)
+        requestedAt = container.decodeLossyInt64(forKey: .requestedAt)
+            ?? container.decodeLossyInt64(forKey: .requestedAtMs)
+            ?? container.decodeLossyInt64(forKey: .requestedAtSnake)
+            ?? container.decodeLossyInt64(forKey: .requestedAtMsSnake)
+            ?? Int64(Date().timeIntervalSince1970 * 1000)
+        resolvedAt = container.decodeLossyInt64(forKey: .resolvedAt)
+            ?? container.decodeLossyInt64(forKey: .resolvedAtMs)
+            ?? container.decodeLossyInt64(forKey: .resolvedAtSnake)
+            ?? container.decodeLossyInt64(forKey: .resolvedAtMsSnake)
+            ?? container.decodeLossyInt64(forKey: .decidedAt)
+            ?? container.decodeLossyInt64(forKey: .decidedAtMs)
+            ?? container.decodeLossyInt64(forKey: .decidedAtSnake)
+            ?? container.decodeLossyInt64(forKey: .decidedAtMsSnake)
+        resolvedBy = try container.decodeIfPresent(String.self, forKey: .resolvedBy)
+            ?? container.decodeIfPresent(String.self, forKey: .resolvedBySnake)
+            ?? container.decodeIfPresent(String.self, forKey: .decidedBy)
+            ?? container.decodeIfPresent(String.self, forKey: .decidedBySnake)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+            ?? container.decodeIfPresent(String.self, forKey: .transportSource)
+            ?? container.decodeIfPresent(String.self, forKey: .transportSourceSnake)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(runId, forKey: .runId)
+        try container.encode(nodeId, forKey: .nodeId)
+        try container.encodeIfPresent(iteration, forKey: .iteration)
+        try container.encodeIfPresent(workflowPath, forKey: .workflowPath)
+        try container.encodeIfPresent(gate, forKey: .gate)
+        try container.encode(status, forKey: .status)
+        try container.encodeIfPresent(payload, forKey: .payload)
+        try container.encode(requestedAt, forKey: .requestedAt)
+        try container.encodeIfPresent(resolvedAt, forKey: .resolvedAt)
+        try container.encodeIfPresent(resolvedBy, forKey: .resolvedBy)
+        try container.encodeIfPresent(source, forKey: .source)
+    }
 
     var requestedDate: Date {
         Date(timeIntervalSince1970: Double(requestedAt) / 1000)
@@ -581,7 +1139,11 @@ struct Approval: Identifiable, Codable {
     }
 
     var waitTime: String {
-        let seconds = Int(Date().timeIntervalSince(requestedDate))
+        waitTime(at: Date())
+    }
+
+    func waitTime(at date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(requestedDate)))
         if seconds < 60 { return "\(seconds)s" }
         if seconds < 3600 { return seconds % 60 == 0 ? "\(seconds / 60)m" : "\(seconds / 60)m \(seconds % 60)s" }
         return "\(seconds / 3600)h \(seconds / 60 % 60)m"
@@ -653,10 +1215,13 @@ struct ApprovalDecision: Identifiable, Codable {
         case note
         case reason
         case resolvedAt
+        case resolvedAtMs
         case resolvedBy
         case decidedAt
+        case decidedAtMs
         case decidedBy
         case requestedAt
+        case requestedAtMs
         case workflowPath
         case gate
         case payload
@@ -666,10 +1231,13 @@ struct ApprovalDecision: Identifiable, Codable {
         case runIDSnake = "run_id"
         case nodeIDSnake = "node_id"
         case resolvedAtSnake = "resolved_at"
+        case resolvedAtMsSnake = "resolved_at_ms"
         case resolvedBySnake = "resolved_by"
         case decidedAtSnake = "decided_at"
+        case decidedAtMsSnake = "decided_at_ms"
         case decidedBySnake = "decided_by"
         case requestedAtSnake = "requested_at"
+        case requestedAtMsSnake = "requested_at_ms"
         case workflowPathSnake = "workflow_path"
         case transportSourceSnake = "transport_source"
     }
@@ -681,16 +1249,21 @@ struct ApprovalDecision: Identifiable, Codable {
             ?? container.decode(String.self, forKey: .runIDSnake)
         nodeId = try container.decodeIfPresent(String.self, forKey: .nodeId)
             ?? container.decode(String.self, forKey: .nodeIDSnake)
-        action = try container.decodeIfPresent(String.self, forKey: .action)
-            ?? container.decodeIfPresent(String.self, forKey: .decision)
-            ?? container.decodeIfPresent(String.self, forKey: .status)
-            ?? "approved"
+        action = Self.normalizedAction(
+            try container.decodeIfPresent(String.self, forKey: .action)
+                ?? container.decodeIfPresent(String.self, forKey: .decision)
+                ?? container.decodeIfPresent(String.self, forKey: .status)
+        )
         note = try container.decodeIfPresent(String.self, forKey: .note)
         reason = try container.decodeIfPresent(String.self, forKey: .reason)
         resolvedAt = container.decodeLossyInt64(forKey: .resolvedAt)
+            ?? container.decodeLossyInt64(forKey: .resolvedAtMs)
             ?? container.decodeLossyInt64(forKey: .resolvedAtSnake)
+            ?? container.decodeLossyInt64(forKey: .resolvedAtMsSnake)
             ?? container.decodeLossyInt64(forKey: .decidedAt)
+            ?? container.decodeLossyInt64(forKey: .decidedAtMs)
             ?? container.decodeLossyInt64(forKey: .decidedAtSnake)
+            ?? container.decodeLossyInt64(forKey: .decidedAtMsSnake)
         resolvedBy = try container.decodeIfPresent(String.self, forKey: .resolvedBy)
             ?? container.decodeIfPresent(String.self, forKey: .resolvedBySnake)
             ?? container.decodeIfPresent(String.self, forKey: .decidedBy)
@@ -700,7 +1273,9 @@ struct ApprovalDecision: Identifiable, Codable {
         gate = try container.decodeIfPresent(String.self, forKey: .gate)
         payload = try container.decodeIfPresent(String.self, forKey: .payload)
         requestedAt = container.decodeLossyInt64(forKey: .requestedAt)
+            ?? container.decodeLossyInt64(forKey: .requestedAtMs)
             ?? container.decodeLossyInt64(forKey: .requestedAtSnake)
+            ?? container.decodeLossyInt64(forKey: .requestedAtMsSnake)
         source = try container.decodeIfPresent(String.self, forKey: .source)
             ?? container.decodeIfPresent(String.self, forKey: .transportSource)
             ?? container.decodeIfPresent(String.self, forKey: .transportSourceSnake)
@@ -721,6 +1296,22 @@ struct ApprovalDecision: Identifiable, Codable {
         try container.encodeIfPresent(payload, forKey: .payload)
         try container.encodeIfPresent(requestedAt, forKey: .requestedAt)
         try container.encodeIfPresent(source, forKey: .source)
+    }
+
+    private static func normalizedAction(_ rawAction: String?) -> String {
+        let normalized = rawAction?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        switch normalized {
+        case "approve", "approved":
+            return "approved"
+        case "deny", "denied":
+            return "denied"
+        case "pending", "waiting", "waiting-approval", "blocked", "":
+            return "pending"
+        default:
+            return "unknown"
+        }
     }
 }
 
@@ -743,6 +1334,28 @@ struct PromptInput: Identifiable, Codable {
     enum CodingKeys: String, CodingKey {
         case name, type
         case defaultValue = "default"
+        case defaultValueAlt = "defaultValue"
+    }
+
+    init(name: String, type: String?, defaultValue: String?) {
+        self.name = name
+        self.type = type
+        self.defaultValue = defaultValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        defaultValue = try container.decodeIfPresent(String.self, forKey: .defaultValue)
+            ?? container.decodeIfPresent(String.self, forKey: .defaultValueAlt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encodeIfPresent(type, forKey: .type)
+        try container.encodeIfPresent(defaultValue, forKey: .defaultValue)
     }
 }
 
@@ -815,6 +1428,334 @@ struct AggregateScore: Identifiable, Codable {
     }
 }
 
+struct MetricsFilter: Codable, Equatable {
+    let workflowPath: String?
+    let runId: String?
+    let nodeId: String?
+    let startMs: Int64?
+    let endMs: Int64?
+    let groupBy: String?
+
+    init(
+        workflowPath: String? = nil,
+        runId: String? = nil,
+        nodeId: String? = nil,
+        startMs: Int64? = nil,
+        endMs: Int64? = nil,
+        groupBy: String? = nil
+    ) {
+        self.workflowPath = workflowPath
+        self.runId = runId
+        self.nodeId = nodeId
+        self.startMs = startMs
+        self.endMs = endMs
+        self.groupBy = groupBy
+    }
+}
+
+struct TokenMetrics: Decodable, Equatable {
+    let totalInputTokens: Int64
+    let totalOutputTokens: Int64
+    let totalTokens: Int64
+    let cacheReadTokens: Int64
+    let cacheWriteTokens: Int64
+    let byPeriod: [TokenPeriodBatch]
+
+    init(
+        totalInputTokens: Int64 = 0,
+        totalOutputTokens: Int64 = 0,
+        totalTokens: Int64 = 0,
+        cacheReadTokens: Int64 = 0,
+        cacheWriteTokens: Int64 = 0,
+        byPeriod: [TokenPeriodBatch] = []
+    ) {
+        self.totalInputTokens = totalInputTokens
+        self.totalOutputTokens = totalOutputTokens
+        self.totalTokens = totalTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.byPeriod = byPeriod
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case totalInputTokens
+        case totalOutputTokens
+        case totalTokens
+        case cacheReadTokens
+        case cacheWriteTokens
+        case byPeriod
+        case totalInputTokensSnake = "total_input_tokens"
+        case totalOutputTokensSnake = "total_output_tokens"
+        case totalTokensSnake = "total_tokens"
+        case cacheReadTokensSnake = "cache_read_tokens"
+        case cacheWriteTokensSnake = "cache_write_tokens"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        totalInputTokens = container.decodeLossyInt64(forKey: .totalInputTokens)
+            ?? container.decodeLossyInt64(forKey: .totalInputTokensSnake)
+            ?? 0
+        totalOutputTokens = container.decodeLossyInt64(forKey: .totalOutputTokens)
+            ?? container.decodeLossyInt64(forKey: .totalOutputTokensSnake)
+            ?? 0
+        let decodedTotalTokens = container.decodeLossyInt64(forKey: .totalTokens)
+            ?? container.decodeLossyInt64(forKey: .totalTokensSnake)
+        totalTokens = decodedTotalTokens ?? (totalInputTokens + totalOutputTokens)
+        cacheReadTokens = container.decodeLossyInt64(forKey: .cacheReadTokens)
+            ?? container.decodeLossyInt64(forKey: .cacheReadTokensSnake)
+            ?? 0
+        cacheWriteTokens = container.decodeLossyInt64(forKey: .cacheWriteTokens)
+            ?? container.decodeLossyInt64(forKey: .cacheWriteTokensSnake)
+            ?? 0
+        byPeriod = (try? container.decode([TokenPeriodBatch].self, forKey: .byPeriod)) ?? []
+    }
+
+    var cacheHitRate: Double? {
+        guard totalTokens > 0 else { return nil }
+        return Double(cacheReadTokens) / Double(totalTokens)
+    }
+}
+
+struct TokenPeriodBatch: Decodable, Equatable {
+    let label: String
+    let inputTokens: Int64
+    let outputTokens: Int64
+    let cacheReadTokens: Int64
+    let cacheWriteTokens: Int64
+
+    init(
+        label: String,
+        inputTokens: Int64 = 0,
+        outputTokens: Int64 = 0,
+        cacheReadTokens: Int64 = 0,
+        cacheWriteTokens: Int64 = 0
+    ) {
+        self.label = label
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.cacheWriteTokens = cacheWriteTokens
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case label
+        case inputTokens
+        case outputTokens
+        case cacheReadTokens
+        case cacheWriteTokens
+        case inputTokensSnake = "input_tokens"
+        case outputTokensSnake = "output_tokens"
+        case cacheReadTokensSnake = "cache_read_tokens"
+        case cacheWriteTokensSnake = "cache_write_tokens"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        label = (try? container.decode(String.self, forKey: .label)) ?? ""
+        inputTokens = container.decodeLossyInt64(forKey: .inputTokens)
+            ?? container.decodeLossyInt64(forKey: .inputTokensSnake)
+            ?? 0
+        outputTokens = container.decodeLossyInt64(forKey: .outputTokens)
+            ?? container.decodeLossyInt64(forKey: .outputTokensSnake)
+            ?? 0
+        cacheReadTokens = container.decodeLossyInt64(forKey: .cacheReadTokens)
+            ?? container.decodeLossyInt64(forKey: .cacheReadTokensSnake)
+            ?? 0
+        cacheWriteTokens = container.decodeLossyInt64(forKey: .cacheWriteTokens)
+            ?? container.decodeLossyInt64(forKey: .cacheWriteTokensSnake)
+            ?? 0
+    }
+}
+
+struct LatencyMetrics: Decodable, Equatable {
+    let count: Int
+    let meanMs: Double
+    let minMs: Double
+    let maxMs: Double
+    let p50Ms: Double
+    let p95Ms: Double
+    let byPeriod: [LatencyPeriodBatch]
+
+    init(
+        count: Int = 0,
+        meanMs: Double = 0,
+        minMs: Double = 0,
+        maxMs: Double = 0,
+        p50Ms: Double = 0,
+        p95Ms: Double = 0,
+        byPeriod: [LatencyPeriodBatch] = []
+    ) {
+        self.count = count
+        self.meanMs = meanMs
+        self.minMs = minMs
+        self.maxMs = maxMs
+        self.p50Ms = p50Ms
+        self.p95Ms = p95Ms
+        self.byPeriod = byPeriod
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case count
+        case meanMs
+        case minMs
+        case maxMs
+        case p50Ms
+        case p95Ms
+        case byPeriod
+        case meanMsSnake = "mean_ms"
+        case minMsSnake = "min_ms"
+        case maxMsSnake = "max_ms"
+        case p50MsSnake = "p50_ms"
+        case p95MsSnake = "p95_ms"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        count = container.decodeLossyInt(forKey: .count) ?? 0
+        meanMs = (try? container.decode(Double.self, forKey: .meanMs))
+            ?? (try? container.decode(Double.self, forKey: .meanMsSnake))
+            ?? 0
+        minMs = (try? container.decode(Double.self, forKey: .minMs))
+            ?? (try? container.decode(Double.self, forKey: .minMsSnake))
+            ?? 0
+        maxMs = (try? container.decode(Double.self, forKey: .maxMs))
+            ?? (try? container.decode(Double.self, forKey: .maxMsSnake))
+            ?? 0
+        p50Ms = (try? container.decode(Double.self, forKey: .p50Ms))
+            ?? (try? container.decode(Double.self, forKey: .p50MsSnake))
+            ?? 0
+        p95Ms = (try? container.decode(Double.self, forKey: .p95Ms))
+            ?? (try? container.decode(Double.self, forKey: .p95MsSnake))
+            ?? 0
+        byPeriod = (try? container.decode([LatencyPeriodBatch].self, forKey: .byPeriod)) ?? []
+    }
+}
+
+struct LatencyPeriodBatch: Decodable, Equatable {
+    let label: String
+    let count: Int
+    let meanMs: Double
+    let p50Ms: Double
+    let p95Ms: Double
+
+    init(
+        label: String,
+        count: Int = 0,
+        meanMs: Double = 0,
+        p50Ms: Double = 0,
+        p95Ms: Double = 0
+    ) {
+        self.label = label
+        self.count = count
+        self.meanMs = meanMs
+        self.p50Ms = p50Ms
+        self.p95Ms = p95Ms
+    }
+}
+
+struct CostReport: Decodable, Equatable {
+    let totalCostUSD: Double
+    let inputCostUSD: Double
+    let outputCostUSD: Double
+    let runCount: Int
+    let byPeriod: [CostPeriodBatch]
+
+    init(
+        totalCostUSD: Double = 0,
+        inputCostUSD: Double = 0,
+        outputCostUSD: Double = 0,
+        runCount: Int = 0,
+        byPeriod: [CostPeriodBatch] = []
+    ) {
+        self.totalCostUSD = totalCostUSD
+        self.inputCostUSD = inputCostUSD
+        self.outputCostUSD = outputCostUSD
+        self.runCount = runCount
+        self.byPeriod = byPeriod
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case totalCostUSD = "totalCostUsd"
+        case inputCostUSD = "inputCostUsd"
+        case outputCostUSD = "outputCostUsd"
+        case runCount
+        case byPeriod
+        case totalCostUSDSnake = "total_cost_usd"
+        case inputCostUSDSnake = "input_cost_usd"
+        case outputCostUSDSnake = "output_cost_usd"
+        case runCountSnake = "run_count"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        totalCostUSD = (try? container.decode(Double.self, forKey: .totalCostUSD))
+            ?? (try? container.decode(Double.self, forKey: .totalCostUSDSnake))
+            ?? 0
+        inputCostUSD = (try? container.decode(Double.self, forKey: .inputCostUSD))
+            ?? (try? container.decode(Double.self, forKey: .inputCostUSDSnake))
+            ?? 0
+        outputCostUSD = (try? container.decode(Double.self, forKey: .outputCostUSD))
+            ?? (try? container.decode(Double.self, forKey: .outputCostUSDSnake))
+            ?? 0
+        runCount = container.decodeLossyInt(forKey: .runCount)
+            ?? container.decodeLossyInt(forKey: .runCountSnake)
+            ?? 0
+        byPeriod = (try? container.decode([CostPeriodBatch].self, forKey: .byPeriod)) ?? []
+    }
+}
+
+struct CostPeriodBatch: Decodable, Equatable {
+    let label: String
+    let totalCostUSD: Double
+    let inputCostUSD: Double
+    let outputCostUSD: Double
+    let runCount: Int
+
+    init(
+        label: String,
+        totalCostUSD: Double = 0,
+        inputCostUSD: Double = 0,
+        outputCostUSD: Double = 0,
+        runCount: Int = 0
+    ) {
+        self.label = label
+        self.totalCostUSD = totalCostUSD
+        self.inputCostUSD = inputCostUSD
+        self.outputCostUSD = outputCostUSD
+        self.runCount = runCount
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case label
+        case totalCostUSD = "totalCostUsd"
+        case inputCostUSD = "inputCostUsd"
+        case outputCostUSD = "outputCostUsd"
+        case runCount
+        case totalCostUSDSnake = "total_cost_usd"
+        case inputCostUSDSnake = "input_cost_usd"
+        case outputCostUSDSnake = "output_cost_usd"
+        case runCountSnake = "run_count"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        label = (try? container.decode(String.self, forKey: .label)) ?? ""
+        totalCostUSD = (try? container.decode(Double.self, forKey: .totalCostUSD))
+            ?? (try? container.decode(Double.self, forKey: .totalCostUSDSnake))
+            ?? 0
+        inputCostUSD = (try? container.decode(Double.self, forKey: .inputCostUSD))
+            ?? (try? container.decode(Double.self, forKey: .inputCostUSDSnake))
+            ?? 0
+        outputCostUSD = (try? container.decode(Double.self, forKey: .outputCostUSD))
+            ?? (try? container.decode(Double.self, forKey: .outputCostUSDSnake))
+            ?? 0
+        runCount = container.decodeLossyInt(forKey: .runCount)
+            ?? container.decodeLossyInt(forKey: .runCountSnake)
+            ?? 0
+    }
+}
+
 // MARK: - Memory Types
 
 struct MemoryFact: Identifiable, Codable {
@@ -825,6 +1766,100 @@ struct MemoryFact: Identifiable, Codable {
     let createdAtMs: Int64
     let updatedAtMs: Int64
     let ttlMs: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case namespace
+        case key
+        case valueJson
+        case value = "value"
+        case valueJsonSnake = "value_json"
+        case schemaSig
+        case schemaSigSnake = "schema_sig"
+        case createdAtMs
+        case createdAtMsSnake = "created_at_ms"
+        case updatedAtMs
+        case updatedAtMsSnake = "updated_at_ms"
+        case ttlMs
+        case ttlMsSnake = "ttl_ms"
+    }
+
+    init(
+        namespace: String,
+        key: String,
+        valueJson: String,
+        schemaSig: String?,
+        createdAtMs: Int64,
+        updatedAtMs: Int64,
+        ttlMs: Int64?
+    ) {
+        self.namespace = namespace
+        self.key = key
+        self.valueJson = valueJson
+        self.schemaSig = schemaSig
+        self.createdAtMs = createdAtMs
+        self.updatedAtMs = updatedAtMs
+        self.ttlMs = ttlMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        let decodedNamespace = try container.decodeIfPresent(String.self, forKey: .namespace)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let decodedKey = try container.decodeIfPresent(String.self, forKey: .key)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            let namespace = decodedNamespace,
+            !namespace.isEmpty,
+            let key = decodedKey,
+            !key.isEmpty
+        else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Memory fact requires namespace and key")
+            )
+        }
+
+        let valueJson = try container.decodeIfPresent(String.self, forKey: .valueJson)
+            ?? container.decodeIfPresent(String.self, forKey: .valueJsonSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .value)
+        guard let valueJson else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Memory fact requires valueJson")
+            )
+        }
+
+        guard
+            let createdAtMs = container.decodeLossyInt64(forKey: .createdAtMs)
+                ?? container.decodeLossyInt64(forKey: .createdAtMsSnake),
+            let updatedAtMs = container.decodeLossyInt64(forKey: .updatedAtMs)
+                ?? container.decodeLossyInt64(forKey: .updatedAtMsSnake)
+        else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Memory fact requires createdAtMs and updatedAtMs")
+            )
+        }
+
+        self.namespace = namespace
+        self.key = key
+        self.valueJson = valueJson
+        self.schemaSig = try container.decodeIfPresent(String.self, forKey: .schemaSig)
+            ?? container.decodeIfPresent(String.self, forKey: .schemaSigSnake)
+        self.createdAtMs = createdAtMs
+        self.updatedAtMs = updatedAtMs
+        self.ttlMs = container.decodeLossyInt64(forKey: .ttlMs)
+            ?? container.decodeLossyInt64(forKey: .ttlMsSnake)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(namespace, forKey: .namespace)
+        try container.encode(key, forKey: .key)
+        try container.encode(valueJson, forKey: .valueJson)
+        try container.encodeIfPresent(schemaSig, forKey: .schemaSig)
+        try container.encode(createdAtMs, forKey: .createdAtMs)
+        try container.encode(updatedAtMs, forKey: .updatedAtMs)
+        try container.encodeIfPresent(ttlMs, forKey: .ttlMs)
+    }
 
     var id: String { "\(namespace):\(key)" }
 
@@ -846,6 +1881,10 @@ struct MemoryRecallResult: Identifiable, Codable {
 }
 
 // MARK: - Snapshot Types
+
+struct TimelineResponse: Codable {
+    let timeline: Timeline
+}
 
 struct Timeline: Codable {
     let runId: String
@@ -1027,6 +2066,10 @@ struct SnapshotDiff: Codable {
             vcsPointerChanged: try container.decodeIfPresent(Bool.self, forKey: .vcsPointerChanged) ?? false
         )
     }
+}
+
+struct SnapshotDiffResponse: Codable {
+    let diff: SnapshotDiff
 }
 
 struct SnapshotNodeChange: Codable, Equatable {
@@ -1278,10 +2321,13 @@ struct SmithersIssue: Identifiable, Codable {
         case number
         case title
         case body
+        case description
         case state
+        case status
         case labels
         case assignees
         case commentCount
+        case comments
         case commentCountSnake = "comment_count"
         case commentsCountSnake = "comments_count"
     }
@@ -1292,12 +2338,15 @@ struct SmithersIssue: Identifiable, Codable {
         id = Self.decodeString(from: container, forKey: .id)
             ?? number.map { "issue-\($0)" }
             ?? "issue"
-        title = (try? container.decode(String.self, forKey: .title)) ?? ""
-        body = try? container.decodeIfPresent(String.self, forKey: .body)
-        state = try? container.decodeIfPresent(String.self, forKey: .state)
+        title = Self.decodeNormalizedString(from: container, forKey: .title) ?? ""
+        body = Self.decodeNormalizedString(from: container, forKey: .body)
+            ?? Self.decodeNormalizedString(from: container, forKey: .description)
+        state = Self.decodeNormalizedString(from: container, forKey: .state)
+            ?? Self.decodeNormalizedString(from: container, forKey: .status)
         labels = Self.decodeNameList(from: container, forKey: .labels)
         assignees = Self.decodeNameList(from: container, forKey: .assignees)
         commentCount = Self.decodeInt(from: container, forKey: .commentCount)
+            ?? Self.decodeInt(from: container, forKey: .comments)
             ?? Self.decodeInt(from: container, forKey: .commentCountSnake)
             ?? Self.decodeInt(from: container, forKey: .commentsCountSnake)
     }
@@ -1325,6 +2374,18 @@ struct SmithersIssue: Identifiable, Codable {
             return String(value)
         }
         return nil
+    }
+
+    private static func decodeNormalizedString(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> String? {
+        guard let value = decodeString(from: container, forKey: key)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 
     private static func decodeInt(
@@ -1387,17 +2448,26 @@ struct Workspace: Identifiable, Codable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, status, createdAt
+        case state
+        case displayName
         case createdAtSnake = "created_at"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        name = try container.decodeIfPresent(String.self, forKey: .name) ?? id
-        status = try container.decodeIfPresent(String.self, forKey: .status)
+        guard let decodedID = Self.decodeString(from: container, forKey: .id).flatMap(Self.normalizedText) else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: container, debugDescription: "Workspace id is required")
+        }
+        id = decodedID
+        let decodedName = try container.decodeIfPresent(String.self, forKey: .name)
+            ?? container.decodeIfPresent(String.self, forKey: .displayName)
+        name = Self.normalizedText(decodedName) ?? id
+        let decodedStatus = try container.decodeIfPresent(String.self, forKey: .status)
+            ?? container.decodeIfPresent(String.self, forKey: .state)
+        status = Self.normalizedText(decodedStatus)
         let camelCreatedAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
         let snakeCreatedAt = try container.decodeIfPresent(String.self, forKey: .createdAtSnake)
-        createdAt = camelCreatedAt ?? snakeCreatedAt
+        createdAt = Self.normalizedText(camelCreatedAt ?? snakeCreatedAt)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1406,6 +2476,26 @@ struct Workspace: Identifiable, Codable {
         try container.encode(name, forKey: .name)
         try container.encodeIfPresent(status, forKey: .status)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
+    }
+
+    private static func decodeString(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> String? {
+        if let value = try? container.decode(String.self, forKey: key) {
+            return value
+        }
+        if let value = try? container.decode(Int.self, forKey: key) {
+            return String(value)
+        }
+        return nil
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 }
 
@@ -1430,14 +2520,17 @@ struct WorkspaceSnapshot: Identifiable, Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        let camelWorkspaceId = try container.decodeIfPresent(String.self, forKey: .workspaceId)
-        let snakeWorkspaceId = try container.decodeIfPresent(String.self, forKey: .workspaceIdSnake)
-        workspaceId = camelWorkspaceId ?? snakeWorkspaceId ?? ""
-        name = try container.decodeIfPresent(String.self, forKey: .name)
+        guard let decodedID = Self.decodeString(from: container, forKey: .id).flatMap(Self.normalizedText) else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: container, debugDescription: "Workspace snapshot id is required")
+        }
+        id = decodedID
+        let camelWorkspaceId = Self.decodeString(from: container, forKey: .workspaceId)
+        let snakeWorkspaceId = Self.decodeString(from: container, forKey: .workspaceIdSnake)
+        workspaceId = Self.normalizedText(camelWorkspaceId ?? snakeWorkspaceId) ?? ""
+        name = Self.normalizedText(try container.decodeIfPresent(String.self, forKey: .name))
         let camelCreatedAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
         let snakeCreatedAt = try container.decodeIfPresent(String.self, forKey: .createdAtSnake)
-        createdAt = camelCreatedAt ?? snakeCreatedAt
+        createdAt = Self.normalizedText(camelCreatedAt ?? snakeCreatedAt)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1446,6 +2539,26 @@ struct WorkspaceSnapshot: Identifiable, Codable {
         try container.encode(workspaceId, forKey: .workspaceId)
         try container.encodeIfPresent(name, forKey: .name)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
+    }
+
+    private static func decodeString(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys
+    ) -> String? {
+        if let value = try? container.decode(String.self, forKey: key) {
+            return value
+        }
+        if let value = try? container.decode(Int.self, forKey: key) {
+            return String(value)
+        }
+        return nil
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
     }
 }
 
@@ -1581,8 +2694,8 @@ struct ChatBlock: Identifiable, Codable {
         lifecycleId ?? _fallbackId
     }
     var lifecycleId: String? {
-        if let id, !id.isEmpty { return id }
         if let itemId, !itemId.isEmpty { return itemId }
+        if let id, !id.isEmpty { return id }
         return nil
     }
     var attemptIndex: Int { max(0, attempt ?? 0) }
@@ -1619,7 +2732,6 @@ struct ChatBlock: Identifiable, Codable {
             attempt: attempt,
             role: role,
             content: content,
-            timestampMs: timestampMs,
             decodeIndex: decoder.codingPath.compactMap(\.intValue).last
         )
     }
@@ -1632,7 +2744,8 @@ struct ChatBlock: Identifiable, Codable {
         attempt: Int? = nil,
         role: String,
         content: String,
-        timestampMs: Int64? = nil
+        timestampMs: Int64? = nil,
+        fallbackId: String? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1642,14 +2755,13 @@ struct ChatBlock: Identifiable, Codable {
         self.role = role
         self.content = content
         self.timestampMs = timestampMs
-        self._fallbackId = Self.fallbackId(
+        self._fallbackId = fallbackId ?? Self.fallbackId(
             itemId: itemId,
             runId: runId,
             nodeId: nodeId,
             attempt: attempt,
             role: role,
             content: content,
-            timestampMs: timestampMs,
             decodeIndex: nil
         )
     }
@@ -1661,22 +2773,28 @@ struct ChatBlock: Identifiable, Codable {
         attempt: Int?,
         role: String,
         content: String,
-        timestampMs: Int64?,
         decodeIndex: Int?
     ) -> String {
-        var data = Data("smithers.chatblock.fallback.v1\n".utf8)
+        var data = Data("smithers.chatblock.fallback.v2\n".utf8)
         appendField(itemId, named: "itemId", to: &data)
         appendField(runId, named: "runId", to: &data)
         appendField(nodeId, named: "nodeId", to: &data)
         appendField(attempt.map(String.init), named: "attempt", to: &data)
-        appendField(role, named: "role", to: &data)
-        appendField(content, named: "content", to: &data)
-        appendField(timestampMs.map(String.init), named: "timestampMs", to: &data)
+        appendField(normalizedRole(role), named: "role", to: &data)
+        appendField(contentPrefix(content), named: "contentPrefix", to: &data)
         appendField(decodeIndex.map(String.init), named: "decodeIndex", to: &data)
 
         let digest = SHA256.hash(data: data)
         let hex = digest.map { String(format: "%02x", $0) }.joined()
         return "chatblock-\(hex)"
+    }
+
+    private static func normalizedRole(_ role: String) -> String {
+        role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func contentPrefix(_ content: String) -> String {
+        String(content.prefix(96))
     }
 
     private static func appendField(_ value: String?, named name: String, to data: inout Data) {
@@ -1716,16 +2834,24 @@ struct ChatBlock: Identifiable, Codable {
                 incomingTimestampMs: incoming.timestampMs
             )
             : incoming.content
+        let mergedId = incoming.id ?? id
+        let mergedItemId = incoming.itemId ?? itemId
+        let mergedLifecycleId: String? = {
+            if let mergedId, !mergedId.isEmpty { return mergedId }
+            if let mergedItemId, !mergedItemId.isEmpty { return mergedItemId }
+            return nil
+        }()
 
         return ChatBlock(
-            id: incoming.id ?? id,
-            itemId: incoming.itemId ?? itemId,
+            id: mergedId,
+            itemId: mergedItemId,
             runId: incoming.runId ?? runId,
             nodeId: incoming.nodeId ?? nodeId,
             attempt: incoming.attempt ?? attempt,
             role: incoming.role,
             content: mergedContent,
-            timestampMs: incoming.timestampMs ?? timestampMs
+            timestampMs: incoming.timestampMs ?? timestampMs,
+            fallbackId: mergedLifecycleId == nil ? _fallbackId : nil
         )
     }
 
@@ -1815,6 +2941,12 @@ func deduplicatedChatBlocks(_ blocks: [ChatBlock]) -> [ChatBlock] {
 
 // MARK: - Run Hijack Session
 
+struct HijackLaunchInvocation: Equatable {
+    let executable: String
+    let arguments: [String]
+    let workingDirectory: String
+}
+
 struct HijackSession: Codable {
     let runId: String
     let agentEngine: String
@@ -1822,9 +2954,20 @@ struct HijackSession: Codable {
     let resumeToken: String
     let cwd: String
     let supportsResume: Bool
+    let launchCommand: String?
+    let launchArgs: [String]
+    let mode: String?
+    let resumeCommand: String?
 
     enum CodingKeys: String, CodingKey {
         case runId, agentEngine, agentBinary, resumeToken, cwd, supportsResume
+        case engine, mode, resume, launch, resumeCommand
+    }
+
+    private struct LaunchSpec: Codable {
+        let command: String
+        let args: [String]
+        let cwd: String?
     }
 
     init(
@@ -1833,7 +2976,11 @@ struct HijackSession: Codable {
         agentBinary: String,
         resumeToken: String,
         cwd: String,
-        supportsResume: Bool
+        supportsResume: Bool,
+        launchCommand: String? = nil,
+        launchArgs: [String] = [],
+        mode: String? = nil,
+        resumeCommand: String? = nil
     ) {
         self.runId = runId
         self.agentEngine = agentEngine
@@ -1841,27 +2988,128 @@ struct HijackSession: Codable {
         self.resumeToken = resumeToken
         self.cwd = cwd
         self.supportsResume = supportsResume
+        self.launchCommand = launchCommand
+        self.launchArgs = launchArgs
+        self.mode = mode
+        self.resumeCommand = resumeCommand
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let launch = try container.decodeIfPresent(LaunchSpec.self, forKey: .launch)
+
         runId = try container.decodeIfPresent(String.self, forKey: .runId) ?? ""
-        agentEngine = try container.decodeIfPresent(String.self, forKey: .agentEngine) ?? ""
-        agentBinary = try container.decodeIfPresent(String.self, forKey: .agentBinary) ?? ""
-        resumeToken = try container.decodeIfPresent(String.self, forKey: .resumeToken) ?? ""
-        cwd = try container.decodeIfPresent(String.self, forKey: .cwd) ?? ""
-        supportsResume = try container.decodeIfPresent(Bool.self, forKey: .supportsResume) ?? false
+        agentEngine = try container.decodeIfPresent(String.self, forKey: .agentEngine)
+            ?? container.decodeIfPresent(String.self, forKey: .engine)
+            ?? ""
+        agentBinary = try container.decodeIfPresent(String.self, forKey: .agentBinary)
+            ?? launch?.command
+            ?? Self.defaultAgentBinary(for: agentEngine)
+        resumeToken = try container.decodeIfPresent(String.self, forKey: .resumeToken)
+            ?? container.decodeIfPresent(String.self, forKey: .resume)
+            ?? ""
+        let decodedCWD = try container.decodeIfPresent(String.self, forKey: .cwd)
+        cwd = launch?.cwd ?? decodedCWD ?? ""
+        launchCommand = launch?.command
+        launchArgs = launch?.args ?? []
+        mode = try container.decodeIfPresent(String.self, forKey: .mode)
+        resumeCommand = try container.decodeIfPresent(String.self, forKey: .resumeCommand)
+
+        if let explicit = try container.decodeIfPresent(Bool.self, forKey: .supportsResume) {
+            supportsResume = explicit
+        } else if mode == "conversation" {
+            supportsResume = false
+        } else {
+            supportsResume = launch != nil || !resumeToken.isEmpty
+        }
+
+        guard !runId.isEmpty || !agentEngine.isEmpty || launch != nil || !resumeToken.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .runId,
+                in: container,
+                debugDescription: "Missing hijack session payload"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(runId, forKey: .runId)
+        try container.encode(agentEngine, forKey: .agentEngine)
+        try container.encode(agentBinary, forKey: .agentBinary)
+        try container.encode(resumeToken, forKey: .resumeToken)
+        try container.encode(cwd, forKey: .cwd)
+        try container.encode(supportsResume, forKey: .supportsResume)
+        try container.encodeIfPresent(mode, forKey: .mode)
+        try container.encodeIfPresent(resumeCommand, forKey: .resumeCommand)
+
+        if let launchCommand {
+            try container.encode(
+                LaunchSpec(command: launchCommand, args: launchArgs, cwd: cwd.isEmpty ? nil : cwd),
+                forKey: .launch
+            )
+        }
     }
 
     func resumeArgs() -> [String] {
         guard supportsResume, !resumeToken.isEmpty else { return [] }
         switch agentEngine {
+        case "claude-code", "claude":
+            return ["--resume", resumeToken]
         case "codex":
-            return ["--session-id", resumeToken]
+            return cwd.isEmpty ? ["resume", resumeToken] : ["resume", resumeToken, "-C", cwd]
         case "gemini":
+            return ["--resume", resumeToken]
+        case "pi":
             return ["--session", resumeToken]
+        case "kimi":
+            return cwd.isEmpty ? ["--session", resumeToken] : ["--session", resumeToken, "--work-dir", cwd]
+        case "forge":
+            return cwd.isEmpty ? ["--conversation-id", resumeToken] : ["--conversation-id", resumeToken, "-C", cwd]
+        case "amp":
+            return ["threads", "continue", resumeToken]
         default:
             return ["--resume", resumeToken]
+        }
+    }
+
+    func launchInvocation(defaultWorkingDirectory: String = FileManager.default.currentDirectoryPath) -> HijackLaunchInvocation? {
+        guard supportsResume else { return nil }
+
+        let configuredExecutable = (launchCommand ?? agentBinary)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let executable = configuredExecutable.isEmpty ? Self.defaultAgentBinary(for: agentEngine) : configuredExecutable
+        let arguments = launchArgs.isEmpty ? resumeArgs() : launchArgs
+        guard !executable.isEmpty, !arguments.isEmpty else { return nil }
+
+        let workingDirectory = cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? defaultWorkingDirectory
+            : cwd
+        return HijackLaunchInvocation(
+            executable: executable,
+            arguments: arguments,
+            workingDirectory: workingDirectory
+        )
+    }
+
+    private static func defaultAgentBinary(for engine: String) -> String {
+        switch engine {
+        case "claude-code", "claude":
+            return "claude"
+        case "codex":
+            return "codex"
+        case "gemini":
+            return "gemini"
+        case "pi":
+            return "pi"
+        case "kimi":
+            return "kimi"
+        case "forge":
+            return "forge"
+        case "amp":
+            return "amp"
+        default:
+            return engine
         }
     }
 }
@@ -1893,13 +3141,31 @@ struct CronSchedule: Identifiable, Codable {
     private enum CodingKeys: String, CodingKey {
         case id
         case cronId
+        case cronIdSnake = "cron_id"
+        case cronID
+        case scheduleId
+        case scheduleID
         case pattern
+        case cronPattern
+        case cronPatternSnake = "cron_pattern"
         case workflowPath
+        case workflowPathSnake = "workflow_path"
+        case workflow
+        case path
         case enabled
+        case isEnabled
         case createdAtMs
+        case createdAtMsSnake = "created_at_ms"
+        case createdAt
         case lastRunAtMs
+        case lastRunAtMsSnake = "last_run_at_ms"
+        case lastRunAt
         case nextRunAtMs
+        case nextRunAtMsSnake = "next_run_at_ms"
+        case nextRunAt
         case errorJson
+        case errorJsonSnake = "error_json"
+        case error
     }
 
     init(
@@ -1924,17 +3190,60 @@ struct CronSchedule: Identifiable, Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        pattern = try container.decodeIfPresent(String.self, forKey: .pattern) ?? ""
-        workflowPath = try container.decodeIfPresent(String.self, forKey: .workflowPath) ?? ""
-        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-        createdAtMs = try container.decodeIfPresent(Int64.self, forKey: .createdAtMs)
-        lastRunAtMs = try container.decodeIfPresent(Int64.self, forKey: .lastRunAtMs)
-        nextRunAtMs = try container.decodeIfPresent(Int64.self, forKey: .nextRunAtMs)
-        errorJson = try container.decodeIfPresent(String.self, forKey: .errorJson)
+        func decodeString(_ key: CodingKeys) -> String? {
+            try? container.decodeIfPresent(String.self, forKey: key)
+        }
+
+        let decodedPattern = Self.nonEmpty(decodeString(.pattern))
+            ?? Self.nonEmpty(decodeString(.cronPattern))
+            ?? Self.nonEmpty(decodeString(.cronPatternSnake))
+        pattern = decodedPattern ?? ""
+
+        let workflowJSONValue = try? container.decodeIfPresent(JSONValue.self, forKey: .workflow)
+        let decodedWorkflowPath = Self.nonEmpty(decodeString(.workflowPath))
+            ?? Self.nonEmpty(decodeString(.workflowPathSnake))
+            ?? Self.nonEmpty(decodeString(.workflow))
+            ?? Self.nonEmpty(decodeString(.path))
+            ?? Self.nonEmpty(cronWorkflowPathString(workflowJSONValue))
+        workflowPath = decodedWorkflowPath ?? ""
+
+        enabled = container.decodeLossyBool(forKey: .enabled)
+            ?? container.decodeLossyBool(forKey: .isEnabled)
+            ?? true
+
+        createdAtMs = container.decodeLossyInt64(forKey: .createdAtMs)
+            ?? container.decodeLossyInt64(forKey: .createdAtMsSnake)
+            ?? parseInspectTimestampMs(decodeString(.createdAt))
+
+        lastRunAtMs = container.decodeLossyInt64(forKey: .lastRunAtMs)
+            ?? container.decodeLossyInt64(forKey: .lastRunAtMsSnake)
+            ?? parseInspectTimestampMs(decodeString(.lastRunAt))
+
+        nextRunAtMs = container.decodeLossyInt64(forKey: .nextRunAtMs)
+            ?? container.decodeLossyInt64(forKey: .nextRunAtMsSnake)
+            ?? parseInspectTimestampMs(decodeString(.nextRunAt))
+
+        let errorValue = try? container.decodeIfPresent(JSONValue.self, forKey: .error)
+        if let encoded = Self.nonEmpty(decodeString(.errorJson))
+            ?? Self.nonEmpty(decodeString(.errorJsonSnake))
+            ?? Self.nonEmpty(jsonValueString(errorValue)) {
+            errorJson = encoded
+        } else if let errorValue {
+            errorJson = errorValue.compactJSONString
+        } else {
+            errorJson = nil
+        }
+
+        let decodedID = decodeString(.id)
+        let decodedCronID = decodeString(.cronId)
+            ?? decodeString(.cronIdSnake)
+            ?? decodeString(.cronID)
+            ?? decodeString(.scheduleId)
+            ?? decodeString(.scheduleID)
 
         let resolvedID = Self.resolvedID(
-            id: try container.decodeIfPresent(String.self, forKey: .id),
-            cronId: try container.decodeIfPresent(String.self, forKey: .cronId),
+            id: decodedID,
+            cronId: decodedCronID,
             pattern: pattern,
             workflowPath: workflowPath
         )
@@ -2003,6 +3312,58 @@ struct CronSchedule: Identifiable, Codable {
 
 struct CronResponse: Codable {
     let crons: [CronSchedule]
+
+    private enum CodingKeys: String, CodingKey {
+        case crons
+        case schedules
+        case items
+        case results
+        case data
+    }
+
+    init(crons: [CronSchedule]) {
+        self.crons = crons
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .crons) {
+            self.crons = crons
+            return
+        }
+        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .schedules) {
+            self.crons = crons
+            return
+        }
+        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .items) {
+            self.crons = crons
+            return
+        }
+        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .results) {
+            self.crons = crons
+            return
+        }
+        if let crons = try container.decodeIfPresent([CronSchedule].self, forKey: .data) {
+            self.crons = crons
+            return
+        }
+        if let nested = try? container.decode(CronResponse.self, forKey: .data) {
+            self.crons = nested.crons
+            return
+        }
+
+        throw DecodingError.dataCorruptedError(
+            forKey: .crons,
+            in: container,
+            debugDescription: "Expected cron schedules under crons/schedules/items/results/data"
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(crons, forKey: .crons)
+    }
 }
 
 // MARK: - SQL Result
@@ -2209,6 +3570,39 @@ private enum SQLCellValue: Codable {
 
 // MARK: - Search Results
 
+enum SearchScope: String, Codable, CaseIterable, Sendable {
+    case code
+    case issues
+    case repos
+
+    var displayName: String {
+        switch self {
+        case .code:
+            return "Code"
+        case .issues:
+            return "Issues"
+        case .repos:
+            return "Repos"
+        }
+    }
+
+    var resultKind: String {
+        switch self {
+        case .code:
+            return "code"
+        case .issues:
+            return "issue"
+        case .repos:
+            return "repo"
+        }
+    }
+}
+
+struct SearchSnippetRange: Codable, Equatable {
+    let content: String
+    let startLine: Int?
+}
+
 struct SearchResult: Identifiable, Codable {
     let id: String
     let title: String
@@ -2217,6 +3611,59 @@ struct SearchResult: Identifiable, Codable {
     let filePath: String?
     let lineNumber: Int?
     let kind: String?           // repo, issue, code
+
+    let snippetRanges: [SearchSnippetRange]?
+
+    init(
+        id: String,
+        title: String,
+        description: String?,
+        snippet: String?,
+        filePath: String?,
+        lineNumber: Int?,
+        kind: String?,
+        snippetRanges: [SearchSnippetRange]? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.snippet = snippet
+        self.filePath = filePath
+        self.lineNumber = lineNumber
+        self.kind = kind
+        self.snippetRanges = snippetRanges
+    }
+
+    var displaySnippet: String? {
+        if let snippetRanges {
+            let rendered = snippetRanges
+                .filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .flatMap { Self.displayLines(for: $0) }
+                .joined(separator: "\n")
+            if !rendered.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return rendered
+            }
+        }
+
+        guard let snippet, !snippet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        guard let lineNumber else {
+            return snippet
+        }
+        let range = SearchSnippetRange(content: snippet, startLine: lineNumber)
+        return Self.displayLines(for: range).joined(separator: "\n")
+    }
+
+    private static func displayLines(for range: SearchSnippetRange) -> [String] {
+        let lines = range.content.components(separatedBy: "\n")
+        guard let startLine = range.startLine else {
+            return lines
+        }
+        return lines.enumerated().map { offset, line in
+            "L\(startLine + offset): \(line)"
+        }
+    }
 }
 
 // MARK: - SSE Event

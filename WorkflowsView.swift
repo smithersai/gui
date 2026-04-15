@@ -248,7 +248,7 @@ struct WorkflowsView: View {
                                         .font(.system(size: 12, weight: .medium))
                                         .foregroundColor(Theme.textPrimary)
                                         .lineLimit(1)
-                                    if let path = workflow.relativePath {
+                                    if let path = workflow.filePath {
                                         Text(path)
                                             .font(.system(size: 10, design: .monospaced))
                                             .foregroundColor(Theme.textTertiary)
@@ -307,7 +307,7 @@ struct WorkflowsView: View {
                             Text(workflow.name)
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundColor(Theme.textPrimary)
-                            if let path = workflow.relativePath {
+                            if let path = workflow.filePath {
                                 Text(path)
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundColor(Theme.textTertiary)
@@ -347,11 +347,20 @@ struct WorkflowsView: View {
                                             .padding(.vertical, 1)
                                             .themedPill(cornerRadius: 8)
                                     }
+                                    if t == .runs && !workflowRuns.isEmpty {
+                                        Text("\(workflowRuns.count)")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundColor(Theme.textTertiary)
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 1)
+                                            .themedPill(cornerRadius: 8)
+                                    }
                                 }
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("workflows.tab.\(t.rawValue.lowercased())")
                             .overlay(alignment: .bottom) {
                                 if tab == t {
                                     Rectangle().fill(Theme.accent).frame(height: 2)
@@ -402,6 +411,8 @@ struct WorkflowsView: View {
                         workflowSourceEditor
                     case .imports:
                         importsPane
+                    case .runs:
+                        runsPane
                     case .launch:
                         launchPane
                     }
@@ -440,12 +451,14 @@ struct WorkflowsView: View {
                 .background(Theme.warning.opacity(0.08))
             }
 
-            TextEditor(text: $workflowSource)
-                .font(.system(size: 12, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .background(Theme.base)
-                .padding(1)
-                .accessibilityIdentifier("workflows.sourceEditor")
+            SyntaxHighlightedTextEditor(
+                text: $workflowSource,
+                language: SourceCodeLanguage(fileName: selectedWorkflow?.filePath ?? "workflow.tsx"),
+                accessibilityIdentifier: "workflows.sourceEditor"
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.base)
+            .padding(1)
         }
     }
 
@@ -521,12 +534,14 @@ struct WorkflowsView: View {
                     .background(Theme.surface2)
                     .border(Theme.border, edges: [.bottom])
 
-                    TextEditor(text: $importedFiles[idx].source)
-                        .font(.system(size: 12, design: .monospaced))
-                        .scrollContentBackground(.hidden)
-                        .background(Theme.base)
-                        .padding(1)
-                        .accessibilityIdentifier("workflows.importEditor.\(importedFiles[idx].name)")
+                    SyntaxHighlightedTextEditor(
+                        text: $importedFiles[idx].source,
+                        language: SourceCodeLanguage(fileName: importedFiles[idx].id),
+                        accessibilityIdentifier: "workflows.importEditor.\(importedFiles[idx].name)"
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Theme.base)
+                    .padding(1)
                 }
             } else {
                 VStack(spacing: 8) {
@@ -1052,6 +1067,126 @@ struct WorkflowsView: View {
         }
     }
 
+    // MARK: - Runs Pane
+
+    private var runsPane: some View {
+        VStack(spacing: 0) {
+            if isLoadingRuns {
+                VStack(spacing: 8) {
+                    ProgressView().scaleEffect(0.6)
+                    Text("Loading runs...")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if workflowRuns.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "play.circle")
+                        .font(.system(size: 28))
+                        .foregroundColor(Theme.textTertiary)
+                    Text("No runs yet")
+                        .font(.system(size: 13))
+                        .foregroundColor(Theme.textTertiary)
+                    Text("Launch this workflow from the Launch tab")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // Runs header
+                HStack {
+                    Text("\(workflowRuns.count) run\(workflowRuns.count == 1 ? "" : "s")")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Theme.textSecondary)
+                    Spacer()
+                    Button(action: { Task { await loadWorkflowRuns() } }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .border(Theme.border, edges: [.bottom])
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(workflowRuns) { run in
+                            Button(action: { onNavigate?(.runInspect(runId: run.runId, workflowName: run.workflowName)) }) {
+                                HStack(spacing: 10) {
+                                    // Status icon
+                                    Circle()
+                                        .fill(runStatusColor(run.status))
+                                        .frame(width: 8, height: 8)
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 6) {
+                                            Text(run.runId.prefix(12) + "...")
+                                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                                .foregroundColor(Theme.textPrimary)
+                                                .lineLimit(1)
+
+                                            Text(run.status.label)
+                                                .font(.system(size: 9, weight: .bold))
+                                                .foregroundColor(runStatusColor(run.status))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(runStatusColor(run.status).opacity(0.15))
+                                                .cornerRadius(4)
+                                        }
+
+                                        HStack(spacing: 8) {
+                                            if let started = run.startedAt {
+                                                Label(Self.relativeTime(started), systemImage: "clock")
+                                                    .font(.system(size: 10))
+                                                    .foregroundColor(Theme.textTertiary)
+                                            }
+                                            if !run.elapsedString.isEmpty {
+                                                Text(run.elapsedString)
+                                                    .font(.system(size: 10))
+                                                    .foregroundColor(Theme.textTertiary)
+                                            }
+                                            if let summary = run.summary {
+                                                let total = summary["total"] ?? 0
+                                                let finished = summary["finished"] ?? 0
+                                                if total > 0 {
+                                                    Text("\(finished)/\(total) tasks")
+                                                        .font(.system(size: 10))
+                                                        .foregroundColor(Theme.textTertiary)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(Theme.textTertiary)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("workflows.run.\(run.runId)")
+                            Divider().background(Theme.border)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static func relativeTime(_ date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 { return "just now" }
+        if interval < 3600 { return "\(Int(interval / 60))m ago" }
+        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
+        return "\(Int(interval / 86400))d ago"
+    }
+
     // MARK: - Actions
 
     private func selectWorkflow(_ workflow: Workflow) {
@@ -1079,18 +1214,21 @@ struct WorkflowsView: View {
         importedFiles = []
         selectedFileIndex = nil
         saveError = nil
+        workflowRuns = []
+        isLoadingRuns = false
         tab = .source
 
         Task {
             await loadDAG(workflow)
             await loadWorkflowSource(workflow)
+            await loadWorkflowRuns()
         }
     }
 
     private func loadWorkflowSource(_ workflow: Workflow) async {
-        guard let relativePath = workflow.relativePath else { return }
+        guard let workflowPath = workflow.filePath else { return }
         do {
-            let source = try await smithers.readWorkflowSource(relativePath)
+            let source = try await smithers.readWorkflowSource(workflowPath)
             guard selectedWorkflow?.id == workflow.id else { return }
             workflowSource = source
             originalWorkflowSource = source
@@ -1121,31 +1259,37 @@ struct WorkflowsView: View {
     }
 
     private func saveAll() async {
-        guard let workflow = selectedWorkflow, let relativePath = workflow.relativePath else { return }
+        defer { isSaving = false }
+        guard let workflow = selectedWorkflow, let workflowPath = workflow.filePath else { return }
         saveError = nil
         do {
             // Save workflow source
             if workflowSource != originalWorkflowSource {
-                try await smithers.saveWorkflowSource(relativePath, source: workflowSource)
+                try await smithers.saveWorkflowSource(workflowPath, source: workflowSource)
                 originalWorkflowSource = workflowSource
             }
             // Save modified imported files
-            for i in importedFiles.indices {
-                if importedFiles[i].hasChanges {
-                    try await smithers.saveWorkflowSource(importedFiles[i].id, source: importedFiles[i].source)
-                    importedFiles[i] = ImportedFile(
-                        id: importedFiles[i].id,
-                        name: importedFiles[i].name,
-                        kind: importedFiles[i].kind,
-                        source: importedFiles[i].source,
-                        originalSource: importedFiles[i].source
+            let filesToSave = importedFiles.filter(\.hasChanges)
+            var savedSourceByID: [String: String] = [:]
+            for file in filesToSave {
+                try await smithers.saveWorkflowSource(file.id, source: file.source)
+                savedSourceByID[file.id] = file.source
+            }
+            if !savedSourceByID.isEmpty {
+                importedFiles = importedFiles.map { file in
+                    guard let savedSource = savedSourceByID[file.id] else { return file }
+                    return ImportedFile(
+                        id: file.id,
+                        name: file.name,
+                        kind: file.kind,
+                        source: file.source,
+                        originalSource: savedSource
                     )
                 }
             }
         } catch {
             saveError = error.localizedDescription
         }
-        isSaving = false
     }
 
     private func loadWorkflows() async {
@@ -1211,6 +1355,30 @@ struct WorkflowsView: View {
         }
 
         await launchWorkflow()
+    }
+
+    private func loadWorkflowRuns() async {
+        isLoadingRuns = true
+        defer { isLoadingRuns = false }
+        guard let workflow = selectedWorkflow else { return }
+        do {
+            let allRuns = try await smithers.listRuns()
+            guard selectedWorkflow?.id == workflow.id else { return }
+            // Filter to runs matching this workflow by path or name
+            workflowRuns = allRuns.filter { run in
+                if let runPath = run.workflowPath, let wfPath = workflow.filePath {
+                    return runPath == wfPath
+                }
+                if let runName = run.workflowName {
+                    return runName == workflow.name || runName == workflow.id
+                }
+                return false
+            }
+            .sorted { ($0.startedAtMs ?? 0) > ($1.startedAtMs ?? 0) }
+        } catch {
+            // Silently fail — runs are supplementary info
+            workflowRuns = []
+        }
     }
 
     private func launchWorkflow() async {
@@ -1320,7 +1488,7 @@ struct WorkflowsView: View {
         do {
             let runs = try await smithers.listRuns()
             let idByPath: [String: String] = workflows.reduce(into: [:]) { partial, workflow in
-                guard let path = normalizePath(workflow.relativePath) else { return }
+                guard let path = normalizePath(workflow.filePath) else { return }
                 partial[path] = workflow.id
                 partial[(path as NSString).lastPathComponent] = workflow.id
             }
@@ -1383,7 +1551,7 @@ struct WorkflowsView: View {
         case .active: return Theme.success
         case .hot: return Theme.warning
         case .draft: return Theme.info
-        case .archived: return Theme.textTertiary
+        case .archived, .unknown: return Theme.textTertiary
         }
     }
 
@@ -1397,7 +1565,7 @@ struct WorkflowsView: View {
         case .waitingApproval: return Theme.warning
         case .finished: return Theme.success
         case .failed: return Theme.danger
-        case .cancelled: return Theme.textTertiary
+        case .cancelled, .unknown: return Theme.textTertiary
         }
     }
 
@@ -1408,6 +1576,7 @@ struct WorkflowsView: View {
         case .finished: return "checkmark.circle.fill"
         case .failed: return "xmark.circle.fill"
         case .cancelled: return "slash.circle.fill"
+        case .unknown: return "questionmark.circle.fill"
         }
     }
 

@@ -413,9 +413,13 @@ final class TerminalViewTests: XCTestCase {
         ))
     }
 
-    func test_TERMINAL_KEY_FORWARDING_POLICY_commandShortcutsRemainForApp() {
-        XCTAssertFalse(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+    func test_TERMINAL_KEY_FORWARDING_POLICY_commandKeyEventsForwardToTerminal() {
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
             .keyDown,
+            modifierFlags: [.command]
+        ))
+        XCTAssertTrue(TerminalKeyForwardingPolicy.shouldForwardKeyEvent(
+            .keyUp,
             modifierFlags: [.command]
         ))
     }

@@ -43,24 +43,6 @@ struct ChangesView: View {
     @State private var bookmarkToDelete = ""
     @State private var actionInFlight = false
 
-    private static let iso8601WithFractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
-    private static let iso8601Basic: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
-
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter
-    }()
-
     init(smithers: SmithersClient, initialMode: Mode = .changes) {
         self.smithers = smithers
         _mode = State(initialValue: initialMode)
@@ -405,13 +387,7 @@ struct ChangesView: View {
                     ProgressView()
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
-                    let diff = diffCache[changeID] ?? ""
-                    SyntaxHighlightedText(diff.isEmpty ? "(no changes)" : diff, font: .system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .themedDiffBlock()
-                        .padding(16)
+                    UnifiedDiffView(diffText: diffCache[changeID] ?? "")
                 }
             }
         }
@@ -455,17 +431,13 @@ struct ChangesView: View {
                         Text("Uncommitted Changes")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(Theme.textSecondary)
-                        SyntaxHighlightedText(workingDiff, font: .system(size: 11, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .themedDiffBlock()
+                        UnifiedDiffView(diffText: workingDiff)
                     }
                 } else if let workingDiffError {
                     Text("Diff error: \(workingDiffError)")
                         .font(.system(size: 12))
                         .foregroundColor(Theme.danger)
-                } else if !statusLoading {
+                } else if !statusLoading && statusError == nil && workingDiffError == nil {
                     Text("Clean working copy.")
                         .font(.system(size: 12))
                         .foregroundColor(Theme.textTertiary)
@@ -615,6 +587,7 @@ struct ChangesView: View {
             _ = try await smithers.createBookmark(name: name, changeID: selectedChangeID, remote: true)
             actionMessage = "Created bookmark '\(name)'"
             bookmarkName = ""
+            detailCache.removeValue(forKey: selectedChangeID)
             await loadChanges()
         } catch {
             actionError = error.localizedDescription
@@ -633,6 +606,9 @@ struct ChangesView: View {
         do {
             try await smithers.deleteBookmark(name: name, remote: true)
             actionMessage = "Deleted bookmark '\(name)'"
+            if let selectedChangeID {
+                detailCache.removeValue(forKey: selectedChangeID)
+            }
             await loadChanges()
         } catch {
             actionError = error.localizedDescription
@@ -683,9 +659,8 @@ struct ChangesView: View {
 
     private func relativeTimestamp(_ raw: String?) -> String {
         guard let raw, !raw.isEmpty else { return "-" }
-        let parsed = Self.iso8601WithFractional.date(from: raw) ?? Self.iso8601Basic.date(from: raw)
-        guard let date = parsed else { return raw }
-        return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
+        guard let date = DateFormatters.parseISO8601InternetDateTime(raw) else { return raw }
+        return DateFormatters.relativeShort.localizedString(for: date, relativeTo: Date())
     }
 
     private func errorView(_ message: String, retry: @escaping () async -> Void) -> some View {

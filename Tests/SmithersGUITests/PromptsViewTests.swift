@@ -400,7 +400,7 @@ final class PromptsLivePreviewTests: XCTestCase {
         XCTAssertTrue(true, "BUG/DESIGN: renderPreview forcibly switches to .preview tab")
     }
 
-    func testGeneratePreviewUsesUnsavedEditorBuffer() async throws {
+    func testGeneratePreviewUsesEditorBufferSource() async throws {
         let client = MockSmithersClient()
         let prompt = SmithersPrompt(
             id: "greeting",
@@ -425,10 +425,10 @@ final class PromptsLivePreviewTests: XCTestCase {
         try view.inspect().find(button: "Generate Preview").tap()
 
         try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertNil(client.previewPromptCalledWith)
         XCTAssertEqual(client.previewPromptSourceCalledWith?.id, "greeting")
         XCTAssertEqual(client.previewPromptSourceCalledWith?.source, "Unsaved {props.name}")
         XCTAssertEqual(client.previewPromptSourceCalledWith?.input, ["name": "Alice"])
-        XCTAssertNil(client.previewPromptCalledWith)
     }
 }
 

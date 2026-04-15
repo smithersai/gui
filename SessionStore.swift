@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 struct Session: Identifiable {
     let id: String
@@ -7,6 +8,8 @@ struct Session: Identifiable {
     var preview: String
     var timestamp: Date
     var agent: AgentService
+    var codexSelection: CodexModelSelection = .fallback
+    var codexApprovalSelection: CodexApprovalSelection = .fallback
 }
 
 @MainActor
@@ -15,7 +18,35 @@ class SessionStore: ObservableObject {
 
     @Published var sessions: [Session] = []
     @Published var runTabs: [RunTab] = []
+    @Published var terminalTabs: [TerminalTab] = []
     @Published var activeSessionId: String?
+    @Published var codexSelectionDefaults: CodexModelSelection
+    @Published var codexApprovalDefaults: CodexApprovalSelection
+
+    private struct PersistedMessageState {
+        var dbMessageID: String
+        var role: PersistedChatRole
+        var text: String
+    }
+
+    private struct PersistableMessage {
+        let chatID: String
+        let role: PersistedChatRole
+        let text: String
+    }
+
+    private let persistence: SessionPersisting?
+    private let workingDirectory: String
+    private var messageCancellables: [String: AnyCancellable] = [:]
+    private var loadedSessionMessageIDs: Set<String> = []
+    private var persistenceSuppressedSessionIDs: Set<String> = []
+    private var persistedMessageStateBySessionID: [String: [String: PersistedMessageState]] = [:]
+
+    private nonisolated static let messageTimestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
 
     var activeSession: Session? {
         sessions.first { $0.id == activeSessionId }
@@ -25,8 +56,31 @@ class SessionStore: ObservableObject {
         activeSession?.agent
     }
 
-    init() {
-        newSession()
+    var activeCodexSelection: CodexModelSelection? {
+        activeSession?.codexSelection
+    }
+
+    var activeCodexApprovalSelection: CodexApprovalSelection? {
+        activeSession?.codexApprovalSelection
+    }
+
+    init(workingDirectory: String? = nil, persistence: SessionPersisting? = nil) {
+        let cwd = CWDResolver.resolve(workingDirectory)
+        self.workingDirectory = cwd
+        codexSelectionDefaults = CodexModelConfigStore.loadSelection(cwd: cwd)
+        codexApprovalDefaults = CodexApprovalConfigStore.loadSelection(cwd: cwd)
+        if let persistence {
+            self.persistence = persistence
+        } else if UITestSupport.isRunningUnitTests {
+            self.persistence = nil
+        } else {
+            self.persistence = SQLiteSessionPersistence(workingDirectory: cwd)
+        }
+
+        AppLogger.state.info("SessionStore init")
+        if !loadPersistedSessions() {
+            newSession()
+        }
     }
 
     @discardableResult
@@ -36,19 +90,33 @@ class SessionStore: ObservableObject {
             session.timestamp = Date()
             sessions.insert(session, at: 0)
             activeSessionId = session.id
+            persistSessionRecord(id: session.id, title: session.title)
             return session.id
         }
 
         let id = UUID().uuidString
-        let agent = AgentService()
+        AppLogger.state.info("SessionStore newSession", metadata: ["id": String(id.prefix(8))])
+        let initialSelection = codexSelectionDefaults
+        let initialApprovalSelection = codexApprovalDefaults
+        let agent = AgentService(
+            workingDir: workingDirectory,
+            modelOverride: initialSelection.model,
+            reasoningEffortOverride: initialSelection.reasoningEffort,
+            approvalPolicyOverride: initialApprovalSelection.approvalPolicy,
+            sandboxModeOverride: initialApprovalSelection.sandboxMode
+        )
         let session = Session(
             id: id,
             title: Self.defaultChatTitle,
             preview: "",
             timestamp: Date(),
-            agent: agent
+            agent: agent,
+            codexSelection: initialSelection,
+            codexApprovalSelection: initialApprovalSelection
         )
         sessions.insert(session, at: 0)
+        observeMessages(for: session.id, agent: session.agent)
+        persistSessionRecord(id: session.id, title: session.title)
         activeSessionId = id
         return id
     }
@@ -61,6 +129,7 @@ class SessionStore: ObservableObject {
 
         if let first = sessions.first {
             activeSessionId = first.id
+            loadSessionMessages(sessionID: first.id, force: false)
             return first.id
         }
 
@@ -68,7 +137,49 @@ class SessionStore: ObservableObject {
     }
 
     func selectSession(_ id: String) {
+        AppLogger.state.debug("SessionStore selectSession", metadata: ["id": String(id.prefix(8))])
         activeSessionId = id
+        loadSessionMessages(sessionID: id, force: false)
+    }
+
+    func loadSessionFromPersistence(_ id: String) {
+        selectSession(id)
+        loadSessionMessages(sessionID: id, force: true)
+    }
+
+    func renameSession(_ id: String, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
+
+        sessions[idx].title = trimmed
+        persistRenameSession(id: id, title: trimmed)
+    }
+
+    func canDeleteSession(_ id: String) -> Bool {
+        guard let session = sessions.first(where: { $0.id == id }) else { return false }
+        return !session.agent.isRunning
+    }
+
+    func deleteSession(_ id: String) {
+        guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
+        guard canDeleteSession(id) else { return }
+
+        sessions.remove(at: idx)
+        messageCancellables[id] = nil
+        loadedSessionMessageIDs.remove(id)
+        persistenceSuppressedSessionIDs.remove(id)
+        persistedMessageStateBySessionID[id] = nil
+        persistDeleteSession(id)
+
+        if activeSessionId == id {
+            if let next = sessions.first {
+                activeSessionId = next.id
+                loadSessionMessages(sessionID: next.id, force: false)
+            } else {
+                _ = newSession()
+            }
+        }
     }
 
     @discardableResult
@@ -91,6 +202,31 @@ class SessionStore: ObservableObject {
         }
 
         return runId
+    }
+
+    @discardableResult
+    func addTerminalTab() -> String {
+        let id = UUID().uuidString
+        let tabNumber = terminalTabs.count + 1
+        AppLogger.state.info("SessionStore addTerminalTab", metadata: ["id": String(id.prefix(8))])
+        terminalTabs.insert(
+            TerminalTab(
+                terminalId: id,
+                title: "Terminal \(tabNumber)",
+                preview: "Shell session",
+                timestamp: Date()
+            ),
+            at: 0
+        )
+        return id
+    }
+
+    @discardableResult
+    func ensureTerminalTab() -> String {
+        if let terminalId = terminalTabs.first?.terminalId {
+            return terminalId
+        }
+        return addTerminalTab()
     }
 
     func autoPopulateActiveRunTabs(_ runs: [RunSummary]) {
@@ -123,16 +259,69 @@ class SessionStore: ObservableObject {
         }
     }
 
-    func sendMessage(_ text: String) {
-        guard let idx = sessions.firstIndex(where: { $0.id == activeSessionId }) else { return }
-
-        if isPlaceholderTitle(sessions[idx].title) {
-            sessions[idx].title = ChatTitleGenerator.title(for: text)
+    func sendMessage(_ text: String, displayText: String? = nil) {
+        guard let idx = sessions.firstIndex(where: { $0.id == activeSessionId }) else {
+            AppLogger.state.warning("SessionStore sendMessage: no active session")
+            return
         }
-        sessions[idx].preview = String(text.prefix(80))
-        sessions[idx].timestamp = Date()
 
-        sessions[idx].agent.sendMessage(text)
+        let visibleText: String
+        if let displayText, !displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            visibleText = displayText
+        } else {
+            visibleText = text
+        }
+        let previousTitle = sessions[idx].title
+        if isPlaceholderTitle(sessions[idx].title) {
+            sessions[idx].title = ChatTitleGenerator.title(for: visibleText)
+        }
+        sessions[idx].preview = String(visibleText.prefix(80))
+        sessions[idx].timestamp = Date()
+        persistSessionRecord(id: sessions[idx].id, title: sessions[idx].title)
+        if sessions[idx].title != previousTitle {
+            persistRenameSession(id: sessions[idx].id, title: sessions[idx].title)
+        }
+
+        sessions[idx].agent.sendMessage(text, displayText: visibleText)
+    }
+
+    @discardableResult
+    func applyCodexSelection(_ selection: CodexModelSelection) -> Result<CodexModelSelection, CodexModelSelectionError> {
+        let normalized = CodexModelCatalog.normalized(selection)
+
+        switch CodexModelConfigStore.persistSelection(normalized, cwd: activeAgent?.workingDirectory) {
+        case .success(let persisted):
+
+            codexSelectionDefaults = persisted
+            if let idx = sessions.firstIndex(where: { $0.id == activeSessionId }) {
+                sessions[idx].codexSelection = persisted
+                sessions[idx].agent.updateModelSelection(
+                    model: persisted.model,
+                    reasoningEffort: persisted.reasoningEffort
+                )
+            }
+            return .success(persisted)
+
+        case .failure(let error):
+            return .failure(error)
+        }
+    }
+
+    @discardableResult
+    func applyCodexApprovalSelection(
+        _ selection: CodexApprovalSelection
+    ) -> Result<CodexApprovalSelection, CodexApprovalSelectionError> {
+        codexApprovalDefaults = selection
+
+        if let idx = sessions.firstIndex(where: { $0.id == activeSessionId }) {
+            sessions[idx].codexApprovalSelection = selection
+            sessions[idx].agent.updateApprovalSelection(
+                approvalPolicy: selection.approvalPolicy,
+                sandboxMode: selection.sandboxMode
+            )
+        }
+
+        return .success(selection)
     }
 
     func sidebarTabs(matching searchText: String = "") -> [SidebarTab] {
@@ -144,6 +333,7 @@ class SessionStore: ObservableObject {
                 kind: .chat,
                 chatSessionId: session.id,
                 runId: nil,
+                terminalId: nil,
                 title: session.title,
                 preview: session.preview,
                 date: session.timestamp,
@@ -156,6 +346,20 @@ class SessionStore: ObservableObject {
                 kind: .run,
                 chatSessionId: nil,
                 runId: tab.runId,
+                terminalId: nil,
+                title: tab.title,
+                preview: tab.preview,
+                date: tab.timestamp,
+                now: now
+            )
+        }
+        let terminalTabs = terminalTabs.map { tab in
+            makeSidebarTab(
+                id: "terminal:\(tab.terminalId)",
+                kind: .terminal,
+                chatSessionId: nil,
+                runId: nil,
+                terminalId: tab.terminalId,
                 title: tab.title,
                 preview: tab.preview,
                 date: tab.timestamp,
@@ -163,12 +367,13 @@ class SessionStore: ObservableObject {
             )
         }
 
-        return (chatTabs + runTabs)
+        return (chatTabs + runTabs + terminalTabs)
             .filter { tab in
                 needle.isEmpty ||
                     tab.title.localizedCaseInsensitiveContains(needle) ||
                     tab.preview.localizedCaseInsensitiveContains(needle) ||
-                    (tab.runId?.localizedCaseInsensitiveContains(needle) ?? false)
+                    (tab.runId?.localizedCaseInsensitiveContains(needle) ?? false) ||
+                    (tab.terminalId?.localizedCaseInsensitiveContains(needle) ?? false)
             }
             .sorted { $0.sortDate > $1.sortDate }
     }
@@ -179,6 +384,222 @@ class SessionStore: ObservableObject {
             let group = Self.groupLabel(for: s.timestamp)
             let ago = Self.relativeTime(from: s.timestamp, to: now)
             return ChatSession(id: s.id, title: s.title, preview: s.preview, timestamp: ago, group: group)
+        }
+    }
+
+    @discardableResult
+    private func loadPersistedSessions() -> Bool {
+        guard let persistence else { return false }
+
+        do {
+            let persisted = try persistence.loadSessions()
+            guard !persisted.isEmpty else { return false }
+
+            sessions = persisted.map { summary in
+                let agent = AgentService(
+                    workingDir: workingDirectory,
+                    modelOverride: codexSelectionDefaults.model,
+                    reasoningEffortOverride: codexSelectionDefaults.reasoningEffort,
+                    approvalPolicyOverride: codexApprovalDefaults.approvalPolicy,
+                    sandboxModeOverride: codexApprovalDefaults.sandboxMode
+                )
+                return Session(
+                    id: summary.id,
+                    title: summary.title,
+                    preview: summary.preview,
+                    timestamp: summary.updatedAt,
+                    agent: agent,
+                    codexSelection: codexSelectionDefaults,
+                    codexApprovalSelection: codexApprovalDefaults
+                )
+            }
+
+            for session in sessions {
+                observeMessages(for: session.id, agent: session.agent)
+            }
+
+            activeSessionId = sessions.first?.id
+            if let activeSessionId {
+                loadSessionMessages(sessionID: activeSessionId, force: true)
+            }
+            return true
+        } catch {
+            AppLogger.state.warning("SessionStore failed to load persisted sessions", metadata: [
+                "error": String(describing: error),
+            ])
+            return false
+        }
+    }
+
+    private func observeMessages(for sessionID: String, agent: AgentService) {
+        messageCancellables[sessionID] = agent.$messages.sink { [weak self] messages in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleMessageUpdate(sessionID: sessionID, messages: messages)
+            }
+        }
+    }
+
+    private func handleMessageUpdate(sessionID: String, messages: [ChatMessage]) {
+        guard !persistenceSuppressedSessionIDs.contains(sessionID) else { return }
+        guard let idx = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+
+        let persistable = messages.compactMap { persistableMessage(from: $0) }
+        guard !persistable.isEmpty else { return }
+
+        if let latest = persistable.last {
+            sessions[idx].preview = String(latest.text.prefix(80))
+            sessions[idx].timestamp = Date()
+        }
+
+        persistSessionRecord(id: sessionID, title: sessions[idx].title)
+        persistMessages(persistable, for: sessionID)
+    }
+
+    private func persistableMessage(from message: ChatMessage) -> PersistableMessage? {
+        let normalized = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+
+        switch message.type {
+        case .user:
+            return PersistableMessage(chatID: message.id, role: .user, text: message.content)
+        case .assistant:
+            return PersistableMessage(chatID: message.id, role: .assistant, text: message.content)
+        default:
+            return nil
+        }
+    }
+
+    private func persistMessages(_ messages: [PersistableMessage], for sessionID: String) {
+        guard let persistence else { return }
+        var stateByChatID = persistedMessageStateBySessionID[sessionID] ?? [:]
+
+        for message in messages {
+            if var existing = stateByChatID[message.chatID] {
+                guard existing.role != message.role || existing.text != message.text else { continue }
+                do {
+                    try persistence.updateMessage(messageID: existing.dbMessageID, role: message.role, text: message.text)
+                    existing.role = message.role
+                    existing.text = message.text
+                    stateByChatID[message.chatID] = existing
+                } catch {
+                    AppLogger.state.warning("SessionStore failed to update persisted message", metadata: [
+                        "session_id": String(sessionID.prefix(8)),
+                        "error": String(describing: error),
+                    ])
+                }
+                continue
+            }
+
+            let dbMessageID = UUID(uuidString: message.chatID) != nil ? message.chatID : UUID().uuidString
+            do {
+                try persistence.createMessage(sessionID: sessionID, messageID: dbMessageID, role: message.role, text: message.text)
+                stateByChatID[message.chatID] = PersistedMessageState(
+                    dbMessageID: dbMessageID,
+                    role: message.role,
+                    text: message.text
+                )
+            } catch {
+                AppLogger.state.warning("SessionStore failed to persist message", metadata: [
+                    "session_id": String(sessionID.prefix(8)),
+                    "error": String(describing: error),
+                ])
+            }
+        }
+
+        persistedMessageStateBySessionID[sessionID] = stateByChatID
+    }
+
+    private func loadSessionMessages(sessionID: String, force: Bool) {
+        guard let persistence else { return }
+        guard force || !loadedSessionMessageIDs.contains(sessionID) else { return }
+        guard let idx = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+
+        do {
+            let persisted = try persistence.loadMessages(sessionID: sessionID)
+            var loadedMessages: [ChatMessage] = []
+            var messageState: [String: PersistedMessageState] = [:]
+
+            for message in persisted {
+                let type: ChatMessage.MessageType = message.role == .user ? .user : .assistant
+                loadedMessages.append(
+                    ChatMessage(
+                        id: message.id,
+                        type: type,
+                        content: message.text,
+                        timestamp: Self.messageTimestampFormatter.string(from: message.createdAt),
+                        command: nil,
+                        diff: nil
+                    )
+                )
+                messageState[message.id] = PersistedMessageState(
+                    dbMessageID: message.id,
+                    role: message.role,
+                    text: message.text
+                )
+            }
+
+            persistenceSuppressedSessionIDs.insert(sessionID)
+            sessions[idx].agent.messages = loadedMessages
+            persistenceSuppressedSessionIDs.remove(sessionID)
+
+            persistedMessageStateBySessionID[sessionID] = messageState
+            loadedSessionMessageIDs.insert(sessionID)
+
+            if let last = persisted.last {
+                sessions[idx].preview = String(last.text.prefix(80))
+                sessions[idx].timestamp = last.createdAt
+            } else {
+                sessions[idx].preview = ""
+            }
+
+            if isPlaceholderTitle(sessions[idx].title),
+               let firstUserMessage = persisted.first(where: { $0.role == .user }) {
+                let generated = ChatTitleGenerator.title(for: firstUserMessage.text)
+                sessions[idx].title = generated
+                persistRenameSession(id: sessionID, title: generated)
+            }
+        } catch {
+            AppLogger.state.warning("SessionStore failed to load session messages", metadata: [
+                "session_id": String(sessionID.prefix(8)),
+                "error": String(describing: error),
+            ])
+        }
+    }
+
+    private func persistSessionRecord(id: String, title: String) {
+        guard let persistence else { return }
+        do {
+            try persistence.createSession(id: id, title: title)
+        } catch {
+            AppLogger.state.warning("SessionStore failed to persist session", metadata: [
+                "session_id": String(id.prefix(8)),
+                "error": String(describing: error),
+            ])
+        }
+    }
+
+    private func persistRenameSession(id: String, title: String) {
+        guard let persistence else { return }
+        do {
+            try persistence.renameSession(id: id, title: title)
+        } catch {
+            AppLogger.state.warning("SessionStore failed to rename session", metadata: [
+                "session_id": String(id.prefix(8)),
+                "error": String(describing: error),
+            ])
+        }
+    }
+
+    private func persistDeleteSession(_ id: String) {
+        guard let persistence else { return }
+        do {
+            try persistence.deleteSession(id: id)
+        } catch {
+            AppLogger.state.warning("SessionStore failed to delete session", metadata: [
+                "session_id": String(id.prefix(8)),
+                "error": String(describing: error),
+            ])
         }
     }
 
@@ -218,6 +639,7 @@ class SessionStore: ObservableObject {
         kind: SidebarTabKind,
         chatSessionId: String?,
         runId: String?,
+        terminalId: String?,
         title: String,
         preview: String,
         date: Date,
@@ -228,6 +650,7 @@ class SessionStore: ObservableObject {
             kind: kind,
             chatSessionId: chatSessionId,
             runId: runId,
+            terminalId: terminalId,
             title: title,
             preview: preview,
             timestamp: Self.relativeTime(from: date, to: now),

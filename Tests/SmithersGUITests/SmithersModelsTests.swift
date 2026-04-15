@@ -156,6 +156,24 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(task.state, "running")
     }
 
+    func testRunTaskDecodingCLIShapeParsesIterationAndState() throws {
+        let json = """
+        {
+          "id": "review-gate:0",
+          "label": "Review Gate",
+          "state": "in-progress",
+          "attempt": "3",
+          "updatedAt": "2026-04-15T01:05:45Z"
+        }
+        """.data(using: .utf8)!
+        let task = try JSONDecoder().decode(RunTask.self, from: json)
+        XCTAssertEqual(task.nodeId, "review-gate")
+        XCTAssertEqual(task.iteration, 0)
+        XCTAssertEqual(task.state, "running")
+        XCTAssertEqual(task.lastAttempt, 3)
+        XCTAssertEqual(task.updatedAtMs, 1_776_215_145_000)
+    }
+
     // MARK: - RunInspection
 
     func testRunInspectionDecoding() throws {
@@ -165,6 +183,65 @@ final class SmithersModelsTests: XCTestCase {
         let inspection = try JSONDecoder().decode(RunInspection.self, from: json)
         XCTAssertEqual(inspection.run.runId, "r1")
         XCTAssertEqual(inspection.tasks.count, 1)
+    }
+
+    func testRunInspectionDecodesRealCLIInspectShape() throws {
+        let json = """
+        {
+          "run": {
+            "id": "92e861d1-d3e7-4926-a087-91f9a9c1598c",
+            "workflow": "ticket-kanban",
+            "status": "running",
+            "started": "2026-04-15T01:05:15.093Z",
+            "elapsed": "3h 42m"
+          },
+          "steps": [
+            {
+              "id": "0001-port-agents-view:implement",
+              "state": "finished",
+              "attempt": 1,
+              "label": "0001-port-agents-view:implement"
+            },
+            {
+              "id": "0001-port-agents-view:review:0",
+              "state": "in-progress",
+              "attempt": 1,
+              "label": "0001-port-agents-view:review:0"
+            },
+            {
+              "id": "release-gate",
+              "state": "waitingApproval",
+              "attempt": 0,
+              "label": "Release gate"
+            }
+          ],
+          "cta": {
+            "description": "Suggested commands:",
+            "commands": [
+              {
+                "command": "smithers logs 92e861d1-d3e7-4926-a087-91f9a9c1598c",
+                "description": "Tail run logs"
+              }
+            ]
+          }
+        }
+        """.data(using: .utf8)!
+
+        let inspection = try JSONDecoder().decode(RunInspection.self, from: json)
+
+        XCTAssertEqual(inspection.run.runId, "92e861d1-d3e7-4926-a087-91f9a9c1598c")
+        XCTAssertEqual(inspection.run.workflowName, "ticket-kanban")
+        XCTAssertEqual(inspection.run.status, .running)
+        XCTAssertEqual(inspection.run.startedAtMs, 1_776_215_115_093)
+        XCTAssertEqual(inspection.run.summary?["total"], 3)
+        XCTAssertEqual(inspection.run.summary?["finished"], 1)
+        XCTAssertEqual(inspection.run.summary?["running"], 1)
+        XCTAssertEqual(inspection.run.summary?["waiting-approval"], 1)
+
+        XCTAssertEqual(inspection.tasks.count, 3)
+        XCTAssertEqual(inspection.tasks[1].nodeId, "0001-port-agents-view:review")
+        XCTAssertEqual(inspection.tasks[1].iteration, 0)
+        XCTAssertEqual(inspection.tasks[1].state, "running")
     }
 
     // MARK: - SmithersAgent
@@ -232,6 +309,25 @@ final class SmithersModelsTests: XCTestCase {
         let wf = try JSONDecoder().decode(Workflow.self, from: json)
         XCTAssertNil(wf.workspaceId)
         XCTAssertNil(wf.status)
+    }
+
+    func testWorkflowDecodingFromEntryFileUsesFilePath() throws {
+        let json = """
+        {"id":"w3","displayName":"Deploy","entryFile":".smithers/workflows/deploy.tsx"}
+        """.data(using: .utf8)!
+        let wf = try JSONDecoder().decode(Workflow.self, from: json)
+        XCTAssertEqual(wf.name, "Deploy")
+        XCTAssertEqual(wf.filePath, ".smithers/workflows/deploy.tsx")
+    }
+
+    func testWorkflowDecodingFromPathAliasUsesFilePath() throws {
+        let json = """
+        {"id":"w4","name":"Release","path":"workflows/release.tsx","workspace_id":"ws-9","updated_at":"2026-04-15T00:00:00Z"}
+        """.data(using: .utf8)!
+        let wf = try JSONDecoder().decode(Workflow.self, from: json)
+        XCTAssertEqual(wf.workspaceId, "ws-9")
+        XCTAssertEqual(wf.updatedAt, "2026-04-15T00:00:00Z")
+        XCTAssertEqual(wf.filePath, "workflows/release.tsx")
     }
 
     // MARK: - WorkflowLaunchField
@@ -322,6 +418,20 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(decision.reason, "missing tests")
     }
 
+    func testApprovalDecisionDecodingSupportsDecisionAndDecidedAliases() throws {
+        let json = """
+        {"id":"d2","run_id":"r2","node_id":"n2","decision":"approved","decided_at":1700000001000,"decided_by":"ops","requested_at":1700000000000,"workflow_path":".smithers/workflows/release.yml","gate":"Release Gate","payload":"{\\"environment\\":\\"prod\\"}","transport_source":"sqlite"}
+        """.data(using: .utf8)!
+        let decision = try JSONDecoder().decode(ApprovalDecision.self, from: json)
+        XCTAssertEqual(decision.action, "approved")
+        XCTAssertEqual(decision.resolvedAt, 1700000001000)
+        XCTAssertEqual(decision.resolvedBy, "ops")
+        XCTAssertEqual(decision.requestedAt, 1700000000000)
+        XCTAssertEqual(decision.workflowPath, ".smithers/workflows/release.yml")
+        XCTAssertEqual(decision.gate, "Release Gate")
+        XCTAssertEqual(decision.source, "sqlite")
+    }
+
     // MARK: - SmithersPrompt & PromptInput
 
     func testPromptInputDefaultValueCodingKey() throws {
@@ -331,6 +441,15 @@ final class SmithersModelsTests: XCTestCase {
         let input = try JSONDecoder().decode(PromptInput.self, from: json)
         XCTAssertEqual(input.defaultValue, "gpt-4")
         XCTAssertEqual(input.id, "model")
+    }
+
+    func testPromptInputDefaultValueAltCodingKey() throws {
+        let json = """
+        {"name":"goal","type":"string","defaultValue":"ship"}
+        """.data(using: .utf8)!
+        let input = try JSONDecoder().decode(PromptInput.self, from: json)
+        XCTAssertEqual(input.defaultValue, "ship")
+        XCTAssertEqual(input.id, "goal")
     }
 
     func testSmithersPromptDecoding() throws {
@@ -420,6 +539,53 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(quality.p50), 0.9, accuracy: 0.0001)
     }
 
+    // MARK: - Metrics
+
+    func testMetricsFilterDefaultsToNilValues() {
+        let filter = MetricsFilter()
+        XCTAssertNil(filter.workflowPath)
+        XCTAssertNil(filter.runId)
+        XCTAssertNil(filter.nodeId)
+        XCTAssertNil(filter.startMs)
+        XCTAssertNil(filter.endMs)
+        XCTAssertNil(filter.groupBy)
+    }
+
+    func testTokenMetricsDecodesSnakeCaseAndComputesTotalFallback() throws {
+        let json = """
+        {"total_input_tokens":2000,"total_output_tokens":500,"cache_read_tokens":250,"cache_write_tokens":10}
+        """.data(using: .utf8)!
+        let metrics = try JSONDecoder().decode(TokenMetrics.self, from: json)
+        XCTAssertEqual(metrics.totalInputTokens, 2000)
+        XCTAssertEqual(metrics.totalOutputTokens, 500)
+        XCTAssertEqual(metrics.totalTokens, 2500)
+        XCTAssertEqual(metrics.cacheReadTokens, 250)
+        XCTAssertEqual(metrics.cacheWriteTokens, 10)
+        XCTAssertEqual(metrics.cacheHitRate ?? 0, 0.1, accuracy: 0.0001)
+    }
+
+    func testLatencyMetricsDecodingWithByPeriod() throws {
+        let json = """
+        {"count":3,"meanMs":120.5,"minMs":10,"maxMs":300,"p50Ms":90,"p95Ms":280,"byPeriod":[{"label":"2026-04-15","count":3,"meanMs":120.5,"p50Ms":90,"p95Ms":280}]}
+        """.data(using: .utf8)!
+        let metrics = try JSONDecoder().decode(LatencyMetrics.self, from: json)
+        XCTAssertEqual(metrics.count, 3)
+        XCTAssertEqual(metrics.meanMs, 120.5, accuracy: 0.001)
+        XCTAssertEqual(metrics.byPeriod.count, 1)
+        XCTAssertEqual(metrics.byPeriod.first?.label, "2026-04-15")
+    }
+
+    func testCostReportDecodingWithByPeriod() throws {
+        let json = """
+        {"totalCostUsd":0.5,"inputCostUsd":0.2,"outputCostUsd":0.3,"runCount":4,"byPeriod":[{"label":"2026-04-15","totalCostUsd":0.3,"inputCostUsd":0.1,"outputCostUsd":0.2,"runCount":2}]}
+        """.data(using: .utf8)!
+        let report = try JSONDecoder().decode(CostReport.self, from: json)
+        XCTAssertEqual(report.totalCostUSD, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(report.runCount, 4)
+        XCTAssertEqual(report.byPeriod.count, 1)
+        XCTAssertEqual(report.byPeriod.first?.runCount, 2)
+    }
+
     // MARK: - MemoryFact
 
     func testMemoryFactSchemaSig() throws {
@@ -453,6 +619,30 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(fact.namespace, fact2.namespace)
         XCTAssertEqual(fact.key, fact2.key)
         XCTAssertEqual(fact.schemaSig, fact2.schemaSig)
+    }
+
+    func testMemoryFactSnakeCaseDecoding() throws {
+        let json = """
+        {"namespace":"workflow:implement","key":"k","value_json":"{\\"ok\\":true}","schema_sig":"sig","created_at_ms":1000,"updated_at_ms":2000,"ttl_ms":3000}
+        """.data(using: .utf8)!
+        let fact = try JSONDecoder().decode(MemoryFact.self, from: json)
+        XCTAssertEqual(fact.namespace, "workflow:implement")
+        XCTAssertEqual(fact.key, "k")
+        XCTAssertEqual(fact.valueJson, #"{"ok":true}"#)
+        XCTAssertEqual(fact.schemaSig, "sig")
+        XCTAssertEqual(fact.createdAtMs, 1000)
+        XCTAssertEqual(fact.updatedAtMs, 2000)
+        XCTAssertEqual(fact.ttlMs, 3000)
+    }
+
+    func testMemoryFactDecodingSupportsStringTimestamps() throws {
+        let json = """
+        {"namespace":"ns","key":"k","valueJson":"{}","createdAtMs":"1000","updatedAtMs":"2000","ttlMs":"3000"}
+        """.data(using: .utf8)!
+        let fact = try JSONDecoder().decode(MemoryFact.self, from: json)
+        XCTAssertEqual(fact.createdAtMs, 1000)
+        XCTAssertEqual(fact.updatedAtMs, 2000)
+        XCTAssertEqual(fact.ttlMs, 3000)
     }
 
     // MARK: - MemoryRecallResult
@@ -683,6 +873,19 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(issue.commentCount, 3)
     }
 
+    func testIssueDecodingSupportsDescriptionStatusAndCommentsFallbacks() throws {
+        let json = """
+        {"id":"i2","number":"11","title":"Bug","description":"details","status":"open","labels":[{"name":"bug"}],"assignees":[{"login":"dev2"}],"comments":"4"}
+        """.data(using: .utf8)!
+        let issue = try JSONDecoder().decode(SmithersIssue.self, from: json)
+        XCTAssertEqual(issue.number, 11)
+        XCTAssertEqual(issue.body, "details")
+        XCTAssertEqual(issue.state, "open")
+        XCTAssertEqual(issue.labels, ["bug"])
+        XCTAssertEqual(issue.assignees, ["dev2"])
+        XCTAssertEqual(issue.commentCount, 4)
+    }
+
     func testIssueStates() throws {
         for state in ["open", "closed"] {
             let json = """
@@ -723,6 +926,17 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(ws.createdAt, "2026-03-07T00:00:00Z")
     }
 
+    func testWorkspaceDecodesNumericIDDisplayNameAndState() throws {
+        let json = """
+        {"id":42,"displayName":" Primary ","state":"running","created_at":"2026-03-07T00:00:00Z"}
+        """.data(using: .utf8)!
+        let ws = try JSONDecoder().decode(Workspace.self, from: json)
+        XCTAssertEqual(ws.id, "42")
+        XCTAssertEqual(ws.name, "Primary")
+        XCTAssertEqual(ws.status, "running")
+        XCTAssertEqual(ws.createdAt, "2026-03-07T00:00:00Z")
+    }
+
     // MARK: - WorkspaceSnapshot
 
     func testWorkspaceSnapshotDecoding() throws {
@@ -741,6 +955,16 @@ final class SmithersModelsTests: XCTestCase {
         let snap = try JSONDecoder().decode(WorkspaceSnapshot.self, from: json)
         XCTAssertEqual(snap.workspaceId, "ws1")
         XCTAssertEqual(snap.createdAt, "2026-03-07T00:00:00Z")
+    }
+
+    func testWorkspaceSnapshotDecodesNumericIDs() throws {
+        let json = """
+        {"id":9,"workspace_id":42,"name":" Nightly ","created_at":"2026-03-07T00:00:00Z"}
+        """.data(using: .utf8)!
+        let snap = try JSONDecoder().decode(WorkspaceSnapshot.self, from: json)
+        XCTAssertEqual(snap.id, "9")
+        XCTAssertEqual(snap.workspaceId, "42")
+        XCTAssertEqual(snap.name, "Nightly")
     }
 
     // MARK: - Changes / Status (JJHub)
@@ -822,6 +1046,17 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(block.stableId, "cmd-1")
     }
 
+    func testChatBlockLifecycleIdPrefersItemIdWhenBothPresent() throws {
+        let json = """
+        {"id":"evt-123","item_id":"cmd-1","role":"tool","content":"running"}
+        """.data(using: .utf8)!
+        let block = try JSONDecoder().decode(ChatBlock.self, from: json)
+        XCTAssertEqual(block.id, "evt-123")
+        XCTAssertEqual(block.itemId, "cmd-1")
+        XCTAssertEqual(block.lifecycleId, "cmd-1")
+        XCTAssertEqual(block.stableId, "cmd-1")
+    }
+
     func testChatBlockDecodingWithoutId() throws {
         let json = """
         {"role":"user","content":"Hi"}
@@ -875,6 +1110,31 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertTrue(block.stableId.hasPrefix("chatblock-"))
     }
 
+    func testChatBlockStableIdPreservedWhenMergingAnonymousAssistantStream() {
+        let existing = ChatBlock(
+            id: nil,
+            runId: "run-1",
+            nodeId: "node-1",
+            attempt: 0,
+            role: "assistant",
+            content: "Hello",
+            timestampMs: 100
+        )
+        let incoming = ChatBlock(
+            id: nil,
+            runId: "run-1",
+            nodeId: "node-1",
+            attempt: 0,
+            role: "assistant",
+            content: "Hello world",
+            timestampMs: 101
+        )
+
+        let merged = existing.mergingAssistantStream(with: incoming)
+        XCTAssertEqual(merged.stableId, existing.stableId)
+        XCTAssertEqual(merged.content, "Hello world")
+    }
+
     func testChatBlockMergedStreamingContentAppendsTimestampedDelta() {
         let merged = ChatBlock.mergedStreamingContent(
             existing: "Hello ",
@@ -919,6 +1179,19 @@ final class SmithersModelsTests: XCTestCase {
 
         let deduped = deduplicatedChatBlocks(blocks)
         XCTAssertEqual(deduped.count, 1)
+        XCTAssertEqual(deduped[0].content, "complete")
+    }
+
+    func testDeduplicatedChatBlocksUsesItemIdAcrossChangingEventIds() {
+        let blocks = [
+            ChatBlock(id: "evt-1", itemId: "cmd-1", role: "tool", content: "running"),
+            ChatBlock(id: "evt-2", itemId: "cmd-1", role: "tool", content: "progress"),
+            ChatBlock(id: "evt-3", itemId: "cmd-1", role: "tool", content: "complete"),
+        ]
+
+        let deduped = deduplicatedChatBlocks(blocks)
+        XCTAssertEqual(deduped.count, 1)
+        XCTAssertEqual(deduped[0].lifecycleId, "cmd-1")
         XCTAssertEqual(deduped[0].content, "complete")
     }
 
@@ -997,6 +1270,33 @@ final class SmithersModelsTests: XCTestCase {
             }
             XCTAssertEqual(context.debugDescription, "CronSchedule id resolved to an empty string")
         }
+    }
+
+    func testCronScheduleDecodesSnakeCaseTransportShape() throws {
+        let json = """
+        {"cron_id":"c4","cronPattern":"*/10 * * * *","workflow_path":".smithers/workflows/debug.tsx","isEnabled":"1","created_at_ms":"1776218840798","last_run_at_ms":null,"next_run_at_ms":"1776219440798","error_json":"{\\"message\\":\\"boom\\"}"}
+        """.data(using: .utf8)!
+
+        let cron = try JSONDecoder().decode(CronSchedule.self, from: json)
+        XCTAssertEqual(cron.id, "c4")
+        XCTAssertEqual(cron.pattern, "*/10 * * * *")
+        XCTAssertEqual(cron.workflowPath, ".smithers/workflows/debug.tsx")
+        XCTAssertTrue(cron.enabled)
+        XCTAssertEqual(cron.createdAtMs, 1_776_218_840_798)
+        XCTAssertEqual(cron.nextRunAtMs, 1_776_219_440_798)
+        XCTAssertEqual(cron.errorJson, "{\"message\":\"boom\"}")
+    }
+
+    func testCronResponseDecodesNestedDataCrons() throws {
+        let json = """
+        {"data":{"crons":[{"cronId":"c5","pattern":"0 * * * *","workflowPath":"hourly.ts","enabled":true}]}}
+        """.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(CronResponse.self, from: json)
+        XCTAssertEqual(response.crons.count, 1)
+        XCTAssertEqual(response.crons[0].id, "c5")
+        XCTAssertEqual(response.crons[0].workflowPath, "hourly.ts")
+        XCTAssertTrue(response.crons[0].enabled)
     }
 
     // MARK: - SQLResult

@@ -25,7 +25,7 @@ final class NavDestinationTests: XCTestCase {
         let all: [NavDestination] = [
             .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
-            .landings, .tickets, .issues, .terminal, .liveRun(runId: "run", nodeId: nil), .workspaces,
+            .landings, .tickets, .issues, .terminal(), .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
         XCTAssertEqual(all.count, 20, "There must be exactly 20 static NavDestination routes")
     }
@@ -34,7 +34,7 @@ final class NavDestinationTests: XCTestCase {
         let all: [NavDestination] = [
             .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
-            .landings, .tickets, .issues, .terminal, .liveRun(runId: "run", nodeId: nil), .workspaces,
+            .landings, .tickets, .issues, .terminal(), .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
         for dest in all {
             XCTAssertFalse(dest.label.isEmpty, "\(dest) label should not be empty")
@@ -45,7 +45,7 @@ final class NavDestinationTests: XCTestCase {
         let all: [NavDestination] = [
             .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
-            .landings, .tickets, .issues, .terminal, .liveRun(runId: "run", nodeId: nil), .workspaces,
+            .landings, .tickets, .issues, .terminal(), .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
         for dest in all {
             XCTAssertFalse(dest.icon.isEmpty, "\(dest) icon should not be empty")
@@ -54,7 +54,7 @@ final class NavDestinationTests: XCTestCase {
 
     func testSpecificLabels() {
         XCTAssertEqual(NavDestination.chat.label, "Chat")
-        XCTAssertEqual(NavDestination.terminal.label, "Terminal")
+        XCTAssertEqual(NavDestination.terminal().label, "Terminal")
         XCTAssertEqual(NavDestination.liveRun(runId: "run", nodeId: nil).label, "Live Run")
         XCTAssertEqual(NavDestination.dashboard.label, "Dashboard")
         XCTAssertEqual(NavDestination.agents.label, "Agents")
@@ -77,7 +77,7 @@ final class NavDestinationTests: XCTestCase {
 
     func testSpecificIcons() {
         XCTAssertEqual(NavDestination.chat.icon, "message")
-        XCTAssertEqual(NavDestination.terminal.icon, "terminal.fill")
+        XCTAssertEqual(NavDestination.terminal().icon, "terminal.fill")
         XCTAssertEqual(NavDestination.liveRun(runId: "run", nodeId: nil).icon, "dot.radiowaves.left.and.right")
         XCTAssertEqual(NavDestination.dashboard.icon, "square.grid.2x2")
         XCTAssertEqual(NavDestination.agents.icon, "person.2")
@@ -510,7 +510,7 @@ final class ContentViewNavigationTests: XCTestCase {
         let all: [NavDestination] = [
             .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
-            .landings, .tickets, .issues, .terminal, .liveRun(runId: "run", nodeId: nil), .workspaces,
+            .landings, .tickets, .issues, .terminal(), .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
         XCTAssertEqual(all.count, 20)
 

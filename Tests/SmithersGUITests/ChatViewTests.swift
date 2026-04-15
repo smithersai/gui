@@ -1049,21 +1049,31 @@ final class ChatViewStatusTextTests: XCTestCase {
 
     /// The statusText() method should include workspace, message count, and running state.
     @MainActor
-    func testStatusTextContent() {
-        let agent = makeAgent(workingDir: "/my/project")
+    func testStatusTextContent() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chat-view-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+
+        let agent = makeAgent(workingDir: project.path)
         // statusText is private, but we can test via /status command side effects
         agent.appendStatusMessage("test")
         XCTAssertEqual(agent.messages.count, 1)
 
         // Test workingDirectory accessor
-        XCTAssertEqual(agent.workingDirectory, "/my/project")
+        XCTAssertEqual(agent.workingDirectory, project.path)
     }
 
     /// AgentService initializes with custom working directory.
     @MainActor
-    func testAgentServiceWorkingDir() {
-        let agent = AgentService(workingDir: "/custom/path")
-        XCTAssertEqual(agent.workingDirectory, "/custom/path")
+    func testAgentServiceWorkingDir() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chat-agent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: project) }
+
+        let agent = AgentService(workingDir: project.path)
+        XCTAssertEqual(agent.workingDirectory, project.path)
     }
 }
 
@@ -1183,5 +1193,40 @@ final class ChatViewBugDocumentationTests: XCTestCase {
         XCTAssertTrue(textStrings.contains("Here's the result:"))
         XCTAssertTrue(textStrings.contains("$ echo hello"))
         XCTAssertTrue(textStrings.contains("hello"))
+    }
+}
+
+final class ChatViewAttachmentMentionWiringTests: XCTestCase {
+
+    func testAttachmentButtonWiredToFilePickerAction() throws {
+        let source = try projectSource("ChatView.swift")
+        XCTAssertTrue(
+            source.contains("Button(action: openAttachmentPicker)"),
+            "Attachment button should trigger openAttachmentPicker"
+        )
+    }
+
+    func testMentionButtonWiredToMentionTrigger() throws {
+        let source = try projectSource("ChatView.swift")
+        XCTAssertTrue(
+            source.contains("Button(action: insertMentionTrigger)"),
+            "Mention button should trigger insertMentionTrigger"
+        )
+    }
+
+    func testComposerHandlesPasteCommand() throws {
+        let source = try projectSource("ChatView.swift")
+        XCTAssertTrue(
+            source.contains(".onPasteCommand"),
+            "Composer input should wire onPasteCommand for attachment paste handling"
+        )
+    }
+
+    func testTextAttachmentPromptSemanticsMatchTUIMarker() throws {
+        let source = try projectSource("ChatView.swift")
+        XCTAssertTrue(
+            source.contains("<system_info>The files below have been attached by the user, consider them in your response</system_info>"),
+            "Prompt composition should include the TUI text attachment system_info marker"
+        )
     }
 }

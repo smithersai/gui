@@ -8,6 +8,7 @@ struct JJHubWorkflowsView: View {
     @State private var selectedWorkflowID: Int?
     @State private var isLoading = true
     @State private var loadError: String?
+    @State private var loadGeneration = 0
 
     @State private var actionMessage: String?
     @State private var actionError: String?
@@ -16,24 +17,6 @@ struct JJHubWorkflowsView: View {
     @State private var refInput = ""
     @State private var promptError: String?
     @State private var isTriggering = false
-
-    private static let iso8601WithFractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
-    private static let iso8601Basic: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
-
-    private static let absoluteFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter
-    }()
 
     private var selectedWorkflow: JJHubWorkflow? {
         guard let selectedWorkflowID else { return nil }
@@ -327,6 +310,8 @@ struct JJHubWorkflowsView: View {
     // MARK: - Actions
 
     private func loadData() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
         loadError = nil
         actionMessage = nil
@@ -337,6 +322,7 @@ struct JJHubWorkflowsView: View {
 
         do {
             let loaded = try await smithers.listJJHubWorkflows(limit: 100)
+            guard generation == loadGeneration else { return }
             workflows = loaded
             if loaded.isEmpty {
                 selectedWorkflowID = nil
@@ -348,6 +334,7 @@ struct JJHubWorkflowsView: View {
                 showRunPrompt = false
             }
         } catch {
+            guard generation == loadGeneration else { return }
             workflows = []
             selectedWorkflowID = nil
             showRunPrompt = false
@@ -467,12 +454,12 @@ struct JJHubWorkflowsView: View {
             if let raw, !raw.isEmpty { return raw }
             return "-"
         }
-        return Self.absoluteFormatter.string(from: date)
+        return DateFormatters.yearMonthDayHourMinute.string(from: date)
     }
 
     private func parseDate(_ raw: String?) -> Date? {
         guard let raw, !raw.isEmpty else { return nil }
-        return Self.iso8601WithFractional.date(from: raw) ?? Self.iso8601Basic.date(from: raw)
+        return DateFormatters.parseISO8601InternetDateTime(raw)
     }
 
     private func errorView(_ message: String) -> some View {

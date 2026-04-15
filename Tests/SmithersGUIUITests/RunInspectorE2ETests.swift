@@ -1,6 +1,20 @@
 import XCTest
 
 final class RunInspectorE2ETests: SmithersGUIUITestCase {
+    func testRunHijackOpensTerminalWithResumeCommand() {
+        navigate(to: "Runs", expectedViewIdentifier: "view.runs")
+
+        waitForElement("runs.hijack.ui-run-active-001").click()
+
+        XCTAssertTrue(element("view.terminalCommand.Hijack ui-run-a").waitForExistence(timeout: 5))
+        let command = waitForElement("terminal.command").label
+        XCTAssertTrue(
+            command.contains("'codex' 'resume' 'ui-session-token' '-C'"),
+            "Expected hijack terminal command to resume the Codex session, got: \(command)"
+        )
+        XCTAssertTrue(waitForElement("terminal.cwd").label.count > 0)
+    }
+
     func testRunInspectorSupportsModesNodeDetailAndSnapshots() {
         navigate(to: "Runs", expectedViewIdentifier: "view.runs")
 

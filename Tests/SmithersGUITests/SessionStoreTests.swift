@@ -6,6 +6,36 @@ final class SessionStoreTests: XCTestCase {
 
     // MARK: - Helpers
 
+    private func requireSQLite3() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: SQLiteSessionPersistence.sqliteBinaryPath)
+        process.arguments = ["--version"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw XCTSkip("sqlite3 is required for SessionStore persistence tests")
+        }
+
+        if process.terminationStatus != 0 {
+            throw XCTSkip("sqlite3 is required for SessionStore persistence tests")
+        }
+    }
+
+    private func makePersistentStore(tempDirectory: String) -> SessionStore {
+        SessionStore(
+            workingDirectory: tempDirectory,
+            persistence: SQLiteSessionPersistence(workingDirectory: tempDirectory)
+        )
+    }
+
+    private func flushMainActorWrites() {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+    }
+
     /// Build a session with a given timestamp, bypassing AgentService FFI.
     private func makeSession(
         id: String = UUID().uuidString,
@@ -13,7 +43,14 @@ final class SessionStoreTests: XCTestCase {
         preview: String = "",
         timestamp: Date = Date()
     ) -> Session {
-        Session(id: id, title: title, preview: preview, timestamp: timestamp, agent: AgentService())
+        Session(
+            id: id,
+            title: title,
+            preview: preview,
+            timestamp: timestamp,
+            agent: AgentService(),
+            codexSelection: .fallback
+        )
     }
 
     // MARK: - PLATFORM_SESSION_UUID_BASED_ID
@@ -301,6 +338,22 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(tabs.map(\.runId), ["run-needle"])
     }
 
+    func testTerminalTabsAppearInSidebarTabs() {
+        let store = SessionStore()
+        let terminalId = store.addTerminalTab()
+        let tabs = store.sidebarTabs()
+        XCTAssertTrue(tabs.contains { $0.id == "terminal:\(terminalId)" && $0.title == "Terminal 1" })
+    }
+
+    func testNewTerminalTabsHaveDistinctIds() {
+        let store = SessionStore()
+        let firstId = store.addTerminalTab()
+        let secondId = store.addTerminalTab()
+
+        XCTAssertNotEqual(firstId, secondId)
+        XCTAssertEqual(store.terminalTabs.map(\.title), ["Terminal 2", "Terminal 1"])
+    }
+
     // MARK: - Edge cases
 
     func testSendMessageToNonExistentSessionIsNoOp() {
@@ -342,5 +395,110 @@ final class SessionStoreTests: XCTestCase {
         let ts = store.sessions.first!.timestamp
         XCTAssertGreaterThanOrEqual(ts, before)
         XCTAssertLessThanOrEqual(ts, after)
+    }
+
+    func testApplyCodexApprovalSelectionUpdatesDefaultsAndActiveSession() {
+        let store = SessionStore()
+        let selection = CodexApprovalSelection(
+            approvalPolicy: .onRequest,
+            sandboxMode: .workspaceWrite
+        )
+
+        let result = store.applyCodexApprovalSelection(selection)
+        switch result {
+        case .success(let applied):
+            XCTAssertEqual(applied, selection)
+            XCTAssertEqual(store.codexApprovalDefaults, selection)
+            XCTAssertEqual(store.activeCodexApprovalSelection, selection)
+        case .failure(let error):
+            XCTFail("Expected success, got \(error)")
+        }
+    }
+
+    func testNewSessionUsesCurrentApprovalDefaults() {
+        let store = SessionStore()
+        _ = store.applyCodexApprovalSelection(
+            CodexApprovalSelection(
+                approvalPolicy: .never,
+                sandboxMode: .dangerFullAccess
+            )
+        )
+
+        store.newSession()
+        XCTAssertEqual(
+            store.activeCodexApprovalSelection,
+            CodexApprovalSelection(
+                approvalPolicy: .never,
+                sandboxMode: .dangerFullAccess
+            )
+        )
+    }
+
+    // MARK: - Persistence
+
+    func testPersistentSessionsSurviveRestart() throws {
+        try requireSQLite3()
+
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("session-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let store1 = makePersistentStore(tempDirectory: tempDirectory.path)
+        let sessionID = store1.activeSessionId!
+        store1.renameSession(sessionID, to: "Persistent Session")
+        store1.sendMessage("Persist this message")
+        flushMainActorWrites()
+
+        let store2 = makePersistentStore(tempDirectory: tempDirectory.path)
+        let restored = store2.sessions.first(where: { $0.id == sessionID })
+
+        XCTAssertNotNil(restored)
+        XCTAssertEqual(restored?.title, "Persistent Session")
+        XCTAssertEqual(restored?.preview, "Persist this message")
+    }
+
+    func testPersistentLoadSessionRestoresMessages() throws {
+        try requireSQLite3()
+
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("session-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let store1 = makePersistentStore(tempDirectory: tempDirectory.path)
+        let firstSessionID = store1.activeSessionId!
+        store1.sendMessage("First persisted prompt")
+        flushMainActorWrites()
+        store1.newSession()
+        store1.sendMessage("Second persisted prompt")
+        flushMainActorWrites()
+
+        let store2 = makePersistentStore(tempDirectory: tempDirectory.path)
+        store2.loadSessionFromPersistence(firstSessionID)
+
+        XCTAssertEqual(store2.activeSessionId, firstSessionID)
+        XCTAssertTrue(
+            store2.activeAgent?.messages.contains(where: {
+                $0.type == .user && $0.content.contains("First persisted prompt")
+            }) ?? false
+        )
+    }
+
+    func testPersistentDeleteRemovesSessionAcrossRestart() throws {
+        try requireSQLite3()
+
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("session-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let store1 = makePersistentStore(tempDirectory: tempDirectory.path)
+        let sessionID = store1.activeSessionId!
+        store1.renameSession(sessionID, to: "To Delete")
+        store1.deleteSession(sessionID)
+
+        let store2 = makePersistentStore(tempDirectory: tempDirectory.path)
+        XCTAssertFalse(store2.sessions.contains(where: { $0.id == sessionID }))
     }
 }

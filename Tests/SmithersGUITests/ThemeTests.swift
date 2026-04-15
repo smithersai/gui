@@ -453,3 +453,93 @@ final class ThemeTokenWiringTests: XCTestCase {
         XCTAssertTrue(wiredSources.contains("SyntaxHighlightedText"))
     }
 }
+
+// MARK: - SOURCE_CODE_SYNTAX_HIGHLIGHTING
+
+final class SourceCodeLanguageTests: XCTestCase {
+    func testFileExtensionMappingCoversRequestedLanguages() {
+        XCTAssertEqual(SourceCodeLanguage(fileName: "workflow.tsx"), .typeScriptReact)
+        XCTAssertEqual(SourceCodeLanguage(fileName: "types.ts"), .typeScript)
+        XCTAssertEqual(SourceCodeLanguage(fileName: "component.jsx"), .javaScriptReact)
+        XCTAssertEqual(SourceCodeLanguage(fileName: "script.js"), .javaScript)
+        XCTAssertEqual(SourceCodeLanguage(fileName: "prompt.md"), .markdown)
+        XCTAssertEqual(SourceCodeLanguage(fileName: "prompt.mdx"), .mdx)
+    }
+}
+
+final class SourceCodeSyntaxHighlighterTests: XCTestCase {
+    func testTypeScriptReactHighlightsCoreTokens() {
+        let source = """
+        const title: string = "Hi" // note
+        return <Card label={title} />
+        """
+        let highlighted = SourceCodeSyntaxHighlighter.highlightedAttributedString(
+            source,
+            language: .typeScriptReact
+        )
+
+        assertForegroundColor(in: highlighted, source: source, token: "const", equals: Theme.synKeyword)
+        assertForegroundColor(in: highlighted, source: source, token: "string", equals: Theme.synType)
+        assertForegroundColor(in: highlighted, source: source, token: "\"Hi\"", equals: Theme.synString)
+        assertForegroundColor(in: highlighted, source: source, token: "// note", equals: Theme.synComment)
+        assertForegroundColor(in: highlighted, source: source, token: "Card", equals: Theme.synFunction)
+        assertForegroundColor(in: highlighted, source: source, token: "label", equals: Theme.synProperty)
+    }
+
+    func testMDXHighlightsMarkdownAndEmbeddedJSX() {
+        let source = """
+        # Title
+        Use `code` and [docs](https://example.test).
+        <Step count={1} />
+        """
+        let highlighted = SourceCodeSyntaxHighlighter.highlightedAttributedString(
+            source,
+            language: .mdx
+        )
+
+        assertForegroundColor(in: highlighted, source: source, token: "# Title", equals: Theme.synHeading)
+        assertForegroundColor(in: highlighted, source: source, token: "`code`", equals: Theme.synString)
+        assertForegroundColor(in: highlighted, source: source, token: "docs", equals: Theme.synFunction)
+        assertForegroundColor(in: highlighted, source: source, token: "Step", equals: Theme.synFunction)
+        assertForegroundColor(in: highlighted, source: source, token: "count", equals: Theme.synProperty)
+        assertForegroundColor(in: highlighted, source: source, token: "1", equals: Theme.synNumber)
+    }
+}
+
+private func assertForegroundColor(
+    in attributed: NSAttributedString,
+    source: String,
+    token: String,
+    equals expected: Color,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    let range = (source as NSString).range(of: token)
+    XCTAssertNotEqual(range.location, NSNotFound, "\(token) should exist in source", file: file, line: line)
+    guard range.location != NSNotFound else { return }
+
+    let actual = attributed.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor
+    XCTAssertNotNil(actual, "\(token) should have a foreground color", file: file, line: line)
+    guard let actualRGBA = actual?.usingColorSpace(.sRGB)?.rgbaComponents(),
+          let expectedRGBA = SourceCodeSyntaxHighlighter.nsColor(expected).usingColorSpace(.sRGB)?.rgbaComponents() else {
+        XCTFail("Could not resolve \(token) colors", file: file, line: line)
+        return
+    }
+
+    let accuracy: CGFloat = 1.0 / 255.0
+    XCTAssertEqual(actualRGBA.r, expectedRGBA.r, accuracy: accuracy, file: file, line: line)
+    XCTAssertEqual(actualRGBA.g, expectedRGBA.g, accuracy: accuracy, file: file, line: line)
+    XCTAssertEqual(actualRGBA.b, expectedRGBA.b, accuracy: accuracy, file: file, line: line)
+    XCTAssertEqual(actualRGBA.a, expectedRGBA.a, accuracy: accuracy, file: file, line: line)
+}
+
+private extension NSColor {
+    func rgbaComponents() -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) {
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+        getRed(&r, green: &g, blue: &b, alpha: &a)
+        return (r, g, b, a)
+    }
+}

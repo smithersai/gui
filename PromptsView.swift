@@ -293,11 +293,14 @@ struct PromptsView: View {
     }
 
     private var sourceEditor: some View {
-        TextEditor(text: sourceBinding)
-            .font(.system(size: 12, design: .monospaced))
-            .scrollContentBackground(.hidden)
-            .background(Theme.base)
-            .padding(1)
+        SyntaxHighlightedTextEditor(
+            text: sourceBinding,
+            language: SourceCodeLanguage(fileName: selectedPrompt?.entryFile ?? "\(selectedId ?? "prompt").mdx"),
+            accessibilityIdentifier: "prompts.sourceEditor"
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.base)
+        .padding(1)
     }
 
     private var inputsView: some View {
@@ -458,11 +461,16 @@ struct PromptsView: View {
 
     private func savePrompt() async {
         guard let id = selectedId else { return }
+        let capturedId = id
+        let sourceToSave = source
         do {
-            try await smithers.updatePrompt(id, source: source)
-            originalSource = source
+            try await smithers.updatePrompt(capturedId, source: sourceToSave)
+            // Only apply if the same prompt is still selected.
+            guard selectedId == capturedId else { return }
+            originalSource = sourceToSave
             saveError = nil
         } catch {
+            guard selectedId == capturedId else { return }
             saveError = error.localizedDescription
         }
         isSaving = false
