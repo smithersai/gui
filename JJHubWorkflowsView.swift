@@ -164,7 +164,7 @@ struct JJHubWorkflowsView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(selectedWorkflowID == workflow.id ? Theme.sidebarSelected : Color.clear)
+                            .themedSidebarRowBackground(isSelected: selectedWorkflowID == workflow.id)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -175,6 +175,7 @@ struct JJHubWorkflowsView: View {
                 }
             }
         }
+        .refreshable { await loadData() }
         .background(Theme.surface2)
     }
 
@@ -229,7 +230,7 @@ struct JJHubWorkflowsView: View {
                                     Text("Run Workflow")
                                 }
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.white)
+                                .foregroundColor(Theme.textPrimary)
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 36)
                                 .background(Theme.accent)
@@ -291,7 +292,7 @@ struct JJHubWorkflowsView: View {
                         Text(isTriggering ? "Running..." : "Run")
                     }
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(Theme.textPrimary)
                     .padding(.horizontal, 14)
                     .frame(height: 30)
                     .background(isTriggering ? Theme.accent.opacity(0.6) : Theme.accent)
@@ -307,8 +308,7 @@ struct JJHubWorkflowsView: View {
                         .foregroundColor(Theme.textSecondary)
                         .padding(.horizontal, 14)
                         .frame(height: 30)
-                        .background(Theme.pillBg)
-                        .cornerRadius(6)
+                        .themedPill(cornerRadius: 6)
                 }
                 .buttonStyle(.plain)
                 .disabled(isTriggering)
