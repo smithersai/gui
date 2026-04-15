@@ -1,14 +1,33 @@
 import SwiftUI
 
+struct PromptSourceLoadSnapshot: Equatable {
+    let promptId: String
+    let loadGeneration: Int
+    let editGeneration: Int
+
+    func canApply(
+        selectedId: String?,
+        activeLoadGeneration: Int,
+        currentEditGeneration: Int
+    ) -> Bool {
+        selectedId == promptId
+            && activeLoadGeneration == loadGeneration
+            && currentEditGeneration == editGeneration
+    }
+}
+
 struct PromptsView: View {
     @ObservedObject var smithers: SmithersClient
     @State private var prompts: [SmithersPrompt] = []
     @State private var selectedId: String?
     @State private var source: String = ""
     @State private var originalSource: String = ""
+    @State private var sourceEditGeneration = 0
+    @State private var sourceLoadGeneration = 0
     @State private var inputs: [PromptInput] = []
     @State private var inputValues: [String: String] = [:]
     @State private var previewText: String?
+    @State private var previewRequestGeneration = 0
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var isPreviewing = false
@@ -17,6 +36,7 @@ struct PromptsView: View {
     @State private var showUnsavedAlert = false
     @State private var pendingPrompt: SmithersPrompt?
     @State private var tab: DetailTab = .source
+    private let previewDebounceNanoseconds: UInt64 = 300_000_000
 
     enum DetailTab: String, CaseIterable {
         case source = "Source"
@@ -31,11 +51,28 @@ struct PromptsView: View {
     init(
         smithers: SmithersClient,
         initialPrompts: [SmithersPrompt],
-        isLoading: Bool = false
+        isLoading: Bool = false,
+        selectedId: String? = nil,
+        source: String? = nil,
+        originalSource: String? = nil,
+        inputs: [PromptInput] = [],
+        inputValues: [String: String] = [:],
+        previewText: String? = nil,
+        tab: DetailTab = .source
     ) {
         self.smithers = smithers
+        let selectedSource = source
+            ?? initialPrompts.first { $0.id == selectedId }?.source
+            ?? ""
         _prompts = State(initialValue: initialPrompts)
         _isLoading = State(initialValue: isLoading)
+        _selectedId = State(initialValue: selectedId)
+        _source = State(initialValue: selectedSource)
+        _originalSource = State(initialValue: originalSource ?? selectedSource)
+        _inputs = State(initialValue: inputs)
+        _inputValues = State(initialValue: inputValues)
+        _previewText = State(initialValue: previewText)
+        _tab = State(initialValue: tab)
     }
 
     private var selectedPrompt: SmithersPrompt? {
@@ -44,6 +81,17 @@ struct PromptsView: View {
 
     private var hasChanges: Bool {
         source != originalSource
+    }
+
+    private var sourceBinding: Binding<String> {
+        Binding(
+            get: { source },
+            set: { newValue in
+                guard source != newValue else { return }
+                source = newValue
+                sourceEditGeneration += 1
+            }
+        )
     }
 
     var body: some View {
@@ -64,6 +112,13 @@ struct PromptsView: View {
         }
         .background(Theme.surface1)
         .task { await loadPrompts() }
+        .task(id: sourceEditGeneration) {
+            await renderPreviewAfterDebounce(
+                promptId: selectedId,
+                sourceSnapshot: source,
+                editGeneration: sourceEditGeneration
+            )
+        }
         .alert("Unsaved Changes", isPresented: $showUnsavedAlert) {
             Button("Discard", role: .destructive) {
                 if let p = pendingPrompt {
@@ -144,7 +199,7 @@ struct PromptsView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(selectedId == prompt.id ? Theme.sidebarSelected : Color.clear)
+                            .themedSidebarRowBackground(isSelected: selectedId == prompt.id)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -153,6 +208,7 @@ struct PromptsView: View {
                 }
             }
         }
+        .refreshable { await loadPrompts() }
         .background(Theme.surface2)
     }
 
@@ -198,7 +254,7 @@ struct PromptsView: View {
                                     Text("Save")
                                 }
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white)
+                                .foregroundColor(Theme.textPrimary)
                                 .padding(.horizontal, 12)
                                 .frame(height: 26)
                                 .background(Theme.accent)
@@ -237,7 +293,7 @@ struct PromptsView: View {
     }
 
     private var sourceEditor: some View {
-        TextEditor(text: $source)
+        TextEditor(text: sourceBinding)
             .font(.system(size: 12, design: .monospaced))
             .scrollContentBackground(.hidden)
             .background(Theme.base)
@@ -269,8 +325,7 @@ struct PromptsView: View {
                                         .foregroundColor(Theme.textTertiary)
                                         .padding(.horizontal, 4)
                                         .padding(.vertical, 1)
-                                        .background(Theme.pillBg)
-                                        .cornerRadius(3)
+                                        .themedPill(cornerRadius: 3)
                                 }
                             }
                             TextField(
@@ -362,17 +417,31 @@ struct PromptsView: View {
         previewText = nil
         isPreviewing = false
         tab = .source
+        sourceLoadGeneration += 1
+        let loadSnapshot = PromptSourceLoadSnapshot(
+            promptId: promptId,
+            loadGeneration: sourceLoadGeneration,
+            editGeneration: sourceEditGeneration
+        )
 
         // Load full details + props
         Task {
             do {
                 let full = try await smithers.getPrompt(promptId)
-                guard selectedId == promptId else { return }
+                guard loadSnapshot.canApply(
+                    selectedId: selectedId,
+                    activeLoadGeneration: sourceLoadGeneration,
+                    currentEditGeneration: sourceEditGeneration
+                ) else { return }
                 source = full.source ?? ""
                 originalSource = source
 
                 let props = try await smithers.discoverPromptProps(promptId)
-                guard selectedId == promptId else { return }
+                guard loadSnapshot.canApply(
+                    selectedId: selectedId,
+                    activeLoadGeneration: sourceLoadGeneration,
+                    currentEditGeneration: sourceEditGeneration
+                ) else { return }
                 inputs = props
                 var defaults: [String: String] = [:]
                 for prop in props {
@@ -399,21 +468,55 @@ struct PromptsView: View {
         isSaving = false
     }
 
-    private func renderPreview() async {
+    private func renderPreviewAfterDebounce(
+        promptId: String?,
+        sourceSnapshot: String,
+        editGeneration: Int
+    ) async {
+        guard editGeneration > 0, promptId != nil else { return }
+        do {
+            try await Task.sleep(nanoseconds: previewDebounceNanoseconds)
+        } catch {
+            return
+        }
+        guard selectedId == promptId,
+              source == sourceSnapshot,
+              sourceEditGeneration == editGeneration else { return }
+        await renderPreview(switchToPreview: false)
+    }
+
+    private func renderPreview(switchToPreview: Bool = true) async {
         guard let id = selectedId else { return }
         let selectedValues = inputValues
+        let selectedSource = source
+        let editGeneration = sourceEditGeneration
+        previewRequestGeneration += 1
+        let requestGeneration = previewRequestGeneration
         isPreviewing = true
-        tab = .preview
+        if switchToPreview {
+            tab = .preview
+        }
+        defer {
+            if selectedId == id && previewRequestGeneration == requestGeneration {
+                isPreviewing = false
+            }
+        }
         do {
-            let preview = try await smithers.previewPrompt(id, input: selectedValues)
-            guard selectedId == id else { return }
+            let preview = try await smithers.previewPrompt(id, source: selectedSource, input: selectedValues)
+            guard selectedId == id,
+                  source == selectedSource,
+                  inputValues == selectedValues,
+                  sourceEditGeneration == editGeneration,
+                  previewRequestGeneration == requestGeneration else { return }
             previewText = preview
         } catch {
-            guard selectedId == id else { return }
+            guard selectedId == id,
+                  source == selectedSource,
+                  inputValues == selectedValues,
+                  sourceEditGeneration == editGeneration,
+                  previewRequestGeneration == requestGeneration else { return }
             previewText = "Error: \(error.localizedDescription)"
         }
-        guard selectedId == id else { return }
-        isPreviewing = false
     }
 
     private func loadPrompts() async {
