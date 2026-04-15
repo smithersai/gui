@@ -13,7 +13,7 @@ struct ChangesView: View {
 
     @ObservedObject var smithers: SmithersClient
 
-    @State private var mode: Mode = .changes
+    @State private var mode: Mode
     @State private var detailTab: DetailTab = .info
 
     @State private var repo: JJHubRepo?
@@ -61,6 +61,11 @@ struct ChangesView: View {
         return formatter
     }()
 
+    init(smithers: SmithersClient, initialMode: Mode = .changes) {
+        self.smithers = smithers
+        _mode = State(initialValue: initialMode)
+    }
+
     private var selectedChange: JJHubChange? {
         guard let selectedChangeID else { return nil }
         return changes.first { $0.changeID == selectedChangeID }
@@ -85,7 +90,7 @@ struct ChangesView: View {
 
             if mode == .changes {
                 if let listError {
-                    errorView(listError) { await loadChanges() }
+                    errorView(listError) { await refresh(for: .changes) }
                 } else {
                     HStack(spacing: 0) {
                         changesList
@@ -427,7 +432,7 @@ struct ChangesView: View {
                 }
 
                 if let statusError {
-                    Text("Status error: \(statusError)")
+                    Text("Error: \(statusError)")
                         .font(.system(size: 12))
                         .foregroundColor(Theme.danger)
                 } else if !statusText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -473,11 +478,11 @@ struct ChangesView: View {
     // MARK: - Actions
 
     private func initialLoad() async {
-        await loadRepo()
-        await loadChanges()
+        await refresh(for: mode)
     }
 
     private func refresh(for mode: Mode) async {
+        await loadRepo()
         switch mode {
         case .changes:
             await loadChanges()

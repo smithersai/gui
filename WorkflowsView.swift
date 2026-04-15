@@ -149,7 +149,7 @@ struct WorkflowsView: View {
                                         .foregroundColor(workflowStatusColor(status))
                                 }
                                 if let updated = workflow.updatedAt {
-                                    Label(updated, systemImage: "clock")
+                                    Label(Self.formatDate(updated), systemImage: "clock")
                                         .font(.system(size: 11))
                                         .foregroundColor(Theme.textTertiary)
                                 }
@@ -287,7 +287,7 @@ struct WorkflowsView: View {
                 .disabled(isLaunching)
                 .accessibilityIdentifier("workflows.launchButton")
 
-                Button(action: { showLaunchForm = false }) {
+                Button(action: { showLaunchForm = false; launchError = nil }) {
                     Text("Cancel")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(Theme.textSecondary)
@@ -347,6 +347,7 @@ struct WorkflowsView: View {
 
     private func launchWorkflow() async {
         guard let workflow = selectedWorkflow else { return }
+        guard !isLaunching else { return }
         isLaunching = true
         launchError = nil
         do {
@@ -360,11 +361,36 @@ struct WorkflowsView: View {
         isLaunching = false
     }
 
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let displayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
+    private static func formatDate(_ iso: String) -> String {
+        if let date = isoFormatter.date(from: iso) {
+            return displayFormatter.string(from: date)
+        }
+        // Retry without fractional seconds
+        let fallback = ISO8601DateFormatter()
+        if let date = fallback.date(from: iso) {
+            return displayFormatter.string(from: date)
+        }
+        return iso
+    }
+
     private func workflowStatusColor(_ status: WorkflowStatus) -> Color {
         switch status {
         case .active: return Theme.success
         case .hot: return Theme.warning
-        case .draft: return Theme.textTertiary
+        case .draft: return Theme.info
         case .archived: return Theme.textTertiary
         }
     }

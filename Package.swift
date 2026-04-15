@@ -30,11 +30,14 @@ let package = Package(
                 "Tests",
                 "docs",
                 "project.yml",
+                "smithers.db",
+                "smithers.db-shm",
+                "smithers.db-wal",
             ],
             linkerSettings: [
                 .unsafeFlags([
-                    "-L/Users/williamcory/gui/codex/codex-rs/target/release",
-                    "-L/Users/williamcory/gui/ghostty/macos/GhosttyKit.xcframework/macos-arm64",
+                    "-Lcodex/codex-rs/target/release",
+                    "-Lghostty/macos/GhosttyKit.xcframework/macos-arm64",
                 ]),
                 .unsafeFlags([
                     "-lghostty-fat",

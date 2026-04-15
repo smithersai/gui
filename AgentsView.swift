@@ -83,7 +83,7 @@ struct AgentsView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 8) {
                 Text(statusIcon(agent.status))
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundColor(statusColor(agent.status))
 
                 Text(agent.name)
@@ -208,11 +208,11 @@ struct AgentsView: View {
     private func statusIcon(_ status: String) -> String {
         switch status {
         case "likely-subscription", "api-key":
-            return "ok"
+            return "●"
         case "binary-only":
-            return "~"
+            return "◐"
         default:
-            return "x"
+            return "○"
         }
     }
 

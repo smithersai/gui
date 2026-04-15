@@ -16,6 +16,7 @@ struct LiveRunChatView: View {
 
     @State private var allBlocks: [ChatBlock] = []
     @State private var attempts: [Int: [ChatBlock]] = [:]
+    @State private var seenBlockIDs: Set<String> = []
     @State private var currentAttempt = 0
     @State private var maxAttempt = 0
     @State private var newBlocksInLatest = 0
@@ -92,6 +93,11 @@ struct LiveRunChatView: View {
     }
 
     private var stateCounts: [(String, Int)] {
+        if let summary = run?.summary, !summary.isEmpty {
+            return summary
+                .map { ($0.key, $0.value) }
+                .sorted { $0.0 < $1.0 }
+        }
         let grouped = Dictionary(grouping: tasks, by: { $0.state })
         return grouped
             .map { ($0.key, $0.value.count) }
@@ -577,9 +583,7 @@ struct LiveRunChatView: View {
 
         do {
             var blocks = try await smithers.getChatOutput(runId)
-            blocks = blocks
-                .filter(matchesNodeFilter)
-                .sorted(by: chatSort)
+            blocks = blocks.filter(matchesNodeFilter)
             rebuildAttempts(with: blocks)
             startStreaming()
         } catch {
@@ -625,6 +629,9 @@ struct LiveRunChatView: View {
 
     private func appendStreamBlock(_ block: ChatBlock) {
         guard matchesNodeFilter(block) else { return }
+        if let id = block.id, !id.isEmpty {
+            guard seenBlockIDs.insert(id).inserted else { return }
+        }
 
         allBlocks.append(block)
         indexBlock(block)
@@ -642,6 +649,11 @@ struct LiveRunChatView: View {
     private func rebuildAttempts(with blocks: [ChatBlock]) {
         allBlocks = blocks
         attempts = [:]
+        seenBlockIDs = Set(
+            blocks
+                .compactMap(\.id)
+                .filter { !$0.isEmpty }
+        )
         maxAttempt = 0
         currentAttempt = 0
 
@@ -667,13 +679,6 @@ struct LiveRunChatView: View {
     private func matchesNodeFilter(_ block: ChatBlock) -> Bool {
         guard let nodeId, !nodeId.isEmpty else { return true }
         return block.nodeId == nodeId
-    }
-
-    private func chatSort(_ lhs: ChatBlock, _ rhs: ChatBlock) -> Bool {
-        let lts = lhs.timestampMs ?? Int64.min
-        let rts = rhs.timestampMs ?? Int64.min
-        if lts != rts { return lts < rts }
-        return lhs.stableId < rhs.stableId
     }
 
     private func startHijack() {

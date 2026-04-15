@@ -10,7 +10,8 @@ struct WorkspacesView: View {
     @State private var showCreate = false
     @State private var newName = ""
     @State private var isCreating = false
-    @State private var actionInFlight: String?
+    @State private var actionInFlight: Set<String> = []
+    @State private var deleteTarget: String?
 
     enum WSTab: String, CaseIterable {
         case workspaces = "Workspaces"
@@ -24,7 +25,16 @@ struct WorkspacesView: View {
             // Tabs
             HStack(spacing: 0) {
                 ForEach(WSTab.allCases, id: \.self) { t in
-                    Button(action: { tab = t; Task { await loadData() } }) {
+                    Button(action: {
+                        tab = t
+                        // Bug 1: Clear stale data from the other tab
+                        if t == .workspaces {
+                            snapshots = []
+                        } else {
+                            workspaces = []
+                        }
+                        Task { await loadData() }
+                    }) {
                         Text(t.rawValue)
                             .font(.system(size: 12, weight: tab == t ? .semibold : .regular))
                             .foregroundColor(tab == t ? Theme.accent : Theme.textSecondary)
@@ -55,6 +65,23 @@ struct WorkspacesView: View {
         .background(Theme.surface1)
         .accessibilityIdentifier("workspaces.root")
         .task { await loadData() }
+        .confirmationDialog(
+            "Delete Workspace",
+            isPresented: Binding(
+                get: { deleteTarget != nil },
+                set: { if !$0 { deleteTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let id = deleteTarget {
+                    Task { await performDeleteWS(id) }
+                }
+            }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+        } message: {
+            Text("Are you sure you want to delete this workspace? This action cannot be undone.")
+        }
     }
 
     // MARK: - Header
@@ -140,7 +167,7 @@ struct WorkspacesView: View {
 
                             Spacer()
 
-                            if actionInFlight == ws.id {
+                            if actionInFlight.contains(ws.id) {
                                 ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
                             } else {
                                 HStack(spacing: 4) {
@@ -152,12 +179,18 @@ struct WorkspacesView: View {
                                         wsAction("play.fill", color: Theme.success) {
                                             Task { await resumeWS(ws.id) }
                                         }
+                                    } else if ws.status == "stopped" {
+                                        // Bug 2: Stopped workspaces now have Resume and Delete actions
+                                        wsAction("play.fill", color: Theme.success) {
+                                            Task { await resumeWS(ws.id) }
+                                        }
                                     }
                                     wsAction("doc.on.doc", color: Theme.accent) {
                                         Task { await snapshotWS(ws) }
                                     }
+                                    // Bug 3: Delete now goes through confirmation dialog
                                     wsAction("trash", color: Theme.danger) {
-                                        Task { await deleteWS(ws.id) }
+                                        deleteTarget = ws.id
                                     }
                                 }
                             }
@@ -214,19 +247,23 @@ struct WorkspacesView: View {
 
                             Spacer()
 
-                            Button(action: { Task { await createWSFromSnapshot(snap) } }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "plus.square.on.square")
-                                    Text("Create WS")
+                            if actionInFlight.contains(snap.id) {
+                                ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
+                            } else {
+                                Button(action: { Task { await createWSFromSnapshot(snap) } }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "plus.square.on.square")
+                                        Text("Create WS")
+                                    }
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(Theme.accent)
+                                    .padding(.horizontal, 8)
+                                    .frame(height: 24)
+                                    .background(Theme.accent.opacity(0.12))
+                                    .cornerRadius(4)
                                 }
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(Theme.accent)
-                                .padding(.horizontal, 8)
-                                .frame(height: 24)
-                                .background(Theme.accent.opacity(0.12))
-                                .cornerRadius(4)
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
@@ -317,6 +354,12 @@ struct WorkspacesView: View {
         }
     }
 
+    private static func snapshotTimestamp() -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyyMMdd-HHmm"
+        return fmt.string(from: Date())
+    }
+
     // MARK: - Actions
 
     private func loadData() async {
@@ -347,51 +390,57 @@ struct WorkspacesView: View {
         isCreating = false
     }
 
-    private func deleteWS(_ id: String) async {
-        actionInFlight = id
+    private func deleteWS(_ id: String) {
+        deleteTarget = id
+    }
+
+    private func performDeleteWS(_ id: String) async {
+        actionInFlight.insert(id)
         do {
             try await smithers.deleteWorkspace(id)
             await loadData()
         } catch {
             self.error = error.localizedDescription
         }
-        actionInFlight = nil
+        actionInFlight.remove(id)
     }
 
     private func suspendWS(_ id: String) async {
-        actionInFlight = id
+        actionInFlight.insert(id)
         do {
             try await smithers.suspendWorkspace(id)
             await loadData()
         } catch {
             self.error = error.localizedDescription
         }
-        actionInFlight = nil
+        actionInFlight.remove(id)
     }
 
     private func resumeWS(_ id: String) async {
-        actionInFlight = id
+        actionInFlight.insert(id)
         do {
             try await smithers.resumeWorkspace(id)
             await loadData()
         } catch {
             self.error = error.localizedDescription
         }
-        actionInFlight = nil
+        actionInFlight.remove(id)
     }
 
     private func snapshotWS(_ ws: Workspace) async {
-        actionInFlight = ws.id
+        actionInFlight.insert(ws.id)
         do {
-            _ = try await smithers.createWorkspaceSnapshot(workspaceId: ws.id, name: "\(ws.name)-snapshot")
+            let timestamp = Self.snapshotTimestamp()
+            _ = try await smithers.createWorkspaceSnapshot(workspaceId: ws.id, name: "\(ws.name)-snapshot-\(timestamp)")
             await loadData()
         } catch {
             self.error = error.localizedDescription
         }
-        actionInFlight = nil
+        actionInFlight.remove(ws.id)
     }
 
     private func createWSFromSnapshot(_ snap: WorkspaceSnapshot) async {
+        actionInFlight.insert(snap.id)
         do {
             _ = try await smithers.createWorkspace(name: "\(snap.name ?? "ws")-from-snap", snapshotId: snap.id)
             tab = .workspaces
@@ -399,6 +448,7 @@ struct WorkspacesView: View {
         } catch {
             self.error = error.localizedDescription
         }
+        actionInFlight.remove(snap.id)
     }
 
     private func errorView(_ message: String) -> some View {

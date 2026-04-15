@@ -63,13 +63,16 @@ struct JJHubWorkflowsView: View {
                 HStack(spacing: 0) {
                     workflowList
                         .frame(width: 330)
+                        .accessibilityIdentifier("jjhubWorkflows.list")
                     Divider().background(Theme.border)
                     detailPane
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityIdentifier("jjhubWorkflows.detail")
                 }
             }
         }
         .background(Theme.surface1)
+        .accessibilityIdentifier("jjhubWorkflows.root")
         .task { await loadData() }
     }
 
@@ -165,6 +168,7 @@ struct JJHubWorkflowsView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("jjhubWorkflows.row.\(workflow.id)")
 
                         Divider().background(Theme.border)
                     }
@@ -185,12 +189,14 @@ struct JJHubWorkflowsView: View {
                             Text(actionMessage)
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(Theme.success)
+                                .accessibilityIdentifier("jjhubWorkflows.actionMessage")
                         }
 
                         if let actionError, !actionError.isEmpty {
                             Text(actionError)
                                 .font(.system(size: 11))
                                 .foregroundColor(Theme.danger)
+                                .accessibilityIdentifier("jjhubWorkflows.actionError")
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
@@ -230,6 +236,7 @@ struct JJHubWorkflowsView: View {
                                 .cornerRadius(8)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("jjhubWorkflows.runButton")
                         }
                     }
                     .padding(20)
@@ -273,6 +280,7 @@ struct JJHubWorkflowsView: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Theme.border, lineWidth: 1)
                 )
+                .accessibilityIdentifier("jjhubWorkflows.refInput")
 
             HStack(spacing: 8) {
                 Button(action: { Task { await triggerWorkflow() } }) {
@@ -291,6 +299,7 @@ struct JJHubWorkflowsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isTriggering)
+                .accessibilityIdentifier("jjhubWorkflows.runConfirmButton")
 
                 Button(action: closeRunPrompt) {
                     Text("Cancel")
@@ -303,6 +312,7 @@ struct JJHubWorkflowsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isTriggering)
+                .accessibilityIdentifier("jjhubWorkflows.cancelButton")
             }
 
             if let promptError, !promptError.isEmpty {
@@ -311,6 +321,7 @@ struct JJHubWorkflowsView: View {
                     .foregroundColor(Theme.danger)
             }
         }
+        .accessibilityIdentifier("jjhubWorkflows.runPrompt")
     }
 
     // MARK: - Actions
@@ -472,10 +483,13 @@ struct JJHubWorkflowsView: View {
             Text(message)
                 .font(.system(size: 13))
                 .foregroundColor(Theme.textSecondary)
+                .accessibilityIdentifier("jjhubWorkflows.loadErrorMessage")
             Button("Retry") { Task { await loadData() } }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("jjhubWorkflows.retryButton")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("jjhubWorkflows.loadError")
     }
 }
