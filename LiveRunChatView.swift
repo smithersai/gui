@@ -528,7 +528,7 @@ struct LiveRunChatView: View {
             return "[\(formatDuration(deltaMs: delta))]"
         }
         let date = Date(timeIntervalSince1970: Double(blockTS) / 1000.0)
-        return "[\(timeFormatter.string(from: date))]"
+        return "[\(DateFormatters.hourMinuteSecond.string(from: date))]"
     }
 
     private func formatDuration(deltaMs: Int64) -> String {
@@ -936,9 +936,3 @@ private struct StreamBlockEnvelope: Decodable {
     let block: ChatBlock?
     let data: ChatBlock?
 }
-
-private let timeFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "HH:mm:ss"
-    return formatter
-}()

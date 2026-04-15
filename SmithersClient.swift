@@ -4036,6 +4036,7 @@ class SmithersClient: ObservableObject {
         let resolvedBy = approvalString(from: row, keys: ["resolvedBy", "resolved_by", "decidedBy", "decided_by"])
         let workflowPath = approvalString(from: row, keys: ["workflowPath", "workflow_path"])
         let gate = approvalString(from: row, keys: ["gate", "question", "label"])
+        let iteration = approvalInt(from: row, keys: ["iteration", "attempt"])
         let status = Self.normalizedApprovalStatus(
             approvalString(from: row, keys: ["status", "decision", "action"])
         )
@@ -4047,6 +4048,7 @@ class SmithersClient: ObservableObject {
             id: id,
             runId: runId,
             nodeId: nodeId,
+            iteration: iteration,
             workflowPath: workflowPath,
             gate: gate,
             status: status,
@@ -4074,11 +4076,13 @@ class SmithersClient: ObservableObject {
         let resolvedBy = approvalString(from: row, keys: ["resolvedBy", "resolved_by", "decidedBy", "decided_by"])
         let id = approvalString(from: row, keys: ["id"])
             ?? "decision-\(runId)-\(nodeId)-\(fallbackIndex)"
+        let iteration = approvalInt(from: row, keys: ["iteration", "attempt"])
 
         return ApprovalDecision(
             id: id,
             runId: runId,
             nodeId: nodeId,
+            iteration: iteration,
             action: action,
             note: approvalString(from: row, keys: ["note", "comment"]),
             reason: approvalString(from: row, keys: ["reason"]),
@@ -5802,6 +5806,66 @@ class SmithersClient: ObservableObject {
         }
     }
 
+    private struct ParsedSSEEvent {
+        let event: String?
+        let data: String
+    }
+
+    private struct SSEParser {
+        private var eventType: String?
+        private var dataLines: [String] = []
+
+        mutating func consume(_ rawLine: String) -> ParsedSSEEvent? {
+            let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
+
+            if line.isEmpty {
+                return dispatch()
+            }
+
+            guard !line.hasPrefix(":") else {
+                return nil
+            }
+
+            let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+            let field = String(parts[0])
+            var value = parts.count > 1 ? String(parts[1]) : ""
+            if value.first == " " {
+                value.removeFirst()
+            }
+
+            switch field {
+            case "event":
+                eventType = value
+            case "data":
+                dataLines.append(value)
+            case "id", "retry":
+                break
+            default:
+                break
+            }
+
+            return nil
+        }
+
+        mutating func finish() -> ParsedSSEEvent? {
+            dispatch()
+        }
+
+        private mutating func dispatch() -> ParsedSSEEvent? {
+            defer {
+                eventType = nil
+                dataLines.removeAll(keepingCapacity: true)
+            }
+
+            guard !dataLines.isEmpty else {
+                return nil
+            }
+
+            let event = eventType?.isEmpty == true ? nil : eventType
+            return ParsedSSEEvent(event: event, data: dataLines.joined(separator: "\n"))
+        }
+    }
+
     private func sseStream(url: URL, runId: String?) -> AsyncStream<SSEEvent> {
         return sseStream(urls: [url], runId: runId)
     }
@@ -5888,38 +5952,25 @@ class SmithersClient: ObservableObject {
                             "status": String(http.statusCode)
                         ])
 
-                        var eventType: String? = nil
-                        var dataBuffer = ""
+                        var parser = SSEParser()
 
-                        for try await line in bytes.lines {
-                            if line.isEmpty {
-                                if !dataBuffer.isEmpty {
-                                    if let event = SSEEvent.filtered(event: eventType, data: dataBuffer, expectedRunId: runId) {
-                                        yieldedEvents += 1
-                                        continuation.yield(event)
-                                    } else {
-                                        filteredEvents += 1
-                                    }
-                                    eventType = nil
-                                    dataBuffer = ""
-                                }
-                                continue
-                            }
-                            if line.hasPrefix("event:") {
-                                eventType = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-                            } else if line.hasPrefix("data:") {
-                                let value = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-                                dataBuffer = dataBuffer.isEmpty ? value : dataBuffer + "\n" + value
-                            }
-                        }
-
-                        if !dataBuffer.isEmpty {
-                            if let event = SSEEvent.filtered(event: eventType, data: dataBuffer, expectedRunId: runId) {
+                        func emit(_ parsed: ParsedSSEEvent) {
+                            if let event = SSEEvent.filtered(event: parsed.event, data: parsed.data, expectedRunId: runId) {
                                 yieldedEvents += 1
                                 continuation.yield(event)
                             } else {
                                 filteredEvents += 1
                             }
+                        }
+
+                        for try await line in bytes.lines {
+                            if let parsed = parser.consume(line) {
+                                emit(parsed)
+                            }
+                        }
+
+                        if let parsed = parser.finish() {
+                            emit(parsed)
                         }
                         let ms = Int((CFAbsoluteTimeGetCurrent() - streamStart) * 1000)
                         AppLogger.network.info("SSE finished", metadata: [

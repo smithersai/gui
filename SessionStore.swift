@@ -42,12 +42,6 @@ class SessionStore: ObservableObject {
     private var persistenceSuppressedSessionIDs: Set<String> = []
     private var persistedMessageStateBySessionID: [String: [String: PersistedMessageState]] = [:]
 
-    private nonisolated static let messageTimestampFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
-        return formatter
-    }()
-
     var activeSession: Session? {
         sessions.first { $0.id == activeSessionId }
     }
@@ -527,7 +521,7 @@ class SessionStore: ObservableObject {
                         id: message.id,
                         type: type,
                         content: message.text,
-                        timestamp: Self.messageTimestampFormatter.string(from: message.createdAt),
+                        timestamp: DateFormatters.hourMinute.string(from: message.createdAt),
                         command: nil,
                         diff: nil
                     )

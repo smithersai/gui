@@ -1399,12 +1399,15 @@ struct TerminalView: View {
                 .background(Theme.base)
                 .accessibilityIdentifier("terminal.placeholder")
             } else if let app = ghostty.app {
-                TerminalSurfaceRepresentable(
-                    app: app,
-                    sessionId: sessionId,
-                    command: command,
-                    workingDirectory: workingDirectory
-                )
+                GeometryReader { geometry in
+                    TerminalSurfaceRepresentable(
+                        app: app,
+                        sessionId: sessionId,
+                        command: command,
+                        workingDirectory: workingDirectory,
+                        layoutSize: geometry.size
+                    )
+                }
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "terminal")
