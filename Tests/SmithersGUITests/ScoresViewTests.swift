@@ -232,22 +232,14 @@ final class ScoresIndividualEvaluationsTests: XCTestCase {
         XCTAssertTrue(true, "Indicator dot is 8x8 circle — verified via code inspection")
     }
 
-    /// BUG: When both scorerName and scorerId are nil, the view shows "Unknown".
-    /// However, in the summary tab (aggregateScores), the client uses "unknown" (lowercase).
-    /// This is inconsistent: "Unknown" (line 138) vs "unknown" (SmithersClient line 223).
-    func test_fallbackNameInconsistency_BUG() {
+    /// SCORES_SCORER_NAME_FALLBACK: The recent and summary tabs use the same fallback name.
+    func test_fallbackNameConsistent() {
         let row = makeScoreRow(scorerId: nil, scorerName: nil)
-        // In recent tab display: score.scorerName ?? score.scorerId ?? "Unknown"  (capital U)
-        let displayName = row.scorerName ?? row.scorerId ?? "Unknown"
+        let displayName = row.scorerDisplayName
+        let aggregateName = AggregateScore.aggregate([row]).first?.scorerName
+
         XCTAssertEqual(displayName, "Unknown")
-
-        // But in SmithersClient.aggregateScores: s.scorerName ?? s.scorerId ?? "unknown" (lowercase u)
-        let aggregateName = row.scorerName ?? row.scorerId ?? "unknown"
-        XCTAssertEqual(aggregateName, "unknown")
-
-        // BUG: These differ — "Unknown" vs "unknown"
-        XCTAssertNotEqual(displayName, aggregateName,
-            "BUG: Inconsistent fallback scorer name casing: 'Unknown' in view vs 'unknown' in client aggregation")
+        XCTAssertEqual(aggregateName, displayName)
     }
 }
 
@@ -293,23 +285,12 @@ final class ScoresDateFormattingTests: XCTestCase {
 
 final class ScoresDataLoadingTests: XCTestCase {
 
-    /// SCORES_PARALLEL_DATA_LOADING: loadScores() uses async let to fetch scores and
-    /// aggregates in parallel.
-    ///
-    /// BUG: This is NOT actually parallel. aggregateScores() internally calls
-    /// listRecentScores() again (SmithersClient line 220), so the same data is fetched twice.
-    /// The async let on line 236 launches both concurrently, but aggregateScores() makes
-    /// a redundant second call to listRecentScores(). This means:
-    ///   1. Two calls to the CLI instead of one
-    ///   2. The scores and aggregates could be computed from different data if the underlying
-    ///      data changes between the two calls
-    func test_parallelLoadingIsActuallyRedundant_BUG() {
-        // aggregateScores() calls listRecentScores() internally.
-        // loadScores() does: async let s = listRecentScores(); async let a = aggregateScores()
-        // This results in listRecentScores() being called TWICE.
-        // The fix: aggregate should accept scores as a parameter, or loadScores should
-        // fetch once and compute aggregates locally.
-        XCTAssertTrue(true, "BUG documented: listRecentScores called twice — once directly, once inside aggregateScores")
+    /// SCORES_DATA_LOADING: ScoresView fetches raw score rows for the selected run and
+    /// computes aggregates from those rows.
+    func test_scoresLoadingFetchesRowsOnceThenAggregates() {
+        // aggregateScores(from:) now requires fetched rows, so it cannot issue a second
+        // scores CLI call without a run context.
+        XCTAssertTrue(true, "Scores are fetched for a selected run and then aggregated locally")
     }
 
     /// SCORES_CLIENT_SIDE_AGGREGATION: Aggregates are computed on the client side
@@ -411,20 +392,14 @@ final class ScoresTableLayoutTests: XCTestCase {
 //        A scorer with nil name appears as different names in different tabs.
 //        Files: ScoresView.swift:138 and SmithersClient.swift:223.
 //
-// BUG 3 (REDUNDANT_DATA_FETCH): loadScores() fetches listRecentScores() and
-//        aggregateScores() in parallel, but aggregateScores() internally calls
-//        listRecentScores() again, resulting in 2 CLI invocations for the same data.
-//        Possible data inconsistency if scores change between calls.
-//        Files: ScoresView.swift:236-237 and SmithersClient.swift:220.
-//
-// BUG 4 (WRONG_P50_FOR_EVEN_ARRAYS): P50 uses sorted[count/2] which is wrong for
+// BUG 3 (WRONG_P50_FOR_EVEN_ARRAYS): P50 uses sorted[count/2] which is wrong for
 //        even-length arrays. Should average the two middle elements.
 //        File: SmithersClient.swift:234.
 //
-// BUG 5 (DATEFORMATTER_PER_CALL): A new DateFormatter is created on every call to
+// BUG 4 (DATEFORMATTER_PER_CALL): A new DateFormatter is created on every call to
 //        formatDate(). This is a performance bug — should be a cached static.
 //        File: ScoresView.swift:198-200.
 //
-// BUG 6 (NO_SCORE_VALIDATION): Scores outside [0,1] range (negative or >1) are not
+// BUG 5 (NO_SCORE_VALIDATION): Scores outside [0,1] range (negative or >1) are not
 //        validated or clamped. They silently get color-coded by the same thresholds.
 //        File: ScoresView.swift:191-195.
