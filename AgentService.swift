@@ -77,13 +77,26 @@ final class CodexBridge: CodexBridgeControlling, @unchecked Sendable {
         let result = prompt.withCString { promptPtr in
             codex_send(h, promptPtr, { (eventJson, userData) in
                 guard let eventJson = eventJson, let userData = userData else { return }
-                let json = String(cString: eventJson)
+                let chunk = String(cString: eventJson)
                 let box = Unmanaged<CallbackBox>.fromOpaque(userData).takeUnretainedValue()
-                box.callback(json.hasSuffix("\n") ? json : json + "\n")
+                box.callback(CodexBridge.normalizedJSONLChunk(chunk))
             }, context)
         }
 
         return result == 0
+    }
+
+    /// Preserve raw JSONL chunks for partial-line buffering.
+    /// Some codex-ffi builds emit one full JSON event per callback without a trailing newline.
+    /// In that case, synthesize a delimiter so line-oriented consumers remain compatible.
+    nonisolated static func normalizedJSONLChunk(_ chunk: String) -> String {
+        guard !chunk.isEmpty else { return chunk }
+        guard !chunk.contains("\n"), !chunk.contains("\r") else { return chunk }
+        guard let data = chunk.data(using: .utf8),
+              (try? JSONDecoder().decode(CodexEvent.self, from: data)) != nil else {
+            return chunk
+        }
+        return chunk + "\n"
     }
 
     func cancel() {

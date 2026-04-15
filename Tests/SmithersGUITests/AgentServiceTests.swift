@@ -779,6 +779,37 @@ private final class FakeCodexBridge: CodexBridgeControlling, @unchecked Sendable
     func cancel() {}
 }
 
+// MARK: - Codex Bridge JSONL Chunk Normalization Tests
+
+final class CodexBridgeJSONLChunkNormalizationTests: XCTestCase {
+    func testStandaloneEventChunkGetsNewlineDelimiter() {
+        let chunk = #"{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"hello"}}"#
+        let normalized = CodexBridge.normalizedJSONLChunk(chunk)
+        XCTAssertEqual(normalized, chunk + "\n")
+    }
+
+    func testPartialChunkRemainsUntouched() {
+        let chunk = #"{"type":"item.completed","item":{"id":"m1""#
+        let normalized = CodexBridge.normalizedJSONLChunk(chunk)
+        XCTAssertEqual(normalized, chunk)
+    }
+
+    func testPartialChunksDecodeWhenCompletedWithNewline() {
+        let buffer = CodexJSONLLineBuffer()
+
+        let first = CodexBridge.normalizedJSONLChunk(#"{"type":"item.completed","item":{"id":"m1""#)
+        XCTAssertTrue(buffer.append(first).isEmpty)
+
+        let second = CodexBridge.normalizedJSONLChunk(#","type":"agent_message","text":"hello"}}"# + "\n")
+        let events = buffer.append(second)
+
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0].type, "item.completed")
+        XCTAssertEqual(events[0].item?.id, "m1")
+        XCTAssertEqual(events[0].item?.text, "hello")
+    }
+}
+
 final class CodexBridgeLifecycleTests: XCTestCase {
 
     func testCancelInvalidatesPendingBridgeCreation() {
