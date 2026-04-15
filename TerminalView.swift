@@ -2,6 +2,10 @@ import SwiftUI
 import AppKit
 import GhosttyKit
 
+private struct SendableGhosttyAppRef: @unchecked Sendable {
+    let value: ghostty_app_t
+}
+
 // MARK: - Ghostty Terminal App (singleton)
 
 @MainActor
@@ -17,6 +21,9 @@ class GhosttyApp: ObservableObject {
     private init() {
         if UITestSupport.isEnabled {
             ready = true
+            return
+        }
+        if UITestSupport.isRunningUnitTests {
             return
         }
 
@@ -42,15 +49,25 @@ class GhosttyApp: ObservableObject {
             return false
         }
         runtime.read_clipboard_cb = { userdata, loc, state in
-            // Return false = we don't handle clipboard reads via this callback
-            return false
+            guard let state else { return false }
+            if loc.rawValue == GHOSTTY_CLIPBOARD_SELECTION.rawValue {
+                return false
+            }
+            let pasteboard = NSPasteboard.general
+            guard let str = pasteboard.string(forType: .string) else { return false }
+            guard let userdata else { return false }
+            let surfaceView = Unmanaged<TerminalSurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+            guard let surface = surfaceView.surface else { return false }
+            str.withCString { ptr in
+                ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
+            }
+            return true
         }
         runtime.confirm_read_clipboard_cb = { userdata, str, state, request in
             // No-op for confirm read
         }
         runtime.write_clipboard_cb = { userdata, loc, content, len, confirm in
             guard let content else { return }
-            let mimePtr = content.pointee.mime
             let dataPtr = content.pointee.data
             guard let dataPtr else { return }
             let str = String(cString: dataPtr)
@@ -71,9 +88,9 @@ class GhosttyApp: ObservableObject {
         self.ready = true
 
         // Start tick timer for event processing
-        let appRef = app
+        let appRef = SendableGhosttyAppRef(value: app)
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0/120.0, repeats: true) { _ in
-            ghostty_app_tick(appRef)
+            ghostty_app_tick(appRef.value)
         }
     }
 
@@ -104,6 +121,7 @@ class TerminalSurfaceView: NSView {
 
         // Use the factory function for default config, then customize
         var surfaceCfg = ghostty_surface_config_new()
+        surfaceCfg.userdata = Unmanaged.passUnretained(self).toOpaque()
         surfaceCfg.platform_tag = GHOSTTY_PLATFORM_MACOS
         surfaceCfg.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque()))
         surfaceCfg.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
@@ -201,8 +219,27 @@ class TerminalSurfaceView: NSView {
 
     override func flagsChanged(with event: NSEvent) {
         guard let surface else { return }
+
+        // Determine which modifier mask corresponds to the physical key
+        let mod: NSEvent.ModifierFlags
+        switch event.keyCode {
+        case 0x39: mod = .capsLock
+        case 0x38, 0x3C: mod = .shift
+        case 0x3B, 0x3E: mod = .control
+        case 0x3A, 0x3D: mod = .option
+        case 0x37, 0x36: mod = .command
+        default: mod = []
+        }
+
+        let action: ghostty_input_action_e
+        if mod.isEmpty {
+            action = GHOSTTY_ACTION_PRESS
+        } else {
+            action = event.modifierFlags.contains(mod) ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
+        }
+
         var key = ghostty_input_key_s()
-        key.action = GHOSTTY_ACTION_PRESS
+        key.action = action
         key.mods = modsFromEvent(event)
         key.keycode = UInt32(event.keyCode)
         _ = ghostty_surface_key(surface, key)
@@ -280,6 +317,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
     func makeNSView(context: Context) -> TerminalSurfaceView {
         let view = TerminalSurfaceView(app: app, command: command, workingDirectory: workingDirectory)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            guard view.window != nil else { return }
             view.window?.makeFirstResponder(view)
         }
         return view
