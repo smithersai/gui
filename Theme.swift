@@ -95,6 +95,49 @@ private struct ThemedSidebarRowBackground: ViewModifier {
         content
             .background(Theme.sidebarRowFill(isSelected: isSelected, isHovered: isHovered, defaultFill: defaultFill))
             .cornerRadius(cornerRadius)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+            .onHover { isHovered = $0 }
+    }
+}
+
+private struct ThemedCardHover: ViewModifier {
+    let cornerRadius: CGFloat
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(isHovered ? Theme.accent.opacity(0.25) : Theme.border, lineWidth: 1)
+            )
+            .scaleEffect(isHovered ? 1.01 : 1.0)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+            .onHover { isHovered = $0 }
+    }
+}
+
+private struct ThemedRowHover: ViewModifier {
+    let cornerRadius: CGFloat
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(isHovered ? Color.white.opacity(0.03) : Color.clear)
+            )
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .onHover { isHovered = $0 }
+    }
+}
+
+private struct ThemedButtonHover: ViewModifier {
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isHovered ? 1.0 : 0.85)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
             .onHover { isHovered = $0 }
     }
 }
@@ -148,6 +191,18 @@ extension View {
 
     func themedDiffBlock(cornerRadius: CGFloat = Theme.Metrics.diffBlockCornerRadius) -> some View {
         modifier(ThemedDiffBlockBackground(cornerRadius: cornerRadius))
+    }
+
+    func themedCardHover(cornerRadius: CGFloat = 10) -> some View {
+        modifier(ThemedCardHover(cornerRadius: cornerRadius))
+    }
+
+    func themedRowHover(cornerRadius: CGFloat = 6) -> some View {
+        modifier(ThemedRowHover(cornerRadius: cornerRadius))
+    }
+
+    func themedButtonHover() -> some View {
+        modifier(ThemedButtonHover())
     }
 }
 
