@@ -60,19 +60,17 @@ final class RunSummaryTests: XCTestCase {
         XCTAssertEqual(run.totalNodes, 10)
         XCTAssertEqual(run.finishedNodes, 3)
         XCTAssertEqual(run.failedNodes, 1)
-        XCTAssertEqual(run.progress, 0.3, accuracy: 0.001)
+        XCTAssertEqual(run.completedNodes, 4)
+        XCTAssertEqual(run.progress, 0.4, accuracy: 0.001)
+        XCTAssertEqual(run.finishedProgress, 0.3, accuracy: 0.001)
+        XCTAssertEqual(run.failedProgress, 0.1, accuracy: 0.001)
     }
 
-    /// BUG: progress only counts finishedNodes, not failedNodes.
-    /// A run with 10 total, 5 finished, 5 failed shows 50% instead of 100%.
-    /// The progress bar never reaches 100% for runs that have failures.
-    func testBug_ProgressIgnoresFailedNodes() {
+    func testProgressIncludesFailedNodes() {
         let run = makeRun(summary: ["total": 10, "finished": 5, "failed": 5])
-        // Expected: (5+5)/10 = 1.0 (all nodes done)
-        // Actual: 5/10 = 0.5 (only counts finished)
-        XCTAssertEqual(run.progress, 0.5,
-                       "BUG: progress only considers 'finished' nodes, ignoring 'failed' nodes")
-        // This means a fully-completed run with some failures shows <100%
+        XCTAssertEqual(run.completedNodes, 10)
+        XCTAssertEqual(run.progress, 1.0,
+                       "Progress should count both finished and failed nodes as completed work")
     }
 
     /// BUG: Progress percentage display uses `Int(run.progress * 100)` which truncates.
