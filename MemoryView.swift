@@ -9,6 +9,13 @@ enum MemoryNamespaceFilterState {
         guard let filter else { return nil }
         return namespaces.contains(filter) ? filter : nil
     }
+
+    static func filteredFacts(from facts: [MemoryFact], namespaceFilter: String?, namespaces: [String]) -> [MemoryFact] {
+        guard let namespace = validatedFilter(namespaceFilter, namespaces: namespaces) else {
+            return facts
+        }
+        return facts.filter { $0.namespace == namespace }
+    }
 }
 
 struct MemoryView: View {
@@ -45,11 +52,16 @@ struct MemoryView: View {
         MemoryNamespaceFilterState.namespaces(from: allNamespaceFacts)
     }
 
+    private var effectiveNamespaceFilter: String? {
+        MemoryNamespaceFilterState.validatedFilter(namespaceFilter, namespaces: namespaces)
+    }
+
     private var filteredFacts: [MemoryFact] {
-        if let ns = namespaceFilter {
-            return facts.filter { $0.namespace == ns }
-        }
-        return facts
+        MemoryNamespaceFilterState.filteredFacts(
+            from: facts,
+            namespaceFilter: effectiveNamespaceFilter,
+            namespaces: namespaces
+        )
     }
 
     private var recallTopKBinding: Binding<Int> {
@@ -64,18 +76,22 @@ struct MemoryView: View {
             header
             toolbar
 
-            switch mode {
-                case .list:
-                    if let err = listError {
-                        errorView(err)
-                    } else if let fact = selectedFact {
-                        factDetail(fact)
-                    } else {
-                        factList
-                    }
-                case .recall:
-                    recallView
+            Group {
+                switch mode {
+                    case .list:
+                        if let err = listError {
+                            errorView(err)
+                        } else if let fact = selectedFact {
+                            factDetail(fact)
+                        } else {
+                            factList
+                        }
+                    case .recall:
+                        recallView
+                }
             }
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.15), value: mode)
         }
         .background(Theme.surface1)
         .task { await loadFacts() }
@@ -149,7 +165,7 @@ struct MemoryView: View {
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Text(namespaceFilter ?? "All Namespaces")
+                        Text(effectiveNamespaceFilter ?? "All Namespaces")
                             .font(.system(size: 11))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8))
@@ -209,7 +225,7 @@ struct MemoryView: View {
                     .border(Theme.border, edges: [.bottom])
 
                     ForEach(filteredFacts) { fact in
-                        Button(action: { selectedFact = fact }) {
+                        Button(action: { withAnimation(.easeOut(duration: 0.15)) { selectedFact = fact } }) {
                             HStack(spacing: 0) {
                                 Text(fact.namespace)
                                     .frame(width: 100, alignment: .leading)
@@ -228,6 +244,7 @@ struct MemoryView: View {
                             .font(.system(size: 11, design: .monospaced))
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
+                            .themedRowHover()
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -319,7 +336,7 @@ struct MemoryView: View {
             }
             .padding(20)
 
-            Text("Semantic recall in: \(namespaceFilter ?? "all namespaces")")
+            Text("Semantic recall in: \(effectiveNamespaceFilter ?? "all namespaces")")
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -374,6 +391,7 @@ struct MemoryView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
+                            .themedRowHover()
                             Divider().background(Theme.border)
                         }
                     }
@@ -532,9 +550,11 @@ struct MemoryView: View {
             }
 
             facts = allFacts
-            let visibleFacts = validNamespace.map { namespace in
-                allFacts.filter { $0.namespace == namespace }
-            } ?? allFacts
+            let visibleFacts = MemoryNamespaceFilterState.filteredFacts(
+                from: allFacts,
+                namespaceFilter: validNamespace,
+                namespaces: availableNamespaces
+            )
             if let selectedFact, !visibleFacts.contains(where: { $0.id == selectedFact.id }) {
                 self.selectedFact = nil
             }
@@ -566,7 +586,7 @@ struct MemoryView: View {
         do {
             let fetched = try await smithers.recallMemory(
                 query: trimmedQuery,
-                namespace: namespaceFilter,
+                namespace: effectiveNamespaceFilter,
                 workflowPath: workflowPath,
                 topK: recallTopK
             )

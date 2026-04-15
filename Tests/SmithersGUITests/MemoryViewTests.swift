@@ -195,6 +195,43 @@ final class MemoryNamespaceFilterTests: XCTestCase {
         )
     }
 
+    func testFilteredFactsFallsBackToAllWhenNamespaceIsStale() {
+        let facts = [
+            makeFact(namespace: "project", key: "a"),
+            makeFact(namespace: "workflow", key: "b"),
+        ]
+        let namespaces = MemoryNamespaceFilterState.namespaces(from: facts)
+
+        let visibleFacts = MemoryNamespaceFilterState.filteredFacts(
+            from: facts,
+            namespaceFilter: "deleted",
+            namespaces: namespaces
+        )
+
+        XCTAssertEqual(
+            visibleFacts.map(\.key).sorted(),
+            ["a", "b"],
+            "When a stale namespace is selected, refresh should fall back to showing all facts."
+        )
+    }
+
+    func testFilteredFactsRespectsValidNamespaceSelection() {
+        let facts = [
+            makeFact(namespace: "project", key: "a"),
+            makeFact(namespace: "workflow", key: "b"),
+            makeFact(namespace: "project", key: "c"),
+        ]
+        let namespaces = MemoryNamespaceFilterState.namespaces(from: facts)
+
+        let visibleFacts = MemoryNamespaceFilterState.filteredFacts(
+            from: facts,
+            namespaceFilter: "project",
+            namespaces: namespaces
+        )
+
+        XCTAssertEqual(visibleFacts.map(\.key), ["a", "c"])
+    }
+
     func testMockListFactsFiltersByNamespace() async throws {
         let client = MockSmithersClient()
         client.stubbedFacts = [
