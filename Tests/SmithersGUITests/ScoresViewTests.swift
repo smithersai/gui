@@ -199,12 +199,9 @@ final class ScoresColorCodingTests: XCTestCase {
         XCTAssertEqual(testScoreColor(1.5), Theme.success, "Scores > 1.0 are not validated")
     }
 
-    // Helper that mirrors ScoresView.scoreColor (which is private).
-    // We replicate it here to test the thresholds.
+    // Helper uses the production color scale so tests do not duplicate thresholds.
     private func testScoreColor(_ value: Double) -> Color {
-        if value >= 0.8 { return Theme.success }
-        if value >= 0.5 { return Theme.warning }
-        return Theme.danger
+        ScoreColorScale.color(for: value)
     }
 }
 

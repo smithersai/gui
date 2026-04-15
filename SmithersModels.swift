@@ -115,10 +115,10 @@ extension RunStatus {
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let raw = try container.decode(String.self)
-        self = Self.fromCLIStatus(raw)
+        self = Self.normalized(raw)
     }
 
-    fileprivate static func fromCLIStatus(_ value: String?) -> RunStatus {
+    static func normalized(_ value: String?) -> RunStatus {
         switch normalizedInspectToken(value) {
         case "waiting-approval", "waitingapproval", "blocked", "paused":
             return .waitingApproval
@@ -171,7 +171,7 @@ extension RunSummary {
         )
         self.workflowPath = normalizeInspectString(try container.decodeIfPresent(String.self, forKey: .workflowPath))
         let status = try container.decodeIfPresent(String.self, forKey: .status)
-        self.status = RunStatus.fromCLIStatus(status)
+        self.status = RunStatus.normalized(status)
 
         let started = try container.decodeIfPresent(String.self, forKey: .started)
         self.startedAtMs = container.decodeLossyInt64(forKey: .startedAtMs)

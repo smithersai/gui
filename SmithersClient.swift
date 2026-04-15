@@ -4122,6 +4122,13 @@ class SmithersClient: ObservableObject {
         return nil
     }
 
+    private func approvalInt(from row: [String: Any], keys: [String]) -> Int? {
+        guard let value = approvalInt64(from: row, keys: keys) else {
+            return nil
+        }
+        return Int(exactly: value)
+    }
+
     private func approvalPayloadString(from row: [String: Any], keys: [String]) -> String? {
         for key in keys {
             guard let value = row[key], !(value is NSNull) else {

@@ -665,12 +665,6 @@ private struct DeveloperDebugBadge: View {
 private struct DeveloperLogEntryRow: View {
     let entry: LogEntry
 
-    private static let formatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        return formatter
-    }()
-
     private var levelColor: Color {
         switch entry.level {
         case .debug: return Theme.textTertiary
@@ -683,7 +677,7 @@ private struct DeveloperLogEntryRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
-                Text(Self.formatter.string(from: entry.timestamp))
+                Text(DateFormatters.hourMinuteSecondMillisecond.string(from: entry.timestamp))
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(Theme.textTertiary)
                 Text(entry.level.rawValue.uppercased())
