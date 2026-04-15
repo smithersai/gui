@@ -241,6 +241,62 @@ struct IssuesView: View {
         .accessibilityIdentifier("issues.create.form")
     }
 
+    private func closeIssueSheet(_ issue: SmithersIssue) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Close issue")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(Theme.textPrimary)
+
+            Text(issue.title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(2)
+
+            TextEditor(text: $closeComment)
+                .font(.system(size: 12))
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 120)
+                .padding(8)
+                .background(Theme.inputBg)
+                .cornerRadius(8)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+
+            Text("Optional closing comment")
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textTertiary)
+
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Cancel") {
+                    closeTarget = nil
+                    closeComment = ""
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(Theme.textSecondary)
+
+                Button(action: { Task { await confirmCloseIssue(issue) } }) {
+                    HStack(spacing: 6) {
+                        if isClosing {
+                            ProgressView().scaleEffect(0.5).frame(width: 10, height: 10)
+                        }
+                        Text("Close")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(Theme.accent)
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .disabled(isClosing)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 420, minHeight: 260)
+        .background(Theme.surface1)
+    }
+
     // MARK: - Detail Pane
 
     private var detailPane: some View {

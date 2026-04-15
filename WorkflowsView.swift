@@ -14,6 +14,7 @@ struct WorkflowsView: View {
     @State private var dagLoadError: String?
     @State private var showDAGDetails = false
     @State private var launchInputs: [String: String] = [:]
+    @State private var launchValidationErrors: [String: String] = [:]
     @State private var isLaunching = false
     @State private var showRunConfirmation = false
     @State private var doctorIssues: [WorkflowDoctorIssue] = []
@@ -110,11 +111,14 @@ struct WorkflowsView: View {
     }
 
     private enum WorkflowLaunchInputError: LocalizedError {
+        case missingRequired(field: String)
         case invalidNumber(field: String, value: String)
         case invalidJSON(field: String, expected: String)
 
         var errorDescription: String? {
             switch self {
+            case .missingRequired(let field):
+                return "\(field) is required."
             case .invalidNumber(let field, let value):
                 return "\(field) must be a number. \"\(value)\" is not valid."
             case .invalidJSON(let field, let expected):

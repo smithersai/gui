@@ -8,28 +8,45 @@ import XCTest
 private func parseSSELines(_ raw: String) -> [SSEEvent] {
     var events: [SSEEvent] = []
     var eventType: String? = nil
-    var dataBuffer = ""
+    var dataLines: [String] = []
 
-    for line in raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+    func dispatch() {
+        guard !dataLines.isEmpty else {
+            eventType = nil
+            return
+        }
+        let event = eventType?.isEmpty == true ? nil : eventType
+        events.append(SSEEvent(event: event, data: dataLines.joined(separator: "\n")))
+        eventType = nil
+        dataLines.removeAll(keepingCapacity: true)
+    }
+
+    for rawLine in raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+        let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
         if line.isEmpty {
-            if !dataBuffer.isEmpty {
-                events.append(SSEEvent(event: eventType, data: dataBuffer))
-                eventType = nil
-                dataBuffer = ""
-            }
+            dispatch()
             continue
         }
-        if line.hasPrefix("event:") {
-            eventType = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-        } else if line.hasPrefix("data:") {
-            let value = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            dataBuffer = dataBuffer.isEmpty ? value : dataBuffer + "\n" + value
+
+        guard !line.hasPrefix(":") else {
+            continue
+        }
+
+        let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        let field = String(parts[0])
+        var value = parts.count > 1 ? String(parts[1]) : ""
+        if value.first == " " {
+            value.removeFirst()
+        }
+
+        if field == "event" {
+            eventType = value
+        } else if field == "data" {
+            dataLines.append(value)
         }
     }
     // Flush remaining buffer (matches SmithersClient behavior)
-    if !dataBuffer.isEmpty {
-        events.append(SSEEvent(event: eventType, data: dataBuffer))
-    }
+    dispatch()
     return events
 }
 
@@ -110,19 +127,27 @@ final class SSEParserTests: XCTestCase {
         XCTAssertEqual(events[0].data, "leftovers")
     }
 
-    // STREAMING_SSE_LINE_PARSER — blank data lines ignored (no empty event emitted)
+    // STREAMING_SSE_LINE_PARSER — separators without data do not emit events
     func testEmptyLinesOnlyNoEvent() {
         let raw = "\n\n\n"
         let events = parseSSELines(raw)
         XCTAssertEqual(events.count, 0)
     }
 
-    // STREAMING_SSE_LINE_PARSER — whitespace trimming after "data:" and "event:"
-    func testWhitespaceTrimming() {
+    // STREAMING_SSE_LINE_PARSER — only one optional leading space after ":" is stripped
+    func testWhitespacePreserved() {
         let raw = "event:   spaced  \ndata:   padded  \n\n"
         let events = parseSSELines(raw)
-        XCTAssertEqual(events[0].event, "spaced")
-        XCTAssertEqual(events[0].data, "padded")
+        XCTAssertEqual(events[0].event, "  spaced  ")
+        XCTAssertEqual(events[0].data, "  padded  ")
+    }
+
+    func testEmptyDataEventEmitted() {
+        let raw = "event: heartbeat\ndata:\n\n"
+        let events = parseSSELines(raw)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0].event, "heartbeat")
+        XCTAssertEqual(events[0].data, "")
     }
 
     // STREAMING_SSE_LINE_PARSER — event type resets after dispatch
