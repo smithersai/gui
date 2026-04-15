@@ -7,6 +7,7 @@ final class NavigationE2ETests: SmithersGUIUITestCase {
             ("Terminal", "view.terminal"),
             ("Dashboard", "view.dashboard"),
             ("Runs", "view.runs"),
+            ("Snapshots", "view.snapshots"),
             ("Workflows", "view.workflows"),
             ("Triggers", "view.triggers"),
             ("JJHub Workflows", "view.jjhubWorkflows"),

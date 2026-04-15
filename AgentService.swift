@@ -431,12 +431,7 @@ class AgentService: ObservableObject {
             let (eventStream, eventContinuation) = AsyncStream<CodexEvent>.makeStream()
             let eventConsumer = Task { [weak self] in
                 for await event in eventStream {
-                    await MainActor.run {
-                        guard let self,
-                              self.currentTurnID == turnID
-                        else { return }
-                        self.handleEvent(event)
-                    }
+                    await self?.handleBridgeEvent(event, turnID: turnID)
                 }
             }
 
@@ -455,6 +450,11 @@ class AgentService: ObservableObject {
 
             await self?.finishDetachedTurn(success: success, turnID: turnID)
         }
+    }
+
+    private func handleBridgeEvent(_ event: CodexEvent, turnID: UUID) {
+        guard currentTurnID == turnID else { return }
+        handleEvent(event)
     }
 
     func cancel() {
