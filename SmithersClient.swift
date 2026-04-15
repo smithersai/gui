@@ -6340,6 +6340,38 @@ class SmithersClient: ObservableObject {
         return blocks
     }
 
+    private static func unescapeJSONStringValue(_ s: String) -> String {
+        var result = ""
+        result.reserveCapacity(s.count)
+        var i = s.startIndex
+        while i < s.endIndex {
+            if s[i] == "\\" {
+                let next = s.index(after: i)
+                if next < s.endIndex {
+                    switch s[next] {
+                    case "n": result.append("\n")
+                    case "t": result.append("\t")
+                    case "r": result.append("\r")
+                    case "\"": result.append("\"")
+                    case "\\": result.append("\\")
+                    case "/": result.append("/")
+                    default:
+                        result.append(s[i])
+                        result.append(s[next])
+                    }
+                    i = s.index(next, offsetBy: 1)
+                } else {
+                    result.append(s[i])
+                    i = next
+                }
+            } else {
+                result.append(s[i])
+                i = s.index(after: i)
+            }
+        }
+        return result
+    }
+
     private func normalizeChatRole(_ role: String) -> String {
         switch role.lowercased() {
         case "assistant", "agent":
