@@ -53,19 +53,22 @@ struct RunSummary: Identifiable, Codable {
     }
 
     var totalNodes: Int { summary?["total"] ?? 0 }
-    var finishedNodes: Int { summary?["finished"] ?? 0 }
+    var succeededNodes: Int { summary?["succeeded"] ?? summary?["finished"] ?? 0 }
+    var finishedNodes: Int { succeededNodes }
     var failedNodes: Int { summary?["failed"] ?? 0 }
-    var completedNodes: Int { finishedNodes + failedNodes }
+    var completedNodes: Int { succeededNodes + failedNodes }
 
     var progress: Double {
         guard totalNodes > 0 else { return 0 }
         return Double(completedNodes) / Double(totalNodes)
     }
 
-    var finishedProgress: Double {
+    var succeededProgress: Double {
         guard totalNodes > 0 else { return 0 }
-        return Double(finishedNodes) / Double(totalNodes)
+        return Double(succeededNodes) / Double(totalNodes)
     }
+
+    var finishedProgress: Double { succeededProgress }
 
     var failedProgress: Double {
         guard totalNodes > 0 else { return 0 }
@@ -344,6 +347,9 @@ private func parseInspectTimestampMs(_ value: String?) -> Int64? {
     if let date = DateFormatters.parseISO8601InternetDateTime(raw) {
         return Int64(date.timeIntervalSince1970 * 1000)
     }
+    if let relativeMs = DateFormatters.parseRelativeAgoTimestampMs(raw) {
+        return relativeMs
+    }
     return nil
 }
 
@@ -386,9 +392,39 @@ private func cronWorkflowPathString(_ value: JSONValue?) -> String? {
     guard let value else { return nil }
     switch value {
     case .object(let object):
-        return jsonValueString(object["workflowPath"])
-            ?? jsonValueString(object["workflow_path"])
-            ?? jsonValueString(object["path"])
+        let keys = [
+            "workflowPath",
+            "workflow_path",
+            "entryFile",
+            "entry_file",
+            "relativePath",
+            "relative_path",
+            "filePath",
+            "file_path",
+            "path",
+        ]
+        for key in keys {
+            if let resolvedPath = jsonValueString(object[key]) {
+                return resolvedPath
+            }
+        }
+        return nil
+    default:
+        return jsonValueString(value)
+    }
+}
+
+private func cronPatternString(_ value: JSONValue?) -> String? {
+    guard let value else { return nil }
+    switch value {
+    case .object(let object):
+        return jsonValueString(object["pattern"])
+            ?? jsonValueString(object["cronPattern"])
+            ?? jsonValueString(object["cron_pattern"])
+            ?? jsonValueString(object["schedule"])
+            ?? jsonValueString(object["scheduleExpression"])
+            ?? jsonValueString(object["schedule_expression"])
+            ?? jsonValueString(object["expression"])
     default:
         return jsonValueString(value)
     }
@@ -575,14 +611,18 @@ struct Workflow: Identifiable, Codable {
 struct WorkflowLaunchField: Codable {
     let name: String
     let key: String
-    let type: String?       // string, number, boolean
+    let type: String?       // string, number, boolean, object, array, json
     let defaultValue: String?
     let required: Bool
 
     enum CodingKeys: String, CodingKey {
-        case name, label, key, type, required
+        case name, label, title, key, id, type, required
         case isRequired
+        case optional
         case defaultValue = "default"
+        case schema
+        case inputSchema
+        case jsonSchema
     }
 
     init(name: String, key: String, type: String?, defaultValue: String?, required: Bool = false) {
@@ -595,21 +635,53 @@ struct WorkflowLaunchField: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        key = try container.decode(String.self, forKey: .key)
-        let decodedName = try container.decodeIfPresent(String.self, forKey: .name)
-        let decodedLabel = try container.decodeIfPresent(String.self, forKey: .label)
-        name = decodedName ?? decodedLabel ?? key
-        type = try container.decodeIfPresent(String.self, forKey: .type)
-        if let explicitDefault = try? container.decodeIfPresent(String.self, forKey: .defaultValue) {
-            defaultValue = explicitDefault
-        } else if let jsonDefault = try? container.decodeIfPresent(JSONValue.self, forKey: .defaultValue) {
-            defaultValue = jsonDefault.workflowInputText
-        } else {
-            defaultValue = nil
+        let decodedSchema = try container.decodeIfPresent(JSONValue.self, forKey: .schema)
+            ?? container.decodeIfPresent(JSONValue.self, forKey: .inputSchema)
+            ?? container.decodeIfPresent(JSONValue.self, forKey: .jsonSchema)
+
+        let decodedPrimaryKey = try container.decodeIfPresent(String.self, forKey: .key)
+            ?? (try container.decodeIfPresent(String.self, forKey: .id))
+        let decodedFallbackKey = try container.decodeIfPresent(String.self, forKey: .name)
+            ?? (try container.decodeIfPresent(String.self, forKey: .label))
+            ?? (try container.decodeIfPresent(String.self, forKey: .title))
+        let decodedKey = Self.normalizedString(decodedPrimaryKey)
+            ?? Self.normalizedString(decodedFallbackKey)
+        guard let resolvedKey = decodedKey else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.key,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected launch input key")
+            )
         }
-        required = container.decodeLossyBool(forKey: .required)
-            ?? container.decodeLossyBool(forKey: .isRequired)
-            ?? false
+        key = resolvedKey
+
+        let decodedName = Self.normalizedString(try container.decodeIfPresent(String.self, forKey: .name))
+        let decodedLabel = Self.normalizedString(try container.decodeIfPresent(String.self, forKey: .label))
+        let decodedTitle = Self.normalizedString(try container.decodeIfPresent(String.self, forKey: .title))
+        name = decodedName ?? decodedLabel ?? decodedTitle ?? key
+
+        let explicitTypeString = Self.normalizedType(try container.decodeIfPresent(String.self, forKey: .type))
+        let explicitTypeValue = try container.decodeIfPresent(JSONValue.self, forKey: .type)
+        let inferredTypeFromTypeValue = explicitTypeValue.flatMap(Self.inferType(fromTypeToken:))
+        let inferredTypeFromSchema = Self.inferType(fromSchema: decodedSchema)
+
+        let decodedDefault = try container.decodeIfPresent(JSONValue.self, forKey: .defaultValue)
+            ?? Self.defaultFromSchema(decodedSchema)
+        defaultValue = Self.textInputDefault(from: decodedDefault)
+
+        let inferredTypeFromDefault = Self.inferType(fromDefault: decodedDefault)
+        type = explicitTypeString
+            ?? inferredTypeFromTypeValue
+            ?? inferredTypeFromSchema
+            ?? inferredTypeFromDefault
+
+        if let explicitRequired = container.decodeLossyBool(forKey: .required)
+            ?? container.decodeLossyBool(forKey: .isRequired) {
+            required = explicitRequired
+        } else if let explicitOptional = container.decodeLossyBool(forKey: .optional) {
+            required = !explicitOptional
+        } else {
+            required = Self.requiredFromSchema(decodedSchema) ?? false
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -620,6 +692,285 @@ struct WorkflowLaunchField: Codable {
         try container.encodeIfPresent(defaultValue, forKey: .defaultValue)
         if required {
             try container.encode(required, forKey: .required)
+        }
+    }
+
+    static func fields(fromInputSchema schema: JSONValue?) -> [WorkflowLaunchField]? {
+        guard let schema else { return nil }
+        return fields(fromInputSchema: schema, depth: 0)
+    }
+
+    private static func fields(fromInputSchema schema: JSONValue, depth: Int) -> [WorkflowLaunchField]? {
+        guard depth <= 3, case .object(let object) = schema else { return nil }
+
+        if let properties = objectValue(for: object["properties"]) ?? objectValue(for: object["shape"]) {
+            let requiredKeys = requiredKeySet(from: object["required"])
+            let fields = properties.keys.sorted().map { key in
+                let propertySchema = properties[key]
+                let inferredType = inferType(fromSchema: propertySchema)
+                    ?? inferType(fromDefault: defaultFromSchema(propertySchema))
+                let defaultValue = textInputDefault(from: defaultFromSchema(propertySchema))
+                let propertyRequired = requiredFromSchema(propertySchema) ?? false
+                let isRequired = requiredKeys.contains(key) || propertyRequired
+                return WorkflowLaunchField(
+                    name: displayName(for: key, schema: propertySchema),
+                    key: key,
+                    type: inferredType,
+                    defaultValue: defaultValue,
+                    required: isRequired
+                )
+            }
+            return fields.isEmpty ? nil : fields
+        }
+
+        let wrapperKeys: [String] = ["inputSchema", "input_schema", "schema", "input"]
+        for wrapperKey in wrapperKeys {
+            guard let nested = object[wrapperKey] else { continue }
+            if let nestedFields = fields(fromInputSchema: nested, depth: depth + 1),
+               !nestedFields.isEmpty {
+                return nestedFields
+            }
+        }
+
+        return nil
+    }
+
+    private static func displayName(for key: String, schema: JSONValue?) -> String {
+        guard case .object(let object) = schema else { return key }
+        return normalizedString(string(from: object["title"]))
+            ?? normalizedString(string(from: object["label"]))
+            ?? normalizedString(string(from: object["name"]))
+            ?? key
+    }
+
+    private static func requiredKeySet(from value: JSONValue?) -> Set<String> {
+        guard case .array(let items) = value else { return [] }
+        return Set(items.compactMap { normalizedString(string(from: $0)) })
+    }
+
+    private static func defaultFromSchema(_ schema: JSONValue?) -> JSONValue? {
+        guard let schema else { return nil }
+        switch schema {
+        case .object(let object):
+            if let explicitDefault = object["default"] {
+                return explicitDefault
+            }
+            for key in ["anyOf", "oneOf", "allOf"] {
+                guard case .array(let candidates) = object[key] else { continue }
+                for candidate in candidates {
+                    if let nestedDefault = defaultFromSchema(candidate) {
+                        return nestedDefault
+                    }
+                }
+            }
+            if let nestedSchema = object["schema"] {
+                return defaultFromSchema(nestedSchema)
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private static func requiredFromSchema(_ schema: JSONValue?) -> Bool? {
+        guard case .object(let object) = schema else { return nil }
+        if let requiredValue = bool(from: object["required"]) {
+            return requiredValue
+        }
+        if let requiredValue = bool(from: object["isRequired"]) {
+            return requiredValue
+        }
+        if let optionalValue = bool(from: object["optional"]) {
+            return !optionalValue
+        }
+        return nil
+    }
+
+    private static func inferType(fromDefault value: JSONValue?) -> String? {
+        guard let value else { return nil }
+        switch value {
+        case .bool:
+            return "boolean"
+        case .number:
+            return "number"
+        case .string:
+            return "string"
+        case .array:
+            return "array"
+        case .object:
+            return "object"
+        case .null:
+            return nil
+        }
+    }
+
+    private static func inferType(fromTypeToken value: JSONValue) -> String? {
+        switch value {
+        case .string(let raw):
+            if let token = canonicalTypeToken(raw), token != "null" {
+                return token
+            }
+            return nil
+        case .array(let values):
+            let tokens = values.compactMap(typeToken)
+            return mergedType(fromTokens: tokens)
+        default:
+            return nil
+        }
+    }
+
+    private static func inferType(fromSchema schema: JSONValue?) -> String? {
+        guard let schema else { return nil }
+
+        switch schema {
+        case .string:
+            return inferType(fromTypeToken: schema)
+        case .object(let object):
+            if let directType = object["type"].flatMap(inferType(fromTypeToken:)) {
+                return directType
+            }
+
+            for key in ["anyOf", "oneOf", "allOf"] {
+                guard case .array(let variants) = object[key] else { continue }
+                let variantTypes = variants.compactMap { inferType(fromSchema: $0) }
+                if let merged = mergedType(fromTokens: variantTypes) {
+                    return merged
+                }
+            }
+
+            if objectValue(for: object["properties"]) != nil || object["additionalProperties"] != nil {
+                return "object"
+            }
+            if object["items"] != nil || object["prefixItems"] != nil {
+                return "array"
+            }
+            if let constValue = object["const"] {
+                return inferType(fromDefault: constValue)
+            }
+            if case .array(let enumValues)? = object["enum"] {
+                let enumTypes = enumValues.compactMap(typeToken)
+                if let merged = mergedType(fromTokens: enumTypes) {
+                    return merged
+                }
+            }
+            if let nestedSchema = object["schema"], let nestedType = inferType(fromSchema: nestedSchema) {
+                return nestedType
+            }
+            if let inferredDefaultType = inferType(fromDefault: object["default"]) {
+                return inferredDefaultType
+            }
+            return nil
+        case .array(let values):
+            let inferredTypes = values.compactMap { inferType(fromSchema: $0) }
+            return mergedType(fromTokens: inferredTypes)
+        default:
+            return inferType(fromDefault: schema)
+        }
+    }
+
+    private static func mergedType(fromTokens tokens: [String]) -> String? {
+        guard !tokens.isEmpty else { return nil }
+        let unique = Set(tokens)
+        let nonNull = unique.filter { $0 != "null" }
+        if nonNull.count == 1 {
+            return nonNull.first
+        }
+        if nonNull.isEmpty {
+            return nil
+        }
+        return "json"
+    }
+
+    private static func typeToken(from value: JSONValue) -> String? {
+        switch value {
+        case .string(let raw):
+            return canonicalTypeToken(raw)
+        case .null:
+            return "null"
+        case .bool:
+            return "boolean"
+        case .number:
+            return "number"
+        case .array:
+            return "array"
+        case .object:
+            return inferType(fromSchema: value) ?? "object"
+        }
+    }
+
+    private static func normalizedType(_ rawType: String?) -> String? {
+        guard let token = canonicalTypeToken(rawType), token != "null" else { return nil }
+        return token
+    }
+
+    private static func canonicalTypeToken(_ rawType: String?) -> String? {
+        guard let rawType else { return nil }
+        let normalized = rawType
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else { return nil }
+
+        switch normalized {
+        case "string", "str", "text":
+            return "string"
+        case "number", "integer", "int", "float", "double", "decimal":
+            return "number"
+        case "boolean", "bool":
+            return "boolean"
+        case "object", "record", "map":
+            return "object"
+        case "array", "list", "tuple", "set":
+            return "array"
+        case "json", "any", "unknown", "mixed":
+            return "json"
+        case "null", "nil":
+            return "null"
+        default:
+            return nil
+        }
+    }
+
+    private static func textInputDefault(from value: JSONValue?) -> String? {
+        guard let value else { return nil }
+        if case .null = value { return nil }
+        return value.workflowInputText
+    }
+
+    private static func normalizedString(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func objectValue(for value: JSONValue?) -> [String: JSONValue]? {
+        guard case .object(let object) = value else { return nil }
+        return object
+    }
+
+    private static func string(from value: JSONValue?) -> String? {
+        guard case .string(let string) = value else { return nil }
+        return string
+    }
+
+    private static func bool(from value: JSONValue?) -> Bool? {
+        guard let value else { return nil }
+        switch value {
+        case .bool(let boolValue):
+            return boolValue
+        case .number(let numberValue):
+            return numberValue != 0
+        case .string(let stringValue):
+            let normalized = stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            switch normalized {
+            case "true", "1", "yes", "on":
+                return true
+            case "false", "0", "no", "off":
+                return false
+            default:
+                return nil
+            }
+        default:
+            return nil
         }
     }
 }
@@ -670,8 +1021,51 @@ struct WorkflowDAGTask: Identifiable, Codable {
     var id: String { "\(nodeId):\(iteration ?? 0)" }
 
     enum CodingKeys: String, CodingKey {
-        case nodeId, ordinal, iteration, outputTableName, needsApproval, approvalMode
-        case retries, timeoutMs, heartbeatTimeoutMs, continueOnFail, prompt, parallelGroupId
+        case nodeId
+        case ordinal
+        case iteration
+        case outputTableName
+        case needsApproval
+        case approvalMode
+        case retries
+        case timeoutMs
+        case heartbeatTimeoutMs
+        case continueOnFail
+        case prompt
+        case parallelGroupId
+    }
+
+    private enum DecodingKeys: String, CodingKey {
+        case nodeId
+        case nodeIDSnake = "node_id"
+        case id
+        case taskId
+        case taskIDSnake = "task_id"
+        case ordinal
+        case index
+        case order
+        case iteration
+        case outputTableName
+        case outputTableNameSnake = "output_table_name"
+        case outputTable
+        case needsApproval
+        case needsApprovalSnake = "needs_approval"
+        case requiresApproval
+        case requiresApprovalSnake = "requires_approval"
+        case approvalMode
+        case approvalModeSnake = "approval_mode"
+        case retries
+        case maxRetries
+        case maxRetriesSnake = "max_retries"
+        case timeoutMs
+        case timeoutMsSnake = "timeout_ms"
+        case heartbeatTimeoutMs
+        case heartbeatTimeoutMsSnake = "heartbeat_timeout_ms"
+        case continueOnFail
+        case continueOnFailSnake = "continue_on_fail"
+        case prompt
+        case parallelGroupId
+        case parallelGroupIDSnake = "parallel_group_id"
     }
 
     init(
@@ -703,19 +1097,95 @@ struct WorkflowDAGTask: Identifiable, Codable {
     }
 
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        nodeId = try container.decode(String.self, forKey: .nodeId)
-        ordinal = container.decodeLossyInt(forKey: .ordinal)
-        iteration = container.decodeLossyInt(forKey: .iteration)
-        outputTableName = try container.decodeIfPresent(String.self, forKey: .outputTableName)
-        needsApproval = container.decodeLossyBool(forKey: .needsApproval)
-        approvalMode = try container.decodeIfPresent(String.self, forKey: .approvalMode)
-        retries = container.decodeLossyInt(forKey: .retries)
-        timeoutMs = container.decodeLossyInt64(forKey: .timeoutMs)
-        heartbeatTimeoutMs = container.decodeLossyInt64(forKey: .heartbeatTimeoutMs)
-        continueOnFail = container.decodeLossyBool(forKey: .continueOnFail)
-        prompt = try container.decodeIfPresent(String.self, forKey: .prompt)
-        parallelGroupId = try container.decodeIfPresent(String.self, forKey: .parallelGroupId)
+        if let singleValueContainer = try? decoder.singleValueContainer(),
+           let rawNodeID = try? singleValueContainer.decode(String.self),
+           !rawNodeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self = WorkflowDAGTask(nodeId: rawNodeID)
+            return
+        }
+
+        let container = try decoder.container(keyedBy: DecodingKeys.self)
+        let decodedNodeID = try Self.firstPresentString(
+            in: container,
+            keys: [.nodeId, .nodeIDSnake, .id, .taskId, .taskIDSnake]
+        )
+        guard let decodedNodeID, !decodedNodeID.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Workflow DAG node is missing an identifier"
+                )
+            )
+        }
+
+        let decodedOrdinal = container.decodeLossyInt(forKey: .ordinal)
+            ?? container.decodeLossyInt(forKey: .index)
+            ?? container.decodeLossyInt(forKey: .order)
+        let decodedIteration = container.decodeLossyInt(forKey: .iteration)
+        let decodedOutputTableName = try container.decodeIfPresent(String.self, forKey: .outputTableName)
+            ?? container.decodeIfPresent(String.self, forKey: .outputTableNameSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .outputTable)
+        let decodedNeedsApproval = container.decodeLossyBool(forKey: .needsApproval)
+            ?? container.decodeLossyBool(forKey: .needsApprovalSnake)
+            ?? container.decodeLossyBool(forKey: .requiresApproval)
+            ?? container.decodeLossyBool(forKey: .requiresApprovalSnake)
+        let decodedApprovalMode = try container.decodeIfPresent(String.self, forKey: .approvalMode)
+            ?? container.decodeIfPresent(String.self, forKey: .approvalModeSnake)
+        let decodedRetries = container.decodeLossyInt(forKey: .retries)
+            ?? container.decodeLossyInt(forKey: .maxRetries)
+            ?? container.decodeLossyInt(forKey: .maxRetriesSnake)
+        let decodedTimeoutMs = container.decodeLossyInt64(forKey: .timeoutMs)
+            ?? container.decodeLossyInt64(forKey: .timeoutMsSnake)
+        let decodedHeartbeatTimeoutMs = container.decodeLossyInt64(forKey: .heartbeatTimeoutMs)
+            ?? container.decodeLossyInt64(forKey: .heartbeatTimeoutMsSnake)
+        let decodedContinueOnFail = container.decodeLossyBool(forKey: .continueOnFail)
+            ?? container.decodeLossyBool(forKey: .continueOnFailSnake)
+        let decodedPrompt = try container.decodeIfPresent(String.self, forKey: .prompt)
+        let decodedParallelGroupID = try container.decodeIfPresent(String.self, forKey: .parallelGroupId)
+            ?? container.decodeIfPresent(String.self, forKey: .parallelGroupIDSnake)
+
+        self = WorkflowDAGTask(
+            nodeId: decodedNodeID,
+            ordinal: decodedOrdinal,
+            iteration: decodedIteration,
+            outputTableName: decodedOutputTableName,
+            needsApproval: decodedNeedsApproval,
+            approvalMode: decodedApprovalMode,
+            retries: decodedRetries,
+            timeoutMs: decodedTimeoutMs,
+            heartbeatTimeoutMs: decodedHeartbeatTimeoutMs,
+            continueOnFail: decodedContinueOnFail,
+            prompt: decodedPrompt,
+            parallelGroupId: decodedParallelGroupID
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(nodeId, forKey: .nodeId)
+        try container.encodeIfPresent(ordinal, forKey: .ordinal)
+        try container.encodeIfPresent(iteration, forKey: .iteration)
+        try container.encodeIfPresent(outputTableName, forKey: .outputTableName)
+        try container.encodeIfPresent(needsApproval, forKey: .needsApproval)
+        try container.encodeIfPresent(approvalMode, forKey: .approvalMode)
+        try container.encodeIfPresent(retries, forKey: .retries)
+        try container.encodeIfPresent(timeoutMs, forKey: .timeoutMs)
+        try container.encodeIfPresent(heartbeatTimeoutMs, forKey: .heartbeatTimeoutMs)
+        try container.encodeIfPresent(continueOnFail, forKey: .continueOnFail)
+        try container.encodeIfPresent(prompt, forKey: .prompt)
+        try container.encodeIfPresent(parallelGroupId, forKey: .parallelGroupId)
+    }
+
+    private static func firstPresentString(
+        in container: KeyedDecodingContainer<DecodingKeys>,
+        keys: [DecodingKeys]
+    ) throws -> String? {
+        for key in keys {
+            if let value = try container.decodeIfPresent(String.self, forKey: key) {
+                return value
+            }
+        }
+        return nil
     }
 }
 
@@ -724,6 +1194,138 @@ struct WorkflowDAGEdge: Identifiable, Codable, Equatable {
     let to: String
 
     var id: String { "\(from)->\(to)" }
+
+    enum CodingKeys: String, CodingKey {
+        case from
+        case to
+    }
+
+    private enum DecodingKeys: String, CodingKey {
+        case from
+        case to
+        case source
+        case target
+        case fromId
+        case toId
+        case fromNode
+        case fromNodeSnake = "from_node"
+        case toNode
+        case toNodeSnake = "to_node"
+        case start
+        case end
+        case parent
+        case child
+        case tail
+        case head
+        case u
+        case v
+    }
+
+    init(from: String, to: String) {
+        self.from = from
+        self.to = to
+    }
+
+    init(from decoder: Decoder) throws {
+        if var unkeyed = try? decoder.unkeyedContainer() {
+            let first = try Self.decodeLossyString(from: &unkeyed)
+            let second = try Self.decodeLossyString(from: &unkeyed)
+            if let first = first?.trimmingCharacters(in: .whitespacesAndNewlines),
+               let second = second?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !first.isEmpty,
+               !second.isEmpty {
+                self.from = first
+                self.to = second
+                return
+            }
+        }
+
+        if let singleValue = try? decoder.singleValueContainer(),
+           let text = try? singleValue.decode(String.self),
+           let edge = Self.parseInlineEdge(text) {
+            self = edge
+            return
+        }
+
+        let container = try decoder.container(keyedBy: DecodingKeys.self)
+        let decodedFrom = Self.firstLossyString(
+            in: container,
+            keys: [.from, .source, .fromId, .fromNode, .fromNodeSnake, .start, .parent, .tail, .u]
+        )
+        let decodedTo = Self.firstLossyString(
+            in: container,
+            keys: [.to, .target, .toId, .toNode, .toNodeSnake, .end, .child, .head, .v]
+        )
+
+        guard let decodedFrom = decodedFrom?.trimmingCharacters(in: .whitespacesAndNewlines), !decodedFrom.isEmpty,
+              let decodedTo = decodedTo?.trimmingCharacters(in: .whitespacesAndNewlines), !decodedTo.isEmpty else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Workflow DAG edge must include both source and target node IDs"
+                )
+            )
+        }
+
+        from = decodedFrom
+        to = decodedTo
+    }
+
+    private static func parseInlineEdge(_ text: String) -> WorkflowDAGEdge? {
+        for separator in ["->", "=>"] {
+            if let range = text.range(of: separator) {
+                let from = String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let to = String(text[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !from.isEmpty, !to.isEmpty {
+                    return WorkflowDAGEdge(from: from, to: to)
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func firstLossyString(
+        in container: KeyedDecodingContainer<DecodingKeys>,
+        keys: [DecodingKeys]
+    ) -> String? {
+        for key in keys {
+            if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+                return value
+            }
+            if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+                return String(value)
+            }
+            if let value = try? container.decodeIfPresent(Int64.self, forKey: key) {
+                return String(value)
+            }
+            if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+                return String(value)
+            }
+        }
+        return nil
+    }
+
+    private static func decodeLossyString(from container: inout UnkeyedDecodingContainer) throws -> String? {
+        if let value = try? container.decode(String.self) {
+            return value
+        }
+        if let value = try? container.decode(Int.self) {
+            return String(value)
+        }
+        if let value = try? container.decode(Int64.self) {
+            return String(value)
+        }
+        if let value = try? container.decode(Double.self) {
+            return String(value)
+        }
+        return nil
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(from, forKey: .from)
+        try container.encode(to, forKey: .to)
+    }
 }
 
 struct WorkflowDAG: Codable {
@@ -733,6 +1335,7 @@ struct WorkflowDAG: Codable {
     let frameNo: Int?
     let xml: WorkflowDAGXMLNode?
     let tasks: [WorkflowDAGTask]
+    let graphEdges: [WorkflowDAGEdge]?
     let entryTask: String?
     let entryTaskID: String?
     let fields: [WorkflowLaunchField]?
@@ -748,11 +1351,16 @@ struct WorkflowDAG: Codable {
     }
 
     var edges: [WorkflowDAGEdge] {
+        if let graphEdges, !graphEdges.isEmpty {
+            let validNodeIDs = Set(nodes.map(\.nodeId))
+            return Self.filteredAndUniqueEdges(graphEdges, validNodeIds: validNodeIDs.isEmpty ? nil : validNodeIDs)
+        }
+
         guard let xml else {
             return Self.sequentialEdges(for: nodes.map(\.nodeId))
         }
 
-        let validNodeIds = Set(tasks.map(\.nodeId))
+        let validNodeIds = Set(nodes.map(\.nodeId))
         let span = Self.graphSpan(for: xml, validNodeIds: validNodeIds.isEmpty ? nil : validNodeIds)
         return Self.uniqueEdges(span.edges)
     }
@@ -764,6 +1372,7 @@ struct WorkflowDAG: Codable {
             frameNo == nil &&
             xml == nil &&
             tasks.isEmpty &&
+            (graphEdges?.isEmpty ?? true) &&
             entryTask == nil &&
             entryTaskID == nil &&
             fields == nil &&
@@ -789,6 +1398,7 @@ struct WorkflowDAG: Codable {
         frameNo: Int? = nil,
         xml: WorkflowDAGXMLNode? = nil,
         tasks: [WorkflowDAGTask] = [],
+        graphEdges: [WorkflowDAGEdge]? = nil,
         entryTask: String? = nil,
         entryTaskID: String? = nil,
         fields: [WorkflowLaunchField]? = nil,
@@ -799,8 +1409,11 @@ struct WorkflowDAG: Codable {
         self.runId = runId
         self.frameNo = frameNo
         self.xml = xml
-        self.tasks = tasks
-        self.entryTask = entryTask ?? Self.firstTaskId(in: xml) ?? tasks.sortedForWorkflowDAG.first?.nodeId
+        let resolvedEdges = graphEdges ?? []
+        let resolvedTasks = Self.synthesizedTasks(from: resolvedEdges, existing: tasks)
+        self.tasks = resolvedTasks
+        self.graphEdges = resolvedEdges.isEmpty ? nil : resolvedEdges
+        self.entryTask = entryTask ?? Self.firstTaskId(in: xml) ?? resolvedTasks.sortedForWorkflowDAG.first?.nodeId
         self.entryTaskID = entryTaskID
         self.fields = fields
         self.message = message
@@ -821,6 +1434,7 @@ struct WorkflowDAG: Codable {
             frameNo: nil,
             xml: nil,
             tasks: [],
+            graphEdges: nil,
             entryTask: entryTask,
             entryTaskID: entryTaskID,
             fields: fields,
@@ -835,26 +1449,96 @@ struct WorkflowDAG: Codable {
         case frameNo
         case xml
         case tasks
+        case graphEdges = "edges"
         case entryTask
         case entryTaskID = "entryTaskId"
         case fields
         case message
     }
 
+    private enum DecodingKeys: String, CodingKey {
+        case workflowID = "workflowId"
+        case workflowIDSnake = "workflow_id"
+        case workflowIDLegacy = "workflowID"
+        case mode
+        case runId
+        case runIdSnake = "run_id"
+        case frameNo
+        case frameNoSnake = "frame_no"
+        case xml
+        case tasks
+        case nodes
+        case graphEdges = "edges"
+        case links
+        case entryTask
+        case entryTaskSnake = "entry_task"
+        case entryTaskID = "entryTaskId"
+        case entryTaskIDSnake = "entry_task_id"
+        case fields
+        case launchFields
+        case inputFields
+        case inputSchema
+        case inputSchemaSnake = "input_schema"
+        case input
+        case schema
+        case message
+    }
+
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let container = try decoder.container(keyedBy: DecodingKeys.self)
         workflowID = try container.decodeIfPresent(String.self, forKey: .workflowID)
+            ?? container.decodeIfPresent(String.self, forKey: .workflowIDSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .workflowIDLegacy)
         mode = try container.decodeIfPresent(String.self, forKey: .mode)
         runId = try container.decodeIfPresent(String.self, forKey: .runId)
+            ?? container.decodeIfPresent(String.self, forKey: .runIdSnake)
         frameNo = container.decodeLossyInt(forKey: .frameNo)
+            ?? container.decodeLossyInt(forKey: .frameNoSnake)
         xml = try container.decodeIfPresent(WorkflowDAGXMLNode.self, forKey: .xml)
-        tasks = try container.decodeIfPresent([WorkflowDAGTask].self, forKey: .tasks) ?? []
-        fields = try container.decodeIfPresent([WorkflowLaunchField].self, forKey: .fields)
+        let decodedEdges = try container.decodeIfPresent([WorkflowDAGEdge].self, forKey: .graphEdges)
+            ?? container.decodeIfPresent([WorkflowDAGEdge].self, forKey: .links)
+            ?? []
+        let decodedTasks = try container.decodeIfPresent([WorkflowDAGTask].self, forKey: .tasks)
+            ?? container.decodeIfPresent([WorkflowDAGTask].self, forKey: .nodes)
+            ?? []
+        let resolvedTasks = Self.synthesizedTasks(from: decodedEdges, existing: decodedTasks)
+        tasks = resolvedTasks
+        graphEdges = decodedEdges.isEmpty ? nil : decodedEdges
+        let decodedFields = try container.decodeIfPresent([WorkflowLaunchField].self, forKey: .fields)
+            ?? container.decodeIfPresent([WorkflowLaunchField].self, forKey: .launchFields)
+            ?? container.decodeIfPresent([WorkflowLaunchField].self, forKey: .inputFields)
+        let decodedInputSchema = try container.decodeIfPresent(JSONValue.self, forKey: .inputSchema)
+            ?? container.decodeIfPresent(JSONValue.self, forKey: .inputSchemaSnake)
+            ?? container.decodeIfPresent(JSONValue.self, forKey: .input)
+            ?? container.decodeIfPresent(JSONValue.self, forKey: .schema)
+        let inferredFields = WorkflowLaunchField.fields(fromInputSchema: decodedInputSchema)
+        if let decodedFields, !decodedFields.isEmpty {
+            fields = decodedFields
+        } else {
+            fields = inferredFields ?? decodedFields
+        }
         entryTaskID = try container.decodeIfPresent(String.self, forKey: .entryTaskID)
+            ?? container.decodeIfPresent(String.self, forKey: .entryTaskIDSnake)
         message = try container.decodeIfPresent(String.self, forKey: .message)
 
         let decodedEntryTask = try container.decodeIfPresent(String.self, forKey: .entryTask)
-        entryTask = decodedEntryTask ?? entryTaskID ?? Self.firstTaskId(in: xml) ?? tasks.sortedForWorkflowDAG.first?.nodeId
+            ?? container.decodeIfPresent(String.self, forKey: .entryTaskSnake)
+        entryTask = decodedEntryTask ?? entryTaskID ?? Self.firstTaskId(in: xml) ?? resolvedTasks.sortedForWorkflowDAG.first?.nodeId
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(workflowID, forKey: .workflowID)
+        try container.encodeIfPresent(mode, forKey: .mode)
+        try container.encodeIfPresent(runId, forKey: .runId)
+        try container.encodeIfPresent(frameNo, forKey: .frameNo)
+        try container.encodeIfPresent(xml, forKey: .xml)
+        try container.encode(tasks, forKey: .tasks)
+        try container.encodeIfPresent(graphEdges, forKey: .graphEdges)
+        try container.encodeIfPresent(entryTask, forKey: .entryTask)
+        try container.encodeIfPresent(entryTaskID, forKey: .entryTaskID)
+        try container.encodeIfPresent(fields, forKey: .fields)
+        try container.encodeIfPresent(message, forKey: .message)
     }
 
     private struct GraphSpan {
@@ -927,6 +1611,33 @@ struct WorkflowDAG: Codable {
     private static func sequentialEdges(for nodeIds: [String]) -> [WorkflowDAGEdge] {
         guard nodeIds.count > 1 else { return [] }
         return zip(nodeIds, nodeIds.dropFirst()).map { WorkflowDAGEdge(from: $0.0, to: $0.1) }
+    }
+
+    private static func filteredAndUniqueEdges(_ edges: [WorkflowDAGEdge], validNodeIds: Set<String>?) -> [WorkflowDAGEdge] {
+        let filtered = edges.filter { edge in
+            let from = edge.from.trimmingCharacters(in: .whitespacesAndNewlines)
+            let to = edge.to.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !from.isEmpty, !to.isEmpty else { return false }
+            guard let validNodeIds else { return true }
+            return validNodeIds.contains(from) && validNodeIds.contains(to)
+        }
+        return uniqueEdges(filtered)
+    }
+
+    private static func synthesizedTasks(from edges: [WorkflowDAGEdge], existing tasks: [WorkflowDAGTask]) -> [WorkflowDAGTask] {
+        guard tasks.isEmpty, !edges.isEmpty else { return tasks }
+        var orderedNodeIds: [String] = []
+        var seen = Set<String>()
+        for edge in edges {
+            for rawNodeID in [edge.from, edge.to] {
+                let nodeID = rawNodeID.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !nodeID.isEmpty, seen.insert(nodeID).inserted else { continue }
+                orderedNodeIds.append(nodeID)
+            }
+        }
+        return orderedNodeIds.enumerated().map { ordinal, nodeID in
+            WorkflowDAGTask(nodeId: nodeID, ordinal: ordinal)
+        }
     }
 
     private static func uniqueEdges(_ edges: [WorkflowDAGEdge]) -> [WorkflowDAGEdge] {
@@ -1410,8 +2121,23 @@ struct AggregateScore: Identifiable, Codable {
     var id: String { scorerName }
 
     static func aggregate(_ scores: [ScoreRow]) -> [AggregateScore] {
-        Dictionary(grouping: scores, by: \.scorerDisplayName)
-            .map { scorerName, rows in
+        guard !scores.isEmpty else { return [] }
+
+        // Some score rows may omit scorerName while still including scorerId.
+        // Resolve scorerId -> scorerName mappings first so those rows roll up into
+        // the same per-scorer aggregate when a name is present elsewhere.
+        let scorerNamesByID = scores.reduce(into: [String: String]()) { mapping, row in
+            guard let scorerID = normalizedScorerValue(row.scorerId)?.lowercased(),
+                  let scorerName = normalizedScorerValue(row.scorerName) else {
+                return
+            }
+            mapping[scorerID] = scorerName
+        }
+
+        return Dictionary(grouping: scores) { score in
+            scorerGroupKey(for: score, scorerNamesByID: scorerNamesByID)
+        }
+            .map { _, rows in
                 let values = rows.map(\.score)
                 let sorted = values.sorted()
                 let middle = sorted.count / 2
@@ -1422,7 +2148,7 @@ struct AggregateScore: Identifiable, Codable {
                         : sorted[middle]
 
                 return AggregateScore(
-                    scorerName: scorerName,
+                    scorerName: scorerGroupDisplayName(for: rows, scorerNamesByID: scorerNamesByID),
                     count: values.count,
                     mean: values.reduce(0, +) / Double(values.count),
                     min: sorted.first ?? 0,
@@ -1433,6 +2159,42 @@ struct AggregateScore: Identifiable, Codable {
             .sorted { lhs, rhs in
                 lhs.scorerName.localizedStandardCompare(rhs.scorerName) == .orderedAscending
             }
+    }
+
+    private static func scorerGroupKey(for score: ScoreRow, scorerNamesByID: [String: String]) -> String {
+        if let scorerName = normalizedScorerValue(score.scorerName) {
+            return scorerName.lowercased()
+        }
+        guard let scorerID = normalizedScorerValue(score.scorerId) else {
+            return "unknown"
+        }
+        if let mappedScorerName = scorerNamesByID[scorerID.lowercased()] {
+            return mappedScorerName.lowercased()
+        }
+        return scorerID.lowercased()
+    }
+
+    private static func scorerGroupDisplayName(for rows: [ScoreRow], scorerNamesByID: [String: String]) -> String {
+        for row in rows {
+            if let scorerName = normalizedScorerValue(row.scorerName) {
+                return scorerName
+            }
+            if let scorerID = normalizedScorerValue(row.scorerId) {
+                if let mappedScorerName = scorerNamesByID[scorerID.lowercased()] {
+                    return mappedScorerName
+                }
+                return scorerID
+            }
+        }
+        return "Unknown"
+    }
+
+    private static func normalizedScorerValue(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 }
 
@@ -2879,7 +3641,16 @@ struct ChatBlock: Identifiable, Codable {
         if existing.isEmpty { return incoming }
         if incoming.isEmpty { return existing }
         if existing == incoming { return existing }
-        if incoming.hasPrefix(existing) { return incoming }
+        if incoming.hasPrefix(existing) {
+            let continuation = String(incoming.dropFirst(existing.count))
+            if let collapsed = collapsedRetransmittedContinuation(
+                existing: existing,
+                continuation: continuation
+            ) {
+                return collapsed
+            }
+            return incoming
+        }
         if existing.hasPrefix(incoming) { return existing }
         if existing.contains(incoming) { return existing }
         if incoming.contains(existing) { return incoming }
@@ -2891,6 +3662,10 @@ struct ChatBlock: Identifiable, Codable {
                 return incoming + String(existing.dropFirst(reverseOverlap))
             }
             return existing + String(incoming.dropFirst(forwardOverlap))
+        }
+
+        if let inferredOffsetMerge = mergeUsingInferredOffset(existing: existing, incoming: incoming) {
+            return inferredOffsetMerge
         }
 
         if let existingTimestampMs,
@@ -2907,7 +3682,48 @@ struct ChatBlock: Identifiable, Codable {
         if existing == incoming { return true }
         if existing.hasPrefix(incoming) || incoming.hasPrefix(existing) { return true }
         if existing.contains(incoming) || incoming.contains(existing) { return true }
+        if let continuation = incoming.hasPrefix(existing) ? String(incoming.dropFirst(existing.count)) : nil,
+           collapsedRetransmittedContinuation(existing: existing, continuation: continuation) != nil {
+            return true
+        }
+        if mergeUsingInferredOffset(existing: existing, incoming: incoming) != nil {
+            return true
+        }
         return suffixPrefixOverlap(existing, incoming) > 0 || suffixPrefixOverlap(incoming, existing) > 0
+    }
+
+    private static func collapsedRetransmittedContinuation(existing: String, continuation: String) -> String? {
+        guard !continuation.isEmpty else { return existing }
+
+        let overlap = suffixPrefixOverlap(existing, continuation)
+        guard overlap >= minimumReliableOverlapLength(existing: existing, incoming: continuation) else {
+            return nil
+        }
+        return existing + String(continuation.dropFirst(overlap))
+    }
+
+    private static func mergeUsingInferredOffset(existing: String, incoming: String) -> String? {
+        let maxLength = min(existing.count, incoming.count)
+        let minimumLength = minimumReliableOverlapLength(existing: existing, incoming: incoming)
+        guard minimumLength > 0, maxLength >= minimumLength else { return nil }
+
+        for length in stride(from: maxLength, through: minimumLength, by: -1) {
+            let prefix = String(incoming.prefix(length))
+            guard let match = existing.range(of: prefix, options: .backwards) else { continue }
+            guard match.upperBound < existing.endIndex else { continue }
+
+            let mergedPrefix = String(existing[..<match.upperBound])
+            let mergedSuffix = String(incoming.dropFirst(length))
+            return mergedPrefix + mergedSuffix
+        }
+
+        return nil
+    }
+
+    private static func minimumReliableOverlapLength(existing: String, incoming: String) -> Int {
+        let shortest = min(existing.count, incoming.count)
+        guard shortest >= 6 else { return 0 }
+        return min(24, max(6, shortest / 3))
     }
 
     private static func suffixPrefixOverlap(_ lhs: String, _ rhs: String) -> Int {
@@ -3163,8 +3979,18 @@ struct CronSchedule: Identifiable, Codable {
         case pattern
         case cronPattern
         case cronPatternSnake = "cron_pattern"
+        case schedule
+        case scheduleExpression
+        case scheduleExpressionSnake = "schedule_expression"
+        case expression
         case workflowPath
         case workflowPathSnake = "workflow_path"
+        case entryFile
+        case entryFileSnake = "entry_file"
+        case relativePath
+        case relativePathSnake = "relative_path"
+        case filePath
+        case filePathSnake = "file_path"
         case workflow
         case path
         case enabled
@@ -3209,18 +4035,32 @@ struct CronSchedule: Identifiable, Codable {
             try? container.decodeIfPresent(String.self, forKey: key)
         }
 
+        let scheduleJSONValue = try? container.decodeIfPresent(JSONValue.self, forKey: .schedule)
         let decodedPattern = Self.nonEmpty(decodeString(.pattern))
             ?? Self.nonEmpty(decodeString(.cronPattern))
             ?? Self.nonEmpty(decodeString(.cronPatternSnake))
+            ?? Self.nonEmpty(decodeString(.schedule))
+            ?? Self.nonEmpty(decodeString(.scheduleExpression))
+            ?? Self.nonEmpty(decodeString(.scheduleExpressionSnake))
+            ?? Self.nonEmpty(decodeString(.expression))
+            ?? Self.nonEmpty(cronPatternString(scheduleJSONValue))
         pattern = decodedPattern ?? ""
 
         let workflowJSONValue = try? container.decodeIfPresent(JSONValue.self, forKey: .workflow)
-        let decodedWorkflowPath = Self.nonEmpty(decodeString(.workflowPath))
-            ?? Self.nonEmpty(decodeString(.workflowPathSnake))
-            ?? Self.nonEmpty(decodeString(.workflow))
-            ?? Self.nonEmpty(decodeString(.path))
-            ?? Self.nonEmpty(cronWorkflowPathString(workflowJSONValue))
-        workflowPath = decodedWorkflowPath ?? ""
+        let workflowPathCandidates = [
+            Self.nonEmpty(decodeString(.workflowPath)),
+            Self.nonEmpty(decodeString(.workflowPathSnake)),
+            Self.nonEmpty(decodeString(.entryFile)),
+            Self.nonEmpty(decodeString(.entryFileSnake)),
+            Self.nonEmpty(decodeString(.relativePath)),
+            Self.nonEmpty(decodeString(.relativePathSnake)),
+            Self.nonEmpty(decodeString(.filePath)),
+            Self.nonEmpty(decodeString(.filePathSnake)),
+            Self.nonEmpty(decodeString(.workflow)),
+            Self.nonEmpty(decodeString(.path)),
+            Self.nonEmpty(cronWorkflowPathString(workflowJSONValue)),
+        ]
+        workflowPath = workflowPathCandidates.compactMap { $0 }.first ?? ""
 
         enabled = container.decodeLossyBool(forKey: .enabled)
             ?? container.decodeLossyBool(forKey: .isEnabled)
@@ -3694,10 +4534,17 @@ struct SSEEvent {
         self.runId = Self.normalizedRunId(runId) ?? Self.extractRunId(from: data)
     }
 
-    static func filtered(event: String?, data: String, expectedRunId: String?) -> SSEEvent? {
+    static func filtered(event: String?, data: String, eventRunId: String? = nil, expectedRunId: String?) -> SSEEvent? {
+        let normalizedEventRunId = normalizedRunId(eventRunId)
         let payloadRunId = extractRunId(from: data)
-        guard runId(payloadRunId, matches: expectedRunId) else { return nil }
-        return SSEEvent(event: event, data: data, runId: payloadRunId ?? normalizedRunId(expectedRunId))
+
+        if let normalizedEventRunId, let payloadRunId, normalizedEventRunId != payloadRunId {
+            return nil
+        }
+
+        let resolvedRunId = normalizedEventRunId ?? payloadRunId
+        guard runId(resolvedRunId, matches: expectedRunId) else { return nil }
+        return SSEEvent(event: event, data: data, runId: resolvedRunId ?? normalizedRunId(expectedRunId))
     }
 
     func matches(runId expectedRunId: String?) -> Bool {
