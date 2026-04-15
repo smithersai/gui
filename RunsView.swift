@@ -1168,7 +1168,7 @@ struct RunsView: View {
         case "runcancelled":
             return .cancelled
         default:
-            return nil
+            return event.status == nil ? nil : .unknown
         }
     }
 

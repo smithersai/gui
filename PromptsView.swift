@@ -26,10 +26,11 @@ struct PromptsView: View {
     @State private var sourceLoadGeneration = 0
     @State private var inputs: [PromptInput] = []
     @State private var inputValues: [String: String] = [:]
+    @State private var originalInputValues: [String: String] = [:]
     @State private var previewText: String?
     @State private var previewRequestGeneration = 0
     @State private var isLoading = true
-    @State private var isSaving = false
+    @State private var savingPromptId: String?
     @State private var isPreviewing = false
     @State private var error: String?
     @State private var saveError: String?
@@ -64,13 +65,20 @@ struct PromptsView: View {
         let selectedSource = source
             ?? initialPrompts.first { $0.id == selectedId }?.source
             ?? ""
+        let initialInputs = inputs.isEmpty
+            ? Self.inputs(for: selectedSource, preferredInputs: [])
+            : inputs
+        let initialInputValues = inputValues.isEmpty
+            ? Self.defaultInputValues(for: initialInputs)
+            : inputValues
         _prompts = State(initialValue: initialPrompts)
         _isLoading = State(initialValue: isLoading)
         _selectedId = State(initialValue: selectedId)
         _source = State(initialValue: selectedSource)
         _originalSource = State(initialValue: originalSource ?? selectedSource)
-        _inputs = State(initialValue: inputs)
-        _inputValues = State(initialValue: inputValues)
+        _inputs = State(initialValue: initialInputs)
+        _inputValues = State(initialValue: initialInputValues)
+        _originalInputValues = State(initialValue: initialInputValues)
         _previewText = State(initialValue: previewText)
         _tab = State(initialValue: tab)
     }
@@ -79,8 +87,21 @@ struct PromptsView: View {
         prompts.first { $0.id == selectedId }
     }
 
-    private var hasChanges: Bool {
+    private var hasSourceChanges: Bool {
         source != originalSource
+    }
+
+    private var hasInputValueChanges: Bool {
+        Self.normalizedInputValues(inputValues, for: inputs)
+            != Self.normalizedInputValues(originalInputValues, for: inputs)
+    }
+
+    private var hasChanges: Bool {
+        hasSourceChanges
+    }
+
+    private var isSavingSelectedPrompt: Bool {
+        savingPromptId == selectedId
     }
 
     private var sourceBinding: Binding<String> {
@@ -90,6 +111,7 @@ struct PromptsView: View {
                 guard source != newValue else { return }
                 source = newValue
                 sourceEditGeneration += 1
+                syncInputsWithSource(newValue)
             }
         )
     }

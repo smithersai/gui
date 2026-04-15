@@ -532,12 +532,7 @@ struct LandingsView: View {
                         .foregroundColor(Theme.textTertiary)
                         .frame(maxWidth: .infinity, minHeight: 100)
                 } else {
-                    Text(diff)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(Theme.textPrimary)
-                        .textSelection(.enabled)
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    landingUnifiedDiffView(diff)
                 }
             } else {
                 ProgressView()
@@ -545,6 +540,24 @@ struct LandingsView: View {
             }
         }
         .background(Theme.base)
+    }
+
+    private func landingUnifiedDiffView(_ diff: String) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Self.landingDiffChunks(from: diff)) { chunk in
+                VStack(alignment: .leading, spacing: 8) {
+                    if let title = chunk.title {
+                        Text(title)
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundColor(Theme.textSecondary)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 16)
+                    }
+                    UnifiedDiffView(diffText: chunk.diff)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var landingChecksView: some View {
@@ -903,7 +916,7 @@ struct LandingsView: View {
         error = nil
 
         do {
-            let loaded = try await smithers.listLandings(state: stateFilter)
+            let loaded = try await smithers.listLandings(state: Self.landingStateRequestFilter(stateFilter))
             guard generation == loadGeneration else { return }
             _ = capturedNumber // Acknowledge the capture; selection guard is done via generation.
             landings = loaded
