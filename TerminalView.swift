@@ -462,6 +462,7 @@ class TerminalSurfaceView: NSView {
     private let callbacks = TerminalCallbackCoordinator()
     private var retainedCallbacks: Unmanaged<TerminalCallbackCoordinator>?
     private var cleanedUp = false
+    var onClose: (() -> Void)?
 
     // Keep C strings alive for the lifetime of the surface
     private var commandCString: UnsafeMutablePointer<CChar>?
@@ -621,40 +622,62 @@ class TerminalSurfaceView: NSView {
     // MARK: - Mouse Input
 
     override func mouseDown(with event: NSEvent) {
-        guard let surface else { return }
-        window?.makeFirstResponder(self)
-        sendMousePos(event)
-        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, modsFromEvent(event))
+        _ = forwardMouseButton(
+            with: event,
+            action: GHOSTTY_MOUSE_PRESS,
+            button: GHOSTTY_MOUSE_LEFT,
+            focusOnPress: true
+        )
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard let surface else { return }
-        sendMousePos(event)
-        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, modsFromEvent(event))
+        _ = forwardMouseButton(
+            with: event,
+            action: GHOSTTY_MOUSE_RELEASE,
+            button: GHOSTTY_MOUSE_LEFT
+        )
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        guard let surface else { return }
-        sendMousePos(event)
-        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, modsFromEvent(event))
+        if !forwardMouseButton(
+            with: event,
+            action: GHOSTTY_MOUSE_PRESS,
+            button: GHOSTTY_MOUSE_RIGHT,
+            focusOnPress: true
+        ) {
+            super.rightMouseDown(with: event)
+        }
     }
 
     override func rightMouseUp(with event: NSEvent) {
-        guard let surface else { return }
-        sendMousePos(event)
-        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT, modsFromEvent(event))
+        if !forwardMouseButton(
+            with: event,
+            action: GHOSTTY_MOUSE_RELEASE,
+            button: GHOSTTY_MOUSE_RIGHT
+        ) {
+            super.rightMouseUp(with: event)
+        }
     }
 
     override func otherMouseDown(with event: NSEvent) {
-        guard let surface else { return }
-        sendMousePos(event)
-        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, mouseButton(from: event.buttonNumber), modsFromEvent(event))
+        if !forwardMouseButton(
+            with: event,
+            action: GHOSTTY_MOUSE_PRESS,
+            button: mouseButton(from: event.buttonNumber),
+            focusOnPress: true
+        ) {
+            super.otherMouseDown(with: event)
+        }
     }
 
     override func otherMouseUp(with event: NSEvent) {
-        guard let surface else { return }
-        sendMousePos(event)
-        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, mouseButton(from: event.buttonNumber), modsFromEvent(event))
+        if !forwardMouseButton(
+            with: event,
+            action: GHOSTTY_MOUSE_RELEASE,
+            button: mouseButton(from: event.buttonNumber)
+        ) {
+            super.otherMouseUp(with: event)
+        }
     }
 
     override func mouseEntered(with event: NSEvent) { sendMousePos(event) }
@@ -784,7 +807,7 @@ class TerminalSurfaceView: NSView {
         guard let surface else { return }
 
         let pointBounds = bounds
-        let scale = effectiveBackingScale
+        let scale = max(1, effectiveBackingScale.isFinite ? effectiveBackingScale : 1)
         let backingBounds: NSRect
         if window != nil {
             backingBounds = convertToBacking(pointBounds)
@@ -797,8 +820,10 @@ class TerminalSurfaceView: NSView {
             )
         }
 
-        let xScale = pointBounds.width > 0 ? backingBounds.width / pointBounds.width : scale
-        let yScale = pointBounds.height > 0 ? backingBounds.height / pointBounds.height : scale
+        let xScaleRaw = pointBounds.width > 0 ? backingBounds.width / pointBounds.width : scale
+        let yScaleRaw = pointBounds.height > 0 ? backingBounds.height / pointBounds.height : scale
+        let xScale = max(1, xScaleRaw.isFinite ? xScaleRaw : scale)
+        let yScale = max(1, yScaleRaw.isFinite ? yScaleRaw : scale)
         ghostty_surface_set_content_scale(surface, Double(xScale), Double(yScale))
 
         guard sendSize else { return }
@@ -1078,6 +1103,8 @@ class TerminalSurfaceView: NSView {
             shutdownSurface()
             removeFromSuperview()
         }
+
+        onClose?()
     }
 
     @discardableResult
@@ -1176,6 +1203,21 @@ class TerminalSurfaceView: NSView {
         )
     }
 
+    @discardableResult
+    private func forwardMouseButton(
+        with event: NSEvent,
+        action: ghostty_input_mouse_state_e,
+        button: ghostty_input_mouse_button_e,
+        focusOnPress: Bool = false
+    ) -> Bool {
+        guard let surface else { return false }
+        if focusOnPress {
+            window?.makeFirstResponder(self)
+        }
+        sendMousePos(event)
+        return ghostty_surface_mouse_button(surface, action, button, modsFromEvent(event))
+    }
+
     private func sendMousePos(x: Double, y: Double, mods: ghostty_input_mods_e) {
         guard let surface else { return }
         ghostty_surface_mouse_pos(
@@ -1192,17 +1234,22 @@ class TerminalSurfaceView: NSView {
 
     private func modsFromFlags(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         var raw: UInt32 = 0
-        if flags.contains(.shift) { raw |= GHOSTTY_MODS_SHIFT.rawValue }
-        if flags.contains(.control) { raw |= GHOSTTY_MODS_CTRL.rawValue }
-        if flags.contains(.option) { raw |= GHOSTTY_MODS_ALT.rawValue }
-        if flags.contains(.command) { raw |= GHOSTTY_MODS_SUPER.rawValue }
+        let hasShift = flags.contains(.shift)
+        let hasControl = flags.contains(.control)
+        let hasOption = flags.contains(.option)
+        let hasCommand = flags.contains(.command)
+
+        if hasShift { raw |= GHOSTTY_MODS_SHIFT.rawValue }
+        if hasControl { raw |= GHOSTTY_MODS_CTRL.rawValue }
+        if hasOption { raw |= GHOSTTY_MODS_ALT.rawValue }
+        if hasCommand { raw |= GHOSTTY_MODS_SUPER.rawValue }
         if flags.contains(.capsLock) { raw |= GHOSTTY_MODS_CAPS.rawValue }
 
         let rawFlags = flags.rawValue
-        if rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0 { raw |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue }
-        if rawFlags & UInt(NX_DEVICERCTLKEYMASK) != 0 { raw |= GHOSTTY_MODS_CTRL_RIGHT.rawValue }
-        if rawFlags & UInt(NX_DEVICERALTKEYMASK) != 0 { raw |= GHOSTTY_MODS_ALT_RIGHT.rawValue }
-        if rawFlags & UInt(NX_DEVICERCMDKEYMASK) != 0 { raw |= GHOSTTY_MODS_SUPER_RIGHT.rawValue }
+        if hasShift && rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0 { raw |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue }
+        if hasControl && rawFlags & UInt(NX_DEVICERCTLKEYMASK) != 0 { raw |= GHOSTTY_MODS_CTRL_RIGHT.rawValue }
+        if hasOption && rawFlags & UInt(NX_DEVICERALTKEYMASK) != 0 { raw |= GHOSTTY_MODS_ALT_RIGHT.rawValue }
+        if hasCommand && rawFlags & UInt(NX_DEVICERCMDKEYMASK) != 0 { raw |= GHOSTTY_MODS_SUPER_RIGHT.rawValue }
 
         return ghostty_input_mods_e(rawValue: raw)
     }
@@ -1331,6 +1378,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
     var command: String? = nil
     var workingDirectory: String? = nil
     var layoutSize: CGSize = .zero
+    var onClose: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> TerminalSurfaceView {
         let view: TerminalSurfaceView
@@ -1345,6 +1393,8 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
             view = TerminalSurfaceView(app: app, command: command, workingDirectory: workingDirectory)
         }
 
+        view.onClose = onClose
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             guard view.window != nil else { return }
             view.window?.makeFirstResponder(view)
@@ -1354,11 +1404,13 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
 
     func updateNSView(_ nsView: TerminalSurfaceView, context: Context) {
         nsView.synchronizeLayoutSize(layoutSize)
+        nsView.onClose = onClose
     }
 
     static func dismantleNSView(_ nsView: TerminalSurfaceView, coordinator: ()) {
-        if let sessionId = nsView.sessionId {
-            TerminalSurfaceRegistry.shared.deregister(sessionId: sessionId, view: nsView)
+        if nsView.sessionId != nil {
+            // Keep the surface alive in the registry so it persists across tab switches.
+            // It will be shut down explicitly when the terminal tab is closed.
         } else {
             nsView.shutdownSurface()
         }
@@ -1372,6 +1424,7 @@ struct TerminalView: View {
     var sessionId: String? = nil
     var command: String? = nil
     var workingDirectory: String? = nil
+    var onClose: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1408,7 +1461,8 @@ struct TerminalView: View {
                         sessionId: sessionId,
                         command: command,
                         workingDirectory: workingDirectory,
-                        layoutSize: geometry.size
+                        layoutSize: geometry.size,
+                        onClose: onClose
                     )
                 }
             } else {
