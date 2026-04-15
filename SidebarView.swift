@@ -9,6 +9,7 @@ enum NavDestination: Hashable {
     case changes
     case runs
     case workflows
+    case triggers
     case jjhubWorkflows
     case approvals
     case prompts
@@ -17,21 +18,28 @@ enum NavDestination: Hashable {
     case search
     case sql
     case landings
+    case tickets
     case issues
     case terminal
     case terminalCommand(binary: String, workingDirectory: String, name: String)
+    case liveRun(runId: String, nodeId: String?)
+    case runInspect(runId: String, workflowName: String?)
     case workspaces
+    case logs
 
     var label: String {
         switch self {
         case .chat: return "Chat"
         case .terminal: return "Terminal"
         case .terminalCommand(binary: _, workingDirectory: _, name: let name): return name
+        case .liveRun: return "Live Run"
+        case .runInspect: return "Run Inspector"
         case .dashboard: return "Dashboard"
         case .agents: return "Agents"
         case .changes: return "Changes"
         case .runs: return "Runs"
         case .workflows: return "Workflows"
+        case .triggers: return "Triggers"
         case .jjhubWorkflows: return "JJHub Workflows"
         case .approvals: return "Approvals"
         case .prompts: return "Prompts"
@@ -40,8 +48,10 @@ enum NavDestination: Hashable {
         case .search: return "Search"
         case .sql: return "SQL Browser"
         case .landings: return "Landings"
+        case .tickets: return "Tickets"
         case .issues: return "Issues"
         case .workspaces: return "Workspaces"
+        case .logs: return "Logs"
         }
     }
 
@@ -50,11 +60,14 @@ enum NavDestination: Hashable {
         case .chat: return "message"
         case .terminal: return "terminal.fill"
         case .terminalCommand(binary: _, workingDirectory: _, name: _): return "terminal.fill"
+        case .liveRun: return "dot.radiowaves.left.and.right"
+        case .runInspect: return "sidebar.right"
         case .dashboard: return "square.grid.2x2"
         case .agents: return "person.2"
         case .changes: return "point.3.connected.trianglepath.dotted"
         case .runs: return "play.circle"
         case .workflows: return "arrow.triangle.branch"
+        case .triggers: return "clock.arrow.circlepath"
         case .jjhubWorkflows: return "point.3.filled.connected.trianglepath.dotted"
         case .approvals: return "checkmark.shield"
         case .prompts: return "doc.text"
@@ -63,8 +76,10 @@ enum NavDestination: Hashable {
         case .search: return "magnifyingglass"
         case .sql: return "tablecells"
         case .landings: return "arrow.down.to.line"
+        case .tickets: return "ticket"
         case .issues: return "exclamationmark.circle"
         case .workspaces: return "desktopcomputer"
+        case .logs: return "doc.text.below.ecg"
         }
     }
 }
@@ -75,11 +90,28 @@ struct SidebarView: View {
     @ObservedObject var store: SessionStore
     @Binding var destination: NavDestination
     @State private var searchText: String = ""
+    @State private var smithersCollapsed = true
+    @State private var vcsCollapsed = true
+
+    init(
+        store: SessionStore,
+        destination: Binding<NavDestination>,
+        smithersCollapsed: Bool = true,
+        vcsCollapsed: Bool = true
+    ) {
+        self.store = store
+        self._destination = destination
+        self._smithersCollapsed = State(initialValue: smithersCollapsed)
+        self._vcsCollapsed = State(initialValue: vcsCollapsed)
+    }
 
     private let smithersNav: [NavDestination] = [
-        .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows, .approvals,
-        .prompts, .scores, .memory, .search, .sql,
-        .landings, .issues, .workspaces
+        .dashboard, .agents, .runs, .workflows, .triggers, .approvals,
+        .prompts, .scores, .memory, .search, .sql, .workspaces, .logs
+    ]
+
+    private let vcsNav: [NavDestination] = [
+        .changes, .jjhubWorkflows, .landings, .tickets, .issues
     ]
 
     var body: some View {
@@ -109,7 +141,7 @@ struct SidebarView: View {
                             label: NavDestination.chat.label,
                             isSelected: destination == .chat
                         ) {
-                            destination = .chat
+                            openCurrentChat()
                         }
 
                         NavRow(
@@ -121,65 +153,32 @@ struct SidebarView: View {
                         }
                     }
 
+                    SidebarSection(title: "TABS") {
+                        tabList
+                    }
+
                     // Smithers section
-                    SidebarSection(title: "SMITHERS") {
+                    CollapsibleSidebarSection(title: "SMITHERS", isCollapsed: $smithersCollapsed) {
                         ForEach(smithersNav, id: \.self) { nav in
                             NavRow(
                                 icon: nav.icon,
                                 label: nav.label,
-                                isSelected: destination == nav
+                                isSelected: isSelected(nav)
                             ) {
                                 destination = nav
                             }
                         }
                     }
 
-                    // Sessions list
-                    SidebarSection(title: "SESSIONS") {
-                        // Search
-                        HStack {
-                            Image(systemName: "magnifyingglass")
-                                .foregroundColor(Theme.textTertiary)
-                                .font(.system(size: 10))
-                            TextField("Search chats...", text: $searchText)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 11))
-                                .accessibilityIdentifier("sidebar.sessionSearch")
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(Theme.inputBg)
-                        .cornerRadius(6)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Theme.border, lineWidth: 1)
-                        )
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 4)
-
-                        let groups = ["Today", "Yesterday", "Older"]
-                        let allSessions = store.chatSessions().filter {
-                            searchText.isEmpty || $0.title.localizedCaseInsensitiveContains(searchText)
-                        }
-                        ForEach(groups, id: \.self) { group in
-                            let sessions = allSessions.filter { $0.group == group }
-                            if !sessions.isEmpty {
-                                Text(group)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(Theme.textTertiary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.top, 8)
-                                    .padding(.bottom, 2)
-
-                                ForEach(sessions) { session in
-                                    SessionRow(
-                                        session: session,
-                                        isSelected: destination == .chat && store.activeSessionId == session.id
-                                    ) {
-                                        store.selectSession(session.id)
-                                        destination = .chat
-                                    }
-                                }
+                    // VCS section
+                    CollapsibleSidebarSection(title: "VCS", isCollapsed: $vcsCollapsed) {
+                        ForEach(vcsNav, id: \.self) { nav in
+                            NavRow(
+                                icon: nav.icon,
+                                label: nav.label,
+                                isSelected: isSelected(nav)
+                            ) {
+                                destination = nav
                             }
                         }
                     }
@@ -191,8 +190,102 @@ struct SidebarView: View {
     }
 
     private func startNewChat() {
-        store.newSession()
+        store.newSession(reusingEmptyPlaceholder: true)
         destination = .chat
+    }
+
+    private func openCurrentChat() {
+        _ = store.ensureActiveSession()
+        destination = .chat
+    }
+
+    private var tabList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(Theme.textTertiary)
+                    .font(.system(size: 10))
+                TextField("Search tabs...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .accessibilityIdentifier("sidebar.sessionSearch")
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(Theme.inputBg)
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Theme.border, lineWidth: 1)
+            )
+            .padding(.horizontal, 8)
+            .padding(.bottom, 4)
+
+            let groups = ["Today", "Yesterday", "Older"]
+            let allTabs = store.sidebarTabs(matching: searchText)
+
+            if allTabs.isEmpty {
+                Text("No tabs yet")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textTertiary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
+
+            ForEach(groups, id: \.self) { group in
+                let tabs = allTabs.filter { $0.group == group }
+                if !tabs.isEmpty {
+                    Text(group)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(Theme.textTertiary)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                        .padding(.bottom, 2)
+
+                    ForEach(tabs) { tab in
+                        SidebarTabRow(
+                            tab: tab,
+                            isSelected: isSelected(tab)
+                        ) {
+                            selectTab(tab)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func selectTab(_ tab: SidebarTab) {
+        switch tab.kind {
+        case .chat:
+            if let sessionId = tab.chatSessionId {
+                store.selectSession(sessionId)
+                destination = .chat
+            }
+        case .run:
+            if let runId = tab.runId {
+                destination = .liveRun(runId: runId, nodeId: nil)
+            }
+        }
+    }
+
+    private func isSelected(_ nav: NavDestination) -> Bool {
+        if case .runInspect = destination, nav == .runs {
+            return true
+        }
+        return destination == nav
+    }
+
+    private func isSelected(_ tab: SidebarTab) -> Bool {
+        switch tab.kind {
+        case .chat:
+            return destination == .chat && store.activeSessionId == tab.chatSessionId
+        case .run:
+            if case .liveRun(let runId, _) = destination {
+                return runId == tab.runId
+            }
+            return false
+        }
     }
 }
 
@@ -212,6 +305,42 @@ struct SidebarSection<Content: View>: View {
                 .padding(.bottom, 4)
 
             content
+        }
+    }
+}
+
+struct CollapsibleSidebarSection<Content: View>: View {
+    let title: String
+    @Binding var isCollapsed: Bool
+    @ViewBuilder let content: Content
+
+    private var accessibilityKey: String {
+        title.replacingOccurrences(of: " ", with: "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Button(action: { isCollapsed.toggle() }) {
+                HStack(spacing: 6) {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .frame(width: 10)
+                    Text(title)
+                        .font(.system(size: 10, weight: .bold))
+                    Spacer()
+                }
+                .foregroundColor(Theme.textTertiary)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("sidebar.section.\(accessibilityKey)")
+
+            if !isCollapsed {
+                content
+            }
         }
     }
 }
@@ -236,8 +365,7 @@ struct NavRow: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .foregroundColor(isSelected ? Theme.accent : Theme.textSecondary)
-            .background(isSelected ? Theme.sidebarSelected : Color.clear)
-            .cornerRadius(6)
+            .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 6)
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 4)
@@ -270,8 +398,7 @@ struct NewChatMenuRow: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .foregroundColor(Theme.textSecondary)
-            .background(Color.clear)
-            .cornerRadius(6)
+            .themedSidebarRowBackground(isSelected: false, cornerRadius: 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -309,12 +436,55 @@ struct SessionRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(isSelected ? Theme.sidebarSelected : Color.clear)
-            .cornerRadius(6)
+            .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 6)
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 4)
         .accessibilityIdentifier("session.\(session.id)")
+    }
+}
+
+struct SidebarTabRow: View {
+    let tab: SidebarTab
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Image(systemName: tab.kind.icon)
+                        .font(.system(size: 10))
+                        .foregroundColor(isSelected ? Theme.accent : Theme.textTertiary)
+                        .frame(width: 14)
+
+                    Text(tab.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Theme.textPrimary)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text(tab.timestamp)
+                        .font(.system(size: 9))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                if !tab.preview.isEmpty {
+                    Text(tab.preview)
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                        .lineLimit(1)
+                        .padding(.leading, 21)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 6)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+        .accessibilityIdentifier("tab.\(tab.id)")
     }
 }
 
