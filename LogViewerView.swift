@@ -60,6 +60,7 @@ struct LogViewerView: View {
     @State private var logFileURL: URL?
     @State private var droppedWriteCount: Int = 0
     @State private var lastWriteError: String?
+    @State private var showClearLogsConfirmation = false
 
     private var filteredEntries: [LogEntry] {
         LogViewerFiltering.filteredEntries(
@@ -104,7 +105,7 @@ struct LogViewerView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
 
-                Button(action: clearLogs) {
+                Button(action: { showClearLogsConfirmation = true }) {
                     Image(systemName: "trash")
                 }
                 .help("Clear logs")
@@ -232,6 +233,18 @@ struct LogViewerView: View {
         .onDisappear { stopAutoRefresh() }
         .onChange(of: autoRefresh) { _, newValue in
             if newValue { startAutoRefresh() } else { stopAutoRefresh() }
+        }
+        .confirmationDialog(
+            "Clear Logs",
+            isPresented: $showClearLogsConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Logs", role: .destructive) {
+                clearLogs()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Clear all local log entries? This action cannot be undone.")
         }
         .accessibilityIdentifier("view.logs")
     }

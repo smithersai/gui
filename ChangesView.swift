@@ -41,6 +41,7 @@ struct ChangesView: View {
     @State private var actionError: String?
     @State private var bookmarkName = ""
     @State private var bookmarkToDelete = ""
+    @State private var pendingBookmarkDeleteName: String?
     @State private var actionInFlight = false
 
     init(smithers: SmithersClient, initialMode: Mode = .changes) {
@@ -93,6 +94,30 @@ struct ChangesView: View {
         }
         .onChange(of: selectedChangeID) { _, _ in
             syncDeleteBookmarkSelection()
+        }
+        .confirmationDialog(
+            "Delete Bookmark",
+            isPresented: Binding(
+                get: { pendingBookmarkDeleteName != nil },
+                set: { if !$0 { pendingBookmarkDeleteName = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Bookmark", role: .destructive) {
+                if let bookmarkName = pendingBookmarkDeleteName {
+                    pendingBookmarkDeleteName = nil
+                    Task { await deleteBookmark(named: bookmarkName) }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingBookmarkDeleteName = nil
+            }
+        } message: {
+            if let pendingBookmarkDeleteName {
+                Text("Delete bookmark \"\(pendingBookmarkDeleteName)\"? This action cannot be undone.")
+            } else {
+                Text("Delete this bookmark? This action cannot be undone.")
+            }
         }
     }
 
@@ -350,7 +375,7 @@ struct ChangesView: View {
                                 .pickerStyle(.menu)
                                 .frame(maxWidth: 220, alignment: .leading)
 
-                                Button(action: { Task { await deleteBookmark() } }) {
+                                Button(action: requestDeleteBookmark) {
                                     HStack(spacing: 4) {
                                         Image(systemName: "trash")
                                         Text("Delete")
@@ -596,8 +621,13 @@ struct ChangesView: View {
         actionInFlight = false
     }
 
-    private func deleteBookmark() async {
+    private func requestDeleteBookmark() {
         let name = bookmarkToDelete.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        pendingBookmarkDeleteName = name
+    }
+
+    private func deleteBookmark(named name: String) async {
         guard !name.isEmpty else { return }
 
         actionInFlight = true

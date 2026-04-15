@@ -162,6 +162,7 @@ struct ChatView: View {
     @State private var mentionCompletionsLoading = false
     @State private var mentionCompletionsLoaded = false
     @State private var mentionCompletionsRoot = ""
+    @State private var showClearAttachmentsConfirmation = false
     @State private var showFeedbackCategoryDialog = false
     @State private var showFeedbackConsentDialog = false
     @State private var pendingFeedbackCategory: FeedbackCategoryOption?
@@ -318,6 +319,14 @@ struct ChatView: View {
             }
         } message: {
             Text("If you choose Yes, the GUI log file will be attached as codex-logs.log.")
+        }
+        .confirmationDialog("Clear Attachments", isPresented: $showClearAttachmentsConfirmation, titleVisibility: .visible) {
+            Button("Clear Attachments", role: .destructive) {
+                clearAllAttachments()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Remove all pending attachments from this draft message? This action cannot be undone.")
         }
         .sheet(item: $feedbackComposerState) { state in
             FeedbackNoteSheet(
@@ -710,7 +719,7 @@ struct ChatView: View {
                 }
 
                 Button("Clear all") {
-                    clearAllAttachments()
+                    showClearAttachmentsConfirmation = true
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 11, weight: .medium))
@@ -769,70 +778,184 @@ struct ChatView: View {
         .accessibilityIdentifier("chat.mentionPalette")
     }
 
+    private func agentIconName(_ name: String) -> String {
+        switch name.lowercased() {
+        case "claude code": return "chevron.left.forwardslash.chevron.right"
+        case "codex": return "cpu"
+        case "gemini": return "sparkles"
+        case "opencode": return "curlybraces"
+        case "amp": return "bolt.fill"
+        case "forge": return "hammer.fill"
+        case "kimi": return "globe.asia.australia.fill"
+        case "aider": return "wrench.and.screwdriver.fill"
+        default: return "terminal.fill"
+        }
+    }
+
+    private func statusColor(_ status: String) -> Color {
+        switch status {
+        case "likely-subscription": return Theme.success
+        case "api-key": return Theme.warning
+        case "binary-only": return Theme.textTertiary
+        default: return Theme.info
+        }
+    }
+
+    private func agentSubtitle(_ target: ChatTargetOption) -> String {
+        var parts: [String] = [chatTargetStatusLabel(target.status)]
+        if !target.roles.isEmpty {
+            parts.append(target.roles.map { $0.capitalized }.joined(separator: ", "))
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private var targetPickerView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Choose how you want to chat in this workspace.")
-                    .font(.system(size: 14))
-                    .foregroundColor(Theme.textSecondary)
+            VStack(spacing: 28) {
+                // Header
+                VStack(spacing: 6) {
+                    Text("Start a conversation")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Choose a chat provider for this workspace")
+                        .font(.system(size: 13))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .padding(.top, 24)
 
-                ForEach(chatTargets) { target in
-                    Button(action: { selectTarget(target) }) {
-                        HStack(alignment: .top, spacing: 10) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack(spacing: 6) {
-                                    Text(target.name)
-                                        .font(.system(size: 14, weight: .semibold))
+                // Smithers hero card
+                if let smithersTarget = chatTargets.first(where: { $0.kind == .smithers }) {
+                    Button(action: { selectTarget(smithersTarget) }) {
+                        HStack(spacing: 16) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Theme.accent.opacity(0.15))
+                                    .frame(width: 48, height: 48)
+                                Image(systemName: "bubble.left.and.bubble.right.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(Theme.accent)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 8) {
+                                    Text(smithersTarget.name)
+                                        .font(.system(size: 16, weight: .semibold))
                                         .foregroundColor(Theme.textPrimary)
-                                    if target.recommended {
-                                        Text("Recommended")
-                                            .font(.system(size: 9, weight: .bold))
-                                            .foregroundColor(Theme.success)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Theme.success.opacity(0.15))
-                                            .cornerRadius(4)
-                                    } else if !target.status.isEmpty {
-                                        Text("\(chatTargetStatusLabel(target.status))")
-                                            .font(.system(size: 9, weight: .bold))
-                                            .foregroundColor(Theme.textTertiary)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .themedPill(cornerRadius: 4)
-                                    }
+                                    Text("Recommended")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(Theme.success)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(Theme.success.opacity(0.12))
+                                        .cornerRadius(10)
                                 }
-
-                                Text(target.description)
-                                    .font(.system(size: 12))
+                                Text(smithersTarget.description)
+                                    .font(.system(size: 13))
                                     .foregroundColor(Theme.textSecondary)
-
-                                Text(targetMetaLine(target))
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(Theme.textTertiary)
                             }
 
                             Spacer()
 
-                            if launchingTargetID == target.id {
+                            if launchingTargetID == smithersTarget.id {
                                 ProgressView()
                                     .scaleEffect(0.7)
                             } else {
-                                Image(systemName: "arrow.right")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(Theme.textTertiary)
+                                Image(systemName: "arrow.right.circle.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(Theme.accent.opacity(0.5))
                             }
                         }
-                        .padding(12)
-                        .background(Theme.surface2.opacity(0.5))
-                        .cornerRadius(10)
+                        .padding(16)
+                        .background(Theme.accent.opacity(0.06))
+                        .cornerRadius(12)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Theme.border, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Theme.accent.opacity(0.25), lineWidth: 1)
                         )
                     }
                     .buttonStyle(.plain)
-                    .disabled(launchingTargetID != nil || !target.usable)
-                    .accessibilityIdentifier("chat.target.\(target.id)")
+                    .themedCardHover(cornerRadius: 12)
+                    .disabled(launchingTargetID != nil)
+                    .accessibilityIdentifier("chat.target.\(smithersTarget.id)")
+                }
+
+                // External agents section
+                let externalTargets = chatTargets.filter { $0.kind == .externalAgent }
+
+                if !externalTargets.isEmpty || loadingTargets {
+                    VStack(alignment: .leading, spacing: 14) {
+                        // Section divider
+                        HStack(spacing: 12) {
+                            Rectangle()
+                                .fill(Theme.border)
+                                .frame(height: 1)
+                            Text("EXTERNAL AGENTS")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundColor(Theme.textTertiary)
+                                .tracking(1.2)
+                                .fixedSize()
+                            Rectangle()
+                                .fill(Theme.border)
+                                .frame(height: 1)
+                        }
+
+                        // Grid of agents
+                        LazyVGrid(columns: [
+                            GridItem(.flexible(), spacing: 10),
+                            GridItem(.flexible(), spacing: 10),
+                        ], spacing: 10) {
+                            ForEach(externalTargets) { target in
+                                Button(action: { selectTarget(target) }) {
+                                    HStack(spacing: 12) {
+                                        ZStack {
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color.white.opacity(0.04))
+                                                .frame(width: 36, height: 36)
+                                            Image(systemName: agentIconName(target.name))
+                                                .font(.system(size: 14))
+                                                .foregroundColor(Theme.textSecondary)
+                                        }
+
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack(spacing: 6) {
+                                                Text(target.name)
+                                                    .font(.system(size: 13, weight: .semibold))
+                                                    .foregroundColor(Theme.textPrimary)
+                                                    .lineLimit(1)
+                                                Circle()
+                                                    .fill(statusColor(target.status))
+                                                    .frame(width: 6, height: 6)
+                                            }
+
+                                            Text(agentSubtitle(target))
+                                                .font(.system(size: 11))
+                                                .foregroundColor(Theme.textTertiary)
+                                                .lineLimit(1)
+                                        }
+
+                                        Spacer(minLength: 0)
+
+                                        if launchingTargetID == target.id {
+                                            ProgressView()
+                                                .scaleEffect(0.6)
+                                        }
+                                    }
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Theme.surface2.opacity(0.5))
+                                    .cornerRadius(10)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Theme.border, lineWidth: 1)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .themedCardHover(cornerRadius: 10)
+                                .disabled(launchingTargetID != nil || !target.usable)
+                                .accessibilityIdentifier("chat.target.\(target.id)")
+                            }
+                        }
+                    }
                 }
 
                 if loadingTargets {
@@ -865,16 +988,26 @@ struct ChatView: View {
 
                 HStack {
                     Spacer()
-                    Button("Refresh") {
+                    Button {
                         Task { await loadChatTargets(force: true) }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11))
+                            Text("Refresh")
+                        }
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Theme.accent)
+                    .themedButtonHover()
                     .accessibilityIdentifier("chat.target.refresh")
                 }
             }
-            .padding(20)
+            .padding(.horizontal, 32)
+            .padding(.bottom, 20)
+            .frame(maxWidth: 640)
+            .frame(maxWidth: .infinity)
         }
         .background(Theme.surface1)
         .accessibilityIdentifier("chat.targetPicker")
@@ -2394,6 +2527,7 @@ private struct CodexMCPStatusSheet: View {
                                 }
                             }
                         }
+                        .refreshable { await refresh() }
                     }
                 } else if hasLoaded {
                     ContentUnavailableView(
@@ -2895,6 +3029,7 @@ struct MessageRow: View {
                     }
                     .padding(12)
                     .themedDiffBlock()
+                    .textSelection(.enabled)
                     .contextMenu {
                         Button("Copy") {
                             copyTextToClipboard(diff.snippet)
@@ -3363,6 +3498,7 @@ struct CommandBlock: View {
                 Text("$ \(command.cmd)")
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundColor(Theme.textPrimary)
+                    .textSelection(.enabled)
 
                 Spacer()
 
@@ -3395,6 +3531,7 @@ struct CommandBlock: View {
                 Text("cwd: \(command.cwd)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(Theme.textTertiary)
+                    .textSelection(.enabled)
                     .padding(.bottom, 6)
 
                 if hiddenOutputLineCount > 0 && !outputExpanded {
@@ -3457,6 +3594,7 @@ struct CommandBlock: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Theme.border, lineWidth: 1)
         )
+        .textSelection(.enabled)
         .contextMenu {
             Button("Copy output") {
                 copyTextToClipboard(command.output)
