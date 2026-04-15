@@ -27,6 +27,7 @@ let package = Package(
                 "CGhosttyKit",
                 "codex-ffi.h",
                 "build.sh",
+                "CONTRIBUTING.md",
                 "Tests",
                 "docs",
                 "project.yml",

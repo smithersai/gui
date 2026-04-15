@@ -167,8 +167,12 @@ struct FeedbackReporter {
     private let loadLogData: @Sendable () async -> Data?
 
     init(
-        sendEnvelope: @escaping @Sendable (Data) async throws -> Void = FeedbackReporter.defaultSendEnvelope,
-        loadLogData: @escaping @Sendable () async -> Data? = FeedbackReporter.defaultLoadLogData
+        sendEnvelope: @escaping @Sendable (Data) async throws -> Void = { envelope in
+            try await FeedbackReporter.defaultSendEnvelope(envelope)
+        },
+        loadLogData: @escaping @Sendable () async -> Data? = {
+            await FeedbackReporter.defaultLoadLogData()
+        }
     ) {
         self.sendEnvelope = sendEnvelope
         self.loadLogData = loadLogData

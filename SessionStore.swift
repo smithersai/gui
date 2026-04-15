@@ -110,7 +110,6 @@ class SessionStore: ObservableObject {
         )
         sessions.insert(session, at: 0)
         observeMessages(for: session.id, agent: session.agent)
-        persistSessionRecord(id: session.id, title: session.title)
         activeSessionId = id
         return id
     }
