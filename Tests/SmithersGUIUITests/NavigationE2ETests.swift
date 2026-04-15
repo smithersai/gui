@@ -8,6 +8,7 @@ final class NavigationE2ETests: SmithersGUIUITestCase {
             ("Dashboard", "view.dashboard"),
             ("Runs", "view.runs"),
             ("Workflows", "view.workflows"),
+            ("Triggers", "view.triggers"),
             ("JJHub Workflows", "view.jjhubWorkflows"),
             ("Approvals", "view.approvals"),
             ("Prompts", "view.prompts"),
@@ -20,7 +21,14 @@ final class NavigationE2ETests: SmithersGUIUITestCase {
         ]
 
         for destination in destinations {
-            XCTAssertTrue(app.buttons["nav.\(destination.label)"].waitForExistence(timeout: 5), "Missing sidebar destination \(destination.label)")
+            let nav = app.buttons["nav.\(destination.label.replacingOccurrences(of: " ", with: ""))"]
+            if !nav.waitForExistence(timeout: 1.5) {
+                expandSidebarSectionIfNeeded(for: destination.label)
+            }
+            XCTAssertTrue(
+                nav.waitForExistence(timeout: 5),
+                "Missing sidebar destination \(destination.label)"
+            )
         }
 
         for destination in destinations {
