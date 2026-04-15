@@ -1,24 +1,46 @@
 import SwiftUI
 
+enum MemoryNamespaceFilterState {
+    static func namespaces(from facts: [MemoryFact]) -> [String] {
+        Array(Set(facts.map(\.namespace))).sorted()
+    }
+
+    static func validatedFilter(_ filter: String?, namespaces: [String]) -> String? {
+        guard let filter else { return nil }
+        return namespaces.contains(filter) ? filter : nil
+    }
+}
+
 struct MemoryView: View {
     @ObservedObject var smithers: SmithersClient
+    private let workflowPath: String?
     @State private var facts: [MemoryFact] = []
+    @State private var allNamespaceFacts: [MemoryFact] = []
     @State private var recallResults: [MemoryRecallResult] = []
     @State private var isLoading = true
     @State private var listError: String?
     @State private var recallError: String?
     @State private var namespaceFilter: String?
     @State private var recallQuery = ""
+    @State private var recallTopK = 10
     @State private var isRecalling = false
     @State private var mode: ViewMode = .list
     @State private var selectedFact: MemoryFact?
+    @State private var factsLoadID = 0
+
+    private static let minRecallTopK = 1
+
+    init(smithers: SmithersClient, workflowPath: String? = nil) {
+        self._smithers = ObservedObject(wrappedValue: smithers)
+        self.workflowPath = workflowPath
+    }
 
     enum ViewMode {
         case list, recall
     }
 
     private var namespaces: [String] {
-        Array(Set(facts.map(\.namespace))).sorted()
+        MemoryNamespaceFilterState.namespaces(from: allNamespaceFacts)
     }
 
     private var filteredFacts: [MemoryFact] {
@@ -26,6 +48,13 @@ struct MemoryView: View {
             return facts.filter { $0.namespace == ns }
         }
         return facts
+    }
+
+    private var recallTopKBinding: Binding<Int> {
+        Binding(
+            get: { recallTopK },
+            set: { recallTopK = Self.normalizedRecallTopK($0) }
+        )
     }
 
     var body: some View {
@@ -51,7 +80,7 @@ struct MemoryView: View {
             }
         }
         .background(Theme.surface1)
-        .task { await loadFacts() }
+        .task(id: namespaceFilter) { await loadFacts() }
     }
 
     // MARK: - Header
@@ -88,8 +117,7 @@ struct MemoryView: View {
                     .foregroundColor(mode == .list ? Theme.accent : Theme.textSecondary)
                     .padding(.horizontal, 10)
                     .frame(height: 28)
-                    .background(mode == .list ? Theme.pillActive : Theme.pillBg)
-                    .cornerRadius(6)
+                    .themedPill(fill: mode == .list ? Theme.pillActive : Theme.pillBg, cornerRadius: 6)
             }
             .buttonStyle(.plain)
 
@@ -99,8 +127,7 @@ struct MemoryView: View {
                     .foregroundColor(mode == .recall ? Theme.accent : Theme.textSecondary)
                     .padding(.horizontal, 10)
                     .frame(height: 28)
-                    .background(mode == .recall ? Theme.pillActive : Theme.pillBg)
-                    .cornerRadius(6)
+                    .themedPill(fill: mode == .recall ? Theme.pillActive : Theme.pillBg, cornerRadius: 6)
             }
             .buttonStyle(.plain)
 
@@ -266,10 +293,12 @@ struct MemoryView: View {
                     .cornerRadius(6)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
 
+                topKControl
+
                 Button(action: { Task { await doRecall() } }) {
                     Text("Search")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(Theme.textPrimary)
                         .padding(.horizontal, 14)
                         .frame(height: 32)
                         .background(recallQuery.isEmpty ? Theme.accent.opacity(0.5) : Theme.accent)
@@ -326,6 +355,40 @@ struct MemoryView: View {
 
     // MARK: - Helpers
 
+    private var topKControl: some View {
+        HStack(spacing: 6) {
+            Text("Top-K")
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textTertiary)
+
+            TextField("Top-K", value: recallTopKBinding, format: .number)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .multilineTextAlignment(.trailing)
+                .padding(.horizontal, 8)
+                .frame(width: 46, height: 32)
+                .background(Theme.inputBg)
+                .cornerRadius(6)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                .accessibilityLabel("Top-K")
+                .accessibilityIdentifier("memory.recall.topK")
+
+            Stepper(
+                "Top-K",
+                onIncrement: { recallTopK = Self.normalizedRecallTopK(recallTopK + 1) },
+                onDecrement: { recallTopK = Self.normalizedRecallTopK(recallTopK - 1) }
+            )
+                .labelsHidden()
+                .accessibilityLabel("Top-K")
+                .accessibilityIdentifier("memory.recall.topK.stepper")
+        }
+        .frame(height: 32)
+    }
+
+    private static func normalizedRecallTopK(_ value: Int) -> Int {
+        max(value, minRecallTopK)
+    }
+
     private func metaRow(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label)
@@ -381,14 +444,48 @@ struct MemoryView: View {
     }
 
     private func loadFacts() async {
+        factsLoadID += 1
+        let loadID = factsLoadID
+        let requestedNamespace = namespaceFilter
         isLoading = true
         listError = nil
+        defer {
+            if factsLoadID == loadID {
+                isLoading = false
+            }
+        }
+
         do {
-            facts = try await smithers.listMemoryFacts(namespace: namespaceFilter)
+            let allFacts = try await smithers.listMemoryFacts(namespace: nil, workflowPath: workflowPath)
+            guard factsLoadID == loadID, !Task.isCancelled else { return }
+
+            allNamespaceFacts = allFacts
+
+            let availableNamespaces = MemoryNamespaceFilterState.namespaces(from: allFacts)
+            let validNamespace = MemoryNamespaceFilterState.validatedFilter(
+                requestedNamespace,
+                namespaces: availableNamespaces
+            )
+            if validNamespace != namespaceFilter {
+                namespaceFilter = validNamespace
+            }
+
+            let loadedFacts: [MemoryFact]
+            if let validNamespace {
+                loadedFacts = try await smithers.listMemoryFacts(namespace: validNamespace, workflowPath: workflowPath)
+                guard factsLoadID == loadID, !Task.isCancelled else { return }
+            } else {
+                loadedFacts = allFacts
+            }
+
+            facts = loadedFacts
+            if let selectedFact, !loadedFacts.contains(where: { $0.id == selectedFact.id }) {
+                self.selectedFact = nil
+            }
         } catch {
+            guard factsLoadID == loadID, !Task.isCancelled else { return }
             self.listError = error.localizedDescription
         }
-        isLoading = false
     }
 
     private func doRecall() async {
@@ -396,7 +493,7 @@ struct MemoryView: View {
         recallError = nil
         isRecalling = true
         do {
-            recallResults = try await smithers.recallMemory(query: recallQuery, namespace: namespaceFilter)
+            recallResults = try await smithers.recallMemory(query: recallQuery, namespace: namespaceFilter, workflowPath: workflowPath, topK: recallTopK)
         } catch {
             self.recallError = error.localizedDescription
         }
