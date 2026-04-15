@@ -9,6 +9,7 @@ struct ApprovalsView: View {
     @State private var error: String?
     @State private var showHistory = false
     @State private var actionInFlight: Set<String> = [] // approval ids being acted on
+    @State private var pendingDenyApproval: Approval?
 
     private var selectedApproval: Approval? {
         approvals.first { $0.id == selectedId }
@@ -33,6 +34,33 @@ struct ApprovalsView: View {
         .background(Theme.surface1)
         .accessibilityIdentifier("approvals.root")
         .task { await loadApprovals() }
+        .confirmationDialog(
+            "Deny Approval",
+            isPresented: Binding(
+                get: { pendingDenyApproval != nil },
+                set: { if !$0 { pendingDenyApproval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Deny Approval", role: .destructive) {
+                if let approval = pendingDenyApproval {
+                    pendingDenyApproval = nil
+                    Task { await deny(approval) }
+                }
+            }
+            .accessibilityIdentifier("approval.confirmDenyButton")
+
+            Button("Cancel", role: .cancel) {
+                pendingDenyApproval = nil
+            }
+            .accessibilityIdentifier("approval.cancelDenyButton")
+        } message: {
+            if let approval = pendingDenyApproval {
+                Text("Deny approval for \(approval.gate ?? approval.nodeId) on run \(String(approval.runId.prefix(8)))? This will fail the waiting gate.")
+            } else {
+                Text("Deny this approval? This will fail the waiting gate.")
+            }
+        }
     }
 
     // MARK: - Header
@@ -115,7 +143,7 @@ struct ApprovalsView: View {
                         }
                     }
                 } else {
-                    let pending = approvals.filter { $0.status == "pending" }
+                    let pending = approvals.filterPendingApprovals()
                     if pending.isEmpty && !isLoading {
                         emptyView("No pending approvals")
                     } else {
@@ -148,7 +176,7 @@ struct ApprovalsView: View {
                                 }
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 10)
-                                .background(selectedId == approval.id ? Theme.sidebarSelected : Color.clear)
+                                .themedSidebarRowBackground(isSelected: selectedId == approval.id)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -159,6 +187,7 @@ struct ApprovalsView: View {
                 }
             }
         }
+        .refreshable { await loadApprovals() }
         .background(Theme.surface2)
         .accessibilityIdentifier(showHistory ? "approvals.historyList" : "approvals.pendingList")
     }
@@ -211,7 +240,7 @@ struct ApprovalsView: View {
                         Divider().background(Theme.border)
 
                         // Actions
-                        if approval.status == "pending" {
+                        if approval.isPending {
                             HStack(spacing: 12) {
                                 Button(action: { Task { await approve(approval) } }) {
                                     HStack(spacing: 6) {
@@ -219,7 +248,7 @@ struct ApprovalsView: View {
                                         Text("Approve")
                                     }
                                     .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(Theme.textPrimary)
                                     .padding(.horizontal, 20)
                                     .frame(height: 36)
                                     .background(Theme.success)
@@ -229,13 +258,13 @@ struct ApprovalsView: View {
                                 .disabled(actionInFlight.contains(approval.id))
                                 .accessibilityIdentifier("approval.approveButton")
 
-                                Button(action: { Task { await deny(approval) } }) {
+                                Button(action: { pendingDenyApproval = approval }) {
                                     HStack(spacing: 6) {
                                         Image(systemName: "xmark")
                                         Text("Deny")
                                     }
                                     .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(Theme.textPrimary)
                                     .padding(.horizontal, 20)
                                     .frame(height: 36)
                                     .background(Theme.danger)
