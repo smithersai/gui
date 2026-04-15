@@ -19,6 +19,82 @@ private final class PipeOutputCollector: @unchecked Sendable {
     }
 }
 
+private extension String {
+    var nilIfEmpty: String? {
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
+    }
+}
+
+enum SmithersMemoryCLI {
+    static let defaultNamespace = "global:default"
+
+    static func normalizedNamespace(_ namespace: String?) -> String {
+        guard let namespace = namespace?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !namespace.isEmpty else {
+            return defaultNamespace
+        }
+        return namespace
+    }
+
+    static func normalizedWorkflowPath(_ workflowPath: String?) -> String? {
+        guard let workflowPath = workflowPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !workflowPath.isEmpty else {
+            return nil
+        }
+        return workflowPath
+    }
+
+    static func listArgs(namespace: String? = nil, workflowPath: String? = nil) -> [String] {
+        var args = ["memory", "list", normalizedNamespace(namespace), "--format", "json"]
+        if let workflowPath = normalizedWorkflowPath(workflowPath) {
+            args += ["--workflow", workflowPath]
+        }
+        return args
+    }
+
+    static func recallArgs(query: String, namespace: String? = nil, workflowPath: String? = nil, topK: Int = 10) -> [String] {
+        var args = [
+            "memory", "recall", query,
+            "--format", "json",
+            "--namespace", normalizedNamespace(namespace),
+            "--top-k", "\(topK)",
+        ]
+        if let workflowPath = normalizedWorkflowPath(workflowPath) {
+            args += ["--workflow", workflowPath]
+        }
+        return args
+    }
+}
+
+private func cliJSONPayloadCandidates(from data: Data) -> [Data] {
+    guard let raw = String(data: data, encoding: .utf8) else {
+        return []
+    }
+
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return []
+    }
+
+    var seen = Set<String>()
+    var candidates: [Data] = []
+    func append(_ candidate: String) {
+        let normalized = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, seen.insert(normalized).inserted else {
+            return
+        }
+        if let data = normalized.data(using: .utf8) {
+            candidates.append(data)
+        }
+    }
+
+    append(trimmed)
+    for index in trimmed.indices where trimmed[index] == "{" || trimmed[index] == "[" {
+        append(String(trimmed[index...]))
+    }
+    return candidates
+}
+
 /// Client for Smithers — uses the `smithers` CLI as primary transport (like the TUI),
 /// with optional HTTP fallback when a workflow is running with `--serve`.
 @MainActor
@@ -28,16 +104,25 @@ class SmithersClient: ObservableObject {
 
     private let cwd: String
     private let smithersBin: String
+    private let jjhubBin: String
     private let decoder: JSONDecoder
+
+    var workingDirectory: String { cwd }
 
     // Optional HTTP server (only when a workflow is running with --serve)
     var serverURL: String?
     private let session: URLSession
+    private let streamSession: URLSession
     private var uiResolvedApprovalIDs: Set<String> = []
     private var uiApprovalDecisions: [ApprovalDecision] = SmithersClient.makeUIApprovalDecisions()
+    private var uiTickets: [Ticket] = SmithersClient.makeUITickets()
+    private var uiCrons: [CronSchedule] = SmithersClient.makeUICrons()
+    private var uiLandings: [Landing] = SmithersClient.makeUILandings()
     private var uiIssues: [SmithersIssue] = SmithersClient.makeUIIssues()
     private var uiWorkspaces: [Workspace] = SmithersClient.makeUIWorkspaces()
     private var uiWorkspaceSnapshots: [WorkspaceSnapshot] = SmithersClient.makeUIWorkspaceSnapshots()
+    private var runWorkflowPathCache: [String: String] = [:]
+    private var snapshotWorkflowPathCache: [String: String] = [:]
 
     private struct AgentManifestEntry {
         let id: String
@@ -109,16 +194,67 @@ class SmithersClient: ObservableObject {
 
     private static let noSQLTransportMessage =
         "no smithers transport available: SQL requires a running smithers server; start with: smithers up --serve"
+    private static let allRunsStreamRunId = "all-runs"
 
-    init(cwd: String? = nil) {
-        self.cwd = cwd ?? FileManager.default.currentDirectoryPath
-        // Don't spawn a process during init — just use "smithers" and rely on PATH
-        self.smithersBin = "smithers"
-        self.decoder = JSONDecoder()
-
+    nonisolated static func makeHTTPURLSessionConfiguration() -> URLSessionConfiguration {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
-        self.session = URLSession(configuration: config)
+        return config
+    }
+
+    nonisolated static func makeSSEURLSessionConfiguration() -> URLSessionConfiguration {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = .infinity
+        config.timeoutIntervalForResource = .infinity
+        return config
+    }
+
+    init(cwd: String? = nil, smithersBin: String = "smithers", jjhubBin: String = "jjhub") {
+        self.cwd = CWDResolver.resolve(cwd)
+        // Don't spawn a process during init — just use "smithers" and rely on PATH
+        self.smithersBin = smithersBin
+        self.jjhubBin = jjhubBin
+        self.decoder = JSONDecoder()
+        self.session = URLSession(configuration: Self.makeHTTPURLSessionConfiguration())
+        self.streamSession = URLSession(configuration: Self.makeSSEURLSessionConfiguration())
+    }
+
+    nonisolated static func resolvedHTTPTransportURL(path: String, serverURL: String?, fallbackPort: Int? = nil) -> URL? {
+        let trimmedServerURL = serverURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL: URL
+
+        if let trimmedServerURL, !trimmedServerURL.isEmpty {
+            guard let configuredURL = URL(string: trimmedServerURL),
+                  configuredURL.scheme != nil,
+                  configuredURL.host != nil else {
+                return nil
+            }
+            baseURL = configuredURL
+        } else if let fallbackPort,
+                  let fallbackURL = URL(string: "http://localhost:\(fallbackPort)") {
+            baseURL = fallbackURL
+        } else {
+            return nil
+        }
+
+        return resolvedHTTPTransportURL(path: path, baseURL: baseURL)
+    }
+
+    func resolvedHTTPTransportURL(path: String, fallbackPort: Int? = nil) -> URL? {
+        Self.resolvedHTTPTransportURL(path: path, serverURL: serverURL, fallbackPort: fallbackPort)
+    }
+
+    private nonisolated static func resolvedHTTPTransportURL(path: String, baseURL: URL) -> URL? {
+        var base = baseURL.absoluteString
+        if !base.hasSuffix("/") {
+            base += "/"
+        }
+
+        let relativePath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        guard let normalizedBaseURL = URL(string: base) else {
+            return nil
+        }
+        return URL(string: relativePath, relativeTo: normalizedBaseURL)?.absoluteURL
     }
 
     // MARK: - UI Test Fixtures
@@ -187,6 +323,90 @@ class SmithersClient: ObservableObject {
     private static func makeUIApprovalDecisions() -> [ApprovalDecision] {
         [
             ApprovalDecision(id: "decision-existing", runId: "ui-run-finished-001", nodeId: "review-gate", action: "approved", note: "Looks good", reason: nil, resolvedAt: UITestSupport.nowMs - 1_800_000, resolvedBy: "ui-test"),
+        ]
+    }
+
+    private static func makeUITickets() -> [Ticket] {
+        [
+            Ticket(
+                id: "0007-port-tickets-workflow",
+                content: """
+                # Port Tickets Workflow To GUI
+
+                ## Problem
+
+                The GUI has no tickets view or Smithers ticket methods.
+                """,
+                status: nil,
+                createdAtMs: UITestSupport.nowMs - 86_400_000,
+                updatedAtMs: UITestSupport.nowMs - 43_200_000
+            ),
+            Ticket(
+                id: "0015-wire-issues-backend",
+                content: """
+                # Wire Issues Backend
+
+                ## Summary
+
+                Connect the issues view to real JJHub data.
+                """,
+                status: nil,
+                createdAtMs: UITestSupport.nowMs - 64_800_000,
+                updatedAtMs: UITestSupport.nowMs - 21_600_000
+            ),
+        ]
+    }
+
+    private static func makeUICrons() -> [CronSchedule] {
+        let now = UITestSupport.nowMs
+        return [
+            CronSchedule(
+                id: "cron-ui-1",
+                pattern: "0 * * * *",
+                workflowPath: ".smithers/workflows/hourly-checks.tsx",
+                enabled: true,
+                createdAtMs: now - 2_592_000_000,
+                lastRunAtMs: now - 1_800_000,
+                nextRunAtMs: now + 1_800_000,
+                errorJson: nil
+            ),
+            CronSchedule(
+                id: "cron-ui-2",
+                pattern: "30 9 * * 1-5",
+                workflowPath: ".smithers/workflows/weekday-standup.tsx",
+                enabled: false,
+                createdAtMs: now - 1_296_000_000,
+                lastRunAtMs: now - 86_400_000,
+                nextRunAtMs: nil,
+                errorJson: "{\"message\":\"workflow not found\"}"
+            ),
+        ]
+    }
+
+    private static func makeUILandings() -> [Landing] {
+        [
+            Landing(
+                id: "landing-201",
+                number: 201,
+                title: "UI fixture landing",
+                description: "Landing fixture used for UI mode.",
+                state: "open",
+                targetBranch: "main",
+                author: "smithers",
+                createdAt: "2026-04-14T10:00:00Z",
+                reviewStatus: "pending"
+            ),
+            Landing(
+                id: "landing-202",
+                number: 202,
+                title: "Merged fixture landing",
+                description: "Already merged fixture landing.",
+                state: "merged",
+                targetBranch: "main",
+                author: "smithers",
+                createdAt: "2026-04-13T10:00:00Z",
+                reviewStatus: "approved"
+            ),
         ]
     }
 
@@ -338,12 +558,12 @@ class SmithersClient: ObservableObject {
 
     private func execJJHubJSONArgs(_ args: [String]) async throws -> Data {
         let fullArgs = args + ["--json", "--no-color"]
-        return try await execBinaryArgs(bin: "jjhub", args: fullArgs, displayName: "jjhub")
+        return try await execBinaryArgs(bin: jjhubBin, args: fullArgs, displayName: "jjhub")
     }
 
     private func execJJHubRawArgs(_ args: [String]) async throws -> String {
         let fullArgs = args + ["--no-color"]
-        let data = try await execBinaryArgs(bin: "jjhub", args: fullArgs, displayName: "jjhub")
+        let data = try await execBinaryArgs(bin: jjhubBin, args: fullArgs, displayName: "jjhub")
         return String(decoding: data, as: UTF8.self)
     }
 
@@ -369,6 +589,70 @@ class SmithersClient: ObservableObject {
     private func execJSON<T: Decodable>(_ args: String...) async throws -> T {
         let data = try await execArgs(args)
         return try decoder.decode(T.self, from: data)
+    }
+
+    private func execFirstJSON<T: Decodable>(_ args: String...) async throws -> T {
+        let data = try await execArgs(args)
+        let jsonData = try Self.firstJSONValueData(in: data)
+        return try decoder.decode(T.self, from: jsonData)
+    }
+
+    private func decodeCLIJSON<T: Decodable>(_: T.Type, from data: Data) throws -> T {
+        var firstError: Error?
+        for candidate in cliJSONPayloadCandidates(from: data) {
+            do {
+                return try decoder.decode(T.self, from: candidate)
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+            }
+        }
+
+        if let firstError {
+            throw firstError
+        }
+        return try decoder.decode(T.self, from: data)
+    }
+
+    private nonisolated static func firstJSONValueData(in data: Data) throws -> Data {
+        let bytes = [UInt8](data)
+        guard let start = bytes.firstIndex(where: { $0 == 0x7B || $0 == 0x5B }) else {
+            throw SmithersError.cli("No JSON value found in smithers output")
+        }
+
+        let open = bytes[start]
+        let close: UInt8 = open == 0x7B ? 0x7D : 0x5D
+        var depth = 0
+        var inString = false
+        var escaped = false
+
+        for index in start..<bytes.count {
+            let byte = bytes[index]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if byte == 0x5C {
+                    escaped = true
+                } else if byte == 0x22 {
+                    inString = false
+                }
+                continue
+            }
+
+            if byte == 0x22 {
+                inString = true
+            } else if byte == open {
+                depth += 1
+            } else if byte == close {
+                depth -= 1
+                if depth == 0 {
+                    return data.subdata(in: start..<(index + 1))
+                }
+            }
+        }
+
+        throw SmithersError.cli("Incomplete JSON value in smithers output")
     }
 
     // MARK: - Workflows
@@ -409,41 +693,293 @@ class SmithersClient: ObservableObject {
         )
     }
 
-    func getWorkflowDAG(_ workflowId: String) async throws -> WorkflowDAG {
+    private func workflowEntryFile(for workflow: Workflow) throws -> String {
+        guard let relativePath = workflow.relativePath else {
+            throw SmithersError.api("Workflow \(workflow.id) is missing an entry file path")
+        }
+        return try normalizedWorkflowPath(relativePath)
+    }
+
+    private func normalizedWorkflowPath(_ workflowPath: String) throws -> String {
+        let trimmed = workflowPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw SmithersError.api("Workflow entry file path is required")
+        }
+        return trimmed
+    }
+
+    func getWorkflowDAG(_ workflow: Workflow) async throws -> WorkflowDAG {
+        try await getWorkflowDAG(workflowPath: workflowEntryFile(for: workflow))
+    }
+
+    func getWorkflowDAG(workflowPath: String) async throws -> WorkflowDAG {
+        let workflowPath = try normalizedWorkflowPath(workflowPath)
         if UITestSupport.isEnabled {
-            return WorkflowDAG(entryTask: "prompt", fields: [
-                WorkflowLaunchField(name: "Prompt", key: "prompt", type: "string", defaultValue: "Ship the fixture"),
-                WorkflowLaunchField(name: "Environment", key: "environment", type: "string", defaultValue: "staging"),
-            ])
+            let promptTask = WorkflowDAGTask(nodeId: "prompt", ordinal: 0, outputTableName: "prompt")
+            let reviewTask = WorkflowDAGTask(nodeId: "review", ordinal: 1, outputTableName: "review")
+            return WorkflowDAG(
+                workflowID: workflowPath,
+                mode: "inferred",
+                runId: "graph",
+                frameNo: 0,
+                xml: WorkflowDAGXMLNode(
+                    kind: "element",
+                    tag: "smithers:workflow",
+                    props: ["name": "fixture"],
+                    children: [
+                        WorkflowDAGXMLNode(
+                            kind: "element",
+                            tag: "smithers:sequence",
+                            children: [
+                                WorkflowDAGXMLNode(kind: "element", tag: "smithers:task", props: ["id": "prompt"]),
+                                WorkflowDAGXMLNode(kind: "element", tag: "smithers:task", props: ["id": "review"]),
+                            ]
+                        ),
+                    ]
+                ),
+                tasks: [promptTask, reviewTask],
+                entryTaskID: "prompt",
+                fields: [
+                    WorkflowLaunchField(name: "Prompt", key: "prompt", type: "string", defaultValue: "Ship the fixture"),
+                    WorkflowLaunchField(name: "Environment", key: "environment", type: "string", defaultValue: "staging"),
+                ],
+                message: nil
+            )
         }
 
-        // Use smithers graph to get input fields
-        let data = try await exec("graph", workflowId, "--format", "json")
-        if let dag = try? decoder.decode(WorkflowDAG.self, from: data) {
+        // Use smithers graph to get the real rendered workflow XML and task list.
+        let data = try await exec("graph", workflowPath, "--format", "json")
+        if let envelope = try? decodeCLIJSON(APIEnvelope<WorkflowDAG>.self, from: data),
+           let dag = envelope.data,
+           !dag.isEmpty {
             return dag
         }
-        // Fallback: return empty DAG with a single "prompt" field
-        return WorkflowDAG(entryTask: nil, fields: [
-            WorkflowLaunchField(name: "Prompt", key: "prompt", type: "string", defaultValue: nil)
-        ])
+        if let dag = try? decodeCLIJSON(WorkflowDAG.self, from: data), !dag.isEmpty {
+            return dag
+        }
+        // Fallback: return a generic single-field DAG so launch still works.
+        return WorkflowDAG(
+            workflowID: workflowPath,
+            mode: "fallback",
+            entryTask: nil,
+            entryTaskID: nil,
+            fields: [
+                WorkflowLaunchField(name: "Prompt", key: "prompt", type: "string", defaultValue: nil),
+            ],
+            message: "Launch fields inferred via CLI fallback; daemon API unavailable."
+        )
     }
 
     struct LaunchResult: Decodable {
         let runId: String
     }
 
-    func runWorkflow(_ workflowId: String, inputs: [String: String] = [:]) async throws -> LaunchResult {
+    func runWorkflow(_ workflow: Workflow, inputs: [String: JSONValue] = [:]) async throws -> LaunchResult {
+        try await runWorkflow(workflowPath: workflowEntryFile(for: workflow), inputs: inputs)
+    }
+
+    func runWorkflow(_ workflow: Workflow, inputs: [String: String]) async throws -> LaunchResult {
+        try await runWorkflow(workflowPath: workflowEntryFile(for: workflow), inputs: inputs)
+    }
+
+    func runWorkflow(_ workflowPath: String, inputs: [String: JSONValue] = [:]) async throws -> LaunchResult {
+        try await runWorkflow(workflowPath: workflowPath, inputs: inputs)
+    }
+
+    func runWorkflow(_ workflowPath: String, inputs: [String: String]) async throws -> LaunchResult {
+        try await runWorkflow(workflowPath: workflowPath, inputs: inputs)
+    }
+
+    func runWorkflow(workflowPath: String, inputs: [String: String]) async throws -> LaunchResult {
+        try await runWorkflow(workflowPath: workflowPath, inputs: inputs.mapValues { .string($0) })
+    }
+
+    func runWorkflow(workflowPath: String, inputs: [String: JSONValue] = [:]) async throws -> LaunchResult {
+        let workflowPath = try normalizedWorkflowPath(workflowPath)
         if UITestSupport.isEnabled {
-            return LaunchResult(runId: "ui-run-launched-\(workflowId)")
+            return LaunchResult(runId: "ui-run-launched-\(workflowPath)")
         }
 
-        var args = ["up", workflowId, "-d", "--format", "json"]
+        var args = ["up", workflowPath, "-d", "--format", "json"]
         if !inputs.isEmpty {
-            let inputJSON = try JSONEncoder().encode(inputs)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let inputJSON = try encoder.encode(inputs)
             args += ["--input", String(data: inputJSON, encoding: .utf8)!]
         }
         let data = try await execArgs(args)
         return try decoder.decode(LaunchResult.self, from: data)
+    }
+
+    func runWorkflowDoctor(_ workflow: Workflow) async -> [WorkflowDoctorIssue] {
+        var issues: [WorkflowDoctorIssue] = []
+
+        do {
+            _ = try await resolveSmithersBinaryPath()
+            issues.append(
+                WorkflowDoctorIssue(
+                    severity: "ok",
+                    check: "smithers-binary",
+                    message: "smithers binary found on PATH."
+                )
+            )
+        } catch {
+            issues.append(
+                WorkflowDoctorIssue(
+                    severity: "error",
+                    check: "smithers-binary",
+                    message: "smithers binary not found on PATH. Install smithers and ensure it is accessible."
+                )
+            )
+        }
+
+        do {
+            let dag = try await getWorkflowDAG(workflow)
+            let fields = dag.launchFields
+
+            issues.append(
+                WorkflowDoctorIssue(
+                    severity: "ok",
+                    check: "launch-fields",
+                    message: "Launch fields fetched (\(fields.count) field(s) found)."
+                )
+            )
+
+            if dag.isFallbackMode {
+                var message = "Workflow analysis fell back to generic mode."
+                if let dagMessage = dag.message?.trimmingCharacters(in: .whitespacesAndNewlines), !dagMessage.isEmpty {
+                    message += " \(dagMessage)"
+                }
+                issues.append(
+                    WorkflowDoctorIssue(
+                        severity: "warning",
+                        check: "dag-analysis",
+                        message: message
+                    )
+                )
+            } else {
+                let mode = dag.mode?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let modeLabel = (mode?.isEmpty == false) ? mode! : "inferred"
+                issues.append(
+                    WorkflowDoctorIssue(
+                        severity: "ok",
+                        check: "dag-analysis",
+                        message: "Workflow analysed successfully (mode: \(modeLabel))."
+                    )
+                )
+            }
+
+            if fields.isEmpty {
+                issues.append(
+                    WorkflowDoctorIssue(
+                        severity: "warning",
+                        check: "input-fields",
+                        message: "No input fields defined. The workflow may not accept any parameters."
+                    )
+                )
+            } else {
+                let invalidFields = fields.filter { $0.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+                if invalidFields > 0 {
+                    issues.append(
+                        WorkflowDoctorIssue(
+                            severity: "warning",
+                            check: "input-fields",
+                            message: "\(invalidFields) input field(s) have an empty key. Check the workflow source."
+                        )
+                    )
+                } else {
+                    issues.append(
+                        WorkflowDoctorIssue(
+                            severity: "ok",
+                            check: "input-fields",
+                            message: "All \(fields.count) input field(s) have valid keys."
+                        )
+                    )
+                }
+            }
+        } catch {
+            issues.append(
+                WorkflowDoctorIssue(
+                    severity: "error",
+                    check: "launch-fields",
+                    message: "Could not fetch workflow launch fields: \(error.localizedDescription)"
+                )
+            )
+        }
+
+        return issues
+    }
+
+    private func resolveSmithersBinaryPath() async throws -> String {
+        if UITestSupport.isEnabled {
+            return "/usr/local/bin/\(smithersBin)"
+        }
+
+        let data = try await execBinaryArgs(bin: "which", args: [smithersBin], displayName: "which")
+        let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            throw SmithersError.cli("smithers binary not found on PATH")
+        }
+        return path
+    }
+
+    // MARK: - Workflow Source (filesystem)
+
+    /// Resolve and validate a path under .smithers/ (workflows, components, prompts).
+    private func smithersFilePath(_ relativePath: String) throws -> String {
+        let smithersDir = (cwd as NSString).appendingPathComponent(".smithers")
+        let full = (cwd as NSString).appendingPathComponent(relativePath)
+        let standardizedDir = (smithersDir as NSString).standardizingPath
+        let standardizedPath = (full as NSString).standardizingPath
+        guard standardizedPath.hasPrefix(standardizedDir + "/") else {
+            throw SmithersError.api("Invalid path: must be under .smithers/")
+        }
+        return standardizedPath
+    }
+
+    func readWorkflowSource(_ relativePath: String) async throws -> String {
+        if UITestSupport.isEnabled {
+            return "// Mock workflow source for \(relativePath)"
+        }
+        let path = try smithersFilePath(relativePath)
+        return try String(contentsOfFile: path, encoding: .utf8)
+    }
+
+    func saveWorkflowSource(_ relativePath: String, source: String) async throws {
+        if UITestSupport.isEnabled { return }
+        let path = try smithersFilePath(relativePath)
+        try source.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    /// Parse import statements from a workflow .tsx file to find referenced components and prompts.
+    func parseWorkflowImports(_ source: String) -> (components: [(name: String, path: String)], prompts: [(name: String, path: String)]) {
+        var components: [(String, String)] = []
+        var prompts: [(String, String)] = []
+
+        let lines = source.components(separatedBy: .newlines)
+        // Match: import ... from "../components/Foo" or "../prompts/bar.mdx"
+        let importPattern = try! NSRegularExpression(
+            pattern: #"import\s+.*from\s+["\'](\.\./(?:components|prompts)/[^"\']+)["\']"#
+        )
+        for line in lines {
+            let range = NSRange(line.startIndex..., in: line)
+            if let match = importPattern.firstMatch(in: line, range: range),
+               let pathRange = Range(match.range(at: 1), in: line) {
+                let importPath = String(line[pathRange])
+                // Resolve relative to workflows/ → strip "../"
+                let resolved = importPath.replacingOccurrences(of: "../", with: ".smithers/")
+                let fileName = (resolved as NSString).lastPathComponent
+                let name = (fileName as NSString).deletingPathExtension
+
+                if importPath.contains("/components/") {
+                    let fullPath = resolved.hasSuffix(".tsx") ? resolved : resolved + ".tsx"
+                    components.append((name, fullPath))
+                } else if importPath.contains("/prompts/") {
+                    prompts.append((name, resolved))
+                }
+            }
+        }
+        return (components, prompts)
     }
 
     // MARK: - Runs
@@ -459,11 +995,19 @@ class SmithersClient: ObservableObject {
         } catch SmithersError.cli(let msg) where msg.contains("PS_FAILED") || msg.contains("No smithers.db") {
             return []
         }
-        // ps may return wrapped or bare
+        // ps may return wrapped or bare — try native RunSummary first, then CLI format
         if let wrapped = try? decoder.decode(RunsResponse.self, from: data) {
             return wrapped.runs
         }
-        return try decoder.decode([RunSummary].self, from: data)
+        if let bare = try? decoder.decode([RunSummary].self, from: data) {
+            return bare
+        }
+        // CLI may return different field names (id/workflow/started vs runId/workflowName/startedAtMs)
+        if let cliWrapped = try? decoder.decode(CLIRunsResponse.self, from: data) {
+            return cliWrapped.runs.map { $0.toRunSummary() }
+        }
+        let cliBare = try decoder.decode([CLIRunEntry].self, from: data)
+        return cliBare.map { $0.toRunSummary() }
     }
 
     func inspectRun(_ runId: String) async throws -> RunInspection {
@@ -475,7 +1019,79 @@ class SmithersClient: ObservableObject {
             ])
         }
 
-        return try await execJSON("inspect", runId, "--format", "json")
+        let data = try await exec("inspect", runId, "--format", "json")
+        do {
+            return try Self.decodeRunInspection(from: data, decoder: decoder)
+        } catch {
+            do {
+                return try await inspectRunPaged(runId)
+            } catch {
+                throw error
+            }
+        }
+    }
+
+    nonisolated static func decodeRunInspection(from data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> RunInspection {
+        if let inspection = try? decoder.decode(RunInspection.self, from: data) {
+            return inspection
+        }
+        if let envelope = try? decoder.decode(APIEnvelope<RunInspection>.self, from: data),
+           let inspection = envelope.data {
+            return inspection
+        }
+        if let envelope = try? decoder.decode(DataEnvelope<RunInspection>.self, from: data) {
+            return envelope.data
+        }
+        if let cliInspection = try? decoder.decode(CLIInspectResponse.self, from: data) {
+            return cliInspection.toRunInspection()
+        }
+        if let envelope = try? decoder.decode(APIEnvelope<CLIInspectResponse>.self, from: data),
+           let cliInspection = envelope.data {
+            return cliInspection.toRunInspection()
+        }
+        if let envelope = try? decoder.decode(DataEnvelope<CLIInspectResponse>.self, from: data) {
+            return envelope.data.toRunInspection()
+        }
+
+        return try decoder.decode(CLIInspectResponse.self, from: data).toRunInspection()
+    }
+
+    private func inspectRunPaged(_ runId: String) async throws -> RunInspection {
+        let pageSize = 200
+        var offset = 0
+        var run: RunSummary?
+        var tasks: [RunTask] = []
+
+        while true {
+            let filter = "run,steps[\(offset),\(offset + pageSize)]"
+            let data = try await exec("inspect", runId, "--format", "json", "--filter-output", filter)
+            let page = try Self.decodeRunInspection(from: data, decoder: decoder)
+            if run == nil {
+                run = page.run
+            }
+            tasks.append(contentsOf: page.tasks)
+
+            if page.tasks.count < pageSize {
+                break
+            }
+            offset += pageSize
+        }
+
+        guard let baseRun = run else {
+            throw SmithersError.api("Failed to parse inspect JSON for run \(runId)")
+        }
+
+        let mergedRun = RunSummary(
+            runId: baseRun.runId,
+            workflowName: baseRun.workflowName,
+            workflowPath: baseRun.workflowPath,
+            status: baseRun.status,
+            startedAtMs: baseRun.startedAtMs,
+            finishedAtMs: baseRun.finishedAtMs,
+            summary: makeRunTaskSummary(tasks),
+            errorJson: baseRun.errorJson
+        )
+        return RunInspection(run: mergedRun, tasks: tasks)
     }
 
     func cancelRun(_ runId: String) async throws {
@@ -483,7 +1099,21 @@ class SmithersClient: ObservableObject {
         _ = try await exec("cancel", runId)
     }
 
-    func approveNode(runId: String, nodeId: String, iteration: Int = 0, note: String? = nil) async throws {
+    nonisolated static func approveNodeCLIArgs(runId: String, nodeId: String, iteration: Int? = nil, note: String? = nil) -> [String] {
+        var args = ["approve", runId, "--node", nodeId]
+        if let iteration { args += ["--iteration", String(iteration)] }
+        if let note { args += ["--note", note] }
+        return args
+    }
+
+    nonisolated static func denyNodeCLIArgs(runId: String, nodeId: String, iteration: Int? = nil, reason: String? = nil) -> [String] {
+        var args = ["deny", runId, "--node", nodeId]
+        if let iteration { args += ["--iteration", String(iteration)] }
+        if let reason { args += ["--reason", reason] }
+        return args
+    }
+
+    func approveNode(runId: String, nodeId: String, iteration: Int? = nil, note: String? = nil) async throws {
         if UITestSupport.isEnabled {
             uiResolvedApprovalIDs.insert("\(runId):\(nodeId)")
             uiApprovalDecisions.insert(
@@ -493,12 +1123,11 @@ class SmithersClient: ObservableObject {
             return
         }
 
-        var args = ["approve", "--run", runId, nodeId]
-        if let note { args += ["--note", note] }
+        let args = Self.approveNodeCLIArgs(runId: runId, nodeId: nodeId, iteration: iteration, note: note)
         _ = try await execArgs(args)
     }
 
-    func denyNode(runId: String, nodeId: String, iteration: Int = 0, reason: String? = nil) async throws {
+    func denyNode(runId: String, nodeId: String, iteration: Int? = nil, reason: String? = nil) async throws {
         if UITestSupport.isEnabled {
             uiResolvedApprovalIDs.insert("\(runId):\(nodeId)")
             uiApprovalDecisions.insert(
@@ -508,24 +1137,48 @@ class SmithersClient: ObservableObject {
             return
         }
 
-        var args = ["deny", "--run", runId, nodeId]
-        if let reason { args += ["--reason", reason] }
+        let args = Self.denyNodeCLIArgs(runId: runId, nodeId: nodeId, iteration: iteration, reason: reason)
         _ = try await execArgs(args)
     }
 
     // MARK: - Run Streaming (HTTP — requires --serve)
 
     func streamRunEvents(_ runId: String, port: Int = 7331) -> AsyncStream<SSEEvent> {
-        return sseStream(url: "http://localhost:\(port)/events")
+        let filterRunId = Self.sseFilterRunId(runId)
+        guard let url = resolvedHTTPTransportURL(path: Self.runEventsPath(runId: filterRunId), fallbackPort: port) else {
+            return emptySSEStream()
+        }
+        return sseStream(url: url, runId: filterRunId)
     }
 
     func streamChat(_ runId: String, port: Int = 7331) -> AsyncStream<SSEEvent> {
         let encodedRunId = runId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? runId
-        return sseStream(urls: [
-            "http://localhost:\(port)/v1/runs/\(encodedRunId)/chat/stream",
-            "http://localhost:\(port)/chat/stream?runId=\(encodedRunId)",
-            "http://localhost:\(port)/chat/stream",
-        ])
+        let paths = [
+            "/v1/runs/\(encodedRunId)/chat/stream",
+            "/chat/stream?runId=\(encodedRunId)",
+            "/chat/stream",
+        ]
+        let urls = paths.compactMap { resolvedHTTPTransportURL(path: $0, fallbackPort: port) }
+        guard !urls.isEmpty else {
+            return emptySSEStream()
+        }
+        return sseStream(urls: urls, runId: SSEEvent.normalizedRunId(runId))
+    }
+
+    private nonisolated static func sseFilterRunId(_ runId: String?) -> String? {
+        guard let runId = SSEEvent.normalizedRunId(runId),
+              runId != allRunsStreamRunId else {
+            return nil
+        }
+        return runId
+    }
+
+    private nonisolated static func runEventsPath(runId: String?) -> String {
+        guard let runId else { return "/events" }
+        var components = URLComponents()
+        components.path = "/events"
+        components.queryItems = [URLQueryItem(name: "runId", value: runId)]
+        return components.string ?? "/events"
     }
 
     func getChatOutput(_ runId: String, port: Int = 7331) async throws -> [ChatBlock] {
@@ -575,6 +1228,32 @@ class SmithersClient: ObservableObject {
 
         let data = try await exec("hijack", runId, "--launch", "false", "--format", "json")
         return try decodeHijackSession(from: data)
+    }
+
+    func rerunRun(_ runId: String) async throws -> String {
+        if UITestSupport.isEnabled {
+            return "Triggered JJHub rerun for run #\(runId)"
+        }
+
+        guard let numericRunID = Int(runId) else {
+            throw SmithersError.api("JJHub rerun expects a numeric run ID")
+        }
+
+        do {
+            let data = try await execJJHubJSONArgs(["run", "rerun", "\(numericRunID)"])
+            if let rerunID = parseJJHubRunID(from: data) {
+                return "Triggered JJHub rerun #\(rerunID) from run #\(numericRunID)"
+            }
+            return "Triggered JJHub rerun for run #\(numericRunID)"
+        } catch {
+            if let output = try? await execJJHubRawArgs(["run", "rerun", "\(numericRunID)"]) {
+                let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return trimmed
+                }
+            }
+            throw error
+        }
     }
 
     // MARK: - Agents
@@ -671,9 +1350,44 @@ class SmithersClient: ObservableObject {
         }
     }
 
+    private func parseJJHubRunID(from data: Data) -> Int? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) else {
+            return nil
+        }
+        return extractRunID(object)
+    }
+
+    private func extractRunID(_ value: Any) -> Int? {
+        if let dict = value as? [String: Any] {
+            let keys = ["workflow_run_id", "workflowRunId", "run_id", "runId", "id"]
+            for key in keys {
+                if let intValue = dict[key] as? Int {
+                    return intValue
+                }
+                if let stringValue = dict[key] as? String, let intValue = Int(stringValue) {
+                    return intValue
+                }
+            }
+            for nested in dict.values {
+                if let found = extractRunID(nested) {
+                    return found
+                }
+            }
+        }
+
+        if let array = value as? [Any] {
+            for nested in array {
+                if let found = extractRunID(nested) {
+                    return found
+                }
+            }
+        }
+        return nil
+    }
+
     // MARK: - Memory
 
-    func listMemoryFacts(namespace: String? = nil) async throws -> [MemoryFact] {
+    func listMemoryFacts(namespace: String? = nil, workflowPath: String? = nil) async throws -> [MemoryFact] {
         if UITestSupport.isEnabled {
             let facts = [
                 MemoryFact(namespace: "project", key: "language", valueJson: "\"Swift\"", schemaSig: nil, createdAtMs: UITestSupport.nowMs - 86_400_000, updatedAtMs: UITestSupport.nowMs - 3_600_000, ttlMs: nil),
@@ -683,44 +1397,121 @@ class SmithersClient: ObservableObject {
             return facts.filter { $0.namespace == namespace }
         }
 
-        var args = ["memory", "list", "--format", "json"]
-        if let ns = namespace { args += ["--namespace", ns] }
+        let args = SmithersMemoryCLI.listArgs(
+            namespace: namespace,
+            workflowPath: try resolvedMemoryWorkflowPath(workflowPath)
+        )
         let data = try await execArgs(args)
-        if let wrapped = try? decoder.decode(MemoryResponse.self, from: data) {
-            return wrapped.facts
-        }
-        return try decoder.decode([MemoryFact].self, from: data)
+        return try decodeMemoryFacts(from: data)
     }
 
-    func recallMemory(query: String, namespace: String? = nil, topK: Int = 10) async throws -> [MemoryRecallResult] {
+    func recallMemory(query: String, namespace: String? = nil, workflowPath: String? = nil, topK: Int = 10) async throws -> [MemoryRecallResult] {
         if UITestSupport.isEnabled {
             return [
                 MemoryRecallResult(score: 0.94, content: "SmithersGUI UI test memory result for \(query)", metadata: "namespace=project"),
             ]
         }
 
-        var args = ["memory", "recall", query, "--format", "json", "--top-k", "\(topK)"]
-        if let ns = namespace { args += ["--namespace", ns] }
+        let args = SmithersMemoryCLI.recallArgs(
+            query: query,
+            namespace: namespace,
+            workflowPath: try resolvedMemoryWorkflowPath(workflowPath),
+            topK: topK
+        )
         let data = try await execArgs(args)
-        if let wrapped = try? decoder.decode(RecallResponse.self, from: data) {
+        return try decodeMemoryRecallResults(from: data)
+    }
+
+    private func resolvedMemoryWorkflowPath(_ workflowPath: String?) throws -> String {
+        if let workflowPath = SmithersMemoryCLI.normalizedWorkflowPath(workflowPath) {
+            return workflowPath
+        }
+        if let discovered = discoverDefaultWorkflowPath() {
+            return discovered
+        }
+        throw SmithersError.api("Memory commands require a workflow path; no .smithers/workflows/*.tsx file was found.")
+    }
+
+    private func discoverDefaultWorkflowPath() -> String? {
+        let workflowsDir = URL(fileURLWithPath: cwd)
+            .appendingPathComponent(".smithers")
+            .appendingPathComponent("workflows")
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: workflowsDir,
+            includingPropertiesForKeys: nil
+        ) else {
+            return nil
+        }
+
+        return entries
+            .filter { $0.pathExtension == "tsx" }
+            .map { ".smithers/workflows/\($0.lastPathComponent)" }
+            .sorted()
+            .first
+    }
+
+    private func decodeMemoryFacts(from data: Data) throws -> [MemoryFact] {
+        if let wrapped = try? decodeCLIJSON(MemoryResponse.self, from: data) {
+            return wrapped.facts
+        }
+        if let envelope = try? decodeCLIJSON(APIEnvelope<MemoryResponse>.self, from: data),
+           envelope.ok,
+           let wrapped = envelope.data {
+            return wrapped.facts
+        }
+        if let envelope = try? decodeCLIJSON(DataEnvelope<MemoryResponse>.self, from: data) {
+            return envelope.data.facts
+        }
+        if let envelope = try? decodeCLIJSON(APIEnvelope<[MemoryFact]>.self, from: data),
+           envelope.ok,
+           let facts = envelope.data {
+            return facts
+        }
+        if let envelope = try? decodeCLIJSON(DataEnvelope<[MemoryFact]>.self, from: data) {
+            return envelope.data
+        }
+        return try decodeCLIJSON([MemoryFact].self, from: data)
+    }
+
+    private func decodeMemoryRecallResults(from data: Data) throws -> [MemoryRecallResult] {
+        if let wrapped = try? decodeCLIJSON(RecallResponse.self, from: data) {
             return wrapped.results
         }
-        return try decoder.decode([MemoryRecallResult].self, from: data)
+        if let envelope = try? decodeCLIJSON(APIEnvelope<RecallResponse>.self, from: data),
+           envelope.ok,
+           let wrapped = envelope.data {
+            return wrapped.results
+        }
+        if let envelope = try? decodeCLIJSON(DataEnvelope<RecallResponse>.self, from: data) {
+            return envelope.data.results
+        }
+        if let envelope = try? decodeCLIJSON(APIEnvelope<[MemoryRecallResult]>.self, from: data),
+           envelope.ok,
+           let results = envelope.data {
+            return results
+        }
+        if let envelope = try? decodeCLIJSON(DataEnvelope<[MemoryRecallResult]>.self, from: data) {
+            return envelope.data
+        }
+        return try decodeCLIJSON([MemoryRecallResult].self, from: data)
     }
 
     // MARK: - Scores
 
-    func listRecentScores(runId: String? = nil) async throws -> [ScoreRow] {
+    func listRecentScores(runId: String) async throws -> [ScoreRow] {
+        let trimmedRunId = runId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRunId.isEmpty else {
+            throw SmithersError.cli("Run ID is required to list scores")
+        }
+
         if UITestSupport.isEnabled {
             return [
-                ScoreRow(id: "score-1", runId: "ui-run-finished-001", nodeId: "test", iteration: 0, attempt: 1, scorerId: "quality", scorerName: "Quality", source: "live", score: 0.91, reason: "Fixture score", metaJson: nil, latencyMs: 42, scoredAtMs: UITestSupport.nowMs - 600_000),
-                ScoreRow(id: "score-2", runId: "ui-run-finished-001", nodeId: "lint", iteration: 0, attempt: 1, scorerId: "lint", scorerName: "Lint", source: "batch", score: 0.72, reason: "Fixture lint score", metaJson: nil, latencyMs: 31, scoredAtMs: UITestSupport.nowMs - 500_000),
+                ScoreRow(id: "score-1", runId: trimmedRunId, nodeId: "test", iteration: 0, attempt: 1, scorerId: "quality", scorerName: "Quality", source: "live", score: 0.91, reason: "Fixture score", metaJson: nil, latencyMs: 42, scoredAtMs: UITestSupport.nowMs - 600_000),
+                ScoreRow(id: "score-2", runId: trimmedRunId, nodeId: "lint", iteration: 0, attempt: 1, scorerId: "lint", scorerName: "Lint", source: "batch", score: 0.72, reason: "Fixture lint score", metaJson: nil, latencyMs: 31, scoredAtMs: UITestSupport.nowMs - 500_000),
             ]
         }
 
-        var args = ["scores"]
-        if let rid = runId { args.append(rid) }
-        args += ["--format", "json"]
+        let args = ["scores", trimmedRunId, "--format", "json"]
         let data = try await execArgs(args)
         if let wrapped = try? decoder.decode(ScoresResponse.self, from: data) {
             return wrapped.scores
@@ -728,31 +1519,322 @@ class SmithersClient: ObservableObject {
         return try decoder.decode([ScoreRow].self, from: data)
     }
 
-    func aggregateScores(from scores: [ScoreRow]? = nil, limit: Int = 50) async throws -> [AggregateScore] {
-        if UITestSupport.isEnabled {
-            return [
-                AggregateScore(scorerName: "Quality", count: 2, mean: 0.91, min: 0.88, max: 0.94, p50: 0.91),
-                AggregateScore(scorerName: "Lint", count: 1, mean: 0.72, min: 0.72, max: 0.72, p50: 0.72),
-            ]
+    func aggregateScores(from scores: [ScoreRow], limit: Int = 50) async throws -> [AggregateScore] {
+        AggregateScore.aggregate(scores)
+    }
+
+    // MARK: - Tickets (filesystem + optional HTTP)
+
+    private func ticketsDirectoryPath() -> String {
+        let ticketsDir = (cwd as NSString).appendingPathComponent(".smithers/tickets")
+        return (ticketsDir as NSString).standardizingPath
+    }
+
+    private func ticketPath(for ticketId: String) throws -> String {
+        let invalidCharacters = CharacterSet(charactersIn: "/\\:")
+        guard !ticketId.isEmpty,
+              ticketId != ".",
+              ticketId != "..",
+              !ticketId.contains(".."),
+              ticketId.rangeOfCharacter(from: invalidCharacters) == nil
+        else {
+            throw SmithersError.api("Invalid ticket id")
         }
 
-        // Aggregate from the scores we have
-        let scores = try await { if let scores { return scores } else { return try await listRecentScores() } }()
-        var byScorer: [String: [Double]] = [:]
-        for s in scores {
-            let name = s.scorerName ?? s.scorerId ?? "unknown"
-            byScorer[name, default: []].append(s.score)
+        let ticketsDir = ticketsDirectoryPath()
+        let path = (ticketsDir as NSString).appendingPathComponent("\(ticketId).md")
+        let standardizedPath = (path as NSString).standardizingPath
+        guard standardizedPath.hasPrefix(ticketsDir + "/") else {
+            throw SmithersError.api("Invalid ticket id")
         }
-        return byScorer.map { name, values in
-            let sorted = values.sorted()
-            return AggregateScore(
-                scorerName: name,
-                count: values.count,
-                mean: values.reduce(0, +) / Double(values.count),
-                min: sorted.first ?? 0,
-                max: sorted.last ?? 0,
-                p50: sorted.count > 0 ? (sorted.count % 2 == 0 ? (sorted[sorted.count / 2 - 1] + sorted[sorted.count / 2]) / 2.0 : sorted[sorted.count / 2]) : nil
+        return standardizedPath
+    }
+
+    private func loadTicketsFromFilesystem() throws -> [Ticket] {
+        let ticketsDir = ticketsDirectoryPath()
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: ticketsDir) else { return [] }
+
+        let files = try fm.contentsOfDirectory(atPath: ticketsDir)
+            .filter { $0.hasSuffix(".md") }
+            .sorted()
+
+        return files.compactMap { file in
+            let id = (file as NSString).deletingPathExtension
+            let path = (ticketsDir as NSString).appendingPathComponent(file)
+            guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+                return nil
+            }
+            return Ticket(id: id, content: content, status: nil, createdAtMs: nil, updatedAtMs: nil)
+        }
+    }
+
+    private func decodeTicket(_ data: Data) throws -> Ticket {
+        let payload = try unwrapLegacyEnvelope(data)
+        if let wrapped = try? decoder.decode(DataEnvelope<Ticket>.self, from: payload) {
+            guard !wrapped.data.id.isEmpty else {
+                throw SmithersError.api("parse ticket: missing id field in response")
+            }
+            return wrapped.data
+        }
+        let ticket = try decoder.decode(Ticket.self, from: payload)
+        guard !ticket.id.isEmpty else {
+            throw SmithersError.api("parse ticket: missing id field in response")
+        }
+        return ticket
+    }
+
+    private func decodeTickets(_ data: Data) throws -> [Ticket] {
+        let payload = try unwrapLegacyEnvelope(data)
+        if let wrapped = try? decoder.decode(DataEnvelope<[Ticket]>.self, from: payload) {
+            return wrapped.data
+        }
+        return try decoder.decode([Ticket].self, from: payload)
+    }
+
+    private func isTicketNotFoundError(_ error: Error) -> Bool {
+        if case SmithersError.notFound = error {
+            return true
+        }
+        if case SmithersError.httpError(let code) = error, code == 404 {
+            return true
+        }
+        let msg = error.localizedDescription.uppercased()
+        return msg.contains("TICKET_NOT_FOUND") || msg.contains("NOT FOUND") || msg.contains("404")
+    }
+
+    private func isTicketExistsError(_ error: Error) -> Bool {
+        if case SmithersError.httpError(let code) = error, code == 409 {
+            return true
+        }
+        let msg = error.localizedDescription.uppercased()
+        return msg.contains("TICKET_EXISTS") || msg.contains("ALREADY EXISTS") || msg.contains("409")
+    }
+
+    private func defaultTicketContent(for ticketId: String) -> String {
+        let titleWords = ticketId
+            .split(separator: "-")
+            .map { word in
+                let raw = String(word)
+                guard let first = raw.first else { return raw }
+                return first.uppercased() + raw.dropFirst()
+            }
+            .joined(separator: " ")
+        let title = titleWords.isEmpty ? ticketId : titleWords
+
+        return """
+        # \(title)
+
+        ## Problem
+
+        Describe the problem.
+
+        ## Current State
+
+        - TBD
+
+        ## Goal
+
+        Describe the intended outcome.
+
+        ## Proposed Changes
+
+        - TBD
+
+        ## Acceptance Criteria
+
+        - [ ] TBD
+        """
+    }
+
+    func listTickets() async throws -> [Ticket] {
+        if UITestSupport.isEnabled {
+            return uiTickets.sorted { $0.id < $1.id }
+        }
+
+        if let data = try? await httpRequestRaw(method: "GET", path: "/ticket/list"),
+           let tickets = try? decodeTickets(data) {
+            return tickets
+        }
+
+        return try loadTicketsFromFilesystem()
+    }
+
+    func getTicket(_ ticketId: String) async throws -> Ticket {
+        let trimmedId = ticketId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else {
+            throw SmithersError.api("ticketID must not be empty")
+        }
+
+        if UITestSupport.isEnabled {
+            guard let ticket = uiTickets.first(where: { $0.id == trimmedId }) else {
+                throw SmithersError.notFound
+            }
+            return ticket
+        }
+
+        let encodedId = trimmedId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmedId
+        do {
+            let data = try await httpRequestRaw(method: "GET", path: "/ticket/get/\(encodedId)")
+            return try decodeTicket(data)
+        } catch {
+            if isTicketNotFoundError(error) {
+                throw SmithersError.notFound
+            }
+        }
+
+        let path = try ticketPath(for: trimmedId)
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw SmithersError.notFound
+        }
+        let content = try String(contentsOfFile: path, encoding: .utf8)
+        return Ticket(id: trimmedId, content: content, status: nil, createdAtMs: nil, updatedAtMs: nil)
+    }
+
+    func createTicket(id ticketId: String, content: String? = nil) async throws -> Ticket {
+        let trimmedId = ticketId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else {
+            throw SmithersError.api("CreateTicketInput.ID must not be empty")
+        }
+
+        let contentToWrite: String
+        if let content, !content.isEmpty {
+            contentToWrite = content
+        } else {
+            contentToWrite = defaultTicketContent(for: trimmedId)
+        }
+
+        if UITestSupport.isEnabled {
+            if uiTickets.contains(where: { $0.id == trimmedId }) {
+                throw SmithersError.api("TICKET_EXISTS")
+            }
+            let now = UITestSupport.nowMs
+            let ticket = Ticket(id: trimmedId, content: contentToWrite, status: nil, createdAtMs: now, updatedAtMs: now)
+            uiTickets.insert(ticket, at: 0)
+            return ticket
+        }
+
+        do {
+            let body = try JSONEncoder().encode(CreateTicketInput(id: trimmedId, content: content))
+            let data = try await httpRequestRaw(method: "POST", path: "/ticket/create", jsonBody: body)
+            return try decodeTicket(data)
+        } catch {
+            if isTicketExistsError(error) {
+                throw SmithersError.api("TICKET_EXISTS")
+            }
+        }
+
+        let path = try ticketPath(for: trimmedId)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: path) {
+            throw SmithersError.api("TICKET_EXISTS")
+        }
+        try fm.createDirectory(atPath: ticketsDirectoryPath(), withIntermediateDirectories: true)
+        try contentToWrite.write(toFile: path, atomically: true, encoding: .utf8)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        return Ticket(id: trimmedId, content: contentToWrite, status: nil, createdAtMs: now, updatedAtMs: now)
+    }
+
+    func updateTicket(_ ticketId: String, content: String) async throws -> Ticket {
+        let trimmedId = ticketId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else {
+            throw SmithersError.api("ticketID must not be empty")
+        }
+        guard !content.isEmpty else {
+            throw SmithersError.api("UpdateTicketInput.Content must not be empty")
+        }
+
+        if UITestSupport.isEnabled {
+            guard let index = uiTickets.firstIndex(where: { $0.id == trimmedId }) else {
+                throw SmithersError.notFound
+            }
+            let existing = uiTickets[index]
+            let updated = Ticket(
+                id: existing.id,
+                content: content,
+                status: existing.status,
+                createdAtMs: existing.createdAtMs,
+                updatedAtMs: UITestSupport.nowMs
             )
+            uiTickets[index] = updated
+            return updated
+        }
+
+        let encodedId = trimmedId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmedId
+        do {
+            let body = try JSONEncoder().encode(UpdateTicketInput(content: content))
+            let data = try await httpRequestRaw(method: "POST", path: "/ticket/update/\(encodedId)", jsonBody: body)
+            return try decodeTicket(data)
+        } catch {
+            if isTicketNotFoundError(error) {
+                throw SmithersError.notFound
+            }
+        }
+
+        let path = try ticketPath(for: trimmedId)
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw SmithersError.notFound
+        }
+        try content.write(toFile: path, atomically: true, encoding: .utf8)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        return Ticket(id: trimmedId, content: content, status: nil, createdAtMs: nil, updatedAtMs: now)
+    }
+
+    func deleteTicket(_ ticketId: String) async throws {
+        let trimmedId = ticketId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else {
+            throw SmithersError.api("ticketID must not be empty")
+        }
+
+        if UITestSupport.isEnabled {
+            guard uiTickets.contains(where: { $0.id == trimmedId }) else {
+                throw SmithersError.notFound
+            }
+            uiTickets.removeAll { $0.id == trimmedId }
+            return
+        }
+
+        let encodedId = trimmedId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmedId
+        do {
+            _ = try await httpRequestRaw(method: "POST", path: "/ticket/delete/\(encodedId)")
+            return
+        } catch {
+            if isTicketNotFoundError(error) {
+                throw SmithersError.notFound
+            }
+        }
+
+        let path = try ticketPath(for: trimmedId)
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: path) else {
+            throw SmithersError.notFound
+        }
+        try fm.removeItem(atPath: path)
+    }
+
+    func searchTickets(query: String) async throws -> [Ticket] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            throw SmithersError.api("query must not be empty")
+        }
+
+        if UITestSupport.isEnabled {
+            let q = trimmedQuery.lowercased()
+            return uiTickets.filter {
+                $0.id.lowercased().contains(q) || ($0.content ?? "").lowercased().contains(q)
+            }
+        }
+
+        let encodedQuery = trimmedQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? trimmedQuery
+        if let data = try? await httpRequestRaw(method: "GET", path: "/ticket/search?q=\(encodedQuery)"),
+           let tickets = try? decodeTickets(data) {
+            return tickets
+        }
+
+        let tickets = try loadTicketsFromFilesystem()
+        let q = trimmedQuery.lowercased()
+        return tickets.filter {
+            $0.id.lowercased().contains(q) || ($0.content ?? "").lowercased().contains(q)
         }
     }
 
@@ -818,19 +1900,318 @@ class SmithersClient: ObservableObject {
             return [PromptInput(name: "version", type: "string", defaultValue: nil)]
         }
 
-        // Parse MDX for {props.xxx} patterns
         let prompt = try await getPrompt(promptId)
         guard let source = prompt.source else { return [] }
 
+        return Self.discoverPromptInputs(in: source)
+    }
+
+    private static func discoverPromptInputs(in source: String) -> [PromptInput] {
+        var inputsByName: [String: PromptInput] = [:]
+
+        for input in promptInputsFromFrontmatter(in: source) {
+            inputsByName[input.name] = input
+        }
+
+        for name in promptPropReferences(in: source).sorted() where inputsByName[name] == nil {
+            inputsByName[name] = PromptInput(name: name, type: "string", defaultValue: nil)
+        }
+
+        return inputsByName.values.sorted { $0.name < $1.name }
+    }
+
+    private static func promptPropReferences(in source: String) -> Set<String> {
         var found: Set<String> = []
-        let pattern = try NSRegularExpression(pattern: "\\{\\s*props\\.([\\w.-]+)\\s*\\}")
-        let matches = pattern.matches(in: source, range: NSRange(source.startIndex..., in: source))
-        for match in matches {
-            if let range = Range(match.range(at: 1), in: source) {
-                found.insert(String(source[range]))
+        let patterns: [(pattern: String, captureIndex: Int)] = [
+            (#"(?:^|[^A-Za-z0-9_$])props\s*(?:\?\.|\.)\s*([A-Za-z_$][A-Za-z0-9_$]*(?:[-.][A-Za-z_$][A-Za-z0-9_$]*)*)"#, 1),
+            (#"(?:^|[^A-Za-z0-9_$])props\s*\[\s*["']([^"'\]]+)["']\s*\]"#, 1),
+        ]
+
+        for entry in patterns {
+            guard let regex = try? NSRegularExpression(pattern: entry.pattern) else { continue }
+            let matches = regex.matches(in: source, range: NSRange(source.startIndex..., in: source))
+            for match in matches {
+                if let range = Range(match.range(at: entry.captureIndex), in: source) {
+                    found.insert(String(source[range]))
+                }
             }
         }
-        return found.sorted().map { PromptInput(name: $0, type: "string", defaultValue: nil) }
+
+        return found
+    }
+
+    private static func promptInputsFromFrontmatter(in source: String) -> [PromptInput] {
+        guard let frontmatter = mdxFrontmatterBlock(in: source) else { return [] }
+        let lines = frontmatter.components(separatedBy: .newlines)
+        var inputsByName: [String: PromptInput] = [:]
+
+        for sectionName in ["props", "inputs"] {
+            for section in yamlSections(named: sectionName, in: lines) {
+                for input in promptInputsFromYamlSection(section) {
+                    inputsByName[input.name] = input
+                }
+            }
+        }
+
+        return inputsByName.values.sorted { $0.name < $1.name }
+    }
+
+    private static func mdxFrontmatterBlock(in source: String) -> String? {
+        let normalized = source
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines = normalized.components(separatedBy: "\n")
+        guard lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) == "---" else {
+            return nil
+        }
+
+        var block: [String] = []
+        for line in lines.dropFirst() {
+            if line.trimmingCharacters(in: .whitespacesAndNewlines) == "---" {
+                return block.joined(separator: "\n")
+            }
+            block.append(line)
+        }
+
+        return nil
+    }
+
+    private struct YamlLine {
+        let indent: Int
+        let text: String
+    }
+
+    private static func yamlSections(named sectionName: String, in lines: [String]) -> [[YamlLine]] {
+        var sections: [[YamlLine]] = []
+        var index = 0
+
+        while index < lines.count {
+            let rawLine = lines[index]
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            guard let pair = yamlKeyValue(trimmed),
+                  pair.key == sectionName
+            else {
+                index += 1
+                continue
+            }
+
+            let baseIndent = leadingWhitespaceCount(rawLine)
+            var sectionLines: [YamlLine] = []
+            if !pair.value.isEmpty {
+                sectionLines.append(YamlLine(indent: baseIndent + 2, text: pair.value))
+            }
+
+            index += 1
+            while index < lines.count {
+                let childRawLine = lines[index]
+                let childTrimmed = childRawLine.trimmingCharacters(in: .whitespaces)
+                if childTrimmed.isEmpty || childTrimmed.hasPrefix("#") {
+                    index += 1
+                    continue
+                }
+
+                let childIndent = leadingWhitespaceCount(childRawLine)
+                if childIndent <= baseIndent {
+                    break
+                }
+
+                sectionLines.append(YamlLine(indent: childIndent, text: childTrimmed))
+                index += 1
+            }
+
+            sections.append(sectionLines)
+        }
+
+        return sections
+    }
+
+    private static func promptInputsFromYamlSection(_ lines: [YamlLine]) -> [PromptInput] {
+        guard !lines.isEmpty else { return [] }
+
+        if lines.count == 1, let inlineNames = yamlInlineArray(lines[0].text) {
+            return inlineNames.map { PromptInput(name: $0, type: "string", defaultValue: nil) }
+        }
+
+        if lines.contains(where: { $0.text.hasPrefix("-") }) {
+            return promptInputsFromYamlList(lines)
+        }
+
+        return promptInputsFromYamlMap(lines)
+    }
+
+    private static func promptInputsFromYamlList(_ lines: [YamlLine]) -> [PromptInput] {
+        var inputs: [PromptInput] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            guard line.text.hasPrefix("-") else {
+                index += 1
+                continue
+            }
+
+            let itemText = line.text.dropFirst().trimmingCharacters(in: .whitespaces)
+            let nestedStart = index + 1
+            var nestedEnd = nestedStart
+            while nestedEnd < lines.count && !lines[nestedEnd].text.hasPrefix("-") {
+                nestedEnd += 1
+            }
+            let nested = Array(lines[nestedStart..<nestedEnd])
+
+            if let pair = yamlKeyValue(itemText), pair.key == "name" {
+                let metadata = yamlMetadata(from: nested)
+                inputs.append(PromptInput(
+                    name: yamlScalarValue(pair.value),
+                    type: metadata.type ?? "string",
+                    defaultValue: metadata.defaultValue
+                ))
+            } else if let pair = yamlKeyValue(itemText) {
+                inputs.append(inputFromYamlProperty(
+                    name: pair.key,
+                    value: pair.value,
+                    nested: nested
+                ))
+            } else {
+                let name = yamlScalarValue(itemText)
+                if !name.isEmpty {
+                    inputs.append(PromptInput(name: name, type: "string", defaultValue: nil))
+                }
+            }
+
+            index = nestedEnd
+        }
+
+        return inputs
+    }
+
+    private static func promptInputsFromYamlMap(_ lines: [YamlLine]) -> [PromptInput] {
+        guard let itemIndent = lines.map(\.indent).min() else { return [] }
+        var inputs: [PromptInput] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            guard line.indent == itemIndent,
+                  let pair = yamlKeyValue(line.text)
+            else {
+                index += 1
+                continue
+            }
+
+            let nestedStart = index + 1
+            var nestedEnd = nestedStart
+            while nestedEnd < lines.count && lines[nestedEnd].indent > line.indent {
+                nestedEnd += 1
+            }
+            let nested = Array(lines[nestedStart..<nestedEnd])
+            inputs.append(inputFromYamlProperty(name: pair.key, value: pair.value, nested: nested))
+            index = nestedEnd
+        }
+
+        return inputs
+    }
+
+    private static func inputFromYamlProperty(name: String, value: String, nested: [YamlLine]) -> PromptInput {
+        let metadata = yamlMetadata(from: nested)
+        let inlineMetadata = yamlInlineObject(value)
+        let type = inlineMetadata.type ?? metadata.type ?? yamlTypeValue(value) ?? "string"
+        let defaultValue = inlineMetadata.defaultValue ?? metadata.defaultValue
+        return PromptInput(name: name, type: type, defaultValue: defaultValue)
+    }
+
+    private static func yamlMetadata(from lines: [YamlLine]) -> (type: String?, defaultValue: String?) {
+        var type: String?
+        var defaultValue: String?
+
+        for line in lines {
+            guard let pair = yamlKeyValue(line.text) else { continue }
+            switch pair.key {
+            case "type":
+                type = yamlScalarValue(pair.value)
+            case "default", "defaultValue":
+                defaultValue = yamlScalarValue(pair.value)
+            default:
+                continue
+            }
+        }
+
+        return (type?.isEmpty == true ? nil : type, defaultValue)
+    }
+
+    private static func yamlKeyValue(_ text: String) -> (key: String, value: String)? {
+        guard let colonIndex = text.firstIndex(of: ":") else { return nil }
+        let key = String(text[..<colonIndex]).trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { return nil }
+        let valueStart = text.index(after: colonIndex)
+        let value = String(text[valueStart...]).trimmingCharacters(in: .whitespaces)
+        return (yamlScalarValue(key), value)
+    }
+
+    private static func yamlInlineArray(_ text: String) -> [String]? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("["), trimmed.hasSuffix("]") else { return nil }
+        let inner = trimmed.dropFirst().dropLast()
+        return inner
+            .split(separator: ",")
+            .map { yamlScalarValue(String($0)) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func yamlInlineObject(_ text: String) -> (type: String?, defaultValue: String?) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}") else { return (nil, nil) }
+        let inner = trimmed.dropFirst().dropLast()
+        var type: String?
+        var defaultValue: String?
+
+        for entry in inner.split(separator: ",") {
+            guard let pair = yamlKeyValue(String(entry).trimmingCharacters(in: .whitespaces)) else {
+                continue
+            }
+            switch pair.key {
+            case "type":
+                type = yamlScalarValue(pair.value)
+            case "default", "defaultValue":
+                defaultValue = yamlScalarValue(pair.value)
+            default:
+                continue
+            }
+        }
+
+        return (type, defaultValue)
+    }
+
+    private static func yamlTypeValue(_ text: String) -> String? {
+        let value = yamlScalarValue(text)
+        guard !value.isEmpty else { return nil }
+        if value.contains(":") || value.hasPrefix("[") || value.hasPrefix("{") {
+            return nil
+        }
+        return value
+    }
+
+    private static func yamlScalarValue(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return trimmed }
+        if (trimmed.hasPrefix("\"") && trimmed.hasSuffix("\""))
+            || (trimmed.hasPrefix("'") && trimmed.hasSuffix("'")) {
+            return String(trimmed.dropFirst().dropLast())
+        }
+        return trimmed
+    }
+
+    private static func leadingWhitespaceCount(_ text: String) -> Int {
+        var count = 0
+        for character in text {
+            if character == " " {
+                count += 1
+            } else if character == "\t" {
+                count += 2
+            } else {
+                break
+            }
+        }
+        return count
     }
 
     func updatePrompt(_ promptId: String, source: String) async throws {
@@ -839,23 +2220,30 @@ class SmithersClient: ObservableObject {
         try source.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
-    func previewPrompt(_ promptId: String, input: [String: String]) async throws -> String {
-        if UITestSupport.isEnabled {
-            var result = "Write release notes for {props.version}."
-            for (key, value) in input {
-                result = result.replacingOccurrences(of: "{props.\(key)}", with: value)
-            }
-            return result
-        }
-
-        let prompt = try await getPrompt(promptId)
-        var result = prompt.source ?? ""
+    private func renderPromptSource(_ source: String, input: [String: String]) -> String {
+        var result = source
         for (key, value) in input {
             if let regex = try? NSRegularExpression(pattern: "\\{\\s*props\\.\(NSRegularExpression.escapedPattern(for: key))\\s*\\}") {
                 result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: NSRegularExpression.escapedTemplate(for: value))
             }
         }
         return result
+    }
+
+    func previewPrompt(_ promptId: String, source: String, input: [String: String]) async throws -> String {
+        if !UITestSupport.isEnabled {
+            _ = try promptPath(for: promptId)
+        }
+        return renderPromptSource(source, input: input)
+    }
+
+    func previewPrompt(_ promptId: String, input: [String: String]) async throws -> String {
+        if UITestSupport.isEnabled {
+            return renderPromptSource("Write release notes for {props.version}.", input: input)
+        }
+
+        let prompt = try await getPrompt(promptId)
+        return renderPromptSource(prompt.source ?? "", input: input)
     }
 
     // MARK: - Timeline / Snapshots
@@ -867,7 +2255,16 @@ class SmithersClient: ObservableObject {
             ]
         }
 
-        return try await execJSON("timeline", runId, "--format", "json")
+        let timeline: Timeline = try await execFirstJSON("timeline", runId, "--json=true", "--format", "json")
+        let workflowPath = try? await resolveWorkflowPath(forRunId: runId)
+        let snapshots = timeline.snapshots(workflowPath: workflowPath)
+        if let workflowPath {
+            runWorkflowPathCache[runId] = workflowPath
+            for snapshot in snapshots {
+                snapshotWorkflowPathCache[snapshot.id] = workflowPath
+            }
+        }
+        return snapshots
     }
 
     func forkRun(snapshotId: String) async throws -> RunSummary {
@@ -875,7 +2272,19 @@ class SmithersClient: ObservableObject {
             return Self.makeUIRuns()[0]
         }
 
-        return try await execJSON("fork", snapshotId, "--format", "json")
+        let ref = try parseSnapshotRef(snapshotId)
+        let workflowPath = try await resolveWorkflowPath(forSnapshotRef: ref)
+        let response: ForkRunResponse = try await execJSON(
+            "fork",
+            workflowPath,
+            "--run-id",
+            ref.runId,
+            "--frame",
+            String(ref.frameNo),
+            "--format",
+            "json"
+        )
+        return response.toRunSummary(workflowPath: workflowPath)
     }
 
     func replayRun(snapshotId: String) async throws -> RunSummary {
@@ -883,7 +2292,19 @@ class SmithersClient: ObservableObject {
             return Self.makeUIRuns()[0]
         }
 
-        return try await execJSON("replay", snapshotId, "--format", "json")
+        let ref = try parseSnapshotRef(snapshotId)
+        let workflowPath = try await resolveWorkflowPath(forSnapshotRef: ref)
+        let response: ForkRunResponse = try await execJSON(
+            "replay",
+            workflowPath,
+            "--run-id",
+            ref.runId,
+            "--frame",
+            String(ref.frameNo),
+            "--format",
+            "json"
+        )
+        return response.toRunSummary(workflowPath: workflowPath)
     }
 
     func diffSnapshots(fromId: String, toId: String) async throws -> SnapshotDiff {
@@ -891,7 +2312,99 @@ class SmithersClient: ObservableObject {
             return SnapshotDiff(fromId: fromId, toId: toId, changes: ["Fixture diff"])
         }
 
-        return try await execJSON("diff", fromId, toId, "--format", "json")
+        return try await execFirstJSON("diff", fromId, toId, "--json=true", "--format", "json")
+    }
+
+    private func parseSnapshotRef(_ snapshotId: String) throws -> SnapshotRef {
+        let parts = snapshotId.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              !parts[0].isEmpty,
+              let frameNo = Int(parts[1]) else {
+            throw SmithersError.api("Invalid snapshot ref '\(snapshotId)'. Expected runId:frameNo.")
+        }
+        return SnapshotRef(runId: String(parts[0]), frameNo: frameNo, rawValue: snapshotId)
+    }
+
+    private func resolveWorkflowPath(forSnapshotRef ref: SnapshotRef) async throws -> String {
+        if let cached = snapshotWorkflowPathCache[ref.rawValue] ?? runWorkflowPathCache[ref.runId] {
+            return cached
+        }
+        let workflowPath = try await resolveWorkflowPath(forRunId: ref.runId)
+        snapshotWorkflowPathCache[ref.rawValue] = workflowPath
+        return workflowPath
+    }
+
+    private func resolveWorkflowPath(forRunId runId: String) async throws -> String {
+        if let cached = runWorkflowPathCache[runId] {
+            return cached
+        }
+
+        let workflowName = try await workflowName(forRunId: runId)
+        let workflowPath = try await resolveWorkflowPath(named: workflowName)
+        runWorkflowPathCache[runId] = workflowPath
+        return workflowPath
+    }
+
+    private func workflowName(forRunId runId: String) async throws -> String {
+        let data = try await exec("inspect", runId, "--format", "json")
+        if let response = try? decoder.decode(CLIInspectWorkflowResponse.self, from: data),
+           let workflow = response.run.workflow?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !workflow.isEmpty,
+           workflow != "—" {
+            return workflow
+        }
+
+        let runs = try await listRuns()
+        if let run = runs.first(where: { $0.runId == runId }),
+           let workflowName = run.workflowName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !workflowName.isEmpty {
+            return workflowName
+        }
+
+        throw SmithersError.api("Unable to resolve workflow for run \(runId)")
+    }
+
+    private func resolveWorkflowPath(named workflowName: String) async throws -> String {
+        let candidates = workflowNameCandidates(for: workflowName)
+        for candidate in candidates {
+            if candidate.hasSuffix(".tsx") {
+                return candidate
+            }
+            do {
+                let response: WorkflowPathResponse = try await execJSON("workflow", "path", candidate, "--format", "json")
+                if !response.path.isEmpty {
+                    return response.path
+                }
+            } catch {
+                continue
+            }
+        }
+
+        let workflows = try await listWorkflows()
+        for candidate in candidates {
+            if let workflow = workflows.first(where: { workflow in
+                workflow.id == candidate
+                    || workflow.name == candidate
+                    || workflow.relativePath.map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension == candidate } == true
+            }), let path = workflow.relativePath {
+                return path
+            }
+        }
+
+        throw SmithersError.api("Unable to resolve workflow path for '\(workflowName)'")
+    }
+
+    private func workflowNameCandidates(for workflowName: String) -> [String] {
+        let trimmed = workflowName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let slug = trimmed
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        var candidates: [String] = []
+        for value in [trimmed, slug] where !value.isEmpty && !candidates.contains(value) {
+            candidates.append(value)
+        }
+        return candidates
     }
 
     // MARK: - Changes / Status (JJHub)
@@ -1086,7 +2599,68 @@ class SmithersClient: ObservableObject {
     // MARK: - Crons
 
     func listCrons() async throws -> [CronSchedule] {
-        return try await execJSON("cron", "list", "--format", "json")
+        if UITestSupport.isEnabled { return uiCrons }
+
+        let data = try await exec("cron", "list", "--format", "json")
+        if let response = try? decoder.decode(CronResponse.self, from: data) {
+            return response.crons
+        }
+        return try decoder.decode([CronSchedule].self, from: data)
+    }
+
+    func createCron(pattern: String, workflowPath: String) async throws -> CronSchedule {
+        let normalizedPattern = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedWorkflowPath = workflowPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedPattern.isEmpty, !normalizedWorkflowPath.isEmpty else {
+            throw SmithersError.api("pattern and workflow path are required")
+        }
+
+        if UITestSupport.isEnabled {
+            let now = UITestSupport.nowMs
+            let cron = CronSchedule(
+                id: "cron-ui-\(uiCrons.count + 1)",
+                pattern: normalizedPattern,
+                workflowPath: normalizedWorkflowPath,
+                enabled: true,
+                createdAtMs: now,
+                lastRunAtMs: nil,
+                nextRunAtMs: nil,
+                errorJson: nil
+            )
+            uiCrons.insert(cron, at: 0)
+            return cron
+        }
+
+        return try await execJSON("cron", "add", normalizedPattern, normalizedWorkflowPath, "--format", "json")
+    }
+
+    func toggleCron(cronID: String, enabled: Bool) async throws {
+        if UITestSupport.isEnabled {
+            guard let index = uiCrons.firstIndex(where: { $0.id == cronID }) else { return }
+            let existing = uiCrons[index]
+            uiCrons[index] = CronSchedule(
+                id: existing.id,
+                pattern: existing.pattern,
+                workflowPath: existing.workflowPath,
+                enabled: enabled,
+                createdAtMs: existing.createdAtMs,
+                lastRunAtMs: existing.lastRunAtMs,
+                nextRunAtMs: existing.nextRunAtMs,
+                errorJson: existing.errorJson
+            )
+            return
+        }
+
+        let subcommand = enabled ? "enable" : "disable"
+        _ = try await exec("cron", subcommand, cronID)
+    }
+
+    func deleteCron(cronID: String) async throws {
+        if UITestSupport.isEnabled {
+            uiCrons.removeAll { $0.id == cronID }
+            return
+        }
+        _ = try await exec("cron", "rm", cronID)
     }
 
     // MARK: - Connection Check
@@ -1105,19 +2679,47 @@ class SmithersClient: ObservableObject {
             cliAvailable = false
         }
 
+        let configuredServerURL = serverURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = configuredServerURL, !url.isEmpty else {
+            isConnected = cliAvailable
+            return
+        }
+
         // Check if a serve instance is running
-        if let url = serverURL {
-            do {
-                let request = URLRequest(url: URL(string: "\(url)/health")!)
-                let (_, response) = try await session.data(for: request)
-                isConnected = (response as? HTTPURLResponse)?.statusCode == 200
-            } catch {
-                isConnected = false
-            }
+        guard let healthURL = Self.resolvedHTTPTransportURL(path: "/health", serverURL: url) else {
+            isConnected = false
+            return
+        }
+
+        do {
+            let request = URLRequest(url: healthURL)
+            let (_, response) = try await session.data(for: request)
+            isConnected = (response as? HTTPURLResponse)?.statusCode == 200
+        } catch {
+            isConnected = false
         }
     }
 
-    // MARK: - Stubs for features not yet wired in GUI
+    func hasSmithersProject() -> Bool {
+        if UITestSupport.isEnabled {
+            return true
+        }
+
+        let path = (cwd as NSString).appendingPathComponent(".smithers")
+        var isDirectory = ObjCBool(false)
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    func initializeSmithers() async throws {
+        if UITestSupport.isEnabled {
+            let path = (cwd as NSString).appendingPathComponent(".smithers")
+            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            return
+        }
+        _ = try await exec("init")
+    }
+
+    // MARK: - Approvals and JJHub-backed views
 
     func listPendingApprovals() async throws -> [Approval] {
         if UITestSupport.isEnabled {
@@ -1156,14 +2758,92 @@ class SmithersClient: ObservableObject {
         return []
     }
 
+    private func jjhubLandingStateFilter(_ state: String?) -> String {
+        let value = state?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        switch value {
+        case "", "all":
+            return "all"
+        case "ready", "open":
+            return "open"
+        case "landed", "merged":
+            return "merged"
+        case "draft", "closed":
+            return value
+        default:
+            return value
+        }
+    }
+
+    private func jjhubIssueStateFilter(_ state: String?) -> String {
+        let value = state?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        switch value {
+        case "", "all":
+            return "all"
+        case "open", "opened":
+            return "open"
+        case "closed", "close":
+            return "closed"
+        default:
+            return value
+        }
+    }
+
+    private func decodeLandingList(_ data: Data) throws -> [Landing] {
+        let payload = try unwrapLegacyEnvelope(data)
+        if let wrapped = try? decoder.decode(DataEnvelope<[Landing]>.self, from: payload) {
+            return wrapped.data
+        }
+        if let wrapped = try? decoder.decode(LandingListResponse.self, from: payload) {
+            return wrapped.landings ?? wrapped.items ?? []
+        }
+        return try decoder.decode([Landing].self, from: payload)
+    }
+
+    private func decodeLanding(_ data: Data) throws -> Landing {
+        let payload = try unwrapLegacyEnvelope(data)
+        if let wrapped = try? decoder.decode(DataEnvelope<Landing>.self, from: payload) {
+            return wrapped.data
+        }
+        if let wrapped = try? decoder.decode(LandingDetailResponse.self, from: payload) {
+            return wrapped.landing
+        }
+        return try decoder.decode(Landing.self, from: payload)
+    }
+
+    private func decodeLandingDetail(_ data: Data) throws -> LandingDetailResponse {
+        let payload = try unwrapLegacyEnvelope(data)
+        if let wrapped = try? decoder.decode(DataEnvelope<LandingDetailResponse>.self, from: payload) {
+            return wrapped.data
+        }
+        if let detail = try? decoder.decode(LandingDetailResponse.self, from: payload) {
+            return detail
+        }
+        if let wrapped = try? decoder.decode(DataEnvelope<Landing>.self, from: payload) {
+            return LandingDetailResponse(landing: wrapped.data, changes: nil)
+        }
+        let landing = try decoder.decode(Landing.self, from: payload)
+        return LandingDetailResponse(landing: landing, changes: nil)
+    }
+
+    private func getLandingDetail(number: Int) async throws -> LandingDetailResponse {
+        let data = try await execJJHubJSONArgs(["land", "view", "\(number)"])
+        return try decodeLandingDetail(data)
+    }
+
     func listLandings(state: String? = nil) async throws -> [Landing] {
-        let landings = [
-            Landing(id: "landing-1", number: 1, title: "Fixture landing", description: "Landing fixture for UI tests.", state: "ready", targetBranch: "main", author: "smithers", createdAt: "2026-04-14", reviewStatus: "pending"),
-            Landing(id: "landing-2", number: 2, title: "Landed fixture", description: "Already landed fixture.", state: "landed", targetBranch: "main", author: "smithers", createdAt: "2026-04-13", reviewStatus: "approved"),
-        ]
-        guard UITestSupport.isEnabled else { return [] }
-        guard let state else { return landings }
-        return landings.filter { $0.state == state }
+        if UITestSupport.isEnabled {
+            guard let state else { return uiLandings }
+            let normalizedState = jjhubLandingStateFilter(state)
+            guard normalizedState != "all" else { return uiLandings }
+            return uiLandings.filter { jjhubLandingStateFilter($0.state) == normalizedState }
+        }
+
+        let data = try await execJJHubJSONArgs([
+            "land", "list",
+            "-s", jjhubLandingStateFilter(state),
+            "-L", "100",
+        ])
+        return try decodeLandingList(data)
     }
 
     func getLanding(number: Int) async throws -> Landing {
@@ -1171,41 +2851,217 @@ class SmithersClient: ObservableObject {
             let landings = try await listLandings()
             return landings.first { $0.number == number } ?? landings[0]
         }
-        throw SmithersError.notAvailable("Landings require JJHub")
+        return try await getLandingDetail(number: number).landing
+    }
+
+    func createLanding(title: String, body: String?, target: String?, stack: Bool = true) async throws -> Landing {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTitle.isEmpty else {
+            throw SmithersError.api("title must not be empty")
+        }
+        let normalizedBody = body?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedTarget = target?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if UITestSupport.isEnabled {
+            let nextNumber = (uiLandings.compactMap(\.number).max() ?? 200) + 1
+            let landing = Landing(
+                id: "landing-\(nextNumber)",
+                number: nextNumber,
+                title: normalizedTitle,
+                description: normalizedBody?.isEmpty == false ? normalizedBody : nil,
+                state: "open",
+                targetBranch: normalizedTarget?.isEmpty == false ? normalizedTarget : "main",
+                author: "smithers",
+                createdAt: ISO8601DateFormatter().string(from: Date()),
+                reviewStatus: "pending"
+            )
+            uiLandings.insert(landing, at: 0)
+            return landing
+        }
+
+        var args = ["land", "create", "-t", normalizedTitle]
+        if let normalizedBody, !normalizedBody.isEmpty {
+            args += ["-b", normalizedBody]
+        }
+        if let normalizedTarget, !normalizedTarget.isEmpty {
+            args += ["--target", normalizedTarget]
+        }
+        if stack {
+            args.append("--stack")
+        }
+        let data = try await execJJHubJSONArgs(args)
+        return try decodeLanding(data)
     }
 
     func landingDiff(number: Int) async throws -> String {
         if UITestSupport.isEnabled { return "diff --git a/file.swift b/file.swift\n+fixture change" }
-        throw SmithersError.notAvailable("Landings require JJHub")
+        let detail = try await getLandingDetail(number: number)
+        guard let changes = detail.changes, !changes.isEmpty else {
+            return ""
+        }
+
+        var chunks: [String] = []
+        for change in changes {
+            let diff = (try await changeDiff(change.changeID))
+                .trimmingCharacters(in: .newlines)
+            chunks.append("Change \(change.changeID)\n\n\(diff)")
+        }
+        return chunks.joined(separator: "\n\n------------------------------------------------------------------------\n")
+    }
+
+    func landLanding(number: Int) async throws {
+        if UITestSupport.isEnabled {
+            guard let index = uiLandings.firstIndex(where: { $0.number == number }) else { return }
+            let existing = uiLandings[index]
+            uiLandings[index] = Landing(
+                id: existing.id,
+                number: existing.number,
+                title: existing.title,
+                description: existing.description,
+                state: "merged",
+                targetBranch: existing.targetBranch,
+                author: existing.author,
+                createdAt: existing.createdAt,
+                reviewStatus: "approved"
+            )
+            return
+        }
+        _ = try await execJJHubRawArgs(["land", "land", "\(number)"])
     }
 
     func reviewLanding(number: Int, action: String, body: String?) async throws {
-        if UITestSupport.isEnabled { return }
-        throw SmithersError.notAvailable("Landings require JJHub")
+        if UITestSupport.isEnabled {
+            guard let index = uiLandings.firstIndex(where: { $0.number == number }) else { return }
+            let existing = uiLandings[index]
+            let normalizedAction = action.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: "-", with: "_")
+            let reviewStatus: String
+            switch normalizedAction {
+            case "approve", "approved":
+                reviewStatus = "approved"
+            case "request_changes", "changes_requested":
+                reviewStatus = "changes_requested"
+            case "comment":
+                reviewStatus = existing.reviewStatus ?? "pending"
+            case "land", "merge", "merged":
+                try await landLanding(number: number)
+                return
+            default:
+                throw SmithersError.api("Invalid landing review action: \(action)")
+            }
+            uiLandings[index] = Landing(
+                id: existing.id,
+                number: existing.number,
+                title: existing.title,
+                description: existing.description,
+                state: existing.state,
+                targetBranch: existing.targetBranch,
+                author: existing.author,
+                createdAt: existing.createdAt,
+                reviewStatus: reviewStatus
+            )
+            return
+        }
+        let normalizedAction = action.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+
+        var args = ["land", "review", "\(number)"]
+        switch normalizedAction {
+        case "approve", "approved":
+            args.append("-a")
+        case "request_changes", "changes_requested":
+            args.append("-r")
+        case "comment":
+            args.append("-c")
+        case "land", "merge", "merged":
+            try await landLanding(number: number)
+            return
+        default:
+            throw SmithersError.api("Invalid landing review action: \(action)")
+        }
+
+        if let body, !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args += ["-b", body]
+        }
+        _ = try await execJJHubRawArgs(args)
+    }
+
+    func landingChecks(number: Int) async throws -> String {
+        if UITestSupport.isEnabled {
+            return """
+            ci/unit: pass
+            ci/lint: pass
+            """
+        }
+        return try await execJJHubRawArgs(["land", "checks", "\(number)"])
+    }
+
+    private func decodeIssue(_ data: Data) throws -> SmithersIssue {
+        let payload = try unwrapLegacyEnvelope(data)
+        if let wrapped = try? decoder.decode(DataEnvelope<SmithersIssue>.self, from: payload) {
+            return wrapped.data
+        }
+        if let wrapped = try? decoder.decode(IssueResponse.self, from: payload) {
+            return wrapped.issue
+        }
+        return try decoder.decode(SmithersIssue.self, from: payload)
+    }
+
+    private func decodeIssueList(_ data: Data) throws -> [SmithersIssue] {
+        let payload = try unwrapLegacyEnvelope(data)
+        if let wrapped = try? decoder.decode(DataEnvelope<[SmithersIssue]>.self, from: payload) {
+            return wrapped.data
+        }
+        if let wrapped = try? decoder.decode(IssueListResponse.self, from: payload) {
+            return wrapped.issues ?? wrapped.items ?? []
+        }
+        return try decoder.decode([SmithersIssue].self, from: payload)
     }
 
     func listIssues(state: String? = nil) async throws -> [SmithersIssue] {
         if UITestSupport.isEnabled {
-            guard let state else { return uiIssues }
-            return uiIssues.filter { $0.state == state }
+            let normalizedState = jjhubIssueStateFilter(state)
+            guard normalizedState != "all" else { return uiIssues }
+            return uiIssues.filter { jjhubIssueStateFilter($0.state) == normalizedState }
         }
-        return []
+
+        let jjhubState = jjhubIssueStateFilter(state)
+        let data = try await execJJHubJSONArgs(["issue", "list", "-s", jjhubState, "-L", "100"])
+        return try decodeIssueList(data)
     }
 
     func getIssue(number: Int) async throws -> SmithersIssue {
         if UITestSupport.isEnabled {
-            return uiIssues.first { $0.number == number } ?? uiIssues[0]
+            guard let issue = uiIssues.first(where: { $0.number == number }) else {
+                throw SmithersError.notFound
+            }
+            return issue
         }
-        throw SmithersError.notAvailable("Issues require JJHub")
+
+        let data = try await execJJHubJSONArgs(["issue", "view", "\(number)"])
+        return try decodeIssue(data)
     }
 
     func createIssue(title: String, body: String?) async throws -> SmithersIssue {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else {
+            throw SmithersError.api("title must not be empty")
+        }
+
         if UITestSupport.isEnabled {
-            let issue = SmithersIssue(id: "issue-\(uiIssues.count + 200)", number: uiIssues.count + 200, title: title, body: body, state: "open", labels: ["ui-test"], assignees: ["smithers"], commentCount: 0)
+            let issue = SmithersIssue(id: "issue-\(uiIssues.count + 200)", number: uiIssues.count + 200, title: trimmedTitle, body: body, state: "open", labels: ["ui-test"], assignees: ["smithers"], commentCount: 0)
             uiIssues.insert(issue, at: 0)
             return issue
         }
-        throw SmithersError.notAvailable("Issues require JJHub")
+
+        var args = ["issue", "create", "-t", trimmedTitle]
+        if let body, !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args += ["-b", body]
+        }
+        let data = try await execJJHubJSONArgs(args)
+        return try decodeIssue(data)
     }
 
     func closeIssue(number: Int, comment: String?) async throws {
@@ -1215,82 +3071,534 @@ class SmithersClient: ObservableObject {
             uiIssues[index] = SmithersIssue(id: issue.id, number: issue.number, title: issue.title, body: issue.body, state: "closed", labels: issue.labels, assignees: issue.assignees, commentCount: issue.commentCount)
             return
         }
-        throw SmithersError.notAvailable("Issues require JJHub")
+
+        var args = ["issue", "close", "\(number)"]
+        if let comment, !comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args += ["-c", comment]
+        }
+        let data = try await execJJHubJSONArgs(args)
+        if (try? decodeIssue(data)) == nil {
+            _ = try await getIssue(number: number)
+        }
     }
 
     func listWorkspaces() async throws -> [Workspace] {
         if UITestSupport.isEnabled { return uiWorkspaces }
-        return []
+
+        let data = try await execJJHubJSONArgs(["workspace", "list", "-L", "100"])
+        return try decodeWorkspaces(from: data)
+    }
+
+    func viewWorkspace(_ workspaceId: String) async throws -> Workspace {
+        let normalizedWorkspaceId = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedWorkspaceId.isEmpty else {
+            throw SmithersError.api("workspaceId must not be empty")
+        }
+
+        if UITestSupport.isEnabled {
+            guard let workspace = uiWorkspaces.first(where: { $0.id == normalizedWorkspaceId }) else {
+                throw SmithersError.notFound
+            }
+            return workspace
+        }
+
+        let data = try await execJJHubJSONArgs(["workspace", "view", normalizedWorkspaceId])
+        return try decodeWorkspace(from: data)
     }
 
     func createWorkspace(name: String, snapshotId: String? = nil) async throws -> Workspace {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if UITestSupport.isEnabled {
-            let workspace = Workspace(id: "ui-workspace-\(uiWorkspaces.count + 1)", name: name, status: "active", createdAt: "2026-04-14")
+            let workspaceName = normalizedName.isEmpty ? "Workspace \(uiWorkspaces.count + 1)" : normalizedName
+            let workspace = Workspace(id: "ui-workspace-\(uiWorkspaces.count + 1)", name: workspaceName, status: "active", createdAt: "2026-04-14")
             uiWorkspaces.insert(workspace, at: 0)
             return workspace
         }
-        throw SmithersError.notAvailable("Workspaces require JJHub")
+
+        var args = ["workspace", "create"]
+        if !normalizedName.isEmpty {
+            args += ["--name", normalizedName]
+        }
+        if let snapshotId, !snapshotId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args += ["--snapshot", snapshotId.trimmingCharacters(in: .whitespacesAndNewlines)]
+        }
+        let data = try await execJJHubJSONArgs(args)
+        return try decodeWorkspace(from: data)
     }
 
     func deleteWorkspace(_ workspaceId: String) async throws {
+        let normalizedWorkspaceId = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedWorkspaceId.isEmpty else {
+            throw SmithersError.api("workspaceId must not be empty")
+        }
+
         if UITestSupport.isEnabled {
-            uiWorkspaces.removeAll { $0.id == workspaceId }
+            uiWorkspaces.removeAll { $0.id == normalizedWorkspaceId }
             return
         }
-        throw SmithersError.notAvailable("Workspaces require JJHub")
+
+        _ = try await execJJHubRawArgs(["workspace", "delete", normalizedWorkspaceId])
     }
 
     func suspendWorkspace(_ workspaceId: String) async throws {
+        let normalizedWorkspaceId = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedWorkspaceId.isEmpty else {
+            throw SmithersError.api("workspaceId must not be empty")
+        }
+
         if UITestSupport.isEnabled {
-            updateUIWorkspace(workspaceId, status: "suspended")
+            updateUIWorkspace(normalizedWorkspaceId, status: "suspended")
             return
         }
-        throw SmithersError.notAvailable("Workspaces require JJHub")
+
+        _ = try await execJJHubJSONArgs(["workspace", "suspend", normalizedWorkspaceId])
     }
 
     func resumeWorkspace(_ workspaceId: String) async throws {
+        let normalizedWorkspaceId = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedWorkspaceId.isEmpty else {
+            throw SmithersError.api("workspaceId must not be empty")
+        }
+
         if UITestSupport.isEnabled {
-            updateUIWorkspace(workspaceId, status: "active")
+            updateUIWorkspace(normalizedWorkspaceId, status: "active")
             return
         }
-        throw SmithersError.notAvailable("Workspaces require JJHub")
+
+        _ = try await execJJHubJSONArgs(["workspace", "resume", normalizedWorkspaceId])
+    }
+
+    func forkWorkspace(_ workspaceId: String, name: String? = nil) async throws -> Workspace {
+        let normalizedWorkspaceId = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedWorkspaceId.isEmpty else {
+            throw SmithersError.api("workspaceId must not be empty")
+        }
+        let normalizedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if UITestSupport.isEnabled {
+            guard let parent = uiWorkspaces.first(where: { $0.id == normalizedWorkspaceId }) else {
+                throw SmithersError.notFound
+            }
+            let fallbackName = "\(parent.name)-fork"
+            let forkName = (normalizedName?.isEmpty == false) ? (normalizedName ?? fallbackName) : fallbackName
+            let workspace = Workspace(
+                id: "ui-workspace-\(uiWorkspaces.count + 1)",
+                name: forkName,
+                status: "active",
+                createdAt: "2026-04-14"
+            )
+            uiWorkspaces.insert(workspace, at: 0)
+            return workspace
+        }
+
+        var args = ["workspace", "fork", normalizedWorkspaceId]
+        if let normalizedName, !normalizedName.isEmpty {
+            args += ["--name", normalizedName]
+        }
+        let data = try await execJJHubJSONArgs(args)
+        return try decodeWorkspace(from: data)
     }
 
     func listWorkspaceSnapshots() async throws -> [WorkspaceSnapshot] {
         if UITestSupport.isEnabled { return uiWorkspaceSnapshots }
-        return []
+
+        let data = try await execJJHubJSONArgs(["workspace", "snapshot", "list", "-L", "100"])
+        return try decodeWorkspaceSnapshots(from: data)
+    }
+
+    func viewWorkspaceSnapshot(_ snapshotId: String) async throws -> WorkspaceSnapshot {
+        let normalizedSnapshotId = snapshotId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSnapshotId.isEmpty else {
+            throw SmithersError.api("snapshotId must not be empty")
+        }
+
+        if UITestSupport.isEnabled {
+            guard let snapshot = uiWorkspaceSnapshots.first(where: { $0.id == normalizedSnapshotId }) else {
+                throw SmithersError.notFound
+            }
+            return snapshot
+        }
+
+        let data = try await execJJHubJSONArgs(["workspace", "snapshot", "view", normalizedSnapshotId])
+        return try decodeWorkspaceSnapshot(from: data)
     }
 
     func createWorkspaceSnapshot(workspaceId: String, name: String) async throws -> WorkspaceSnapshot {
+        let normalizedWorkspaceId = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedWorkspaceId.isEmpty else {
+            throw SmithersError.api("workspaceId must not be empty")
+        }
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+
         if UITestSupport.isEnabled {
-            let snapshot = WorkspaceSnapshot(id: "ui-snapshot-\(uiWorkspaceSnapshots.count + 1)", workspaceId: workspaceId, name: name, createdAt: "2026-04-14")
+            let snapshot = WorkspaceSnapshot(id: "ui-snapshot-\(uiWorkspaceSnapshots.count + 1)", workspaceId: normalizedWorkspaceId, name: normalizedName, createdAt: "2026-04-14")
             uiWorkspaceSnapshots.insert(snapshot, at: 0)
             return snapshot
         }
-        throw SmithersError.notAvailable("Workspace snapshots require JJHub")
+
+        var args = ["workspace", "snapshot", "create", normalizedWorkspaceId]
+        if !normalizedName.isEmpty {
+            args += ["--name", normalizedName]
+        }
+        let data = try await execJJHubJSONArgs(args)
+        return try decodeWorkspaceSnapshot(from: data)
+    }
+
+    func deleteWorkspaceSnapshot(_ snapshotId: String) async throws {
+        let normalizedSnapshotId = snapshotId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedSnapshotId.isEmpty else {
+            throw SmithersError.api("snapshotId must not be empty")
+        }
+
+        if UITestSupport.isEnabled {
+            uiWorkspaceSnapshots.removeAll { $0.id == normalizedSnapshotId }
+            return
+        }
+
+        _ = try await execJJHubRawArgs(["workspace", "snapshot", "delete", normalizedSnapshotId])
+    }
+
+    private func decodeWorkspace(from data: Data) throws -> Workspace {
+        if let direct = try? decoder.decode(Workspace.self, from: data) {
+            return direct
+        }
+        if let envelope = try? decoder.decode(APIEnvelope<Workspace>.self, from: data),
+           let workspace = envelope.data {
+            return workspace
+        }
+        if let envelope = try? decoder.decode(DataEnvelope<Workspace>.self, from: data) {
+            return envelope.data
+        }
+        let snippet = String(decoding: data.prefix(200), as: UTF8.self)
+        throw SmithersError.api("parse workspace: unsupported JSON response \(snippet)")
+    }
+
+    private func decodeWorkspaces(from data: Data) throws -> [Workspace] {
+        if let direct = try? decoder.decode([Workspace].self, from: data) {
+            return direct
+        }
+        if let wrapped = try? decoder.decode(WorkspacesResponse.self, from: data) {
+            return wrapped.workspaces
+        }
+        if let envelope = try? decoder.decode(APIEnvelope<[Workspace]>.self, from: data),
+           let workspaces = envelope.data {
+            return workspaces
+        }
+        if let envelope = try? decoder.decode(DataEnvelope<[Workspace]>.self, from: data) {
+            return envelope.data
+        }
+        let snippet = String(decoding: data.prefix(200), as: UTF8.self)
+        throw SmithersError.api("parse workspaces: unsupported JSON response \(snippet)")
+    }
+
+    private func decodeWorkspaceSnapshot(from data: Data) throws -> WorkspaceSnapshot {
+        if let direct = try? decoder.decode(WorkspaceSnapshot.self, from: data) {
+            return direct
+        }
+        if let envelope = try? decoder.decode(APIEnvelope<WorkspaceSnapshot>.self, from: data),
+           let snapshot = envelope.data {
+            return snapshot
+        }
+        if let envelope = try? decoder.decode(DataEnvelope<WorkspaceSnapshot>.self, from: data) {
+            return envelope.data
+        }
+        let snippet = String(decoding: data.prefix(200), as: UTF8.self)
+        throw SmithersError.api("parse workspace snapshot: unsupported JSON response \(snippet)")
+    }
+
+    private func decodeWorkspaceSnapshots(from data: Data) throws -> [WorkspaceSnapshot] {
+        if let direct = try? decoder.decode([WorkspaceSnapshot].self, from: data) {
+            return direct
+        }
+        if let wrapped = try? decoder.decode(WorkspaceSnapshotsResponse.self, from: data) {
+            return wrapped.snapshots
+        }
+        if let envelope = try? decoder.decode(APIEnvelope<[WorkspaceSnapshot]>.self, from: data),
+           let snapshots = envelope.data {
+            return snapshots
+        }
+        if let envelope = try? decoder.decode(DataEnvelope<[WorkspaceSnapshot]>.self, from: data) {
+            return envelope.data
+        }
+        let snippet = String(decoding: data.prefix(200), as: UTF8.self)
+        throw SmithersError.api("parse workspace snapshots: unsupported JSON response \(snippet)")
     }
 
     func searchCode(query: String, limit: Int = 20) async throws -> [SearchResult] {
-        if UITestSupport.isEnabled {
-            return [SearchResult(id: "code-1", title: "ContentView.swift", description: "SwiftUI root view", snippet: "ContentView launches \(query)", filePath: "ContentView.swift", lineNumber: 1, kind: "code")]
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            throw SmithersError.api("query must not be empty")
         }
-        return []
+
+        if UITestSupport.isEnabled {
+            return [SearchResult(id: "code-1", title: "ContentView.swift", description: "SwiftUI root view", snippet: "ContentView launches \(trimmedQuery)", filePath: "ContentView.swift", lineNumber: 1, kind: "code")]
+        }
+
+        let data = try await execJJHubJSONArgs(["search", "code", trimmedQuery, "--limit", "\(limit)"])
+        return try Self.decodeCodeSearchResults(data)
     }
 
     func searchIssues(query: String, state: String? = nil, limit: Int = 20) async throws -> [SearchResult] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            throw SmithersError.api("query must not be empty")
+        }
+
         if UITestSupport.isEnabled {
             return try await listIssues(state: state).map {
                 SearchResult(id: $0.id, title: $0.title, description: $0.body, snippet: nil, filePath: nil, lineNumber: nil, kind: "issue")
             }
         }
-        return []
+
+        var args = ["search", "issues", trimmedQuery, "--limit", "\(limit)"]
+        if let state = state?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !state.isEmpty,
+           state.caseInsensitiveCompare("all") != .orderedSame {
+            args += ["--state", state]
+        }
+        let data = try await execJJHubJSONArgs(args)
+        return try Self.decodeIssueSearchResults(data)
     }
 
     func searchRepos(query: String, limit: Int = 20) async throws -> [SearchResult] {
-        if UITestSupport.isEnabled {
-            return [SearchResult(id: "repo-1", title: "smithers/gui", description: "Fixture repository for \(query)", snippet: nil, filePath: nil, lineNumber: nil, kind: "repo")]
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            throw SmithersError.api("query must not be empty")
         }
-        return []
+
+        if UITestSupport.isEnabled {
+            return [SearchResult(id: "repo-1", title: "smithers/gui", description: "Fixture repository for \(trimmedQuery)", snippet: nil, filePath: nil, lineNumber: nil, kind: "repo")]
+        }
+
+        let data = try await execJJHubJSONArgs(["search", "repos", trimmedQuery, "--limit", "\(limit)"])
+        return try Self.decodeRepositorySearchResults(data)
+    }
+
+    static func decodeRepositorySearchResults(_ data: Data) throws -> [SearchResult] {
+        try searchPageItems(from: data).enumerated().map { offset, item in
+            let owner = searchString(item["owner"])
+            let name = searchString(item["name"])
+            let fullName = searchString(item["full_name"])
+                ?? searchString(item["fullName"])
+                ?? searchRepositoryName(item["repository"])
+                ?? [owner, name].compactMap { $0 }.joined(separator: "/").nilIfEmpty
+                ?? name
+                ?? "Repository"
+            let rawId = searchString(item["id"]) ?? fullName
+            return SearchResult(
+                id: searchID(prefix: "repo", raw: rawId, fallback: "\(offset)"),
+                title: fullName,
+                description: searchString(item["description"]),
+                snippet: nil,
+                filePath: nil,
+                lineNumber: nil,
+                kind: "repo"
+            )
+        }
+    }
+
+    static func decodeIssueSearchResults(_ data: Data) throws -> [SearchResult] {
+        try searchPageItems(from: data).enumerated().map { offset, item in
+            let number = searchInt(item["number"])
+            let title = searchString(item["title"]) ?? number.map { "Issue #\($0)" } ?? "Issue"
+            let state = searchString(item["state"])
+            let repo = searchString(item["repository_name"])
+                ?? searchString(item["repositoryName"])
+                ?? searchString(item["repository_full_name"])
+                ?? searchString(item["repositoryFullName"])
+                ?? searchRepositoryName(item["repository"])
+            let metadata = [
+                number.map { "#\($0)" },
+                state,
+                repo,
+            ].compactMap { $0 }.joined(separator: " · ").nilIfEmpty
+            let rawId = searchString(item["id"])
+                ?? number.map { String($0) }
+                ?? title
+            return SearchResult(
+                id: searchID(prefix: "issue", raw: rawId, fallback: "\(offset)"),
+                title: title,
+                description: searchString(item["body"]) ?? searchString(item["description"]) ?? metadata,
+                snippet: nil,
+                filePath: nil,
+                lineNumber: nil,
+                kind: "issue"
+            )
+        }
+    }
+
+    static func decodeCodeSearchResults(_ data: Data) throws -> [SearchResult] {
+        try searchPageItems(from: data).enumerated().map { offset, item in
+            let repository = searchString(item["repository"])
+                ?? searchString(item["repository_name"])
+                ?? searchString(item["repositoryName"])
+                ?? searchString(item["repository_full_name"])
+                ?? searchString(item["repositoryFullName"])
+                ?? searchRepositoryName(item["repository"])
+            let filePath = searchString(item["file_path"])
+                ?? searchString(item["filePath"])
+                ?? searchString(item["path"])
+                ?? searchString(item["filename"])
+            var matches = searchTextMatches(from: item["text_matches"])
+            if matches.isEmpty {
+                matches = searchTextMatches(from: item["matches"])
+            }
+            if matches.isEmpty {
+                matches = searchTextMatches(from: item["snippets"])
+            }
+            if matches.isEmpty, let content = searchString(item["content"]) {
+                matches = [(content, searchInt(item["line_number"]) ?? searchInt(item["lineNumber"]))]
+            }
+
+            let snippet = matches
+                .map { $0.content }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+                .nilIfEmpty
+            let lineNumber = matches.first { $0.lineNumber != nil }?.lineNumber
+            let rawId = searchString(item["id"])
+                ?? [repository, filePath, lineNumber.map { String($0) }].compactMap { $0 }.joined(separator: ":").nilIfEmpty
+                ?? "\(offset)"
+            return SearchResult(
+                id: searchID(prefix: "code", raw: rawId, fallback: "\(offset)"),
+                title: filePath.map { ($0 as NSString).lastPathComponent }.flatMap { $0.nilIfEmpty } ?? repository ?? "Code result",
+                description: repository,
+                snippet: snippet,
+                filePath: filePath,
+                lineNumber: lineNumber,
+                kind: "code"
+            )
+        }
+    }
+
+    private static func searchPageItems(from data: Data) throws -> [[String: Any]] {
+        let object = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        return try searchPageItems(from: object)
+    }
+
+    private static func searchPageItems(from object: Any) throws -> [[String: Any]] {
+        if object is NSNull {
+            return []
+        }
+        if let items = object as? [[String: Any]] {
+            return items
+        }
+        guard let page = object as? [String: Any] else {
+            throw SmithersError.api("Unexpected search response format")
+        }
+
+        if let ok = page["ok"] as? Bool {
+            if !ok {
+                throw SmithersError.api(searchString(page["error"]) ?? "Smithers API error")
+            }
+            return try searchPageItems(from: page["data"] ?? NSNull())
+        }
+
+        for key in ["items", "data", "results"] {
+            if let items = page[key] as? [[String: Any]] {
+                return items
+            }
+            if let nestedPage = page[key] as? [String: Any] {
+                return try searchPageItems(from: nestedPage)
+            }
+        }
+
+        if page["total_count"] != nil || page["totalCount"] != nil {
+            return []
+        }
+        throw SmithersError.api("Unexpected search response format")
+    }
+
+    private static func searchID(prefix: String, raw: String?, fallback: String) -> String {
+        let value = (raw?.nilIfEmpty ?? fallback).trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("\(prefix)-") {
+            return value
+        }
+        return "\(prefix)-\(value)"
+    }
+
+    private static func searchRepositoryName(_ value: Any?) -> String? {
+        guard let object = value as? [String: Any] else {
+            return nil
+        }
+        return searchString(object["full_name"])
+            ?? searchString(object["fullName"])
+            ?? [searchString(object["owner"]), searchString(object["name"])]
+                .compactMap { $0 }
+                .joined(separator: "/")
+                .nilIfEmpty
+            ?? searchString(object["name"])
+    }
+
+    private static func searchTextMatches(from value: Any?) -> [(content: String, lineNumber: Int?)] {
+        if let text = searchString(value) {
+            return [(text, nil)]
+        }
+        if let strings = value as? [String] {
+            return strings.compactMap { text in
+                text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : (text, nil)
+            }
+        }
+        guard let values = value as? [Any] else {
+            return []
+        }
+        return values.compactMap { value in
+            if let text = searchString(value) {
+                return (text, nil)
+            }
+            guard let object = value as? [String: Any] else {
+                return nil
+            }
+            guard let content = searchString(object["content"])
+                    ?? searchString(object["text"])
+                    ?? searchString(object["line"])
+                    ?? searchString(object["fragment"]) else {
+                return nil
+            }
+            return (
+                content,
+                searchInt(object["line_number"]) ?? searchInt(object["lineNumber"]) ?? searchInt(object["line"])
+            )
+        }
+    }
+
+    private static func searchString(_ value: Any?) -> String? {
+        guard let value, !(value is NSNull) else {
+            return nil
+        }
+        if let string = value as? String {
+            return string.nilIfEmpty
+        }
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return number.boolValue ? "true" : "false"
+            }
+            let double = number.doubleValue
+            if double.rounded() == double {
+                return String(number.int64Value)
+            }
+            return String(double)
+        }
+        return nil
+    }
+
+    private static func searchInt(_ value: Any?) -> Int? {
+        guard let value, !(value is NSNull) else {
+            return nil
+        }
+        if let int = value as? Int {
+            return int
+        }
+        if let int64 = value as? Int64 {
+            return Int(int64)
+        }
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let string = value as? String {
+            return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return nil
     }
 
     private func fetchSQLTablesOverHTTP() async throws -> [SQLTableInfo] {
@@ -1374,12 +3682,7 @@ class SmithersClient: ObservableObject {
     }
 
     private func httpRequestRaw(method: String, path: String, jsonBody: Data? = nil) async throws -> Data {
-        guard
-            let base = serverURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !base.isEmpty,
-            let baseURL = URL(string: base),
-            let url = URL(string: path, relativeTo: baseURL)
-        else {
+        guard let url = resolvedHTTPTransportURL(path: path) else {
             throw SmithersError.notAvailable(Self.noSQLTransportMessage)
         }
 
@@ -1682,7 +3985,9 @@ class SmithersClient: ObservableObject {
 
     private func getChatOutputHTTP(_ runId: String, port: Int) async throws -> [ChatBlock] {
         let encodedRunId = runId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? runId
-        let url = URL(string: "http://localhost:\(port)/v1/runs/\(encodedRunId)/chat")!
+        guard let url = resolvedHTTPTransportURL(path: "/v1/runs/\(encodedRunId)/chat", fallbackPort: port) else {
+            throw SmithersError.api("Invalid server URL while loading run chat")
+        }
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
@@ -1703,23 +4008,23 @@ class SmithersClient: ObservableObject {
 
     private func decodeChatBlocks(from data: Data) throws -> [ChatBlock] {
         if let direct = try? decoder.decode([ChatBlock].self, from: data) {
-            return direct
+            return deduplicatedChatBlocks(direct)
         }
         if let wrapped = try? decoder.decode(ChatBlocksResponse.self, from: data) {
-            return wrapped.blocks
+            return deduplicatedChatBlocks(wrapped.blocks)
         }
         if let envelope = try? decoder.decode(APIEnvelope<[ChatBlock]>.self, from: data),
            envelope.ok,
            let payload = envelope.data {
-            return payload
+            return deduplicatedChatBlocks(payload)
         }
         if let envelope = try? decoder.decode(DataEnvelope<[ChatBlock]>.self, from: data) {
-            return envelope.data
+            return deduplicatedChatBlocks(envelope.data)
         }
         if let lineMap = try? decoder.decode([String: String].self, from: data) {
             let parsed = parseLegacyChatMap(lineMap)
             if !parsed.isEmpty {
-                return parsed
+                return deduplicatedChatBlocks(parsed)
             }
         }
 
@@ -1828,7 +4133,9 @@ class SmithersClient: ObservableObject {
 
     private func hijackRunHTTP(_ runId: String, port: Int) async throws -> HijackSession {
         let encodedRunId = runId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? runId
-        let url = URL(string: "http://localhost:\(port)/v1/runs/\(encodedRunId)/hijack")!
+        guard let url = resolvedHTTPTransportURL(path: "/v1/runs/\(encodedRunId)/hijack", fallbackPort: port) else {
+            throw SmithersError.api("Invalid server URL while hijacking run")
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -1867,26 +4174,37 @@ class SmithersClient: ObservableObject {
 
     // MARK: - SSE Stream (HTTP)
 
-    private func sseStream(url: String) -> AsyncStream<SSEEvent> {
-        return sseStream(urls: [url])
+    private func emptySSEStream() -> AsyncStream<SSEEvent> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
     }
 
-    private func sseStream(urls: [String]) -> AsyncStream<SSEEvent> {
+    private func sseStream(url: URL, runId: String?) -> AsyncStream<SSEEvent> {
+        return sseStream(urls: [url], runId: runId)
+    }
+
+    private func sseStream(urls: [URL], runId: String?) -> AsyncStream<SSEEvent> {
         return AsyncStream { continuation in
-            let task = Task.detached { [session] in
-                for (index, rawURL) in urls.enumerated() {
+            let task = Task.detached { [streamSession] in
+                guard !urls.isEmpty else {
+                    continuation.finish()
+                    return
+                }
+
+                for (index, url) in urls.enumerated() {
                     if Task.isCancelled {
                         continuation.finish()
                         return
                     }
 
-                    guard let url = URL(string: rawURL) else { continue }
                     var request = URLRequest(url: url)
+                    request.timeoutInterval = .infinity
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
 
                     do {
-                        let (bytes, response) = try await session.bytes(for: request)
+                        let (bytes, response) = try await streamSession.bytes(for: request)
                         guard let http = response as? HTTPURLResponse else {
                             if index == urls.count - 1 {
                                 continuation.finish()
@@ -1906,7 +4224,9 @@ class SmithersClient: ObservableObject {
                         for try await line in bytes.lines {
                             if line.isEmpty {
                                 if !dataBuffer.isEmpty {
-                                    continuation.yield(SSEEvent(event: eventType, data: dataBuffer))
+                                    if let event = SSEEvent.filtered(event: eventType, data: dataBuffer, expectedRunId: runId) {
+                                        continuation.yield(event)
+                                    }
                                     eventType = nil
                                     dataBuffer = ""
                                 }
@@ -1921,7 +4241,9 @@ class SmithersClient: ObservableObject {
                         }
 
                         if !dataBuffer.isEmpty {
-                            continuation.yield(SSEEvent(event: eventType, data: dataBuffer))
+                            if let event = SSEEvent.filtered(event: eventType, data: dataBuffer, expectedRunId: runId) {
+                                continuation.yield(event)
+                            }
                         }
                         continuation.finish()
                         return
@@ -1961,9 +4283,400 @@ class SmithersClient: ObservableObject {
 // MARK: - Response wrappers (CLI JSON can be wrapped or bare)
 
 private struct RunsResponse: Decodable { let runs: [RunSummary] }
+private struct SnapshotRef {
+    let runId: String
+    let frameNo: Int
+    let rawValue: String
+}
+
+private struct WorkflowPathResponse: Decodable {
+    let path: String
+}
+
+private struct CLIInspectWorkflowResponse: Decodable {
+    let run: Run
+
+    struct Run: Decodable {
+        let workflow: String?
+    }
+}
+
+private struct ForkRunResponse: Decodable {
+    let forkedRunId: String
+    let parentRunId: String?
+    let parentFrame: Int?
+    let started: Bool?
+    let status: String?
+
+    func toRunSummary(workflowPath: String?) -> RunSummary {
+        RunSummary(
+            runId: forkedRunId,
+            workflowName: nil,
+            workflowPath: workflowPath,
+            status: RunStatus(rawValue: status ?? "") ?? .running,
+            startedAtMs: nil,
+            finishedAtMs: nil,
+            summary: nil,
+            errorJson: nil
+        )
+    }
+}
+
+private struct CLIRunEntry: Decodable {
+    let id: String
+    let workflow: String?
+    let status: String
+    let step: String?
+    let started: String?
+    let startedAtMs: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workflow
+        case status
+        case step
+        case started
+        case startedAtMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.workflow = normalizeCLIString(try container.decodeIfPresent(String.self, forKey: .workflow))
+        self.status = try container.decodeIfPresent(String.self, forKey: .status) ?? RunStatus.running.rawValue
+        self.step = normalizeCLIString(try container.decodeIfPresent(String.self, forKey: .step))
+        self.started = try container.decodeIfPresent(String.self, forKey: .started)
+        self.startedAtMs = decodeCLIInt64(container, forKey: .startedAtMs)
+            ?? parseCLITimestampMs(started)
+    }
+
+    func toRunSummary() -> RunSummary {
+        RunSummary(
+            runId: id,
+            workflowName: workflow,
+            workflowPath: nil,
+            status: normalizeCLIRunStatus(status),
+            startedAtMs: startedAtMs,
+            finishedAtMs: nil,
+            summary: nil,
+            errorJson: nil
+        )
+    }
+}
+
+private struct CLIRunsResponse: Decodable {
+    let runs: [CLIRunEntry]
+}
+
+private struct CLIInspectResponse: Decodable {
+    let run: CLIInspectRun
+    let steps: [CLIInspectStep]
+
+    enum CodingKeys: String, CodingKey {
+        case run
+        case steps
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.run = try container.decode(CLIInspectRun.self, forKey: .run)
+        self.steps = try container.decodeIfPresent([CLIInspectStep].self, forKey: .steps) ?? []
+    }
+
+    func toRunInspection() -> RunInspection {
+        let tasks = steps.map { $0.toRunTask() }
+        return RunInspection(run: run.toRunSummary(tasks: tasks), tasks: tasks)
+    }
+}
+
+private struct CLIInspectRun: Decodable {
+    let id: String
+    let workflow: String?
+    let workflowPath: String?
+    let status: String
+    let startedAtMs: Int64?
+    let finishedAtMs: Int64?
+    let errorJson: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case runId
+        case workflow
+        case workflowName
+        case workflowPath
+        case status
+        case started
+        case startedAtMs
+        case finished
+        case finishedAtMs
+        case error
+        case errorJson
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let idValue = try container.decodeIfPresent(String.self, forKey: .id)
+        let runIdValue = try container.decodeIfPresent(String.self, forKey: .runId)
+        guard let id = idValue ?? runIdValue else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.id,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected inspect run id")
+            )
+        }
+
+        self.id = id
+        let workflow = try container.decodeIfPresent(String.self, forKey: .workflow)
+        let workflowName = try container.decodeIfPresent(String.self, forKey: .workflowName)
+        self.workflow = normalizeCLIString(workflow ?? workflowName)
+        self.workflowPath = normalizeCLIString(try container.decodeIfPresent(String.self, forKey: .workflowPath))
+        self.status = try container.decodeIfPresent(String.self, forKey: .status) ?? RunStatus.running.rawValue
+        let started = try container.decodeIfPresent(String.self, forKey: .started)
+        let finished = try container.decodeIfPresent(String.self, forKey: .finished)
+        self.startedAtMs = decodeCLIInt64(container, forKey: .startedAtMs)
+            ?? parseCLITimestampMs(started)
+        self.finishedAtMs = decodeCLIInt64(container, forKey: .finishedAtMs)
+            ?? parseCLITimestampMs(finished)
+        let errorJson = try container.decodeIfPresent(String.self, forKey: .errorJson)
+        let error = try container.decodeIfPresent(CLIJSONValue.self, forKey: .error)
+        self.errorJson = errorJson ?? encodeCLIJSON(error)
+    }
+
+    func toRunSummary(tasks: [RunTask]) -> RunSummary {
+        RunSummary(
+            runId: id,
+            workflowName: workflow,
+            workflowPath: workflowPath,
+            status: normalizeCLIRunStatus(status),
+            startedAtMs: startedAtMs,
+            finishedAtMs: finishedAtMs,
+            summary: makeRunTaskSummary(tasks),
+            errorJson: errorJson
+        )
+    }
+}
+
+private struct CLIInspectStep: Decodable {
+    let id: String
+    let label: String?
+    let iteration: Int?
+    let state: String
+    let attempt: Int?
+    let updatedAtMs: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case nodeId
+        case label
+        case iteration
+        case state
+        case attempt
+        case lastAttempt
+        case updatedAt
+        case updatedAtMs
+        case startedAtMs
+        case finishedAtMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let idValue = try container.decodeIfPresent(String.self, forKey: .id)
+        let nodeIdValue = try container.decodeIfPresent(String.self, forKey: .nodeId)
+        guard let id = idValue ?? nodeIdValue else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.id,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected inspect step id")
+            )
+        }
+
+        self.id = id
+        self.label = normalizeCLIString(try container.decodeIfPresent(String.self, forKey: .label))
+        self.iteration = decodeCLIInt(container, forKey: .iteration)
+        self.state = normalizeCLIInspectStepState(try container.decodeIfPresent(String.self, forKey: .state) ?? "pending")
+        self.attempt = decodeCLIInt(container, forKey: .attempt)
+            ?? decodeCLIInt(container, forKey: .lastAttempt)
+        let updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        self.updatedAtMs = decodeCLIInt64(container, forKey: .updatedAtMs)
+            ?? parseCLITimestampMs(updatedAt)
+            ?? decodeCLIInt64(container, forKey: .finishedAtMs)
+            ?? decodeCLIInt64(container, forKey: .startedAtMs)
+    }
+
+    func toRunTask() -> RunTask {
+        RunTask(
+            nodeId: id,
+            label: label,
+            iteration: iteration,
+            state: state,
+            lastAttempt: attempt,
+            updatedAtMs: updatedAtMs
+        )
+    }
+}
+
+private enum CLIJSONValue: Codable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: CLIJSONValue])
+    case array([CLIJSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([CLIJSONValue].self) {
+            self = .array(value)
+        } else {
+            self = .object(try container.decode([String: CLIJSONValue].self))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .number(let value):
+            try container.encode(value)
+        case .bool(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+}
+
+private func normalizeCLIString(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+        return nil
+    }
+    return trimmed == "—" || trimmed == "-" ? nil : trimmed
+}
+
+private func parseCLITimestampMs(_ value: String?) -> Int64? {
+    guard let raw = normalizeCLIString(value) else { return nil }
+    if let ms = Int64(raw) {
+        return ms
+    }
+
+    let fractionalFormatter = ISO8601DateFormatter()
+    fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractionalFormatter.date(from: raw) {
+        return Int64(date.timeIntervalSince1970 * 1000)
+    }
+
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    if let date = formatter.date(from: raw) {
+        return Int64(date.timeIntervalSince1970 * 1000)
+    }
+
+    return nil
+}
+
+private func normalizeCLIRunStatus(_ status: String?) -> RunStatus {
+    switch status {
+    case RunStatus.waitingApproval.rawValue:
+        return .waitingApproval
+    case RunStatus.finished.rawValue:
+        return .finished
+    case RunStatus.failed.rawValue:
+        return .failed
+    case RunStatus.cancelled.rawValue:
+        return .cancelled
+    default:
+        return .running
+    }
+}
+
+private func normalizeCLIInspectStepState(_ state: String) -> String {
+    switch state {
+    case "in-progress", "started":
+        return "running"
+    default:
+        return state
+    }
+}
+
+private func makeRunTaskSummary(_ tasks: [RunTask]) -> [String: Int] {
+    var summary = ["total": tasks.count]
+    for task in tasks {
+        summary[task.state, default: 0] += 1
+    }
+    return summary
+}
+
+private func decodeCLIInt<K: CodingKey>(_ container: KeyedDecodingContainer<K>, forKey key: K) -> Int? {
+    if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+        return value
+    }
+    if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+        return Int(value)
+    }
+    return nil
+}
+
+private func decodeCLIInt64<K: CodingKey>(_ container: KeyedDecodingContainer<K>, forKey key: K) -> Int64? {
+    if let value = try? container.decodeIfPresent(Int64.self, forKey: key) {
+        return value
+    }
+    if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+        return Int64(value)
+    }
+    return nil
+}
+
+private func encodeCLIJSON(_ value: CLIJSONValue?) -> String? {
+    guard let value else { return nil }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    guard let data = try? encoder.encode(value) else { return nil }
+    return String(data: data, encoding: .utf8)
+}
+
 private struct MemoryResponse: Decodable { let facts: [MemoryFact] }
 private struct RecallResponse: Decodable { let results: [MemoryRecallResult] }
 private struct ScoresResponse: Decodable { let scores: [ScoreRow] }
+private struct LandingListResponse: Decodable {
+    let landings: [Landing]?
+    let items: [Landing]?
+}
+private struct LandingDetailResponse: Decodable {
+    let landing: Landing
+    let changes: [LandingChangeResponse]?
+}
+private struct LandingChangeResponse: Decodable {
+    let changeID: String
+
+    enum CodingKeys: String, CodingKey {
+        case changeID
+        case changeIDSnake = "change_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        changeID = try container.decodeIfPresent(String.self, forKey: .changeIDSnake) ??
+            container.decode(String.self, forKey: .changeID)
+    }
+}
+private struct IssueResponse: Decodable { let issue: SmithersIssue }
+private struct IssueListResponse: Decodable {
+    let issues: [SmithersIssue]?
+    let items: [SmithersIssue]?
+}
+private struct WorkspacesResponse: Decodable { let workspaces: [Workspace] }
+private struct WorkspaceSnapshotsResponse: Decodable { let snapshots: [WorkspaceSnapshot] }
 private struct ChatBlocksResponse: Decodable { let blocks: [ChatBlock] }
 private struct HijackSessionResponse: Decodable { let session: HijackSession }
 private struct DataEnvelope<T: Decodable>: Decodable { let data: T }
