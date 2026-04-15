@@ -2,8 +2,7 @@ import XCTest
 @testable import SmithersGUI
 
 final class ChatTargetPickerTests: XCTestCase {
-
-    func testBuildChatTargetsIncludesSmithersAsRecommendedFirstOption() {
+    func testBuildChatTargetsIncludesRecommendedSmithersFirst() {
         let targets = buildChatTargets(from: [])
 
         XCTAssertEqual(targets.count, 1)
@@ -13,64 +12,61 @@ final class ChatTargetPickerTests: XCTestCase {
         XCTAssertTrue(targets[0].usable)
     }
 
-    func testBuildChatTargetsIncludesOnlyUsableExternalAgents() {
+    func testBuildChatTargetsIncludesOnlyUsableAgents() {
         let targets = buildChatTargets(from: [
             SmithersAgent(
                 id: "codex",
                 name: "Codex",
                 command: "codex",
                 binaryPath: "/usr/local/bin/codex",
-                status: "api-key",
+                status: "binary-only",
                 hasAuth: false,
-                hasAPIKey: true,
+                hasAPIKey: false,
                 usable: true,
-                roles: ["coding", "implement"],
+                roles: ["coding"],
                 version: nil,
                 authExpired: nil
             ),
             SmithersAgent(
-                id: "forge",
-                name: "Forge",
-                command: "forge",
+                id: "gemini",
+                name: "Gemini",
+                command: "gemini",
                 binaryPath: "",
                 status: "unavailable",
                 hasAuth: false,
                 hasAPIKey: false,
                 usable: false,
+                roles: ["research"],
+                version: nil,
+                authExpired: nil
+            ),
+        ])
+
+        XCTAssertEqual(targets.map(\.id), ["smithers", "codex"])
+        XCTAssertFalse(targets.contains(where: { $0.id == "gemini" }))
+    }
+
+    func testBuildChatTargetsFallsBackToCommandWhenBinaryPathMissing() {
+        let targets = buildChatTargets(from: [
+            SmithersAgent(
+                id: "codex",
+                name: "Codex",
+                command: "codex",
+                binaryPath: "",
+                status: "binary-only",
+                hasAuth: false,
+                hasAPIKey: false,
+                usable: true,
                 roles: ["coding"],
                 version: nil,
                 authExpired: nil
             ),
         ])
 
-        XCTAssertEqual(targets.count, 2)
-        XCTAssertEqual(targets[1].id, "codex")
-        XCTAssertEqual(targets[1].kind, .externalAgent)
-        XCTAssertEqual(targets[1].binary, "/usr/local/bin/codex")
+        XCTAssertEqual(targets[1].binary, "codex")
     }
 
-    func testBuildChatTargetsFallsBackToCommandWhenBinaryPathMissing() {
-        let targets = buildChatTargets(from: [
-            SmithersAgent(
-                id: "opencode",
-                name: "OpenCode",
-                command: "opencode",
-                binaryPath: "",
-                status: "binary-only",
-                hasAuth: false,
-                hasAPIKey: false,
-                usable: true,
-                roles: ["coding", "chat"],
-                version: nil,
-                authExpired: nil
-            ),
-        ])
-
-        XCTAssertEqual(targets.count, 2)
-        XCTAssertEqual(targets[1].binary, "opencode")
-    }
-
-    func testChatTargetStatusLabelMatchesTUISemantics() {
+    func testChatTargetStatusLabelMatchesExpectedValues() {
         XCTAssertEqual(chatTargetStatusLabel("likely-subscription"), "Signed in")
         XCTAssertEqual(chatTargetStatusLabel("api-key"), "API key")
         XCTAssertEqual(chatTargetStatusLabel("binary-only"), "Binary only")

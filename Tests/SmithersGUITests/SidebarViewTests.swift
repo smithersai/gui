@@ -72,7 +72,7 @@ final class NavDestinationTests: XCTestCase {
 
     func testSpecificIcons() {
         XCTAssertEqual(NavDestination.chat.icon, "message")
-        XCTAssertEqual(NavDestination.terminal.icon, "terminal")
+        XCTAssertEqual(NavDestination.terminal.icon, "terminal.fill")
         XCTAssertEqual(NavDestination.dashboard.icon, "square.grid.2x2")
         XCTAssertEqual(NavDestination.agents.icon, "person.2")
         XCTAssertEqual(NavDestination.changes.icon, "point.3.connected.trianglepath.dotted")

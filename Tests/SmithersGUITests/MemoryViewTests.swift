@@ -322,8 +322,20 @@ final class MemoryPrettyPrintJSONTests: XCTestCase {
     func testPrettyPrintPlainStringValue() {
         let input = #""hello""#
         let data = input.data(using: .utf8)!
-        let parsed = try? JSONSerialization.jsonObject(with: data)
-        XCTAssertNotNil(parsed, "A quoted string is valid JSON")
+
+        do {
+            let parsed = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+            XCTAssertEqual(parsed as? String, "hello", "A quoted string is valid top-level JSON")
+
+            let pretty = try JSONSerialization.data(
+                withJSONObject: parsed,
+                options: [.prettyPrinted, .fragmentsAllowed]
+            )
+            let result = String(data: pretty, encoding: .utf8)
+            XCTAssertEqual(result, input, "A plain quoted string should serialize as valid JSON")
+        } catch {
+            XCTFail("A quoted string should parse and pretty-print as valid JSON: \(error)")
+        }
     }
 }
 

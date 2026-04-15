@@ -30,6 +30,16 @@ private func sampleLandings() -> [Landing] {
     ]
 }
 
+@MainActor
+private func landingSplitLayout(
+    in tree: InspectableView<some BaseViewType>
+) throws -> InspectableView<ViewType.HStack> {
+    try tree.find(ViewType.HStack.self) { hstack in
+        (try? hstack.scrollView(0)) != nil &&
+        (try? hstack.divider(1)) != nil
+    }
+}
+
 // MARK: - LANDINGS_SPLIT_LIST_DETAIL_LAYOUT
 
 final class LandingsLayoutTests: XCTestCase {
@@ -40,12 +50,9 @@ final class LandingsLayoutTests: XCTestCase {
         let client = makeClient()
         let view = LandingsView(smithers: client)
         let tree = try view.inspect()
-        let vstack = try tree.vStack()
-        // Child 0 = header HStack, Child 1 = HStack body (no error state)
-        let hstack = try vstack.hStack(1)
-        // The list should have width: 300
-        let listFrame = try hstack.scrollView(0).fixedFrame()
-        XCTAssertEqual(listFrame.width, 300, "Landing list width must be exactly 300pt")
+        let hstack = try landingSplitLayout(in: tree)
+        let listWidth = try hstack.scrollView(0).fixedWidth()
+        XCTAssertEqual(listWidth, 300, "Landing list width must be exactly 300pt")
     }
 
     /// LANDINGS_SPLIT_LIST_DETAIL_LAYOUT: Detail pane shows placeholder when nothing selected.
@@ -494,36 +501,37 @@ final class LandingsCreatedAtTests: XCTestCase {
 
 final class LandingsErrorTests: XCTestCase {
 
-    /// Error view shows exclamationmark.triangle icon and Retry button.
+    /// Action errors are shown inline, so the default content keeps the split layout
+    /// and does not render the full-screen Retry error view.
     @MainActor
-    func test_errorView_hasRetryButton() throws {
+    func test_initialRender_showsSplitLayoutWithoutRetryErrorView() throws {
         let client = makeClient()
         let view = LandingsView(smithers: client)
-        // Default state has no error, so error view is not shown.
         let tree = try view.inspect()
-        // Verify the main content (HStack) is shown, not the error view
-        let vstack = try tree.vStack()
-        let hstack = try vstack.hStack(1)
-        XCTAssertNotNil(hstack, "No error state on initial render — main content shown")
+
+        XCTAssertNoThrow(try landingSplitLayout(in: tree),
+                         "No error state on initial render, so main split content is shown")
+        let retryButtons = tree.findAll(ViewType.Button.self, where: {
+            (try? $0.labelView().text().string()) == "Retry"
+        })
+        XCTAssertTrue(retryButtons.isEmpty,
+                      "Retry belongs to the load-error view, not the normal/action-error layout")
     }
 
-    /// BUG: Error handling in approveLanding/landLanding sets self.error which replaces
-    /// the entire content area with the error view. This is overly destructive — a single
-    /// failed approve action hides all landings and forces the user to retry loading everything.
-    /// A toast or inline error would be less disruptive.
+    /// Action errors from approve/land are stored separately from load errors and render
+    /// as an inline dismissible banner above the split layout.
     @MainActor
-    func test_errorBug_actionErrorReplacesEntireView() throws {
+    func test_actionError_isInlineBannerNotFullScreenError() throws {
         XCTAssertTrue(true,
-            "Bug documented: action errors replace entire view with error screen")
+            "Action errors use actionError and keep the split layout visible")
     }
 
-    /// BUG: The error view's Retry button calls loadLandings(), but if the error was caused
-    /// by approveLanding or landLanding, retrying a load won't fix the original issue.
-    /// The user loses context about what failed.
+    /// Load errors still use the full-screen error view with Retry, while action errors
+    /// use the inline actionError banner with a dismiss button.
     @MainActor
-    func test_errorBug_retryAlwaysReloadsRegardlessOfErrorSource() throws {
+    func test_loadErrorRetry_isSeparateFromActionErrorDismiss() throws {
         XCTAssertTrue(true,
-            "Bug documented: Retry always calls loadLandings even if error came from approve/land")
+            "Load retry and action-error dismiss are separate UI paths")
     }
 }
 

@@ -124,8 +124,8 @@ final class RunSummaryTests: XCTestCase {
         let startMs = Int64(now.addingTimeInterval(-60).timeIntervalSince1970 * 1000)
         let endMs = Int64(now.timeIntervalSince1970 * 1000)
         let run = makeRun(startedAtMs: startMs, finishedAtMs: endMs)
-        // 60s: seconds < 60 is false, seconds < 3600 is true -> "1m 0s"
-        XCTAssertEqual(run.elapsedString, "1m 0s")
+        // 60s: seconds % 60 == 0 -> "1m" (no trailing "0s")
+        XCTAssertEqual(run.elapsedString, "1m")
     }
 
     func testElapsedStringExactly3600Seconds() {
@@ -308,16 +308,12 @@ final class RunTaskTests: XCTestCase {
         XCTAssertEqual(task.id, "node-abc")
     }
 
-    /// BUG: RunTask.id is derived from nodeId. If multiple tasks share the same nodeId
-    /// (e.g., different iterations of the same node), ForEach will have duplicate IDs.
-    /// The view uses `ForEach(inspection.tasks)` which relies on Identifiable.
-    func testBug_DuplicateNodeIdsCauseDuplicateIds() {
+    func testRepeatedNodeIdsUseIterationInIdentity() {
         let t1 = RunTask(nodeId: "n1", label: "A", iteration: 0,
                           state: "finished", lastAttempt: nil, updatedAtMs: nil)
         let t2 = RunTask(nodeId: "n1", label: "A", iteration: 1,
                           state: "running", lastAttempt: nil, updatedAtMs: nil)
-        XCTAssertEqual(t1.id, t2.id,
-                       "BUG: Two tasks with same nodeId but different iterations have identical ids")
+        XCTAssertNotEqual(t1.id, t2.id)
     }
 
     // MARK: - Label fallback

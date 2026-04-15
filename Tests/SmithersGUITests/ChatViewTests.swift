@@ -503,24 +503,17 @@ final class MessageRowTests: XCTestCase {
         _ = try view.inspect()
     }
 
-    /// BUG: diff type messages are not rendered at all in MessageRow.
-    /// The MessageRow checks for .user, .assistant, .command, .status but never handles .diff.
     /// CHAT_GIT_DIFF_INLINE: Diff messages should show inline git diff content.
-    func testDiffMessageIsNotRendered_BUG() throws {
+    func testDiffMessageRendered() throws {
         let msg = diffMessage(id: "d1")
         let view = MessageRow(message: msg)
         let inspected = try view.inspect()
         let texts = inspected.findAll(ViewType.Text.self)
         let textStrings = texts.compactMap { try? $0.string() }
-        // BUG: The .diff case is never matched in MessageRow, so no diff content is shown.
-        // This test documents the bug: diff messages render as empty HStacks.
-        XCTAssertFalse(
-            textStrings.contains("File changes"),
-            "BUG DOCUMENTED: .diff messages are silently dropped. MessageRow has no case for .diff type."
+        XCTAssertTrue(
+            textStrings.contains(where: { $0.contains("+new line") }),
+            "Diff snippet should be rendered. Found: \(textStrings)"
         )
-        // What SHOULD happen (this assertion will fail, documenting the bug):
-        // Uncomment the next line when the bug is fixed:
-        // XCTAssertTrue(textStrings.contains(where: { $0.contains("+new line") }), "Diff snippet should be rendered")
     }
 }
 
@@ -554,31 +547,26 @@ final class CommandBlockTests: XCTestCase {
         )
     }
 
-    /// CHAT_COMMAND_EXIT_CODE_BADGE: Should display "exit 0" badge.
-    /// BUG: The CommandBlock always shows "exit 0" regardless of the actual exitCode.
-    func testExitCodeBadgeAlwaysShowsZero_BUG() throws {
+    /// CHAT_COMMAND_EXIT_CODE_BADGE: Should display the actual exit code.
+    func testExitCodeBadgeShowsActualExitCode() throws {
         let cmd = Command(cmd: "false", cwd: "/tmp", output: "", exitCode: 1, running: false)
         let view = CommandBlock(command: cmd)
         let inspected = try view.inspect()
         let texts = inspected.findAll(ViewType.Text.self)
         let textStrings = texts.compactMap { try? $0.string() }
 
-        // BUG: The exit code badge is hardcoded to "exit 0" and uses a checkmark icon.
-        // It ignores command.exitCode entirely.
         XCTAssertTrue(
-            textStrings.contains("exit 0"),
-            "BUG DOCUMENTED: CommandBlock hardcodes 'exit 0' even when exitCode is 1"
-        )
-        // What SHOULD happen:
-        XCTAssertFalse(
             textStrings.contains("exit 1"),
-            "BUG: 'exit 1' should be shown for exitCode=1, but it's hardcoded to 'exit 0'"
+            "CommandBlock should show actual exit code 'exit 1'. Found: \(textStrings)"
+        )
+        XCTAssertFalse(
+            textStrings.contains("exit 0"),
+            "Should not show 'exit 0' when exitCode is 1"
         )
     }
 
-    /// CHAT_COMMAND_EXIT_CODE_BADGE: Verify checkmark icon is always shown.
-    /// BUG: The icon is always checkmark.circle, even for failures.
-    func testExitCodeBadgeAlwaysShowsCheckmark_BUG() throws {
+    /// CHAT_COMMAND_EXIT_CODE_BADGE: Verify xmark.circle icon for non-zero exit codes.
+    func testExitCodeBadgeShowsXmarkForFailure() throws {
         let cmd = Command(cmd: "fail", cwd: "/tmp", output: "error", exitCode: 127, running: false)
         let view = CommandBlock(command: cmd)
         let inspected = try view.inspect()
@@ -586,12 +574,14 @@ final class CommandBlockTests: XCTestCase {
         let systemNames = images.compactMap { img -> String? in
             try? img.actualImage().name()
         }
-        // BUG: Always shows checkmark.circle even for non-zero exit codes
         XCTAssertTrue(
-            systemNames.contains("checkmark.circle"),
-            "BUG DOCUMENTED: Always shows checkmark.circle regardless of exit code"
+            systemNames.contains("xmark.circle"),
+            "Should show xmark.circle for non-zero exit code. Found: \(systemNames)"
         )
-        // Should show xmark.circle or similar for non-zero exit codes
+        XCTAssertFalse(
+            systemNames.contains("checkmark.circle"),
+            "Should not show checkmark.circle for non-zero exit code"
+        )
     }
 
     /// CHAT_COMMAND_CWD_DISPLAY: The working directory should be displayed.
@@ -607,15 +597,16 @@ final class CommandBlockTests: XCTestCase {
         )
     }
 
-    /// CHAT_COMMAND_EXIT_CODE_BADGE: Badge styling uses success color for exit 0.
-    /// BUG: Uses success color even for non-zero exit codes since exitCode is ignored.
-    func testExitCodeBadgeUsesSuccessColorAlways_BUG() throws {
-        // This is a design/logic bug: the badge color should be red/danger for non-zero exit codes
+    /// CHAT_COMMAND_EXIT_CODE_BADGE: Badge styling uses correct color based on exit code.
+    func testExitCodeBadgeUsesCorrectStyling() throws {
         let cmd = Command(cmd: "rm nonexistent", cwd: "/tmp", output: "No such file", exitCode: 1, running: false)
         let view = CommandBlock(command: cmd)
-        // The view renders without error, but the styling is wrong (always green)
         let inspected = try view.inspect()
-        XCTAssertNoThrow(try inspected.find(ViewType.HStack.self))
+        // Verify the view renders and shows xmark.circle for failure
+        let images = inspected.findAll(ViewType.Image.self)
+        let names = images.compactMap { try? $0.actualImage().name() }
+        XCTAssertTrue(names.contains("xmark.circle"),
+                      "Non-zero exit code should show xmark.circle icon")
     }
 
     /// Test empty command output.
@@ -1016,52 +1007,50 @@ final class ChatViewStatusTextTests: XCTestCase {
 
 final class ChatViewBugDocumentationTests: XCTestCase {
 
-    /// BUG: CommandBlock always shows "exit 0" and a checkmark, ignoring the actual exit code.
-    /// This means failed commands appear successful in the UI.
-    func testCommandBlockIgnoresExitCode_BUG() throws {
+    /// CommandBlock displays the actual exit code correctly.
+    func testCommandBlockShowsActualExitCode() throws {
         let failedCmd = Command(cmd: "make build", cwd: "/project", output: "error: build failed", exitCode: 2, running: false)
         let view = CommandBlock(command: failedCmd)
         let inspected = try view.inspect()
         let texts = inspected.findAll(ViewType.Text.self)
         let textStrings = texts.compactMap { try? $0.string() }
 
-        // Documents the bug: should show "exit 2" but shows "exit 0"
-        XCTAssertTrue(textStrings.contains("exit 0"), "BUG: Hardcoded 'exit 0' instead of actual exit code")
-        XCTAssertFalse(textStrings.contains("exit 2"), "BUG: Actual exit code is never displayed")
+        XCTAssertTrue(textStrings.contains("exit 2"), "Should show actual exit code 'exit 2'")
+        XCTAssertFalse(textStrings.contains("exit 0"), "Should not show 'exit 0' for exitCode=2")
     }
 
-    /// BUG: CommandBlock always shows success (green) styling, even for failed commands.
-    /// The checkmark.circle icon and Theme.success color are hardcoded.
-    func testCommandBlockAlwaysShowsSuccessStyling_BUG() throws {
+    /// CommandBlock shows correct failure styling for non-zero exit codes.
+    func testCommandBlockShowsFailureStyling() throws {
         let failedCmd = Command(cmd: "test", cwd: "/tmp", output: "", exitCode: 127, running: false)
         let view = CommandBlock(command: failedCmd)
         let inspected = try view.inspect()
         let images = inspected.findAll(ViewType.Image.self)
         let names = images.compactMap { try? $0.actualImage().name() }
-        // BUG: Always checkmark, never xmark for failures
-        XCTAssertTrue(names.contains("checkmark.circle"))
+        XCTAssertTrue(names.contains("xmark.circle"),
+                      "Failed commands should show xmark.circle. Found: \(names)")
+        XCTAssertFalse(names.contains("checkmark.circle"),
+                       "Failed commands should not show checkmark.circle")
     }
 
-    /// BUG: MessageRow does not handle .diff message type.
-    /// Diff messages are silently swallowed.
-    func testDiffMessagesAreSilentlySwallowed_BUG() throws {
+    /// MessageRow renders .diff messages with diff content.
+    func testDiffMessagesRendered() throws {
         let msg = diffMessage(id: "d1")
         let view = MessageRow(message: msg)
         let inspected = try view.inspect()
         let texts = inspected.findAll(ViewType.Text.self)
-        // A .diff message produces no text output at all
-        XCTAssertTrue(texts.isEmpty, "BUG: .diff messages produce no output in MessageRow")
+        let textStrings = texts.compactMap { try? $0.string() }
+        XCTAssertFalse(texts.isEmpty, "Diff messages should produce output in MessageRow")
+        XCTAssertTrue(textStrings.contains(where: { $0.contains("+new line") }),
+                      "Diff snippet should be rendered")
     }
 
-    /// BUG: The paperclip Image is not wrapped in a Button, so it's not tappable.
-    /// CHAT_PAPERCLIP_ATTACHMENT_BUTTON implies it should be a button.
+    /// CHAT_PAPERCLIP_ATTACHMENT_BUTTON: The paperclip is a tappable Button.
     @MainActor
-    func testPaperclipIsNotAButton_BUG() throws {
+    func testPaperclipIsAButton() throws {
         let agent = makeAgent()
         let view = ChatView(agent: agent, onSend: { _ in })
         let inspected = try view.inspect()
         let buttons = inspected.findAll(ViewType.Button.self)
-        // Check if any button contains a paperclip image
         var paperclipInButton = false
         for button in buttons {
             let images = button.findAll(ViewType.Image.self)
@@ -1071,15 +1060,15 @@ final class ChatViewBugDocumentationTests: XCTestCase {
                 }
             }
         }
-        XCTAssertFalse(
+        XCTAssertTrue(
             paperclipInButton,
-            "BUG DOCUMENTED: paperclip is a plain Image, not a Button. CHAT_PAPERCLIP_ATTACHMENT_BUTTON expects it to be tappable."
+            "Paperclip should be wrapped in a Button"
         )
     }
 
-    /// BUG: The "at" mention Image is also not wrapped in a Button.
+    /// The "at" mention icon is wrapped in a Button.
     @MainActor
-    func testAtMentionIsNotAButton_BUG() throws {
+    func testAtMentionIsAButton() throws {
         let agent = makeAgent()
         let view = ChatView(agent: agent, onSend: { _ in })
         let inspected = try view.inspect()
@@ -1093,22 +1082,21 @@ final class ChatViewBugDocumentationTests: XCTestCase {
                 }
             }
         }
-        XCTAssertFalse(
+        XCTAssertTrue(
             atInButton,
-            "BUG DOCUMENTED: 'at' icon is a plain Image, not a Button."
+            "'at' icon should be wrapped in a Button"
         )
     }
 
-    /// BUG: CommandBlock does not show running state at all.
-    /// When command.running is true, there's no visual indicator (spinner, etc.).
-    func testRunningCommandHasNoVisualIndicator_BUG() throws {
+    /// CommandBlock shows a ProgressView spinner when the command is running.
+    func testRunningCommandHasProgressView() throws {
         let cmd = Command(cmd: "make test", cwd: "/project", output: "", exitCode: 0, running: true)
         let view = CommandBlock(command: cmd)
         let inspected = try view.inspect()
         let progressViews = inspected.findAll(ViewType.ProgressView.self)
-        XCTAssertEqual(
-            progressViews.count, 0,
-            "BUG DOCUMENTED: CommandBlock shows no spinner/progress for running commands"
+        XCTAssertGreaterThanOrEqual(
+            progressViews.count, 1,
+            "CommandBlock should show a ProgressView spinner for running commands"
         )
     }
 

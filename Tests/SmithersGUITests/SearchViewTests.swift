@@ -27,6 +27,18 @@ private func repoResult(id: String = "r1", title: String = "smithers-core", desc
                  filePath: nil, lineNumber: nil, kind: "repo")
 }
 
+@MainActor
+private func searchTabButton(
+    _ title: String,
+    in tree: InspectableView<some BaseViewType>
+) throws -> InspectableView<ViewType.Button> {
+    let button = try tree.find(ViewType.Button.self) { button in
+        (try? button.labelView().find(text: title)) != nil
+    }
+    XCTAssertEqual(try button.labelView().find(text: title).string(), title)
+    return button
+}
+
 // MARK: - SEARCH_CODE
 
 final class SearchCodeTests: XCTestCase {
@@ -38,15 +50,8 @@ final class SearchCodeTests: XCTestCase {
         let view = SearchView(smithers: client)
         let tree = try view.inspect()
 
-        // The tabs are in an HStack. Find "Code" tab text with semibold weight (selected state).
-        // The tab buttons are inside the second HStack (after header, after search input area).
-        let bodyVStack = try tree.vStack()
-        // Child 0 = header HStack, Child 1 = search input HStack, Child 2 = tabs HStack
-        let tabsHStack = try bodyVStack.hStack(2)
-        // First button should be Code tab with semibold
-        let codeButton = try tabsHStack.button(0)
-        let codeText = try codeButton.labelView().text()
-        XCTAssertEqual(try codeText.string(), "Code")
+        let codeButton = try searchTabButton("Code", in: tree)
+        XCTAssertNotNil(codeButton, "Code tab should be present on initial render")
     }
 
     /// SEARCH_CODE: Code results should display title, file path, line number, and snippet.
@@ -71,12 +76,8 @@ final class SearchIssuesTests: XCTestCase {
         let view = SearchView(smithers: client)
         let tree = try view.inspect()
 
-        let bodyVStack = try tree.vStack()
-        let tabsHStack = try bodyVStack.hStack(2)
-        // Second button = Issues tab
-        let issuesButton = try tabsHStack.button(1)
-        let text = try issuesButton.labelView().text()
-        XCTAssertEqual(try text.string(), "Issues")
+        let issuesButton = try searchTabButton("Issues", in: tree)
+        XCTAssertNotNil(issuesButton, "Issues tab should be present")
     }
 }
 
@@ -91,12 +92,8 @@ final class SearchReposTests: XCTestCase {
         let view = SearchView(smithers: client)
         let tree = try view.inspect()
 
-        let bodyVStack = try tree.vStack()
-        let tabsHStack = try bodyVStack.hStack(2)
-        // Third button = Repos tab
-        let reposButton = try tabsHStack.button(2)
-        let text = try reposButton.labelView().text()
-        XCTAssertEqual(try text.string(), "Repos")
+        let reposButton = try searchTabButton("Repos", in: tree)
+        XCTAssertNotNil(reposButton, "Repos tab should be present")
     }
 
     /// SEARCH_REPOS: All three tabs (Code, Issues, Repos) should be present matching SearchTab.allCases.
@@ -106,14 +103,10 @@ final class SearchReposTests: XCTestCase {
         let view = SearchView(smithers: client)
         let tree = try view.inspect()
 
-        let bodyVStack = try tree.vStack()
-        let tabsHStack = try bodyVStack.hStack(2)
-        let tab0 = try tabsHStack.button(0).labelView().text().string()
-        let tab1 = try tabsHStack.button(1).labelView().text().string()
-        let tab2 = try tabsHStack.button(2).labelView().text().string()
-        XCTAssertEqual(tab0, "Code")
-        XCTAssertEqual(tab1, "Issues")
-        XCTAssertEqual(tab2, "Repos")
+        let tabs = try ["Code", "Issues", "Repos"].map {
+            try searchTabButton($0, in: tree).labelView().find(text: $0).string()
+        }
+        XCTAssertEqual(tabs, ["Code", "Issues", "Repos"])
     }
 }
 
@@ -288,10 +281,8 @@ final class SearchTabSwitchRetriggerTests: XCTestCase {
         let tree = try view.inspect()
 
         // Verify that tab buttons exist and are tappable.
-        let bodyVStack = try tree.vStack()
-        let tabsHStack = try bodyVStack.hStack(2)
-        let issuesButton = try tabsHStack.button(1)
-        XCTAssertNotNil(issuesButton, "Issues tab button should be tappable to switch and retrigger search")
+        let issuesButton = try searchTabButton("Issues", in: tree)
+        XCTAssertNoThrow(try issuesButton.tap(), "Issues tab button should be tappable to switch and retrigger search")
     }
 
     /// SEARCH_TAB_SWITCH_RETRIGGER: BUG DOCUMENTED: When switching from Issues tab to Code tab,

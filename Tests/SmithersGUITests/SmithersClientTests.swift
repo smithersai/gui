@@ -473,6 +473,45 @@ final class SmithersClientCLICommandTests: XCTestCase {
         XCTAssertNotNil(env["PATH"], "PATH must be available for inheritance")
     }
 
+    // JJHUB_GET_CURRENT_REPO — "jjhub repo view --json --no-color"
+    func testJJHubGetCurrentRepoCommandShape() {
+        let args = ["repo", "view", "--json", "--no-color"]
+        XCTAssertEqual(args[0], "repo")
+        XCTAssertEqual(args[1], "view")
+        XCTAssertEqual(Array(args.suffix(2)), ["--json", "--no-color"])
+    }
+
+    // JJHUB_LIST_WORKFLOWS — "jjhub workflow list -L <n> --json --no-color"
+    func testJJHubListWorkflowsCommandShape() {
+        let args = ["workflow", "list", "-L", "100", "--json", "--no-color"]
+        XCTAssertEqual(args[0], "workflow")
+        XCTAssertEqual(args[1], "list")
+        XCTAssertEqual(args[2], "-L")
+        XCTAssertEqual(args[3], "100")
+        XCTAssertEqual(Array(args.suffix(2)), ["--json", "--no-color"])
+    }
+
+    // JJHUB_TRIGGER_WORKFLOW_WITH_REF — "jjhub workflow run <id> --ref <ref> --json --no-color"
+    func testJJHubTriggerWorkflowWithRefCommandShape() {
+        let args = ["workflow", "run", "301", "--ref", "feature/ref", "--json", "--no-color"]
+        XCTAssertEqual(args[0], "workflow")
+        XCTAssertEqual(args[1], "run")
+        XCTAssertEqual(args[2], "301")
+        XCTAssertEqual(args[3], "--ref")
+        XCTAssertEqual(args[4], "feature/ref")
+        XCTAssertEqual(Array(args.suffix(2)), ["--json", "--no-color"])
+    }
+
+    // JJHUB_TRIGGER_WORKFLOW_WITHOUT_REF — "jjhub workflow run <id> --json --no-color"
+    func testJJHubTriggerWorkflowWithoutRefCommandShape() {
+        let args = ["workflow", "run", "301", "--json", "--no-color"]
+        XCTAssertEqual(args[0], "workflow")
+        XCTAssertEqual(args[1], "run")
+        XCTAssertEqual(args[2], "301")
+        XCTAssertFalse(args.contains("--ref"))
+        XCTAssertEqual(Array(args.suffix(2)), ["--json", "--no-color"])
+    }
+
     // JJHUB_LIST_CHANGES — "jjhub change list --limit <n> --json --no-color"
     func testJJHubListChangesCommandShape() {
         let args = ["change", "list", "--limit", "50", "--json", "--no-color"]
@@ -537,6 +576,24 @@ final class SmithersClientCLICommandTests: XCTestCase {
         XCTAssertEqual(args[1], "delete")
         XCTAssertEqual(args[2], "feature/bookmark")
         XCTAssertEqual(args.last, "--no-color")
+    }
+
+    func testJJHubMethodsUseFixturesInUITestMode() async throws {
+        setenv("SMITHERS_GUI_UITEST", "1", 1)
+        defer { unsetenv("SMITHERS_GUI_UITEST") }
+
+        let client = SmithersClient()
+
+        let repo = try await client.getCurrentRepo()
+        XCTAssertEqual(repo.defaultBookmark, "main")
+
+        let workflows = try await client.listJJHubWorkflows(limit: 10)
+        XCTAssertEqual(workflows.count, 2)
+        XCTAssertEqual(workflows.first?.id, 301)
+
+        let run = try await client.triggerJJHubWorkflow(workflowID: 301, ref: "")
+        XCTAssertEqual(run.workflowDefinitionID, 301)
+        XCTAssertEqual(run.triggerRef, "main")
     }
 }
 

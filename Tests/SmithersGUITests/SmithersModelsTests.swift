@@ -147,7 +147,7 @@ final class SmithersModelsTests: XCTestCase {
         {"nodeId":"n1","label":"Step 1","iteration":2,"state":"running","lastAttempt":1,"updatedAtMs":1700000000000}
         """.data(using: .utf8)!
         let task = try JSONDecoder().decode(RunTask.self, from: json)
-        XCTAssertEqual(task.id, "n1")
+        XCTAssertEqual(task.id, "n1-2")
         XCTAssertEqual(task.label, "Step 1")
         XCTAssertEqual(task.iteration, 2)
         XCTAssertEqual(task.state, "running")

@@ -69,6 +69,22 @@ private let sampleProps: [PromptInput] = [
     PromptInput(name: "team", type: nil, defaultValue: "engineering"),
 ]
 
+@MainActor
+private func loadedPromptsView(_ client: MockSmithersClient, prompts: [SmithersPrompt]) -> PromptsView {
+    client.mockPrompts = prompts
+    return PromptsView(smithers: client, initialPrompts: prompts)
+}
+
+private let promptPropPattern = "\\{\\s*props\\.([\\w.-]+)\\s*\\}"
+
+private func discoveredPropNames(in source: String) throws -> [String] {
+    let pattern = try NSRegularExpression(pattern: promptPropPattern)
+    let matches = pattern.matches(in: source, range: NSRange(source.startIndex..., in: source))
+    return matches.compactMap { match in
+        Range(match.range(at: 1), in: source).map { String(source[$0]) }
+    }
+}
+
 // MARK: - Model-level tests
 
 final class SmithersPromptModelTests: XCTestCase {
@@ -108,13 +124,11 @@ final class PromptsListWidthTests: XCTestCase {
     /// The prompt list sidebar must be exactly 240pt wide.
     func testListWidthIs240() throws {
         let client = MockSmithersClient()
-        client.mockPrompts = samplePrompts
-        let view = PromptsView(smithers: client)
+        let view = loadedPromptsView(client, prompts: samplePrompts)
         let inspector = try view.inspect()
 
-        // The structure: VStack > HStack > promptList.frame(width: 240)
-        // Find the ScrollView inside the HStack and check its fixed frame.
-        let hstack = try inspector.find(ViewType.HStack.self)
+        // The structure: VStack > header HStack > content HStack > promptList.frame(width: 240)
+        let hstack = try inspector.vStack().hStack(1)
         let listFrame = try hstack.scrollView(0).fixedFrame()
         XCTAssertEqual(listFrame.width, 240, "Prompt list width must be exactly 240pt")
     }
@@ -127,16 +141,14 @@ final class PromptsListTests: XCTestCase {
 
     func testEmptyStateShowsNoPromptsFound() throws {
         let client = MockSmithersClient()
-        client.mockPrompts = []
-        let view = PromptsView(smithers: client)
+        let view = loadedPromptsView(client, prompts: [])
         let text = try view.inspect().find(text: "No prompts found")
         XCTAssertNoThrow(text)
     }
 
     func testPromptsRenderedInList() throws {
         let client = MockSmithersClient()
-        client.mockPrompts = samplePrompts
-        let view = PromptsView(smithers: client)
+        let view = loadedPromptsView(client, prompts: samplePrompts)
         let inspector = try view.inspect()
         for prompt in samplePrompts {
             XCTAssertNoThrow(try inspector.find(text: prompt.id),
@@ -146,8 +158,7 @@ final class PromptsListTests: XCTestCase {
 
     func testEntryFileShownWhenPresent() throws {
         let client = MockSmithersClient()
-        client.mockPrompts = [samplePrompts[0]]
-        let view = PromptsView(smithers: client)
+        let view = loadedPromptsView(client, prompts: [samplePrompts[0]])
         let inspector = try view.inspect()
         XCTAssertNoThrow(try inspector.find(text: ".smithers/prompts/greeting.mdx"))
     }
@@ -157,8 +168,7 @@ final class PromptsListTests: XCTestCase {
     /// should still be visible.
     func testPromptWithNilEntryFileStillVisible() throws {
         let client = MockSmithersClient()
-        client.mockPrompts = [samplePrompts[2]] // deploy, entryFile == nil
-        let view = PromptsView(smithers: client)
+        let view = loadedPromptsView(client, prompts: [samplePrompts[2]]) // deploy, entryFile == nil
         let inspector = try view.inspect()
         XCTAssertNoThrow(try inspector.find(text: "deploy"))
     }
@@ -242,41 +252,25 @@ final class PromptsPropsDiscoveryTests: XCTestCase {
         XCTAssertEqual(client.discoverPropsCalledWith, "greeting")
     }
 
-    /// The real regex pattern in SmithersClient uses \\{\\s*props\\.(\\w+)\\s*\\}
+    /// The real regex pattern in SmithersClient uses \\{\\s*props\\.([\\w.-]+)\\s*\\}
     /// Test the regex directly.
     func testRegexPattern() throws {
         let source = "Hello { props.name }, your team is {props.team}."
-        let pattern = try NSRegularExpression(pattern: "\\{\\s*props\\.(\\w+)\\s*\\}")
-        let matches = pattern.matches(in: source, range: NSRange(source.startIndex..., in: source))
-        var found: [String] = []
-        for match in matches {
-            if let range = Range(match.range(at: 1), in: source) {
-                found.append(String(source[range]))
-            }
-        }
+        let found = try discoveredPropNames(in: source)
         XCTAssertEqual(Set(found), Set(["name", "team"]))
     }
 
-    /// BUG: The regex \\w+ won't match hyphenated prop names like {props.first-name}.
-    /// Any prop with a dash in the name will be silently ignored.
-    func testRegexDoesNotMatchHyphenatedProps() throws {
+    /// Hyphenated prop names like {props.first-name} are supported.
+    func testRegexMatchesHyphenatedProps() throws {
         let source = "Hello {props.first-name}!"
-        let pattern = try NSRegularExpression(pattern: "\\{\\s*props\\.(\\w+)\\s*\\}")
-        let matches = pattern.matches(in: source, range: NSRange(source.startIndex..., in: source))
-        var found: [String] = []
-        for match in matches {
-            if let range = Range(match.range(at: 1), in: source) {
-                found.append(String(source[range]))
-            }
-        }
-        // Documenting the bug: we get "first" instead of "first-name"
-        XCTAssertEqual(found, ["first"], "BUG: Regex truncates hyphenated prop names at the dash")
+        let found = try discoveredPropNames(in: source)
+        XCTAssertEqual(found, ["first-name"])
     }
 
     /// BUG: The regex does not handle nested braces like {{props.name}}.
     func testRegexMatchesInsideDoubleBraces() throws {
         let source = "Hello {{props.name}}!"
-        let pattern = try NSRegularExpression(pattern: "\\{\\s*props\\.(\\w+)\\s*\\}")
+        let pattern = try NSRegularExpression(pattern: promptPropPattern)
         let matches = pattern.matches(in: source, range: NSRange(source.startIndex..., in: source))
         XCTAssertEqual(matches.count, 1, "BUG: Regex matches inside double braces — may break Handlebars templates")
     }
@@ -284,7 +278,7 @@ final class PromptsPropsDiscoveryTests: XCTestCase {
     /// The regex handles whitespace inside braces: { props.name }
     func testRegexAllowsWhitespace() throws {
         let source = "Hello { props.name }!"
-        let pattern = try NSRegularExpression(pattern: "\\{\\s*props\\.(\\w+)\\s*\\}")
+        let pattern = try NSRegularExpression(pattern: promptPropPattern)
         let matches = pattern.matches(in: source, range: NSRange(source.startIndex..., in: source))
         XCTAssertEqual(matches.count, 1)
     }
