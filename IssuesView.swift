@@ -11,6 +11,7 @@ struct IssuesView: View {
     @State private var newTitle = ""
     @State private var newBody = ""
     @State private var isCreating = false
+    @State private var detailLoadingIds: Set<String> = []
 
     private var selectedIssue: SmithersIssue? {
         issues.first { $0.id == selectedId }
@@ -86,7 +87,7 @@ struct IssuesView: View {
                 .foregroundColor(stateFilter == state ? Theme.accent : Theme.textSecondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(stateFilter == state ? Theme.pillActive : Color.clear)
+                .themedPill(fill: stateFilter == state ? Theme.pillActive : Color.clear, cornerRadius: 6)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("issues.filter.\(label)")
@@ -114,7 +115,10 @@ struct IssuesView: View {
                     .frame(maxWidth: .infinity, minHeight: 200)
                 } else {
                     ForEach(issues) { issue in
-                        Button(action: { selectedId = issue.id }) {
+                        Button(action: {
+                            selectedId = issue.id
+                            Task { await loadIssueDetail(issue) }
+                        }) {
                             HStack(spacing: 10) {
                                 Image(systemName: issue.state == "open" ? "circle" : "checkmark.circle.fill")
                                     .font(.system(size: 12))
@@ -158,7 +162,7 @@ struct IssuesView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(selectedId == issue.id ? Theme.sidebarSelected : Color.clear)
+                            .themedSidebarRowBackground(isSelected: selectedId == issue.id)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -168,6 +172,7 @@ struct IssuesView: View {
                 }
             }
         }
+        .refreshable { await loadIssues() }
         .background(Theme.surface2)
     }
 
@@ -206,7 +211,7 @@ struct IssuesView: View {
                         Text("Create")
                     }
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(Theme.textPrimary)
                     .padding(.horizontal, 12)
                     .frame(height: 28)
                     .background(Theme.accent)
@@ -241,6 +246,11 @@ struct IssuesView: View {
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundColor(Theme.textPrimary)
                             Spacer()
+                            if detailLoadingIds.contains(issue.id) {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .frame(width: 16, height: 16)
+                            }
                             if issue.state == "open" {
                                 Button(action: { Task { await closeIssue(issue) } }) {
                                     HStack(spacing: 4) {
@@ -251,8 +261,7 @@ struct IssuesView: View {
                                     .foregroundColor(Theme.textSecondary)
                                     .padding(.horizontal, 10)
                                     .frame(height: 28)
-                                    .background(Theme.pillBg)
-                                    .cornerRadius(6)
+                                    .themedPill(cornerRadius: 6)
                                 }
                                 .buttonStyle(.plain)
                             } else if issue.state == "closed" {
@@ -265,8 +274,7 @@ struct IssuesView: View {
                                     .foregroundColor(Theme.success)
                                     .padding(.horizontal, 10)
                                     .frame(height: 28)
-                                    .background(Theme.pillBg)
-                                    .cornerRadius(6)
+                                    .themedPill(cornerRadius: 6)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -339,11 +347,23 @@ struct IssuesView: View {
 
     // MARK: - Actions
 
-    private func loadIssues() async {
+    private func loadIssues(selectIssueNumber preferredIssueNumber: Int? = nil) async {
         isLoading = true
         error = nil
+        let previousSelectedId = selectedId
+        let previousSelectedNumber = issues.first(where: { $0.id == previousSelectedId })?.number
         do {
-            issues = try await smithers.listIssues(state: stateFilter)
+            let refreshedIssues = try await smithers.listIssues(state: stateFilter)
+            issues = refreshedIssues
+
+            if let previousSelectedId, refreshedIssues.contains(where: { $0.id == previousSelectedId }) {
+                selectedId = previousSelectedId
+            } else if let selectedNumber = preferredIssueNumber ?? previousSelectedNumber,
+                      let matched = refreshedIssues.first(where: { $0.number == selectedNumber }) {
+                selectedId = matched.id
+            } else if preferredIssueNumber != nil || refreshedIssues.isEmpty {
+                selectedId = nil
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -352,12 +372,14 @@ struct IssuesView: View {
 
     private func createIssue() async {
         isCreating = true
+        error = nil
         do {
-            _ = try await smithers.createIssue(title: newTitle, body: newBody.isEmpty ? nil : newBody)
+            let created = try await smithers.createIssue(title: newTitle, body: newBody.isEmpty ? nil : newBody)
             newTitle = ""
             newBody = ""
             showCreate = false
-            await loadIssues()
+            selectedId = created.id
+            await loadIssues(selectIssueNumber: created.number)
         } catch {
             self.error = error.localizedDescription
         }
@@ -378,9 +400,29 @@ struct IssuesView: View {
             self.error = "Cannot close issue: missing issue number"
             return
         }
+        error = nil
         do {
             try await smithers.closeIssue(number: num, comment: nil)
-            await loadIssues()
+            await loadIssues(selectIssueNumber: num)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func loadIssueDetail(_ issue: SmithersIssue) async {
+        guard let number = issue.number, !detailLoadingIds.contains(issue.id) else { return }
+        detailLoadingIds.insert(issue.id)
+        defer { detailLoadingIds.remove(issue.id) }
+
+        do {
+            let detail = try await smithers.getIssue(number: number)
+            guard let index = issues.firstIndex(where: { $0.id == issue.id || $0.number == number }) else {
+                return
+            }
+            issues[index] = detail
+            if selectedId == issue.id {
+                selectedId = detail.id
+            }
         } catch {
             self.error = error.localizedDescription
         }
