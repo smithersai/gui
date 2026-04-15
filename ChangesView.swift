@@ -220,7 +220,7 @@ struct ChangesView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(selectedChangeID == change.id ? Theme.sidebarSelected : Color.clear)
+                            .themedSidebarRowBackground(isSelected: selectedChangeID == change.id)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -230,6 +230,7 @@ struct ChangesView: View {
                 }
             }
         }
+        .refreshable { await refresh(for: .changes) }
         .background(Theme.surface2)
     }
 
@@ -347,7 +348,7 @@ struct ChangesView: View {
                                     Text("Create")
                                 }
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white)
+                                .foregroundColor(Theme.textPrimary)
                                 .padding(.horizontal, 12)
                                 .frame(height: 30)
                                 .background(Theme.accent)
@@ -405,12 +406,12 @@ struct ChangesView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
                     let diff = diffCache[changeID] ?? ""
-                    Text(diff.isEmpty ? "(no changes)" : diff)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(Theme.textPrimary)
+                    SyntaxHighlightedText(diff.isEmpty ? "(no changes)" : diff, font: .system(size: 11, design: .monospaced))
                         .textSelection(.enabled)
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .themedDiffBlock()
+                        .padding(16)
                 }
             }
         }
@@ -454,10 +455,11 @@ struct ChangesView: View {
                         Text("Uncommitted Changes")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(Theme.textSecondary)
-                        Text(workingDiff)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(Theme.textPrimary)
+                        SyntaxHighlightedText(workingDiff, font: .system(size: 11, design: .monospaced))
                             .textSelection(.enabled)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .themedDiffBlock()
                     }
                 } else if let workingDiffError {
                     Text("Diff error: \(workingDiffError)")
@@ -472,6 +474,7 @@ struct ChangesView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .refreshable { await refresh(for: .status) }
         .background(Theme.surface1)
     }
 
