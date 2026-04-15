@@ -29,7 +29,7 @@ enum SlashCommandAction {
     case navigate(NavDestination)
     case clearChat
     case showHelp
-    case runWorkflow(String)
+    case runWorkflow(Workflow)
     case runSmithersPrompt(String)
 }
 
@@ -253,6 +253,15 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
                 action: .navigate(.agents)
             ),
             SlashCommandItem(
+                id: "smithers.changes",
+                name: "changes",
+                title: "Changes",
+                description: "Open JJHub changes and repository status.",
+                category: .smithers,
+                aliases: ["change", "vcs"],
+                action: .navigate(.changes)
+            ),
+            SlashCommandItem(
                 id: "smithers.runs",
                 name: "runs",
                 title: "Runs",
@@ -269,6 +278,15 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
                 category: .smithers,
                 aliases: ["workflow"],
                 action: .navigate(.workflows)
+            ),
+            SlashCommandItem(
+                id: "smithers.triggers",
+                name: "triggers",
+                title: "Triggers",
+                description: "Manage cron workflow triggers.",
+                category: .smithers,
+                aliases: ["trigger", "crons", "cron"],
+                action: .navigate(.triggers)
             ),
             SlashCommandItem(
                 id: "smithers.jjhub-workflows",
@@ -343,6 +361,15 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
                 action: .navigate(.landings)
             ),
             SlashCommandItem(
+                id: "smithers.tickets",
+                name: "tickets",
+                title: "Tickets",
+                description: "Open local Smithers tickets.",
+                category: .smithers,
+                aliases: ["ticket"],
+                action: .navigate(.tickets)
+            ),
+            SlashCommandItem(
                 id: "smithers.issues",
                 name: "issues",
                 title: "Issues",
@@ -408,7 +435,7 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
                 description: workflow.relativePath ?? "Run Smithers workflow.",
                 category: .workflow,
                 aliases: [workflow.id],
-                action: .runWorkflow(workflow.id)
+                action: .runWorkflow(workflow)
             )
         }
     }
@@ -490,7 +517,6 @@ Optional: Add other sections if relevant, such as Security & Configuration Tips,
             guard let items = grouped[category], !items.isEmpty else { return nil }
             let rows = items
                 .sorted { $0.name < $1.name }
-                .prefix(12)
                 .map { "\($0.displayName) - \($0.description)" }
                 .joined(separator: "\n")
             return "\(category.rawValue)\n\(rows)"
