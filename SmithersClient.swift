@@ -1601,6 +1601,16 @@ class SmithersClient: ObservableObject {
         guard let value else { return "NULL" }
         if value is NSNull { return "NULL" }
         if let string = value as? String { return string }
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return number.boolValue ? "true" : "false"
+            }
+            let asDouble = number.doubleValue
+            if asDouble.rounded() == asDouble {
+                return String(number.int64Value)
+            }
+            return String(asDouble)
+        }
         if let bool = value as? Bool { return bool ? "true" : "false" }
         if let int = value as? Int { return String(int) }
         if let int64 = value as? Int64 { return String(int64) }
@@ -1609,13 +1619,6 @@ class SmithersClient: ObservableObject {
                 return String(Int64(double))
             }
             return String(double)
-        }
-        if let number = value as? NSNumber {
-            let asDouble = number.doubleValue
-            if asDouble.rounded() == asDouble {
-                return String(number.int64Value)
-            }
-            return String(asDouble)
         }
         if let object = value as? [String: Any],
            let data = try? JSONSerialization.data(withJSONObject: object, options: []),

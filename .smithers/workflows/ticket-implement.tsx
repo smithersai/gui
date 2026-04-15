@@ -17,11 +17,12 @@ export default smithers((ctx) => {
   const validate = ctx.outputMaybe("validate", { nodeId: "ticket:validate" });
   const reviews = ctx.outputs.review ?? [];
 
-  // done = false until validate has actually run AND passed, AND at least one reviewer approved
+  // done = false until validate has actually run AND passed, at least one reviewer approved, and none rejected
   const hasValidated = validate !== undefined;
   const validationPassed = hasValidated && validate.allPassed !== false;
   const anyApproved = reviews.length > 0 && reviews.some((r: any) => r.approved === true);
-  const done = validationPassed && anyApproved;
+  const anyRejected = reviews.some((r: any) => r.approved === false);
+  const done = validationPassed && anyApproved && !anyRejected;
 
   const feedbackParts: string[] = [];
   if (validate && !validationPassed && validate.failingSummary) {

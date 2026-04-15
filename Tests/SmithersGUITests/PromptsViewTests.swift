@@ -129,8 +129,8 @@ final class PromptsListWidthTests: XCTestCase {
 
         // The structure: VStack > header HStack > content HStack > promptList.frame(width: 240)
         let hstack = try inspector.vStack().hStack(1)
-        let listFrame = try hstack.scrollView(0).fixedFrame()
-        XCTAssertEqual(listFrame.width, 240, "Prompt list width must be exactly 240pt")
+        let listWidth = try hstack.scrollView(0).fixedWidth()
+        XCTAssertEqual(listWidth, 240, "Prompt list width must be exactly 240pt")
     }
 }
 

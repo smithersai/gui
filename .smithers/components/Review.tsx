@@ -36,7 +36,7 @@ export function Review({ idPrefix, prompt, agents }: ReviewProps) {
           agent={agent}
           continueOnFail
         >
-          <ReviewPrompt reviewer={`reviewer-${index + 1}`} prompt={promptText} />
+          <ReviewPrompt reviewer={`${idPrefix}:reviewer-${index + 1}`} prompt={promptText} />
         </Task>
       ))}
     </Parallel>

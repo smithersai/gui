@@ -54,15 +54,17 @@ function buildFeedback(
   const reviews = ctx.outputs.review ?? [];
 
   // Filter reviews for this ticket's prefix
+  const reviewPrefix = `${slug}:review:reviewer-`;
   const ticketReviews = reviews.filter(
-    (r: any) => r.reviewer?.startsWith?.("reviewer-"),
+    (r: any) => typeof r.reviewer === "string" && r.reviewer.startsWith(reviewPrefix),
   );
 
-  // done = false until validate has actually run AND passed, AND at least one reviewer approved
+  // done = false until validate has actually run AND passed, at least one reviewer approved, and none rejected
   const hasValidated = validate !== undefined;
   const validationPassed = hasValidated && validate.allPassed !== false;
   const anyReviewApproved = ticketReviews.length > 0 && ticketReviews.some((r: any) => r.approved === true);
-  const done = validationPassed && anyReviewApproved;
+  const anyReviewRejected = ticketReviews.some((r: any) => r.approved === false);
+  const done = validationPassed && anyReviewApproved && !anyReviewRejected;
 
   if (!hasValidated) return { feedback: null, done: false };
 
