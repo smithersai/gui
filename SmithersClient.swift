@@ -6199,8 +6199,32 @@ class SmithersClient: ObservableObject {
             }
         }
 
-        // Last resort: treat the raw data as newline-delimited text
+        // Try regex-based extraction for JSON-like text that JSONSerialization couldn't parse
+        // (handles encoding issues, trailing commas, BOM, or non-JSON preamble before the JSON body)
         let rawText = String(decoding: data, as: UTF8.self)
+        let rawTrimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rawTrimmed.hasPrefix("{") || rawTrimmed.hasPrefix("[") {
+            let kvPattern = #"\"(\d+)\"\s*:\s*\"((?:[^\"\\]|\\.)*)\""#
+            if let kvRegex = try? NSRegularExpression(pattern: kvPattern, options: [.dotMatchesLineSeparators]) {
+                let matches = kvRegex.matches(in: rawTrimmed, range: NSRange(location: 0, length: (rawTrimmed as NSString).length))
+                if !matches.isEmpty {
+                    var lineMap: [String: String] = [:]
+                    let ns = rawTrimmed as NSString
+                    for match in matches {
+                        let key = ns.substring(with: match.range(at: 1))
+                        let rawValue = ns.substring(with: match.range(at: 2))
+                        lineMap[key] = Self.unescapeJSONStringValue(rawValue)
+                    }
+                    AppLogger.network.debug("decodeChatBlocks matched: regex JSON extraction", metadata: ["keys": "\(lineMap.count)"])
+                    let parsed = parseLegacyChatMap(lineMap)
+                    if !parsed.isEmpty {
+                        return deduplicatedChatBlocks(parsed)
+                    }
+                }
+            }
+        }
+
+        // Last resort: treat the raw data as newline-delimited text
         let rawLines = rawText.components(separatedBy: .newlines)
         if !rawLines.isEmpty {
             var lineMap: [String: String] = [:]
