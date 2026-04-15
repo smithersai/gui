@@ -43,8 +43,8 @@ struct LiveRunChatView: View {
     private let bottomAnchor = "live-run-chat-bottom"
 
     private var displayBlocks: [ChatBlock] {
-        if attempts.isEmpty { return allBlocks }
-        return attempts[currentAttempt] ?? []
+        let blocks = attempts.isEmpty ? allBlocks : attempts[currentAttempt] ?? []
+        return deduplicatedChatBlocks(blocks)
     }
 
     private var shortRunId: String {
@@ -340,6 +340,7 @@ struct LiveRunChatView: View {
                 }
                 .padding(16)
             }
+            .refreshable { await refresh() }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 2).onChanged { _ in
                     if follow {
@@ -629,8 +630,19 @@ struct LiveRunChatView: View {
 
     private func appendStreamBlock(_ block: ChatBlock) {
         guard matchesNodeFilter(block) else { return }
-        if let id = block.id, !id.isEmpty {
-            guard seenBlockIDs.insert(id).inserted else { return }
+        if let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty {
+            if replaceExistingStreamBlock(block, lifecycleId: lifecycleId) {
+                if follow {
+                    scrollRequest = UUID()
+                }
+                return
+            }
+            seenBlockIDs.insert(lifecycleId)
+        } else if replaceLastAnonymousAssistantStreamBlock(block) {
+            if follow {
+                scrollRequest = UUID()
+            }
+            return
         }
 
         allBlocks.append(block)
@@ -651,7 +663,7 @@ struct LiveRunChatView: View {
         attempts = [:]
         seenBlockIDs = Set(
             blocks
-                .compactMap(\.id)
+                .compactMap(\.lifecycleId)
                 .filter { !$0.isEmpty }
         )
         maxAttempt = 0
@@ -674,6 +686,46 @@ struct LiveRunChatView: View {
         if attempt > maxAttempt {
             maxAttempt = attempt
         }
+    }
+
+    private func replaceExistingStreamBlock(_ block: ChatBlock, lifecycleId: String) -> Bool {
+        guard let index = allBlocks.firstIndex(where: { $0.lifecycleId == lifecycleId }) else {
+            return false
+        }
+
+        let existing = allBlocks[index]
+        allBlocks[index] = existing.canMergeAssistantStream(with: block)
+            ? existing.mergingAssistantStream(with: block)
+            : block
+        rebuildAttemptIndexPreservingSelection()
+        return true
+    }
+
+    private func replaceLastAnonymousAssistantStreamBlock(_ block: ChatBlock) -> Bool {
+        guard block.lifecycleId == nil else { return false }
+        guard let index = allBlocks.indices.last else { return false }
+        let existing = allBlocks[index]
+        guard existing.lifecycleId == nil,
+              existing.canMergeAssistantStream(with: block),
+              existing.hasStreamingContentOverlap(with: block) else {
+            return false
+        }
+
+        allBlocks[index] = existing.mergingAssistantStream(with: block)
+        rebuildAttemptIndexPreservingSelection()
+        return true
+    }
+
+    private func rebuildAttemptIndexPreservingSelection() {
+        let selectedAttempt = currentAttempt
+        attempts = [:]
+        maxAttempt = 0
+
+        for block in allBlocks {
+            indexBlock(block)
+        }
+
+        currentAttempt = min(selectedAttempt, maxAttempt)
     }
 
     private func matchesNodeFilter(_ block: ChatBlock) -> Bool {
