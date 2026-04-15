@@ -7,9 +7,11 @@ import ViewInspector
 
 extension SidebarView: @retroactive Inspectable {}
 extension SidebarSection: @retroactive Inspectable {}
+extension CollapsibleSidebarSection: @retroactive Inspectable {}
 extension NavRow: @retroactive Inspectable {}
 extension NewChatMenuRow: @retroactive Inspectable {}
 extension SessionRow: @retroactive Inspectable {}
+extension SidebarTabRow: @retroactive Inspectable {}
 extension EdgeBorder: @retroactive Inspectable {}
 
 // MARK: - NavDestination Tests
@@ -17,22 +19,22 @@ extension EdgeBorder: @retroactive Inspectable {}
 final class NavDestinationTests: XCTestCase {
 
     // PLATFORM_DESTINATION_ROUTING / NAV_DESTINATION_CHAT through NAV_DESTINATION_WORKSPACES
-    // All 17 destinations must exist.
+    // All 20 static destinations must exist.
 
-    func testAllSeventeenCasesExist() {
+    func testAllTwentyStaticCasesExist() {
         let all: [NavDestination] = [
-            .chat, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows, .approvals,
+            .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .terminal, .workspaces,
+            .landings, .tickets, .issues, .terminal, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
-        XCTAssertEqual(all.count, 17, "There must be exactly 17 NavDestination cases")
+        XCTAssertEqual(all.count, 20, "There must be exactly 20 static NavDestination routes")
     }
 
     func testLabelsAreNonEmpty() {
         let all: [NavDestination] = [
-            .chat, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows, .approvals,
+            .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .terminal, .workspaces,
+            .landings, .tickets, .issues, .terminal, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
         for dest in all {
             XCTAssertFalse(dest.label.isEmpty, "\(dest) label should not be empty")
@@ -41,9 +43,9 @@ final class NavDestinationTests: XCTestCase {
 
     func testIconsAreNonEmpty() {
         let all: [NavDestination] = [
-            .chat, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows, .approvals,
+            .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .terminal, .workspaces,
+            .landings, .tickets, .issues, .terminal, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
         for dest in all {
             XCTAssertFalse(dest.icon.isEmpty, "\(dest) icon should not be empty")
@@ -53,11 +55,13 @@ final class NavDestinationTests: XCTestCase {
     func testSpecificLabels() {
         XCTAssertEqual(NavDestination.chat.label, "Chat")
         XCTAssertEqual(NavDestination.terminal.label, "Terminal")
+        XCTAssertEqual(NavDestination.liveRun(runId: "run", nodeId: nil).label, "Live Run")
         XCTAssertEqual(NavDestination.dashboard.label, "Dashboard")
         XCTAssertEqual(NavDestination.agents.label, "Agents")
         XCTAssertEqual(NavDestination.changes.label, "Changes")
         XCTAssertEqual(NavDestination.runs.label, "Runs")
         XCTAssertEqual(NavDestination.workflows.label, "Workflows")
+        XCTAssertEqual(NavDestination.triggers.label, "Triggers")
         XCTAssertEqual(NavDestination.jjhubWorkflows.label, "JJHub Workflows")
         XCTAssertEqual(NavDestination.approvals.label, "Approvals")
         XCTAssertEqual(NavDestination.prompts.label, "Prompts")
@@ -66,6 +70,7 @@ final class NavDestinationTests: XCTestCase {
         XCTAssertEqual(NavDestination.search.label, "Search")
         XCTAssertEqual(NavDestination.sql.label, "SQL Browser")
         XCTAssertEqual(NavDestination.landings.label, "Landings")
+        XCTAssertEqual(NavDestination.tickets.label, "Tickets")
         XCTAssertEqual(NavDestination.issues.label, "Issues")
         XCTAssertEqual(NavDestination.workspaces.label, "Workspaces")
     }
@@ -73,11 +78,13 @@ final class NavDestinationTests: XCTestCase {
     func testSpecificIcons() {
         XCTAssertEqual(NavDestination.chat.icon, "message")
         XCTAssertEqual(NavDestination.terminal.icon, "terminal.fill")
+        XCTAssertEqual(NavDestination.liveRun(runId: "run", nodeId: nil).icon, "dot.radiowaves.left.and.right")
         XCTAssertEqual(NavDestination.dashboard.icon, "square.grid.2x2")
         XCTAssertEqual(NavDestination.agents.icon, "person.2")
         XCTAssertEqual(NavDestination.changes.icon, "point.3.connected.trianglepath.dotted")
         XCTAssertEqual(NavDestination.runs.icon, "play.circle")
         XCTAssertEqual(NavDestination.workflows.icon, "arrow.triangle.branch")
+        XCTAssertEqual(NavDestination.triggers.icon, "clock.arrow.circlepath")
         XCTAssertEqual(NavDestination.jjhubWorkflows.icon, "point.3.filled.connected.trianglepath.dotted")
         XCTAssertEqual(NavDestination.approvals.icon, "checkmark.shield")
         XCTAssertEqual(NavDestination.prompts.icon, "doc.text")
@@ -86,6 +93,7 @@ final class NavDestinationTests: XCTestCase {
         XCTAssertEqual(NavDestination.search.icon, "magnifyingglass")
         XCTAssertEqual(NavDestination.sql.icon, "tablecells")
         XCTAssertEqual(NavDestination.landings.icon, "arrow.down.to.line")
+        XCTAssertEqual(NavDestination.tickets.icon, "ticket")
         XCTAssertEqual(NavDestination.issues.icon, "exclamationmark.circle")
         XCTAssertEqual(NavDestination.workspaces.icon, "desktopcomputer")
     }
@@ -162,7 +170,7 @@ final class SessionStoreSidebarTests: XCTestCase {
 
     func testSendMessageUpdatesTitleFromFirstMessage() {
         let store = SessionStore()
-        XCTAssertEqual(store.sessions.first?.title, "New Chat")
+        XCTAssertEqual(store.sessions.first?.title, SessionStore.defaultChatTitle)
         store.sendMessage("Hello world")
         XCTAssertEqual(store.sessions.first?.title, "Hello world")
     }
@@ -233,8 +241,8 @@ final class SidebarViewTests: XCTestCase {
         XCTAssertNoThrow(try sut.vStack())
     }
 
-    // PLATFORM_SIDEBAR_SECTIONS_CHAT_SMITHERS_SESSIONS
-    func testSidebarHasThreeSections() throws {
+    // PLATFORM_SIDEBAR_SECTIONS_CHAT_TABS_SMITHERS_VCS
+    func testSidebarHasMainSections() throws {
         let store = SessionStore()
         var dest = NavDestination.chat
         let view = SidebarView(store: store, destination: Binding(get: { dest }, set: { dest = $0 }))
@@ -244,26 +252,26 @@ final class SidebarViewTests: XCTestCase {
         let scrollView = try sut.vStack().scrollView(1)
         let innerVStack = try scrollView.vStack()
 
-        // We expect 3 SidebarSection views: CHAT, SMITHERS, SESSIONS
+        // SidebarSection is generic so ViewInspector may not find it easily.
+        // Fall back: search for section title texts.
         var sectionCount = 0
         for idx in 0..<innerVStack.count {
             if let _ = try? innerVStack.view(SidebarSection<AnyView>.self, idx) {
                 sectionCount += 1
             }
         }
-        // SidebarSection is generic so ViewInspector may not find it easily.
-        // Fall back: search for section title texts
         let allText = try sut.findAll(ViewType.Text.self)
         let sectionTitles = try allText.compactMap { text -> String? in
             let str = try text.string()
-            if str == "CHAT" || str == "SMITHERS" || str == "SESSIONS" {
+            if str == "CHAT" || str == "TABS" || str == "SMITHERS" || str == "VCS" {
                 return str
             }
             return nil
         }
         XCTAssertTrue(sectionTitles.contains("CHAT"), "Missing CHAT section")
+        XCTAssertTrue(sectionTitles.contains("TABS"), "Missing TABS section")
         XCTAssertTrue(sectionTitles.contains("SMITHERS"), "Missing SMITHERS section")
-        XCTAssertTrue(sectionTitles.contains("SESSIONS"), "Missing SESSIONS section")
+        XCTAssertTrue(sectionTitles.contains("VCS"), "Missing VCS section")
     }
 
     // PLATFORM_SIDEBAR_NEW_CHAT_BUTTON
@@ -362,21 +370,28 @@ final class SidebarViewTests: XCTestCase {
         XCTAssertFalse(strings.contains(""), "Empty preview text should be hidden")
     }
 
-    // PLATFORM_SIDEBAR_NAVIGATION - smithersNav contains all 15 non-chat/terminal destinations
-    func testSmithersNavSectionHasFifteenItems() {
-        // The smithersNav array in SidebarView should contain exactly 15 items
-        let expected: [NavDestination] = [
-            .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows, .approvals,
-            .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .workspaces,
+    // PLATFORM_SIDEBAR_NAVIGATION - Smithers and VCS are split
+    func testSmithersAndVCSNavSectionsAreSplit() {
+        let smithersExpected: [NavDestination] = [
+            .dashboard, .agents, .runs, .workflows, .triggers, .approvals,
+            .prompts, .scores, .memory, .search, .sql, .workspaces,
         ]
-        XCTAssertEqual(expected.count, 15)
+        let vcsExpected: [NavDestination] = [
+            .changes, .jjhubWorkflows, .landings, .tickets, .issues,
+        ]
+        XCTAssertEqual(smithersExpected.count, 12)
+        XCTAssertEqual(vcsExpected.count, 5)
     }
 
     func testSmithersNavLabelsInSidebar() throws {
         let store = SessionStore()
         var dest = NavDestination.chat
-        let view = SidebarView(store: store, destination: Binding(get: { dest }, set: { dest = $0 }))
+        let view = SidebarView(
+            store: store,
+            destination: Binding(get: { dest }, set: { dest = $0 }),
+            smithersCollapsed: false,
+            vcsCollapsed: false
+        )
         let sut = try view.inspect()
 
         let allText = try sut.findAll(ViewType.Text.self)
@@ -384,9 +399,9 @@ final class SidebarViewTests: XCTestCase {
 
         // All smithers nav labels should be present
         let expectedLabels = [
-            "Dashboard", "Agents", "Changes", "Runs", "Workflows", "JJHub Workflows", "Approvals",
+            "Dashboard", "Agents", "Changes", "Runs", "Workflows", "Triggers", "JJHub Workflows", "Approvals",
             "Prompts", "Scores", "Memory", "Search", "SQL Browser",
-            "Landings", "Issues", "Workspaces",
+            "Landings", "Tickets", "Issues", "Workspaces",
         ]
         for expected in expectedLabels {
             XCTAssertTrue(labels.contains(expected), "Missing nav label: \(expected)")
@@ -487,21 +502,21 @@ final class ContentViewNavigationTests: XCTestCase {
         XCTAssertTrue(true, "unified toolbar style verified in SmithersApp source")
     }
 
-    // PLATFORM_DESTINATION_ROUTING - all 17 cases in switch
+    // PLATFORM_DESTINATION_ROUTING - all 20 static cases in switch
     func testAllDestinationsRoutedInContentView() {
         // Verify all NavDestination cases are handled by checking each case maps to a view.
         // This is a compile-time guarantee from the exhaustive switch in ContentView,
-        // but we test the enum has exactly 17 cases.
+        // but we test the enum has exactly 20 static cases.
         let all: [NavDestination] = [
-            .chat, .dashboard, .agents, .changes, .runs, .workflows, .jjhubWorkflows, .approvals,
+            .chat, .dashboard, .agents, .changes, .runs, .workflows, .triggers, .jjhubWorkflows, .approvals,
             .prompts, .scores, .memory, .search, .sql,
-            .landings, .issues, .terminal, .workspaces,
+            .landings, .tickets, .issues, .terminal, .liveRun(runId: "run", nodeId: nil), .workspaces,
         ]
-        XCTAssertEqual(all.count, 17)
+        XCTAssertEqual(all.count, 20)
 
         // Verify each has a unique label (no duplicates would indicate a routing bug)
         let labels = Set(all.map(\.label))
-        XCTAssertEqual(labels.count, 17, "All 17 destinations must have unique labels")
+        XCTAssertEqual(labels.count, 20, "All 20 static destinations must have unique labels")
     }
 
     // Test default destination is .chat
