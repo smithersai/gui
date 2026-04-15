@@ -19,6 +19,7 @@ private final class MockSmithersClient: SmithersClient {
     var discoverPropsCalledWith: String?
     var updatePromptCalledWith: (id: String, source: String)?
     var previewPromptCalledWith: (id: String, input: [String: String])?
+    var previewPromptSourceCalledWith: (id: String, source: String, input: [String: String])?
     var shouldThrow = false
 
     override func listPrompts() async throws -> [SmithersPrompt] {
@@ -46,6 +47,12 @@ private final class MockSmithersClient: SmithersClient {
 
     override func previewPrompt(_ promptId: String, input: [String: String]) async throws -> String {
         previewPromptCalledWith = (id: promptId, input: input)
+        if shouldThrow { throw NSError(domain: "test", code: 5, userInfo: [NSLocalizedDescriptionKey: "preview error"]) }
+        return mockPreviewResult
+    }
+
+    override func previewPrompt(_ promptId: String, source: String, input: [String: String]) async throws -> String {
+        previewPromptSourceCalledWith = (id: promptId, source: source, input: input)
         if shouldThrow { throw NSError(domain: "test", code: 5, userInfo: [NSLocalizedDescriptionKey: "preview error"]) }
         return mockPreviewResult
     }
@@ -225,6 +232,67 @@ final class PromptsSourceEditorTests: XCTestCase {
     }
 }
 
+// MARK: - PROMPTS_ASYNC_SOURCE_LOAD_GUARD
+
+final class PromptSourceLoadSnapshotTests: XCTestCase {
+
+    func testFreshLoadCanApplyWhenSelectionAndGenerationsMatch() {
+        let snapshot = PromptSourceLoadSnapshot(
+            promptId: "review",
+            loadGeneration: 3,
+            editGeneration: 7
+        )
+
+        XCTAssertTrue(snapshot.canApply(
+            selectedId: "review",
+            activeLoadGeneration: 3,
+            currentEditGeneration: 7
+        ))
+    }
+
+    func testLoadCannotApplyAfterUserEditGenerationChanges() {
+        let snapshot = PromptSourceLoadSnapshot(
+            promptId: "review",
+            loadGeneration: 3,
+            editGeneration: 7
+        )
+
+        XCTAssertFalse(snapshot.canApply(
+            selectedId: "review",
+            activeLoadGeneration: 3,
+            currentEditGeneration: 8
+        ))
+    }
+
+    func testLoadCannotApplyAfterAnotherLoadStarts() {
+        let snapshot = PromptSourceLoadSnapshot(
+            promptId: "review",
+            loadGeneration: 3,
+            editGeneration: 7
+        )
+
+        XCTAssertFalse(snapshot.canApply(
+            selectedId: "review",
+            activeLoadGeneration: 4,
+            currentEditGeneration: 7
+        ))
+    }
+
+    func testLoadCannotApplyAfterSelectionChanges() {
+        let snapshot = PromptSourceLoadSnapshot(
+            promptId: "review",
+            loadGeneration: 3,
+            editGeneration: 7
+        )
+
+        XCTAssertFalse(snapshot.canApply(
+            selectedId: "greeting",
+            activeLoadGeneration: 3,
+            currentEditGeneration: 7
+        ))
+    }
+}
+
 // MARK: - PROMPTS_SOURCE_INPUTS_PREVIEW_TABS
 
 final class PromptsTabTests: XCTestCase {
@@ -330,6 +398,37 @@ final class PromptsLivePreviewTests: XCTestCase {
     /// meaning the user is forcibly navigated away from the Inputs tab.
     func testRenderPreviewSwitchesToPreviewTab() {
         XCTAssertTrue(true, "BUG/DESIGN: renderPreview forcibly switches to .preview tab")
+    }
+
+    func testGeneratePreviewUsesUnsavedEditorBuffer() async throws {
+        let client = MockSmithersClient()
+        let prompt = SmithersPrompt(
+            id: "greeting",
+            entryFile: ".smithers/prompts/greeting.mdx",
+            source: "Saved {props.name}",
+            inputs: [PromptInput(name: "name", type: "string", defaultValue: nil)]
+        )
+        client.mockPrompts = [prompt]
+        client.mockFullPrompt = prompt
+        client.mockProps = prompt.inputs ?? []
+        client.mockPreviewResult = "Unsaved Alice"
+
+        let view = PromptsView(
+            smithers: client,
+            initialPrompts: [prompt],
+            selectedId: "greeting",
+            source: "Unsaved {props.name}",
+            originalSource: "Saved {props.name}",
+            inputValues: ["name": "Alice"],
+            tab: .preview
+        )
+        try view.inspect().find(button: "Generate Preview").tap()
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(client.previewPromptSourceCalledWith?.id, "greeting")
+        XCTAssertEqual(client.previewPromptSourceCalledWith?.source, "Unsaved {props.name}")
+        XCTAssertEqual(client.previewPromptSourceCalledWith?.input, ["name": "Alice"])
+        XCTAssertNil(client.previewPromptCalledWith)
     }
 }
 
