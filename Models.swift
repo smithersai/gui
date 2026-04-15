@@ -7,6 +7,9 @@ struct ChatSession: Identifiable, Hashable {
     let preview: String
     let timestamp: String
     let group: String
+    var isPinned: Bool = false
+    var isArchived: Bool = false
+    var isUnread: Bool = false
 }
 
 struct RunTab: Identifiable, Hashable {
@@ -52,6 +55,11 @@ struct SidebarTab: Identifiable, Hashable {
     let timestamp: String
     let group: String
     let sortDate: Date
+    var isPinned: Bool = false
+    var isArchived: Bool = false
+    var isUnread: Bool = false
+    var workingDirectory: String? = nil
+    var sessionIdentifier: String? = nil
 }
 
 struct ChatMessage: Identifiable {

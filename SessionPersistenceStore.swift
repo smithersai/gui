@@ -10,6 +10,9 @@ struct PersistedSessionSummary {
     let title: String
     let preview: String
     let updatedAt: Date
+    var isPinned: Bool = false
+    var isArchived: Bool = false
+    var isUnread: Bool = false
 }
 
 struct PersistedSessionMessage {
@@ -24,6 +27,7 @@ protocol SessionPersisting: AnyObject {
     func loadMessages(sessionID: String) throws -> [PersistedSessionMessage]
     func createSession(id: String, title: String) throws
     func renameSession(id: String, title: String) throws
+    func updateSessionFlags(id: String, isPinned: Bool, isArchived: Bool, isUnread: Bool) throws
     func deleteSession(id: String) throws
     func createMessage(sessionID: String, messageID: String, role: PersistedChatRole, text: String) throws
     func updateMessage(messageID: String, role: PersistedChatRole, text: String) throws
@@ -58,6 +62,9 @@ final class SQLiteSessionPersistence: SessionPersisting {
               s.id AS id,
               s.title AS title,
               s.updated_at AS updated_at,
+              COALESCE(s.is_pinned, 0) AS is_pinned,
+              COALESCE(s.is_archived, 0) AS is_archived,
+              COALESCE(s.is_unread, 0) AS is_unread,
               COALESCE((
                 SELECT m.parts
                 FROM messages m
@@ -91,7 +98,10 @@ final class SQLiteSessionPersistence: SessionPersisting {
                 id: id,
                 title: title,
                 preview: preview,
-                updatedAt: updatedAt
+                updatedAt: updatedAt,
+                isPinned: boolValue(row["is_pinned"]),
+                isArchived: boolValue(row["is_archived"]),
+                isUnread: boolValue(row["is_unread"])
             )
         }
     }
@@ -150,6 +160,9 @@ final class SQLiteSessionPersistence: SessionPersisting {
               cost,
               summary_message_id,
               todos,
+              is_pinned,
+              is_archived,
+              is_unread,
               updated_at,
               created_at
             ) VALUES (
@@ -162,6 +175,9 @@ final class SQLiteSessionPersistence: SessionPersisting {
               0.0,
               NULL,
               NULL,
+              0,
+              0,
+              0,
               strftime('%s', 'now'),
               strftime('%s', 'now')
             );
@@ -182,6 +198,21 @@ final class SQLiteSessionPersistence: SessionPersisting {
             """
             UPDATE sessions
             SET title = \(quoteSQL(title))
+            WHERE id = \(quoteSQL(id));
+            """
+        )
+    }
+
+    func updateSessionFlags(id: String, isPinned: Bool, isArchived: Bool, isUnread: Bool) throws {
+        try ensureSchema()
+
+        try executeWrite(
+            """
+            UPDATE sessions
+            SET
+              is_pinned = \(isPinned ? 1 : 0),
+              is_archived = \(isArchived ? 1 : 0),
+              is_unread = \(isUnread ? 1 : 0)
             WHERE id = \(quoteSQL(id));
             """
         )
@@ -293,7 +324,10 @@ final class SQLiteSessionPersistence: SessionPersisting {
               updated_at INTEGER NOT NULL,
               created_at INTEGER NOT NULL,
               summary_message_id TEXT,
-              todos TEXT
+              todos TEXT,
+              is_pinned INTEGER NOT NULL DEFAULT 0,
+              is_archived INTEGER NOT NULL DEFAULT 0,
+              is_unread INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS files (
@@ -378,6 +412,9 @@ final class SQLiteSessionPersistence: SessionPersisting {
 
         try ensureColumn(table: "sessions", column: "summary_message_id", definition: "TEXT")
         try ensureColumn(table: "sessions", column: "todos", definition: "TEXT")
+        try ensureColumn(table: "sessions", column: "is_pinned", definition: "INTEGER NOT NULL DEFAULT 0")
+        try ensureColumn(table: "sessions", column: "is_archived", definition: "INTEGER NOT NULL DEFAULT 0")
+        try ensureColumn(table: "sessions", column: "is_unread", definition: "INTEGER NOT NULL DEFAULT 0")
         try ensureColumn(table: "messages", column: "provider", definition: "TEXT")
         try ensureColumn(table: "messages", column: "is_summary_message", definition: "INTEGER DEFAULT 0 NOT NULL")
 
@@ -567,6 +604,24 @@ private func stringValue(_ value: Any?) -> String? {
         return number.stringValue
     }
     return nil
+}
+
+private func boolValue(_ value: Any?) -> Bool {
+    if let bool = value as? Bool {
+        return bool
+    }
+    if let number = value as? NSNumber {
+        return number.boolValue
+    }
+    if let text = value as? String {
+        switch text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes":
+            return true
+        default:
+            return false
+        }
+    }
+    return false
 }
 
 private func date(fromUnix value: Int64) -> Date {

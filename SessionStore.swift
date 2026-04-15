@@ -10,6 +10,26 @@ struct Session: Identifiable {
     var agent: AgentService
     var codexSelection: CodexModelSelection = .fallback
     var codexApprovalSelection: CodexApprovalSelection = .fallback
+    var isPinned: Bool = false
+    var isArchived: Bool = false
+    var isUnread: Bool = false
+}
+
+enum SessionForkError: LocalizedError {
+    case sessionNotFound
+    case gitUnavailable
+    case gitCommandFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .sessionNotFound:
+            return "Session not found."
+        case .gitUnavailable:
+            return "git is not available at /usr/bin/git."
+        case .gitCommandFailed(let message):
+            return message
+        }
+    }
 }
 
 @MainActor
@@ -116,11 +136,12 @@ class SessionStore: ObservableObject {
 
     @discardableResult
     func ensureActiveSession() -> String {
-        if let activeSessionId, sessions.contains(where: { $0.id == activeSessionId }) {
+        if let activeSessionId,
+           sessions.contains(where: { $0.id == activeSessionId && !$0.isArchived }) {
             return activeSessionId
         }
 
-        if let first = sessions.first {
+        if let first = sessions.first(where: { !$0.isArchived }) {
             activeSessionId = first.id
             loadSessionMessages(sessionID: first.id, force: false)
             return first.id
@@ -131,6 +152,10 @@ class SessionStore: ObservableObject {
 
     func selectSession(_ id: String) {
         AppLogger.state.debug("SessionStore selectSession", metadata: ["id": String(id.prefix(8))])
+        if let idx = sessions.firstIndex(where: { $0.id == id }) {
+            sessions[idx].isUnread = false
+            persistSessionFlags(for: sessions[idx], ensureRecord: false)
+        }
         activeSessionId = id
         loadSessionMessages(sessionID: id, force: false)
     }
@@ -152,6 +177,57 @@ class SessionStore: ObservableObject {
     func canDeleteSession(_ id: String) -> Bool {
         guard let session = sessions.first(where: { $0.id == id }) else { return false }
         return !session.agent.isRunning
+    }
+
+    func canArchiveSession(_ id: String) -> Bool {
+        canDeleteSession(id)
+    }
+
+    func toggleSessionPinned(_ id: String) {
+        guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
+        sessions[idx].isPinned.toggle()
+        persistSessionFlags(for: sessions[idx], ensureRecord: true)
+    }
+
+    func archiveSession(_ id: String) {
+        guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
+        guard canArchiveSession(id) else { return }
+
+        sessions[idx].isArchived = true
+        sessions[idx].isPinned = false
+        sessions[idx].isUnread = false
+        persistSessionFlags(for: sessions[idx], ensureRecord: true)
+
+        if activeSessionId == id {
+            if let next = sessions.first(where: { !$0.isArchived }) {
+                activeSessionId = next.id
+                loadSessionMessages(sessionID: next.id, force: false)
+            } else {
+                _ = newSession()
+            }
+        }
+    }
+
+    func toggleSessionUnread(_ id: String) {
+        guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
+        sessions[idx].isUnread.toggle()
+        persistSessionFlags(for: sessions[idx], ensureRecord: true)
+    }
+
+    func sessionWorkingDirectory(_ id: String) -> String? {
+        sessions.first(where: { $0.id == id })?.agent.workingDirectory
+    }
+
+    func sessionIdentifier(_ id: String) -> String? {
+        guard let session = sessions.first(where: { $0.id == id }) else { return nil }
+        return normalizedOptionalText(session.agent.activeThreadID) ?? session.id
+    }
+
+    func sessionDeeplink(_ id: String) -> String? {
+        guard sessions.contains(where: { $0.id == id }) else { return nil }
+        let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: allowed) ?? id
+        return "smithers://chat/\(encoded)"
     }
 
     func deleteSession(_ id: String) {
@@ -220,6 +296,44 @@ class SessionStore: ObservableObject {
             return terminalId
         }
         return addTerminalTab()
+    }
+
+    func removeTerminalTab(_ terminalId: String) {
+        terminalTabs.removeAll { $0.terminalId == terminalId }
+        TerminalSurfaceRegistry.shared.deregister(sessionId: terminalId)
+    }
+
+    @discardableResult
+    func forkSessionIntoLocal(_ id: String) -> String? {
+        forkSession(id, workingDirectory: nil)
+    }
+
+    func forkSessionIntoNewWorktree(_ id: String) async -> Result<String, SessionForkError> {
+        guard let source = sessions.first(where: { $0.id == id }) else {
+            return .failure(.sessionNotFound)
+        }
+
+        let sourceDirectory = source.agent.workingDirectory
+        let sourceTitle = source.title
+
+        do {
+            let worktreePath = try await Task.detached {
+                try Self.createForkWorktree(
+                    from: sourceDirectory,
+                    sessionID: id,
+                    title: sourceTitle
+                )
+            }.value
+
+            guard let forkedID = forkSession(id, workingDirectory: worktreePath) else {
+                return .failure(.sessionNotFound)
+            }
+            return .success(forkedID)
+        } catch let error as SessionForkError {
+            return .failure(error)
+        } catch {
+            return .failure(.gitCommandFailed(error.localizedDescription))
+        }
     }
 
     func autoPopulateActiveRunTabs(_ runs: [RunSummary]) {
@@ -320,7 +434,7 @@ class SessionStore: ObservableObject {
     func sidebarTabs(matching searchText: String = "") -> [SidebarTab] {
         let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let now = Date()
-        let chatTabs = sessions.map { session in
+        let chatTabs = sessions.filter { !$0.isArchived }.map { session in
             makeSidebarTab(
                 id: "chat:\(session.id)",
                 kind: .chat,
@@ -330,7 +444,12 @@ class SessionStore: ObservableObject {
                 title: session.title,
                 preview: session.preview,
                 date: session.timestamp,
-                now: now
+                now: now,
+                isPinned: session.isPinned,
+                isArchived: session.isArchived,
+                isUnread: session.isUnread,
+                workingDirectory: session.agent.workingDirectory,
+                sessionIdentifier: normalizedOptionalText(session.agent.activeThreadID) ?? session.id
             )
         }
         let runTabs = runTabs.map { tab in
@@ -365,18 +484,33 @@ class SessionStore: ObservableObject {
                 needle.isEmpty ||
                     tab.title.localizedCaseInsensitiveContains(needle) ||
                     tab.preview.localizedCaseInsensitiveContains(needle) ||
+                    (tab.sessionIdentifier?.localizedCaseInsensitiveContains(needle) ?? false) ||
                     (tab.runId?.localizedCaseInsensitiveContains(needle) ?? false) ||
                     (tab.terminalId?.localizedCaseInsensitiveContains(needle) ?? false)
             }
-            .sorted { $0.sortDate > $1.sortDate }
+            .sorted {
+                if $0.isPinned != $1.isPinned {
+                    return $0.isPinned && !$1.isPinned
+                }
+                return $0.sortDate > $1.sortDate
+            }
     }
 
     func chatSessions() -> [ChatSession] {
         let now = Date()
-        return sessions.map { s in
+        return sessions.filter { !$0.isArchived }.map { s in
             let group = Self.groupLabel(for: s.timestamp)
             let ago = Self.relativeTime(from: s.timestamp, to: now)
-            return ChatSession(id: s.id, title: s.title, preview: s.preview, timestamp: ago, group: group)
+            return ChatSession(
+                id: s.id,
+                title: s.title,
+                preview: s.preview,
+                timestamp: ago,
+                group: group,
+                isPinned: s.isPinned,
+                isArchived: s.isArchived,
+                isUnread: s.isUnread
+            )
         }
     }
 
@@ -403,7 +537,10 @@ class SessionStore: ObservableObject {
                     timestamp: summary.updatedAt,
                     agent: agent,
                     codexSelection: codexSelectionDefaults,
-                    codexApprovalSelection: codexApprovalDefaults
+                    codexApprovalSelection: codexApprovalDefaults,
+                    isPinned: summary.isPinned,
+                    isArchived: summary.isArchived,
+                    isUnread: summary.isUnread
                 )
             }
 
@@ -411,10 +548,12 @@ class SessionStore: ObservableObject {
                 observeMessages(for: session.id, agent: session.agent)
             }
 
-            activeSessionId = sessions.first?.id
-            if let activeSessionId {
-                loadSessionMessages(sessionID: activeSessionId, force: true)
+            guard let firstVisibleSession = sessions.first(where: { !$0.isArchived }) else {
+                return false
             }
+
+            activeSessionId = firstVisibleSession.id
+            loadSessionMessages(sessionID: firstVisibleSession.id, force: true)
             return true
         } catch {
             AppLogger.state.warning("SessionStore failed to load persisted sessions", metadata: [
@@ -584,6 +723,26 @@ class SessionStore: ObservableObject {
         }
     }
 
+    private func persistSessionFlags(for session: Session, ensureRecord: Bool) {
+        guard let persistence else { return }
+        do {
+            if ensureRecord {
+                try persistence.createSession(id: session.id, title: session.title)
+            }
+            try persistence.updateSessionFlags(
+                id: session.id,
+                isPinned: session.isPinned,
+                isArchived: session.isArchived,
+                isUnread: session.isUnread
+            )
+        } catch {
+            AppLogger.state.warning("SessionStore failed to update session flags", metadata: [
+                "session_id": String(session.id.prefix(8)),
+                "error": String(describing: error),
+            ])
+        }
+    }
+
     private func persistDeleteSession(_ id: String) {
         guard let persistence else { return }
         do {
@@ -594,6 +753,153 @@ class SessionStore: ObservableObject {
                 "error": String(describing: error),
             ])
         }
+    }
+
+    @discardableResult
+    private func forkSession(_ id: String, workingDirectory: String?) -> String? {
+        guard let source = sessions.first(where: { $0.id == id }) else { return nil }
+
+        let forkID = UUID().uuidString
+        let cwd = workingDirectory ?? source.agent.workingDirectory
+        let agent = AgentService(
+            workingDir: cwd,
+            modelOverride: source.codexSelection.model,
+            reasoningEffortOverride: source.codexSelection.reasoningEffort,
+            approvalPolicyOverride: source.codexApprovalSelection.approvalPolicy,
+            sandboxModeOverride: source.codexApprovalSelection.sandboxMode
+        )
+        agent.messages = Self.copiedMessagesForFork(source.agent.messages)
+
+        let session = Session(
+            id: forkID,
+            title: Self.forkedTitle(from: source.title),
+            preview: source.preview,
+            timestamp: Date(),
+            agent: agent,
+            codexSelection: source.codexSelection,
+            codexApprovalSelection: source.codexApprovalSelection
+        )
+
+        sessions.insert(session, at: 0)
+        observeMessages(for: forkID, agent: agent)
+        activeSessionId = forkID
+        persistSessionRecord(id: forkID, title: session.title)
+
+        if !agent.messages.isEmpty {
+            handleMessageUpdate(sessionID: forkID, messages: agent.messages)
+        }
+
+        return forkID
+    }
+
+    private static func copiedMessagesForFork(_ messages: [ChatMessage]) -> [ChatMessage] {
+        messages.map { message in
+            ChatMessage(
+                id: UUID().uuidString,
+                type: message.type,
+                content: message.content,
+                timestamp: message.timestamp,
+                command: message.command,
+                diff: message.diff,
+                assistant: message.assistant,
+                tool: message.tool
+            )
+        }
+    }
+
+    private static func forkedTitle(from title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = trimmed.isEmpty ? defaultChatTitle : trimmed
+        let forked = "\(base) fork"
+        guard forked.count > 40 else { return forked }
+        return "\(forked.prefix(37))..."
+    }
+
+    private nonisolated static func createForkWorktree(
+        from workingDirectory: String,
+        sessionID: String,
+        title: String
+    ) throws -> String {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/git") else {
+            throw SessionForkError.gitUnavailable
+        }
+
+        let repoRoot = try runGit(["-C", workingDirectory, "rev-parse", "--show-toplevel"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !repoRoot.isEmpty else {
+            throw SessionForkError.gitCommandFailed("Could not resolve the git repository root.")
+        }
+
+        let shortID = String(sessionID.prefix(8)).lowercased()
+        let suffix = String(UUID().uuidString.prefix(8)).lowercased()
+        let sanitizedTitle = sanitizeWorktreeComponent(title)
+        let slug = sanitizedTitle.isEmpty ? "thread" : sanitizedTitle
+        let worktreesDirectory = URL(fileURLWithPath: repoRoot, isDirectory: true)
+            .appendingPathComponent(".worktrees", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: worktreesDirectory,
+            withIntermediateDirectories: true
+        )
+
+        let worktreeURL = worktreesDirectory
+            .appendingPathComponent("\(slug)-\(shortID)-\(suffix)", isDirectory: true)
+        let branchName = "smithers/fork/\(slug)-\(shortID)-\(suffix)"
+
+        _ = try runGit([
+            "-C", repoRoot,
+            "worktree", "add",
+            "-b", branchName,
+            worktreeURL.path,
+            "HEAD",
+        ])
+
+        return worktreeURL.path
+    }
+
+    private nonisolated static func runGit(_ arguments: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw SessionForkError.gitCommandFailed(error.localizedDescription)
+        }
+
+        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let error = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+
+        guard process.terminationStatus == 0 else {
+            let detail = error.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw SessionForkError.gitCommandFailed(
+                detail.isEmpty ? "git exited with status \(process.terminationStatus)." : detail
+            )
+        }
+
+        return output
+    }
+
+    private nonisolated static func sanitizeWorktreeComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let scalars = value.lowercased().unicodeScalars.map { scalar -> Character in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+        let collapsed = String(scalars)
+            .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-_"))
+        return String(collapsed.prefix(32))
+    }
+
+    private func normalizedOptionalText(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func emptyPlaceholderIndex() -> Int? {
@@ -636,7 +942,12 @@ class SessionStore: ObservableObject {
         title: String,
         preview: String,
         date: Date,
-        now: Date
+        now: Date,
+        isPinned: Bool = false,
+        isArchived: Bool = false,
+        isUnread: Bool = false,
+        workingDirectory: String? = nil,
+        sessionIdentifier: String? = nil
     ) -> SidebarTab {
         SidebarTab(
             id: id,
@@ -647,8 +958,13 @@ class SessionStore: ObservableObject {
             title: title,
             preview: preview,
             timestamp: Self.relativeTime(from: date, to: now),
-            group: Self.groupLabel(for: date),
-            sortDate: date
+            group: isPinned ? "Pinned" : Self.groupLabel(for: date),
+            sortDate: date,
+            isPinned: isPinned,
+            isArchived: isArchived,
+            isUnread: isUnread,
+            workingDirectory: workingDirectory,
+            sessionIdentifier: sessionIdentifier
         )
     }
 
