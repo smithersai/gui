@@ -102,6 +102,7 @@ final class HighCoverageViewRenderTests: XCTestCase {
         assertText("Loading run...", existsIn: inspected)
 
         try inspected.find(button: "Live Chat").tap()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         XCTAssertEqual(openedChat?.runId, "deploy-run-123456")
         XCTAssertNil(openedChat?.nodeId)
     }
