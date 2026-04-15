@@ -584,6 +584,7 @@ private struct DeveloperDebugSessionRow: View {
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(2)
         }
+        .textSelection(.enabled)
         .padding(10)
         .background(Theme.surface2.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -614,6 +615,7 @@ private struct DeveloperDebugRunTabRow: View {
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(2)
         }
+        .textSelection(.enabled)
         .padding(10)
         .background(Theme.surface2.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -639,8 +641,8 @@ private struct DeveloperDebugMessageRow: View {
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textSecondary)
                 .lineLimit(3)
-                .textSelection(.enabled)
         }
+        .textSelection(.enabled)
         .padding(10)
         .background(Theme.surface2.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -693,16 +695,15 @@ private struct DeveloperLogEntryRow: View {
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(4)
-                .textSelection(.enabled)
 
             if let formattedMetadata = entry.formattedMetadata {
                 Text(formattedMetadata)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(Theme.textTertiary)
                     .lineLimit(3)
-                    .textSelection(.enabled)
             }
         }
+        .textSelection(.enabled)
         .padding(8)
         .background(Theme.surface2.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 6))

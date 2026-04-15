@@ -380,6 +380,7 @@ struct LiveRunChatView: View {
             Text(message)
                 .font(.system(size: 12))
                 .foregroundColor(Theme.danger)
+                .textSelection(.enabled)
             Button("Retry") {
                 Task { await refresh() }
             }
