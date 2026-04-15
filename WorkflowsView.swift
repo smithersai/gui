@@ -1197,6 +1197,7 @@ struct WorkflowsView: View {
                         }
                     }
                 }
+                .refreshable { await loadWorkflowRuns() }
             }
         }
     }
@@ -1516,6 +1517,9 @@ struct WorkflowsView: View {
                 }
                 inputs[field.key] = .number(number)
             case .boolean:
+                if !field.required, rawLaunchInputValue(for: field) == nil {
+                    continue
+                }
                 inputs[field.key] = .bool(booleanLaunchInputValue(for: field))
             case .object, .array, .json:
                 guard let rawValue = rawLaunchInputValue(for: field) else {
