@@ -143,22 +143,25 @@ struct UnifiedDiffView: View {
 
     var body: some View {
         let parsed = sections
-        if parsed.isEmpty {
-            Text("(no changes)")
-                .font(.system(size: 12))
-                .foregroundColor(Theme.textTertiary)
-                .frame(maxWidth: .infinity, minHeight: 120)
-        } else {
-            VStack(spacing: 16) {
-                // Stats bar
-                diffStatsBar(parsed)
+        Group {
+            if parsed.isEmpty {
+                Text("(no changes)")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.textTertiary)
+                    .frame(maxWidth: .infinity, minHeight: 120)
+            } else {
+                VStack(spacing: 16) {
+                    // Stats bar
+                    diffStatsBar(parsed)
 
-                ForEach(parsed) { section in
-                    fileSectionView(section)
+                    ForEach(parsed) { section in
+                        fileSectionView(section)
+                    }
                 }
+                .padding(16)
             }
-            .padding(16)
         }
+        .textSelection(.enabled)
     }
 
     // MARK: - Stats
