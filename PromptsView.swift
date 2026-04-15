@@ -518,6 +518,80 @@ struct PromptsView: View {
         }
     }
 
+    private func syncInputsWithSource(_ sourceText: String) {
+        let sourceInputs = Self.inputs(for: sourceText, preferredInputs: inputs)
+        applyInputs(sourceInputs, resetValues: false)
+    }
+
+    private func applyInputs(_ nextInputs: [PromptInput], resetValues: Bool) {
+        inputs = nextInputs
+        let defaults = Self.defaultInputValues(for: nextInputs)
+        if resetValues {
+            inputValues = defaults
+            originalInputValues = defaults
+            return
+        }
+
+        inputValues = Self.mergedInputValues(
+            for: nextInputs,
+            existingValues: inputValues,
+            defaultValues: defaults
+        )
+        originalInputValues = Self.mergedInputValues(
+            for: nextInputs,
+            existingValues: originalInputValues,
+            defaultValues: defaults
+        )
+    }
+
+    private static func inputs(for sourceText: String, preferredInputs: [PromptInput]) -> [PromptInput] {
+        let discovered = SmithersClient.discoverPromptInputs(in: sourceText)
+        guard !discovered.isEmpty else { return preferredInputs }
+
+        let preferredByName = Dictionary(preferredInputs.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        return discovered.map { input in
+            guard let preferred = preferredByName[input.name] else {
+                return input
+            }
+            return PromptInput(
+                name: input.name,
+                type: preferred.type ?? input.type,
+                defaultValue: preferred.defaultValue ?? input.defaultValue
+            )
+        }
+    }
+
+    private static func defaultInputValues(for inputs: [PromptInput]) -> [String: String] {
+        inputs.reduce(into: [:]) { values, input in
+            if let defaultValue = input.defaultValue {
+                values[input.name] = defaultValue
+            }
+        }
+    }
+
+    private static func mergedInputValues(
+        for inputs: [PromptInput],
+        existingValues: [String: String],
+        defaultValues: [String: String]
+    ) -> [String: String] {
+        inputs.reduce(into: [:]) { values, input in
+            if let existingValue = existingValues[input.name] {
+                values[input.name] = existingValue
+            } else if let defaultValue = defaultValues[input.name] {
+                values[input.name] = defaultValue
+            }
+        }
+    }
+
+    private static func normalizedInputValues(
+        _ values: [String: String],
+        for inputs: [PromptInput]
+    ) -> [String: String] {
+        inputs.reduce(into: [:]) { normalized, input in
+            normalized[input.name] = values[input.name] ?? ""
+        }
+    }
+
     private func renderPreviewAfterDebounce(
         promptId: String?,
         sourceSnapshot: String,

@@ -449,11 +449,6 @@ class GhosttyApp: ObservableObject {
         ready = false
     }
 
-    deinit {
-        MainActor.assumeIsolated {
-            shutdown()
-        }
-    }
 }
 
 // MARK: - Terminal Surface NSView
@@ -1050,7 +1045,7 @@ class TerminalSurfaceView: NSView {
         )
     }
 
-    func writeClipboard(
+    fileprivate func writeClipboard(
         _ items: [TerminalClipboard.Item],
         location: ghostty_clipboard_e,
         confirm: Bool
