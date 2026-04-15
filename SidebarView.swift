@@ -1,10 +1,15 @@
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#endif
+
 // MARK: - Navigation Destination
 
 enum NavDestination: Hashable {
     case chat
     case dashboard
+    case vcsDashboard
     case agents
     case changes
     case runs
@@ -42,6 +47,7 @@ enum NavDestination: Hashable {
         case .liveRun: return "Live Run"
         case .runInspect: return "Run Inspector"
         case .dashboard: return "Dashboard"
+        case .vcsDashboard: return "VCS Dashboard"
         case .agents: return "Agents"
         case .changes: return "Changes"
         case .runs: return "Runs"
@@ -71,6 +77,7 @@ enum NavDestination: Hashable {
         case .liveRun: return "dot.radiowaves.left.and.right"
         case .runInspect: return "sidebar.right"
         case .dashboard: return "square.grid.2x2"
+        case .vcsDashboard: return "point.3.connected.trianglepath.dotted"
         case .agents: return "person.2"
         case .changes: return "point.3.connected.trianglepath.dotted"
         case .runs: return "play.circle"
@@ -148,51 +155,34 @@ struct SidebarView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Chat section
-                    SidebarSection(title: "CHAT") {
+                    VStack(alignment: .leading, spacing: 2) {
+                        NavRow(
+                            icon: "square.grid.2x2",
+                            label: "Smithers",
+                            isSelected: destination == .dashboard || smithersNav.contains(destination)
+                        ) {
+                            destination = .dashboard
+                        }
+
+                        NavRow(
+                            icon: "point.3.connected.trianglepath.dotted",
+                            label: "VCS",
+                            isSelected: destination == .vcsDashboard || vcsNav.contains(destination)
+                        ) {
+                            destination = .vcsDashboard
+                        }
+                    }
+                    .padding(.top, 14)
+                    .padding(.bottom, 8)
+
+                    SidebarSection(title: "TABS") {
                         NewChatMenuRow(
                             newChatAction: startNewChat,
                             terminalAction: startNewTerminal
                         )
+                        .padding(.bottom, 6)
 
-                        NavRow(
-                            icon: NavDestination.chat.icon,
-                            label: NavDestination.chat.label,
-                            isSelected: destination == .chat
-                        ) {
-                            openCurrentChat()
-                        }
-
-                    }
-
-                    SidebarSection(title: "TABS") {
                         tabList
-                    }
-
-                    // Smithers section
-                    CollapsibleSidebarSection(title: "SMITHERS", isCollapsed: $smithersCollapsed) {
-                        ForEach(smithersNav, id: \.self) { nav in
-                            NavRow(
-                                icon: nav.icon,
-                                label: nav.label,
-                                isSelected: isSelected(nav)
-                            ) {
-                                destination = nav
-                            }
-                        }
-                    }
-
-                    // VCS section
-                    CollapsibleSidebarSection(title: "VCS", isCollapsed: $vcsCollapsed) {
-                        ForEach(vcsNav, id: \.self) { nav in
-                            NavRow(
-                                icon: nav.icon,
-                                label: nav.label,
-                                isSelected: isSelected(nav)
-                            ) {
-                                destination = nav
-                            }
-                        }
                     }
 
                     if developerDebugAvailable {
@@ -213,7 +203,7 @@ struct SidebarView: View {
                 }
             }
         }
-        .alert("Rename Session", isPresented: renameAlertBinding) {
+        .alert("Rename thread", isPresented: renameAlertBinding) {
             TextField("Session title", text: $renameSessionTitle)
             Button("Cancel", role: .cancel) {
                 renameSessionID = nil
@@ -227,7 +217,7 @@ struct SidebarView: View {
                 renameSessionTitle = ""
             }
         } message: {
-            Text("Enter a new title for this session.")
+            Text("Enter a new title for this thread.")
         }
         .alert("Delete Session?", isPresented: deleteAlertBinding) {
             Button("Cancel", role: .cancel) {
@@ -290,7 +280,7 @@ struct SidebarView: View {
             .padding(.horizontal, 8)
             .padding(.bottom, 4)
 
-            let groups = ["Today", "Yesterday", "Older"]
+            let groups = ["Pinned", "Today", "Yesterday", "Older"]
             let allTabs = store.sidebarTabs(matching: searchText)
 
             if allTabs.isEmpty {
@@ -305,11 +295,11 @@ struct SidebarView: View {
                 let tabs = allTabs.filter { $0.group == group }
                 if !tabs.isEmpty {
                     Text(group)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(Theme.textTertiary)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 8)
-                        .padding(.bottom, 2)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 4)
 
                     ForEach(tabs) { tab in
                         SidebarTabRow(
@@ -320,17 +310,55 @@ struct SidebarView: View {
                         }
                         .contextMenu {
                             if tab.kind == .chat, let sessionID = tab.chatSessionId {
-                                Button("Load Session") {
-                                    store.loadSessionFromPersistence(sessionID)
-                                    destination = .chat
+                                Button(tab.isPinned ? "Unpin thread" : "Pin thread") {
+                                    store.toggleSessionPinned(sessionID)
                                 }
-                                Button("Rename Session…") {
+                                Button("Rename thread") {
                                     beginRenameSession(sessionID: sessionID, currentTitle: tab.title)
                                 }
-                                Button("Delete Session", role: .destructive) {
-                                    beginDeleteSession(sessionID: sessionID, currentTitle: tab.title)
+                                Button("Archive thread") {
+                                    store.archiveSession(sessionID)
+                                    destination = .chat
                                 }
-                                .disabled(!store.canDeleteSession(sessionID))
+                                .disabled(!store.canArchiveSession(sessionID))
+                                Button(tab.isUnread ? "Mark as read" : "Mark as unread") {
+                                    store.toggleSessionUnread(sessionID)
+                                }
+                                Divider()
+                                Button("Copy working directory") {
+                                    copyTextToClipboard(tab.workingDirectory ?? store.sessionWorkingDirectory(sessionID) ?? "")
+                                }
+                                .disabled((tab.workingDirectory ?? store.sessionWorkingDirectory(sessionID)) == nil)
+                                Button("Copy session ID") {
+                                    copyTextToClipboard(tab.sessionIdentifier ?? store.sessionIdentifier(sessionID) ?? sessionID)
+                                }
+                                Button("Copy deeplink") {
+                                    copyTextToClipboard(store.sessionDeeplink(sessionID) ?? "")
+                                }
+                                .disabled(store.sessionDeeplink(sessionID) == nil)
+                                Divider()
+                                Button("Fork into local") {
+                                    if store.forkSessionIntoLocal(sessionID) != nil {
+                                        destination = .chat
+                                        AppNotifications.shared.post(
+                                            title: "Thread forked",
+                                            message: "Created a local fork.",
+                                            level: .success
+                                        )
+                                    }
+                                }
+                                Button("Fork into new worktree") {
+                                    forkSessionIntoNewWorktree(sessionID)
+                                }
+                                .disabled(!store.canArchiveSession(sessionID))
+                            }
+                            if tab.kind == .terminal, let terminalId = tab.terminalId {
+                                Button("Close Terminal", role: .destructive) {
+                                    if case .terminal(let activeId) = destination, activeId == terminalId {
+                                        destination = .dashboard
+                                    }
+                                    store.removeTerminalTab(terminalId)
+                                }
                             }
                         }
                     }
@@ -414,6 +442,35 @@ struct SidebarView: View {
         deleteSessionID = sessionID
         deleteSessionTitle = currentTitle
     }
+
+    private func forkSessionIntoNewWorktree(_ sessionID: String) {
+        Task {
+            let result = await store.forkSessionIntoNewWorktree(sessionID)
+            switch result {
+            case .success:
+                destination = .chat
+                AppNotifications.shared.post(
+                    title: "Thread forked",
+                    message: "Created a new git worktree.",
+                    level: .success
+                )
+            case .failure(let error):
+                AppNotifications.shared.post(
+                    title: "Worktree fork failed",
+                    message: error.localizedDescription,
+                    level: .error
+                )
+            }
+        }
+    }
+}
+
+private func copyTextToClipboard(_ text: String) {
+    #if os(macOS)
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
+    #endif
 }
 
 // MARK: - Sidebar Components
@@ -423,13 +480,13 @@ struct SidebarSection<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(Theme.textTertiary)
-                .padding(.horizontal, 12)
-                .padding(.top, 14)
-                .padding(.bottom, 4)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 6)
 
             content
         }
@@ -446,7 +503,7 @@ struct CollapsibleSidebarSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isCollapsed.toggle() } }) {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
@@ -454,13 +511,13 @@ struct CollapsibleSidebarSection<Content: View>: View {
                         .frame(width: 10)
                         .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                     Text(title)
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 11, weight: .semibold))
                     Spacer()
                 }
                 .foregroundColor(Theme.textTertiary)
-                .padding(.horizontal, 12)
-                .padding(.top, 14)
-                .padding(.bottom, 4)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -492,13 +549,13 @@ struct NavRow: View {
                     .lineLimit(1)
                 Spacer()
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .foregroundColor(isSelected ? Theme.accent : Theme.textSecondary)
             .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 6)
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 8)
         .accessibilityIdentifier("nav.\(label.replacingOccurrences(of: " ", with: ""))")
     }
 }
@@ -527,8 +584,11 @@ struct NewChatMenuRow: View {
                     .font(.system(size: 12))
                     .lineLimit(1)
                 Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.textTertiary)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .foregroundColor(Theme.textSecondary)
             .themedSidebarRowBackground(isSelected: false, cornerRadius: 6)
@@ -537,7 +597,7 @@ struct NewChatMenuRow: View {
         }
         .menuStyle(.borderlessButton)
         .buttonStyle(.plain)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 8)
         .accessibilityIdentifier("sidebar.newChat")
     }
 }
@@ -567,12 +627,12 @@ struct SessionRow: View {
                         .lineLimit(1)
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 6)
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 8)
         .accessibilityIdentifier("session.\(session.id)")
     }
 }
@@ -592,11 +652,25 @@ struct SidebarTabRow: View {
                         .frame(width: 14)
 
                     Text(tab.title)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 11, weight: tab.isUnread ? .semibold : .medium))
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
 
                     Spacer()
+
+                    if tab.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 8))
+                            .foregroundColor(Theme.textTertiary)
+                            .accessibilityIdentifier("tab.pinned.\(tab.id)")
+                    }
+
+                    if tab.isUnread {
+                        Circle()
+                            .fill(Theme.accent)
+                            .frame(width: 6, height: 6)
+                            .accessibilityIdentifier("tab.unread.\(tab.id)")
+                    }
 
                     Text(tab.timestamp)
                         .font(.system(size: 9))
@@ -611,12 +685,12 @@ struct SidebarTabRow: View {
                         .padding(.leading, 21)
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 6)
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 8)
         .accessibilityIdentifier("tab.\(tab.id)")
     }
 }
