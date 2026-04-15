@@ -2,11 +2,18 @@ import SwiftUI
 
 struct ScoresView: View {
     @ObservedObject var smithers: SmithersClient
+    @State private var runs: [RunSummary] = []
+    @State private var selectedRunId: String?
     @State private var scores: [ScoreRow] = []
     @State private var aggregates: [AggregateScore] = []
     @State private var isLoading = true
     @State private var error: String?
     @State private var tab: ScoreTab = .summary
+
+    init(smithers: SmithersClient, initialRunId: String? = nil) {
+        self.smithers = smithers
+        _selectedRunId = State(initialValue: initialRunId)
+    }
 
     enum ScoreTab: String, CaseIterable {
         case summary = "Summary"
@@ -21,10 +28,11 @@ struct ScoresView: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundColor(Theme.textPrimary)
                 Spacer()
+                runSelector
                 if isLoading {
                     ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
                 }
-                Button(action: { Task { await loadScores() } }) {
+                Button(action: { Task { await loadRunContextAndScores() } }) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 12))
                         .foregroundColor(Theme.textSecondary)
@@ -58,6 +66,8 @@ struct ScoresView: View {
 
             if let error {
                 errorView(error)
+            } else if selectedRunId == nil && !isLoading {
+                emptyView("No runs available")
             } else {
                 switch tab {
                 case .summary: summaryContent
@@ -66,7 +76,7 @@ struct ScoresView: View {
             }
         }
         .background(Theme.surface1)
-        .task { await loadScores() }
+        .task { await loadRunContextAndScores() }
     }
 
     // MARK: - Summary Tab
@@ -135,7 +145,7 @@ struct ScoresView: View {
                             scoreIndicator(score.score)
 
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(score.scorerName ?? score.scorerId ?? "Unknown")
+                                Text(score.scorerDisplayName)
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(Theme.textPrimary)
                                 if let reason = score.reason {
@@ -168,6 +178,75 @@ struct ScoresView: View {
     }
 
     // MARK: - Helpers
+
+    private var selectedRun: RunSummary? {
+        guard let selectedRunId else { return nil }
+        return runs.first { $0.runId == selectedRunId }
+    }
+
+    private var selectedRunLabel: String {
+        if let selectedRun {
+            return runDisplayName(selectedRun)
+        }
+        if let selectedRunId, !selectedRunId.isEmpty {
+            return "Run \(shortRunId(selectedRunId))"
+        }
+        return runs.isEmpty ? "No runs" : "Select run"
+    }
+
+    private var runSelector: some View {
+        Menu {
+            if runs.isEmpty {
+                Button("No runs available") {}
+                    .disabled(true)
+            } else {
+                ForEach(runs) { run in
+                    Button(action: { Task { await selectRun(run.runId) } }) {
+                        HStack {
+                            Text(runMenuTitle(run))
+                            if selectedRunId == run.runId {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(selectedRunLabel)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8))
+            }
+            .font(.system(size: 11))
+            .foregroundColor(Theme.textSecondary)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: 220, minHeight: 28)
+            .background(Theme.inputBg)
+            .cornerRadius(6)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(runs.isEmpty && selectedRunId == nil)
+        .accessibilityIdentifier("scores.runPicker")
+    }
+
+    private func shortRunId(_ runId: String) -> String {
+        String(runId.prefix(8))
+    }
+
+    private func runDisplayName(_ run: RunSummary) -> String {
+        if let name = run.workflowName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty {
+            return name
+        }
+        return "Run \(shortRunId(run.runId))"
+    }
+
+    private func runMenuTitle(_ run: RunSummary) -> String {
+        "\(runDisplayName(run)) - \(run.status.label) - \(shortRunId(run.runId))"
+    }
 
     private func tableHeader(_ title: String, width: CGFloat) -> some View {
         Text(title)
@@ -225,18 +304,63 @@ struct ScoresView: View {
             Text(message)
                 .font(.system(size: 13))
                 .foregroundColor(Theme.textSecondary)
-            Button("Retry") { Task { await loadScores() } }
+            Button("Retry") { Task { await loadRunContextAndScores() } }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.accent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func loadScores() async {
+    private func loadRunContextAndScores() async {
         isLoading = true
         error = nil
         do {
-            let recentScores = try await smithers.listRecentScores()
+            let loadedRuns = try await smithers.listRuns()
+            runs = loadedRuns
+
+            let runId = selectedRunId(afterLoading: loadedRuns)
+            selectedRunId = runId
+            guard let runId else {
+                scores = []
+                aggregates = []
+                isLoading = false
+                return
+            }
+
+            let recentScores = try await smithers.listRecentScores(runId: runId)
+            scores = recentScores
+            aggregates = try await smithers.aggregateScores(from: recentScores)
+        } catch {
+            self.error = error.localizedDescription
+            scores = []
+            aggregates = []
+        }
+        isLoading = false
+    }
+
+    private func selectedRunId(afterLoading loadedRuns: [RunSummary]) -> String? {
+        if let selectedRunId {
+            let trimmedRunId = selectedRunId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedRunId.isEmpty {
+                return trimmedRunId
+            }
+        }
+        return loadedRuns.first?.runId
+    }
+
+    private func selectRun(_ runId: String) async {
+        guard selectedRunId != runId else { return }
+        selectedRunId = runId
+        await loadScores(for: runId)
+    }
+
+    private func loadScores(for runId: String) async {
+        isLoading = true
+        error = nil
+        scores = []
+        aggregates = []
+        do {
+            let recentScores = try await smithers.listRecentScores(runId: runId)
             scores = recentScores
             aggregates = try await smithers.aggregateScores(from: recentScores)
         } catch {
