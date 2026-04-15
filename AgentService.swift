@@ -6,7 +6,7 @@ import CCodexFFI
 
 /// Swift wrapper around the codex-ffi C library.
 /// Not bound to any actor — all methods are synchronous and block the caller.
-class CodexBridge {
+final class CodexBridge: @unchecked Sendable {
     private var handle: OpaquePointer?
 
     init?(cwd: String) {
@@ -57,6 +57,33 @@ private class CallbackBox {
     init(_ callback: @escaping (String) -> Void) { self.callback = callback }
 }
 
+private final class ActiveBridgeSlot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bridge: CodexBridge?
+
+    func set(_ bridge: CodexBridge) {
+        lock.lock()
+        self.bridge = bridge
+        lock.unlock()
+    }
+
+    func clear(ifSame bridge: CodexBridge) {
+        lock.lock()
+        if self.bridge === bridge {
+            self.bridge = nil
+        }
+        lock.unlock()
+    }
+
+    func take() -> CodexBridge? {
+        lock.lock()
+        let current = bridge
+        bridge = nil
+        lock.unlock()
+        return current
+    }
+}
+
 // MARK: - Agent Service
 
 @MainActor
@@ -70,6 +97,8 @@ class AgentService: ObservableObject {
 
     // Bridge lives on a background thread, never touched from MainActor
     private var bridgeTask: Task<Void, Never>?
+    private let activeBridge = ActiveBridgeSlot()
+    private var currentTurnID = UUID()
 
     var workingDirectory: String { workingDir }
 
@@ -81,6 +110,17 @@ class AgentService: ObservableObject {
     }
 
     func sendMessage(_ prompt: String) {
+        currentTurnID = UUID()
+        let turnID = currentTurnID
+
+        bridgeTask?.cancel()
+        bridgeTask = nil
+        if let bridge = activeBridge.take() {
+            Task.detached {
+                bridge.cancel()
+            }
+        }
+
         messageCounter += 1
         let userMsg = ChatMessage(
             id: "u\(messageCounter)",
@@ -94,11 +134,11 @@ class AgentService: ObservableObject {
         partialText = ""
         isRunning = true
 
-        if UITestSupport.isEnabled {
+        if UITestSupport.isEnabled || UITestSupport.isRunningUnitTests {
             let responseNumber = messageCounter
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 600_000_000)
-                guard self.isRunning else { return }
+                guard self.isRunning, self.currentTurnID == turnID else { return }
                 self.appendAssistantMessage("UI test response for: \(prompt)")
                 self.partialText = ""
                 self.isRunning = false
@@ -108,20 +148,24 @@ class AgentService: ObservableObject {
         }
 
         let cwd = workingDir
+        let activeBridge = activeBridge
 
-        weak let weakSelf = self
-        bridgeTask = Task.detached {
+        weak var weakSelf = self
+        bridgeTask = Task.detached { [cwd, prompt, turnID, activeBridge, weakSelf] in
             NSLog("[AgentService] Starting codex turn on background thread, cwd=%@", cwd)
 
             let bridge = CodexBridge(cwd: cwd)
             guard let bridge = bridge else {
                 NSLog("[AgentService] Bridge creation failed")
                 await MainActor.run {
-                    weakSelf?.appendAssistantMessage("Failed to initialize Codex. cwd=\(cwd)")
-                    weakSelf?.isRunning = false
+                    guard let self = weakSelf, self.currentTurnID == turnID else { return }
+                    self.appendAssistantMessage("Failed to initialize Codex. cwd=\(cwd)")
+                    self.isRunning = false
+                    self.bridgeTask = nil
                 }
                 return
             }
+            activeBridge.set(bridge)
 
             let success = bridge.send(prompt: prompt) { json in
                 NSLog("[AgentService] Event: %@", json)
@@ -129,23 +173,38 @@ class AgentService: ObservableObject {
                       let event = try? JSONDecoder().decode(CodexEvent.self, from: data)
                 else { return }
 
-                DispatchQueue.main.async {
-                    weakSelf?.handleEvent(event)
+                Task { @MainActor in
+                    guard let self = weakSelf,
+                          self.currentTurnID == turnID,
+                          self.isRunning
+                    else { return }
+                    self.handleEvent(event)
                 }
             }
+            activeBridge.clear(ifSame: bridge)
 
             await MainActor.run {
-                if !success {
-                    weakSelf?.appendAssistantMessage("Codex turn failed")
+                guard let self = weakSelf, self.currentTurnID == turnID else { return }
+                if !success && self.isRunning {
+                    self.appendAssistantMessage("Codex turn failed")
                 }
-                weakSelf?.partialText = ""
-                weakSelf?.isRunning = false
+                self.partialText = ""
+                self.isRunning = false
+                self.bridgeTask = nil
             }
         }
     }
 
     func cancel() {
+        currentTurnID = UUID()
         bridgeTask?.cancel()
+        bridgeTask = nil
+        if let bridge = activeBridge.take() {
+            Task.detached {
+                bridge.cancel()
+            }
+        }
+        partialText = ""
         isRunning = false
     }
 
