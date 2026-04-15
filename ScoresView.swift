@@ -70,18 +70,8 @@ struct ScoresView: View {
             // Tabs
             HStack(spacing: 0) {
                 ForEach(ScoreTab.allCases, id: \.self) { t in
-                    Button(action: { tab = t }) {
-                        Text(t.rawValue)
-                            .font(.system(size: 12, weight: tab == t ? .semibold : .regular))
-                            .foregroundColor(tab == t ? Theme.accent : Theme.textSecondary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.plain)
-                    .overlay(alignment: .bottom) {
-                        if tab == t {
-                            Rectangle().fill(Theme.accent).frame(height: 2)
-                        }
+                    DashboardTabButton(label: t.rawValue, isActive: tab == t) {
+                        withAnimation(.easeInOut(duration: 0.2)) { tab = t }
                     }
                 }
                 Spacer()
@@ -93,11 +83,15 @@ struct ScoresView: View {
             } else if selectedRunId == nil && !isLoading {
                 emptyView("No runs available")
             } else {
-                switch tab {
-                case .summary: summaryContent
-                case .metrics: metricsContent
-                case .recent: recentContent
+                Group {
+                    switch tab {
+                    case .summary: summaryContent
+                    case .metrics: metricsContent
+                    case .recent: recentContent
+                    }
                 }
+                .transition(.opacity)
+                .id(tab)
             }
         }
         .background(Theme.surface1)
@@ -112,48 +106,15 @@ struct ScoresView: View {
             VStack(alignment: .leading, spacing: 16) {
                 summaryMetricsPanel
 
-                VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
                     if aggregates.isEmpty && !isLoading {
                         emptyView("No scorer data")
                     } else {
-                        // Table header
-                        HStack(spacing: 0) {
-                            tableHeader("Scorer", width: 140)
-                            tableHeader("Count", width: 60)
-                            tableHeader("Mean", width: 60)
-                            tableHeader("Min", width: 60)
-                            tableHeader("Max", width: 60)
-                            tableHeader("P50", width: 60)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Theme.surface2)
-                        .border(Theme.border, edges: [.bottom])
-
+                        Text("Per-scorer statistics")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Theme.textTertiary)
                         ForEach(aggregates) { agg in
-                            HStack(spacing: 0) {
-                                Text(agg.scorerName)
-                                    .frame(width: 140, alignment: .leading)
-                                Text("\(agg.count)")
-                                    .frame(width: 60, alignment: .trailing)
-                                scoreCell(agg.mean, width: 60)
-                                scoreCell(agg.min, width: 60)
-                                scoreCell(agg.max, width: 60)
-                                if let p50 = agg.p50 {
-                                    scoreCell(p50, width: 60)
-                                } else {
-                                    Text("—")
-                                        .frame(width: 60, alignment: .trailing)
-                                        .foregroundColor(Theme.textTertiary)
-                                }
-                                Spacer()
-                            }
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(Theme.textPrimary)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            Divider().background(Theme.border)
+                            scorerAggregateCard(agg)
                         }
                     }
                 }
@@ -207,6 +168,50 @@ struct ScoresView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
+    }
+
+    private func scorerAggregateCard(_ aggregate: AggregateScore) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(aggregate.scorerName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Theme.textPrimary)
+                Spacer()
+                Text("\(aggregate.count) eval\(aggregate.count == 1 ? "" : "s")")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+            }
+
+            HStack(spacing: 10) {
+                aggregateMetricCell(label: "Mean", value: aggregate.mean)
+                aggregateMetricCell(label: "Min", value: aggregate.min)
+                aggregateMetricCell(label: "Max", value: aggregate.max)
+                aggregateMetricCell(label: "P50", value: aggregate.p50)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .themedCardHover(cornerRadius: 8)
+    }
+
+    private func aggregateMetricCell(label: String, value: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(Theme.textTertiary)
+            if let value {
+                Text(String(format: "%.2f", value))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(scoreColor(value))
+            } else {
+                Text("—")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Metrics Tab
@@ -447,6 +452,7 @@ struct ScoresView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
+                        .themedRowHover()
                         Divider().background(Theme.border)
                     }
                 }
@@ -574,19 +580,6 @@ struct ScoresView: View {
 
     private func runMenuTitle(_ run: RunSummary) -> String {
         "\(runDisplayName(run)) - \(run.status.label) - \(shortRunId(run.runId))"
-    }
-
-    private func tableHeader(_ title: String, width: CGFloat) -> some View {
-        Text(title)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundColor(Theme.textTertiary)
-            .frame(width: width, alignment: title == "Scorer" ? .leading : .trailing)
-    }
-
-    private func scoreCell(_ value: Double, width: CGFloat) -> some View {
-        Text(String(format: "%.2f", value))
-            .foregroundColor(scoreColor(value))
-            .frame(width: width, alignment: .trailing)
     }
 
     private func scoreIndicator(_ value: Double) -> some View {
