@@ -70,8 +70,7 @@ struct SearchView: View {
                         .foregroundColor(Theme.textSecondary)
                         .padding(.horizontal, 8)
                         .frame(height: 24)
-                        .background(Theme.pillBg)
-                        .cornerRadius(4)
+                        .themedPill(cornerRadius: 4)
                     }
                     .buttonStyle(.plain)
                     .padding(.leading, 8)
@@ -95,15 +94,15 @@ struct SearchView: View {
                             if let error = error {
                                 Image(systemName: "exclamationmark.triangle")
                                     .font(.system(size: 28))
-                                    .foregroundColor(.red)
+                                    .foregroundColor(Theme.danger)
                                 Text(error)
                                     .font(.system(size: 13))
-                                    .foregroundColor(.red)
+                                    .foregroundColor(Theme.danger)
                             } else {
                                 Image(systemName: "magnifyingglass")
                                     .font(.system(size: 28))
                                     .foregroundColor(Theme.textTertiary)
-                                Text(query.isEmpty ? "Enter a search query" : "No results found")
+                                Text(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Enter a search query" : "No results found")
                                     .font(.system(size: 13))
                                     .foregroundColor(Theme.textTertiary)
                             }
@@ -170,6 +169,7 @@ struct SearchView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
             }
+            .refreshable { await search() }
         }
         .background(Theme.surface1)
         .accessibilityIdentifier("search.root")
@@ -201,23 +201,29 @@ struct SearchView: View {
     }
 
     private func search() async {
-        guard !query.isEmpty else { return }
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            results = []
+            error = nil
+            isSearching = false
+            return
+        }
         isSearching = true
+        defer { isSearching = false }
         results = []
         self.error = nil
         do {
             switch tab {
             case .code:
-                results = try await smithers.searchCode(query: query)
+                results = try await smithers.searchCode(query: trimmedQuery)
             case .issues:
-                results = try await smithers.searchIssues(query: query, state: issueState)
+                results = try await smithers.searchIssues(query: trimmedQuery, state: issueState)
             case .repos:
-                results = try await smithers.searchRepos(query: query)
+                results = try await smithers.searchRepos(query: trimmedQuery)
             }
         } catch {
             self.error = error.localizedDescription
             results = []
         }
-        isSearching = false
     }
 }
