@@ -13,6 +13,9 @@ struct IssuesView: View {
     @State private var isCreating = false
     @State private var detailLoadingIds: Set<String> = []
     @State private var loadGeneration = 0
+    @State private var closeTarget: SmithersIssue?
+    @State private var closeComment = ""
+    @State private var isClosing = false
 
     private var selectedIssue: SmithersIssue? {
         issues.first { $0.id == selectedId }
@@ -37,6 +40,9 @@ struct IssuesView: View {
         .background(Theme.surface1)
         .accessibilityIdentifier("issues.root")
         .task(id: stateFilter) { await loadIssues() }
+        .sheet(item: $closeTarget) { issue in
+            closeIssueSheet(issue)
+        }
     }
 
     // MARK: - Header
@@ -253,7 +259,7 @@ struct IssuesView: View {
                                     .frame(width: 16, height: 16)
                             }
                             if issue.state == "open" {
-                                Button(action: { Task { await closeIssue(issue) } }) {
+                                Button(action: { beginCloseIssue(issue) }) {
                                     HStack(spacing: 4) {
                                         Image(systemName: "checkmark.circle")
                                         Text("Close")
@@ -278,7 +284,6 @@ struct IssuesView: View {
                                     .themedPill(cornerRadius: 6)
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(true)
                             }
                         }
 

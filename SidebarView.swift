@@ -8,6 +8,7 @@ enum NavDestination: Hashable {
     case agents
     case changes
     case runs
+    case snapshots
     case workflows
     case triggers
     case jjhubWorkflows
@@ -44,6 +45,7 @@ enum NavDestination: Hashable {
         case .agents: return "Agents"
         case .changes: return "Changes"
         case .runs: return "Runs"
+        case .snapshots: return "Snapshots"
         case .workflows: return "Workflows"
         case .triggers: return "Triggers"
         case .jjhubWorkflows: return "JJHub Workflows"
@@ -72,6 +74,7 @@ enum NavDestination: Hashable {
         case .agents: return "person.2"
         case .changes: return "point.3.connected.trianglepath.dotted"
         case .runs: return "play.circle"
+        case .snapshots: return "camera"
         case .workflows: return "arrow.triangle.branch"
         case .triggers: return "clock.arrow.circlepath"
         case .jjhubWorkflows: return "point.3.filled.connected.trianglepath.dotted"
@@ -122,7 +125,7 @@ struct SidebarView: View {
     }
 
     private let smithersNav: [NavDestination] = [
-        .dashboard, .agents, .runs, .workflows, .triggers, .approvals,
+        .dashboard, .agents, .runs, .snapshots, .workflows, .triggers, .approvals,
         .prompts, .scores, .memory, .search, .sql, .workspaces, .logs
     ]
 

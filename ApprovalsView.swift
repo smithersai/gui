@@ -11,6 +11,7 @@ struct ApprovalsView: View {
     @State private var loadGeneration = 0
     @State private var actionInFlight: Set<String> = [] // approval ids being acted on
     @State private var pendingDenyApproval: Approval?
+    @State private var waitTimeNow = Date()
 
     private var selectedApproval: Approval? {
         visibleApprovals.first { $0.id == selectedId }
@@ -44,6 +45,9 @@ struct ApprovalsView: View {
         .background(Theme.surface1)
         .accessibilityIdentifier("approvals.root")
         .task { await loadApprovals() }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { date in
+            waitTimeNow = date
+        }
         .confirmationDialog(
             "Deny Approval",
             isPresented: Binding(
@@ -185,9 +189,9 @@ struct ApprovalsView: View {
                                     Spacer()
 
                                     VStack(alignment: .trailing, spacing: 3) {
-                                        Text(approval.waitTime)
+                                        Text(approval.waitTime(at: waitTimeNow))
                                             .font(.system(size: 10, design: .monospaced))
-                                            .foregroundColor(waitTimeColor(approval))
+                                            .foregroundColor(waitTimeColor(approval, at: waitTimeNow))
 
                                         if approval.isSyntheticFallback {
                                             Text("SYNTHETIC")
@@ -230,12 +234,15 @@ struct ApprovalsView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             metadataRow("Run ID", value: approval.runId)
                             metadataRow("Node ID", value: approval.nodeId)
+                            if let iteration = approval.iteration {
+                                metadataRow("Iteration", value: "\(iteration)")
+                            }
                             if let wp = approval.workflowPath {
                                 metadataRow("Workflow", value: wp)
                             }
                             metadataRow("Requested", value: formatDate(approval.requestedDate))
                             metadataRow("Status", value: approval.status.uppercased())
-                            metadataRow("Wait Time", value: approval.waitTime)
+                            metadataRow("Wait Time", value: approval.waitTime(at: waitTimeNow))
                             if let source = approval.source, !source.isEmpty {
                                 metadataRow("Source", value: source.uppercased())
                             }
@@ -352,8 +359,8 @@ struct ApprovalsView: View {
         }
     }
 
-    private func waitTimeColor(_ approval: Approval) -> Color {
-        let seconds = Int(Date().timeIntervalSince(approval.requestedDate))
+    private func waitTimeColor(_ approval: Approval, at date: Date) -> Color {
+        let seconds = max(0, Int(date.timeIntervalSince(approval.requestedDate)))
         if seconds < 300 { return Theme.textTertiary }
         if seconds < 1800 { return Theme.warning }
         return Theme.danger
@@ -435,7 +442,7 @@ struct ApprovalsView: View {
     private func approve(_ approval: Approval) async {
         actionInFlight.insert(approval.id)
         do {
-            try await smithers.approveNode(runId: approval.runId, nodeId: approval.nodeId)
+            try await smithers.approveNode(runId: approval.runId, nodeId: approval.nodeId, iteration: approval.iteration)
             AppNotifications.shared.post(
                 title: "Approval granted",
                 message: "\(approval.gate ?? approval.nodeId) (\(String(approval.runId.prefix(8))))",
@@ -457,7 +464,7 @@ struct ApprovalsView: View {
     private func deny(_ approval: Approval) async {
         actionInFlight.insert(approval.id)
         do {
-            try await smithers.denyNode(runId: approval.runId, nodeId: approval.nodeId)
+            try await smithers.denyNode(runId: approval.runId, nodeId: approval.nodeId, iteration: approval.iteration)
             AppNotifications.shared.post(
                 title: "Approval denied",
                 message: "\(approval.gate ?? approval.nodeId) (\(String(approval.runId.prefix(8))))",
@@ -481,6 +488,7 @@ struct ApprovalsView: View {
             id: decision.id,
             runId: decision.runId,
             nodeId: decision.nodeId,
+            iteration: decision.iteration,
             workflowPath: decision.workflowPath,
             gate: decision.gate,
             status: decision.action,
