@@ -16,6 +16,15 @@ private extension Color {
     }
 }
 
+private func projectSource(_ filename: String) throws -> String {
+    let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let projectDirectory = testsDirectory
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectDirectory.appendingPathComponent(filename)
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
 // MARK: - THEME_COLOR_BASE through THEME_COLOR_SYN_COMMENT
 
 final class ThemeColorExistenceTests: XCTestCase {
@@ -380,5 +389,67 @@ final class ThemeSyntaxHighlightingTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(ratio, 4.5,
                 "\(name) contrast ratio \(ratio) against base is below WCAG AA (4.5)")
         }
+    }
+}
+
+// MARK: - UI_BUILD_THEME_TOKEN_WIRING
+
+final class ThemeTokenWiringTests: XCTestCase {
+    func testSidebarHoverIsWiredThroughSelectableRows() throws {
+        let theme = try projectSource("Theme.swift")
+        XCTAssertTrue(theme.contains("if isHovered { return sidebarHover }"))
+
+        let wiredSources = [
+            try projectSource("SidebarView.swift"),
+            try projectSource("WorkflowsView.swift"),
+            try projectSource("LandingsView.swift"),
+            try projectSource("IssuesView.swift"),
+            try projectSource("TicketsView.swift"),
+        ].joined(separator: "\n")
+
+        XCTAssertTrue(wiredSources.contains(".themedSidebarRowBackground"))
+    }
+
+    func testPillBorderIsWiredThroughPillModifier() throws {
+        let theme = try projectSource("Theme.swift")
+        XCTAssertTrue(theme.contains("border: Color = Theme.pillBorder"))
+
+        let wiredSources = [
+            try projectSource("AgentsView.swift"),
+            try projectSource("ChatView.swift"),
+            try projectSource("MemoryView.swift"),
+            try projectSource("WorkflowsView.swift"),
+            try projectSource("PromptsView.swift"),
+        ].joined(separator: "\n")
+
+        XCTAssertTrue(wiredSources.contains(".themedPill"))
+    }
+
+    func testBubbleDiffIsWiredThroughDiffBlocks() throws {
+        let theme = try projectSource("Theme.swift")
+        XCTAssertTrue(theme.contains(".background(Theme.bubbleDiff)"))
+
+        let wiredSources = [
+            try projectSource("ChatView.swift"),
+            try projectSource("ChangesView.swift"),
+            try projectSource("LandingsView.swift"),
+        ].joined(separator: "\n")
+
+        XCTAssertTrue(wiredSources.contains(".themedDiffBlock"))
+    }
+
+    func testSyntaxTokensAreWiredThroughHighlightedText() throws {
+        let theme = try projectSource("Theme.swift")
+        for token in ["Theme.synKeyword", "Theme.synString", "Theme.synFunction", "Theme.synComment"] {
+            XCTAssertTrue(theme.contains(token), "\(token) should be used by SyntaxHighlightedText")
+        }
+
+        let wiredSources = [
+            try projectSource("ChatView.swift"),
+            try projectSource("ChangesView.swift"),
+            try projectSource("LandingsView.swift"),
+        ].joined(separator: "\n")
+
+        XCTAssertTrue(wiredSources.contains("SyntaxHighlightedText"))
     }
 }
