@@ -117,6 +117,164 @@ final class DevToolsTreeBuilderTests: XCTestCase {
         walk(tree)
         XCTAssertEqual(seen.count, 3, "root + 2 tasks should each get a unique id")
     }
+
+    // MARK: - Node-state population / rollup
+
+    func testTaskNodeDefaultsToPendingWhenNoEntry() throws {
+        let xml = try decodeXML("""
+        {"kind":"element","tag":"smithers:workflow","props":{},"children":[
+          {"kind":"element","tag":"smithers:task","props":{"id":"missing"},"children":[]}
+        ]}
+        """)
+        let tree = DevToolsTreeBuilder.build(xml: xml, taskIndex: [], nodeStates: [:])
+        XCTAssertEqual(extractState(from: tree.children[0]), .pending)
+        XCTAssertNotEqual(
+            extractState(from: tree.children[0]), .unknown,
+            "Missing node-state entry must render as pending, not unknown"
+        )
+    }
+
+    func testTaskNodeStatePopulatedFromDict() throws {
+        let xml = try decodeXML("""
+        {"kind":"element","tag":"smithers:workflow","props":{},"children":[
+          {"kind":"element","tag":"smithers:task","props":{"id":"g74:implement"},"children":[]},
+          {"kind":"element","tag":"smithers:task","props":{"id":"g74:review:0"},"children":[]}
+        ]}
+        """)
+        let states: [String: DevToolsNodeStateEntry] = [
+            "g74:implement": .init(nodeId: "g74:implement", state: "finished", iteration: 0, lastAttempt: 1),
+            "g74:review:0": .init(nodeId: "g74:review:0", state: "in-progress", iteration: 0, lastAttempt: 1),
+        ]
+        let tree = DevToolsTreeBuilder.build(xml: xml, taskIndex: [], nodeStates: states)
+        XCTAssertEqual(extractState(from: tree.children[0]), .finished)
+        XCTAssertEqual(
+            extractState(from: tree.children[1]), .running,
+            "`in-progress` from DB should normalize to `running`"
+        )
+    }
+
+    func testSkippedStateNormalizesToCancelled() throws {
+        let xml = try decodeXML("""
+        {"kind":"element","tag":"smithers:workflow","props":{},"children":[
+          {"kind":"element","tag":"smithers:task","props":{"id":"s1"},"children":[]}
+        ]}
+        """)
+        let states: [String: DevToolsNodeStateEntry] = [
+            "s1": .init(nodeId: "s1", state: "skipped", iteration: 0, lastAttempt: nil),
+        ]
+        let tree = DevToolsTreeBuilder.build(xml: xml, taskIndex: [], nodeStates: states)
+        XCTAssertEqual(extractState(from: tree.children[0]), .cancelled)
+    }
+
+    func testStructuralNodeRollsUpFailedOverRunning() throws {
+        let xml = try decodeXML("""
+        {"kind":"element","tag":"smithers:workflow","props":{},"children":[
+          {"kind":"element","tag":"smithers:sequence","props":{},"children":[
+            {"kind":"element","tag":"smithers:task","props":{"id":"a"},"children":[]},
+            {"kind":"element","tag":"smithers:task","props":{"id":"b"},"children":[]},
+            {"kind":"element","tag":"smithers:task","props":{"id":"c"},"children":[]}
+          ]}
+        ]}
+        """)
+        let states: [String: DevToolsNodeStateEntry] = [
+            "a": .init(nodeId: "a", state: "finished", iteration: 0, lastAttempt: 1),
+            "b": .init(nodeId: "b", state: "in-progress", iteration: 0, lastAttempt: 1),
+            "c": .init(nodeId: "c", state: "failed", iteration: 0, lastAttempt: 1),
+        ]
+        let tree = DevToolsTreeBuilder.build(xml: xml, taskIndex: [], nodeStates: states)
+        let sequence = tree.children[0]
+        XCTAssertEqual(extractState(from: sequence), .failed)
+        XCTAssertEqual(
+            extractState(from: tree), .failed,
+            "Workflow should also roll up to failed when any descendant failed"
+        )
+    }
+
+    func testStructuralNodeRollsUpToFinishedWhenAllChildrenFinished() throws {
+        let xml = try decodeXML("""
+        {"kind":"element","tag":"smithers:workflow","props":{},"children":[
+          {"kind":"element","tag":"smithers:sequence","props":{},"children":[
+            {"kind":"element","tag":"smithers:task","props":{"id":"a"},"children":[]},
+            {"kind":"element","tag":"smithers:task","props":{"id":"b"},"children":[]}
+          ]}
+        ]}
+        """)
+        let states: [String: DevToolsNodeStateEntry] = [
+            "a": .init(nodeId: "a", state: "finished", iteration: 0, lastAttempt: 1),
+            "b": .init(nodeId: "b", state: "finished", iteration: 0, lastAttempt: 1),
+        ]
+        let tree = DevToolsTreeBuilder.build(xml: xml, taskIndex: [], nodeStates: states)
+        XCTAssertEqual(extractState(from: tree.children[0]), .finished)
+        XCTAssertEqual(extractState(from: tree), .finished)
+    }
+
+    func testRollupIgnoresCancelledWhenSiblingsFinished() throws {
+        let xml = try decodeXML("""
+        {"kind":"element","tag":"smithers:workflow","props":{},"children":[
+          {"kind":"element","tag":"smithers:task","props":{"id":"a"},"children":[]},
+          {"kind":"element","tag":"smithers:task","props":{"id":"b"},"children":[]}
+        ]}
+        """)
+        let states: [String: DevToolsNodeStateEntry] = [
+            "a": .init(nodeId: "a", state: "finished", iteration: 0, lastAttempt: 1),
+            "b": .init(nodeId: "b", state: "skipped", iteration: 0, lastAttempt: 1),
+        ]
+        let tree = DevToolsTreeBuilder.build(xml: xml, taskIndex: [], nodeStates: states)
+        XCTAssertEqual(extractState(from: tree), .finished)
+    }
+
+    func testStateMakeDictPrefersHighestIteration() {
+        let rows: [[String: Any]] = [
+            ["node_id": "g74:review:0", "state": "failed", "iteration": NSNumber(value: 0), "last_attempt": NSNumber(value: 1)],
+            ["node_id": "g74:review:0", "state": "finished", "iteration": NSNumber(value: 1), "last_attempt": NSNumber(value: 2)],
+            ["node_id": "g74:implement", "state": "running", "iteration": NSNumber(value: 0), "last_attempt": NSNumber(value: 1)],
+        ]
+        let dict = DevToolsNodeStateQuery.makeDict(fromRows: rows)
+        XCTAssertEqual(dict.count, 2)
+        XCTAssertEqual(dict["g74:review:0"]?.state, "finished")
+        XCTAssertEqual(dict["g74:review:0"]?.iteration, 1)
+        XCTAssertEqual(dict["g74:implement"]?.state, "running")
+    }
+
+    func testNormalizeDevToolsNodeStateCoversKnownAliases() {
+        XCTAssertEqual(normalizeDevToolsNodeState("in-progress"), "running")
+        XCTAssertEqual(normalizeDevToolsNodeState("in_progress"), "running")
+        XCTAssertEqual(normalizeDevToolsNodeState("started"), "running")
+        XCTAssertEqual(normalizeDevToolsNodeState("running"), "running")
+        XCTAssertEqual(normalizeDevToolsNodeState("complete"), "finished")
+        XCTAssertEqual(normalizeDevToolsNodeState("done"), "finished")
+        XCTAssertEqual(normalizeDevToolsNodeState("error"), "failed")
+        XCTAssertEqual(normalizeDevToolsNodeState("errored"), "failed")
+        XCTAssertEqual(normalizeDevToolsNodeState("skipped"), "cancelled")
+        XCTAssertEqual(normalizeDevToolsNodeState(""), "pending")
+        XCTAssertEqual(normalizeDevToolsNodeState("blocked"), "blocked")
+        XCTAssertEqual(normalizeDevToolsNodeState("waiting-approval"), "waitingApproval")
+    }
+
+    func testNodeStateQuerySelectsRunId() {
+        let sql = DevToolsNodeStateQuery.query(runId: "run-1776372721752")
+        XCTAssertTrue(sql.contains("_smithers_nodes"), "query must target _smithers_nodes table")
+        XCTAssertTrue(sql.contains("'run-1776372721752'"), "query must include quoted run id")
+        XCTAssertTrue(sql.contains("node_id"), "query must project node_id")
+        XCTAssertTrue(sql.contains("state"), "query must project state")
+    }
+
+    func testExistingStatePropFromXMLIsPreservedOverNodeStateDict() throws {
+        // A delta may have already written `state="running"` onto the XML prop.
+        // In that case the transport-side dict should NOT overwrite it, because the
+        // frame-level truth (what the scrubber is pointing at) wins over the latest
+        // DB state when both are present.
+        let xml = try decodeXML("""
+        {"kind":"element","tag":"smithers:workflow","props":{},"children":[
+          {"kind":"element","tag":"smithers:task","props":{"id":"a","state":"running"},"children":[]}
+        ]}
+        """)
+        let states: [String: DevToolsNodeStateEntry] = [
+            "a": .init(nodeId: "a", state: "finished", iteration: 0, lastAttempt: 1),
+        ]
+        let tree = DevToolsTreeBuilder.build(xml: xml, taskIndex: [], nodeStates: states)
+        XCTAssertEqual(extractState(from: tree.children[0]), .running)
+    }
 }
 
 final class DevToolsFrameApplierTests: XCTestCase {
@@ -232,5 +390,139 @@ final class DevToolsCLITransportIntegrationTests: XCTestCase {
         XCTAssertEqual(snap.runId, runId)
         XCTAssertGreaterThan(snap.frameNo, 0)
         XCTAssertEqual(snap.root.type, .workflow)
+        // Tree should have at least one child (workflow has a sequence inside).
+        XCTAssertFalse(snap.root.children.isEmpty)
+    }
+
+    func testSnapshotAtFrameBeforeKeyframeReturnsRun() async throws {
+        guard let dbPath, FileManager.default.fileExists(atPath: dbPath) else {
+            throw XCTSkip("Set SMITHERS_DEVTOOLS_TEST_DB to run this test.")
+        }
+        let runId = ProcessInfo.processInfo.environment["SMITHERS_DEVTOOLS_TEST_RUN_ID"] ?? "run-1776372721752"
+        setenv("SMITHERS_DB_PATH", dbPath, 1)
+        defer { unsetenv("SMITHERS_DB_PATH") }
+
+        let client = SmithersClient(cwd: (dbPath as NSString).deletingLastPathComponent)
+        // Frame 1 is the first keyframe; this should return a snapshot.
+        let snap = try await client.getDevToolsSnapshot(runId: runId, frameNo: 1)
+        XCTAssertEqual(snap.frameNo, 1)
+    }
+}
+
+/// End-to-end test that stands up a minimal `smithers.db` with `_smithers_frames` +
+/// `_smithers_nodes` populated, then calls `getDevToolsSnapshot` and asserts the
+/// resulting tree has real (non-unknown) states on task rows.
+@MainActor
+final class DevToolsSnapshotWithNodeStatesTests: XCTestCase {
+    private func sqlite3Exists() -> Bool {
+        FileManager.default.isExecutableFile(atPath: "/usr/bin/sqlite3")
+    }
+
+    /// Creates a temp sqlite db with a single keyframe + two node-state rows.
+    private func makeTempDB(runId: String) throws -> String {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("smithers-devtools-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dbPath = dir.appendingPathComponent("smithers.db").path
+
+        let keyframeXML = """
+        {"kind":"element","tag":"smithers:workflow","props":{"name":"main"},"children":[\
+        {"kind":"element","tag":"smithers:sequence","props":{},"children":[\
+        {"kind":"element","tag":"smithers:task","props":{"id":"g74:implement"},"children":[]},\
+        {"kind":"element","tag":"smithers:task","props":{"id":"g74:review:0"},"children":[]}\
+        ]}]}
+        """
+        let escapedXML = keyframeXML.replacingOccurrences(of: "'", with: "''")
+        let taskIndexJson = "[]"
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+
+        let setup = """
+        CREATE TABLE _smithers_frames (
+          run_id TEXT NOT NULL,
+          frame_no INTEGER NOT NULL,
+          encoding TEXT NOT NULL,
+          xml_json TEXT NOT NULL,
+          task_index_json TEXT,
+          PRIMARY KEY (run_id, frame_no)
+        );
+        CREATE TABLE _smithers_nodes (
+          run_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          iteration INTEGER NOT NULL DEFAULT 0,
+          state TEXT NOT NULL,
+          last_attempt INTEGER,
+          updated_at_ms INTEGER NOT NULL,
+          output_table TEXT NOT NULL,
+          label TEXT,
+          PRIMARY KEY (run_id, node_id, iteration)
+        );
+        INSERT INTO _smithers_frames(run_id, frame_no, encoding, xml_json, task_index_json) VALUES
+          ('\(runId)', 1, 'keyframe', '\(escapedXML)', '\(taskIndexJson)');
+        INSERT INTO _smithers_nodes(run_id, node_id, iteration, state, last_attempt, updated_at_ms, output_table) VALUES
+          ('\(runId)', 'g74:implement', 0, 'finished', 1, \(nowMs), 'implement'),
+          ('\(runId)', 'g74:review:0', 0, 'in-progress', 1, \(nowMs), 'review');
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [dbPath]
+        let inPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardInput = inPipe
+        process.standardError = errPipe
+        try process.run()
+        inPipe.fileHandleForWriting.write(Data(setup.utf8))
+        try inPipe.fileHandleForWriting.close()
+        process.waitUntilExit()
+
+        if process.terminationStatus != 0 {
+            let errText = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw NSError(domain: "TempDB", code: Int(process.terminationStatus), userInfo: [
+                NSLocalizedDescriptionKey: errText,
+            ])
+        }
+
+        return dbPath
+    }
+
+    func testSnapshotPopulatesStateFromNodesTable() async throws {
+        guard sqlite3Exists() else {
+            throw XCTSkip("/usr/bin/sqlite3 not available")
+        }
+        let runId = "run-devtools-nodestate-test"
+        let dbPath = try makeTempDB(runId: runId)
+        defer { try? FileManager.default.removeItem(atPath: (dbPath as NSString).deletingLastPathComponent) }
+
+        setenv("SMITHERS_DB_PATH", dbPath, 1)
+        defer { unsetenv("SMITHERS_DB_PATH") }
+
+        let client = SmithersClient(cwd: (dbPath as NSString).deletingLastPathComponent)
+        let snap = try await client.getDevToolsSnapshot(runId: runId, frameNo: nil)
+
+        // Root: workflow → sequence → [task(implement), task(review:0)]
+        XCTAssertEqual(snap.root.type, .workflow)
+        let seq = snap.root.children[0]
+        XCTAssertEqual(seq.type, .sequence)
+        XCTAssertEqual(seq.children.count, 2)
+
+        let implement = seq.children[0]
+        let review = seq.children[1]
+
+        XCTAssertEqual(
+            extractState(from: implement), .finished,
+            "`finished` from _smithers_nodes should map to .finished"
+        )
+        XCTAssertEqual(
+            extractState(from: review), .running,
+            "`in-progress` from _smithers_nodes should map to .running"
+        )
+        XCTAssertNotEqual(
+            extractState(from: implement), .unknown,
+            "Task row must never render as Unknown when the DB has a row for it"
+        )
+
+        // Sequence should roll up to `running` (failed > running > … > finished).
+        XCTAssertEqual(extractState(from: seq), .running)
+        XCTAssertEqual(extractState(from: snap.root), .running)
     }
 }

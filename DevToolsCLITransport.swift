@@ -358,31 +358,152 @@ struct DevToolsTaskIndexEntry: Decodable {
     }
 }
 
+// MARK: - Node execution state (from _smithers_nodes)
+
+/// Per-node execution state loaded from `_smithers_nodes`. Populated by a lightweight
+/// SQL query in the transport layer and threaded into `DevToolsTreeBuilder.build`
+/// so the tree rows can render a real state badge instead of "Unknown".
+struct DevToolsNodeStateEntry: Equatable, Sendable {
+    let nodeId: String
+    let state: String
+    let iteration: Int
+    let lastAttempt: Int?
+}
+
+/// Normalizes a raw `_smithers_nodes.state` value onto a `TaskExecutionState.rawValue`.
+/// The DB emits values like `in-progress` / `skipped` / `complete` that need to map
+/// onto the enum cases the UI knows about (`running`, `cancelled`, `finished`, …).
+/// Unknown / empty values fall back to `pending` so structural nodes never render
+/// as "Unknown" when the underlying data just hasn't populated yet — mirrors the
+/// existing normalizer pattern used in `normalizeInspectTaskState`.
+func normalizeDevToolsNodeState(_ raw: String) -> String {
+    let token = raw
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .replacingOccurrences(of: "_", with: "-")
+        .replacingOccurrences(of: " ", with: "-")
+    switch token {
+    case "running", "in-progress", "inprogress", "started":
+        return "running"
+    case "finished", "complete", "completed", "success", "succeeded", "done":
+        return "finished"
+    case "failed", "failure", "error", "errored":
+        return "failed"
+    case "waiting-approval", "waitingapproval":
+        return "waitingApproval"
+    case "blocked", "paused":
+        return "blocked"
+    case "cancelled", "canceled", "skipped":
+        return "cancelled"
+    case "pending", "":
+        return "pending"
+    default:
+        return token
+    }
+}
+
+/// Parent-node rollup precedence. Matches the UX contract described in the ticket:
+/// `failed > running > blocked > waitingApproval > pending > finished`. Cancelled is
+/// treated as "background noise" and does not override a finished sibling.
+private let devToolsRollupPrecedence: [String: Int] = [
+    "failed": 6,
+    "running": 5,
+    "blocked": 4,
+    "waitingApproval": 3,
+    "pending": 2,
+    "finished": 1,
+    "cancelled": 0,
+]
+
+/// Computes the rolled-up state of a parent node from its already-normalized
+/// child states. Returns `nil` when no child carries a state (caller keeps the
+/// parent's existing value).
+func devToolsRolledUpState(childStates: [String]) -> String? {
+    var best: (state: String, rank: Int)?
+    for state in childStates where !state.isEmpty {
+        let rank = devToolsRollupPrecedence[state] ?? -1
+        if best == nil || rank > best!.rank {
+            best = (state, rank)
+        }
+    }
+    return best?.state
+}
+
 // MARK: - XML → DevToolsNode conversion
 
 enum DevToolsTreeBuilder {
     /// Convert a decoded frame tree + task index into a `DevToolsNode` tree suitable for the gui.
     /// Integer ids are assigned depth-first so they're stable within a single snapshot.
+    ///
+    /// - Parameter nodeStates: optional dictionary keyed by `task.nodeId`. When provided,
+    ///   task nodes get their `props["state"]` populated (normalized) and structural nodes
+    ///   roll up their descendants' states. Pass `[:]` or omit for the legacy behaviour.
+    ///
+    /// NOTE: the state map reflects the *final* known state from `_smithers_nodes`, not a
+    /// per-frame snapshot — so when the scrubber is rewound to a historical frame, rollups
+    /// will reflect the current DB state rather than the state at that frame. This is a
+    /// documented v1 simplification and is still a strict upgrade over the previous
+    /// "Unknown" fallback.
     static func build(
         xml: DevToolsFrameXMLNode,
-        taskIndex: [DevToolsTaskIndexEntry]
+        taskIndex: [DevToolsTaskIndexEntry],
+        nodeStates: [String: DevToolsNodeStateEntry] = [:]
     ) -> DevToolsNode {
         let indexByNodeId: [String: DevToolsTaskIndexEntry] = Dictionary(
             taskIndex.map { ($0.nodeId, $0) },
             uniquingKeysWith: { first, _ in first }
         )
         var nextId = 0
-        return convert(xml: xml, depth: 0, idGenerator: { () -> Int in
+        let root = convert(xml: xml, depth: 0, idGenerator: { () -> Int in
             defer { nextId += 1 }
             return nextId
-        }, taskIndex: indexByNodeId)
+        }, taskIndex: indexByNodeId, nodeStates: nodeStates)
+        // Second pass: compute rollup state for structural nodes now that all descendants
+        // know their state. Task nodes already had their state stamped during `convert`.
+        _ = populateRollupStates(root)
+        return root
+    }
+
+    /// Walk the tree post-order and assign a rollup `state` prop to any non-task node
+    /// whose state isn't already set from the XML. Returns the state the caller should
+    /// treat this node as contributing to *its* parent's rollup.
+    @discardableResult
+    private static func populateRollupStates(_ node: DevToolsNode) -> String {
+        // If this is a leaf task, its state was set during `convert` (or defaults to
+        // "pending" per the contract). Nothing to compute.
+        if node.children.isEmpty {
+            if case .string(let s) = node.props["state"], !s.isEmpty {
+                return s
+            }
+            return ""
+        }
+
+        var childStates: [String] = []
+        childStates.reserveCapacity(node.children.count)
+        for child in node.children {
+            let childState = populateRollupStates(child)
+            if !childState.isEmpty { childStates.append(childState) }
+        }
+
+        // Respect an already-set state from XML props (e.g. a delta that wrote `state="running"`
+        // onto a sequence node). Only compute rollup when the parent is stateless.
+        if case .string(let existing) = node.props["state"], !existing.isEmpty {
+            return existing
+        }
+
+        if let rolled = devToolsRolledUpState(childStates: childStates) {
+            node.props["state"] = .string(rolled)
+            return rolled
+        }
+        return ""
     }
 
     private static func convert(
         xml: DevToolsFrameXMLNode,
         depth: Int,
         idGenerator: () -> Int,
-        taskIndex: [String: DevToolsTaskIndexEntry]
+        taskIndex: [String: DevToolsTaskIndexEntry],
+        nodeStates: [String: DevToolsNodeStateEntry]
     ) -> DevToolsNode {
         let id = idGenerator()
         let tag = xml.tag ?? ""
@@ -404,7 +525,8 @@ enum DevToolsTreeBuilder {
                         xml: child,
                         depth: depth + 1,
                         idGenerator: idGenerator,
-                        taskIndex: taskIndex
+                        taskIndex: taskIndex,
+                        nodeStates: nodeStates
                     )
                 )
             }
@@ -431,6 +553,22 @@ enum DevToolsTreeBuilder {
                 outputTableName: indexEntry?.outputTableName,
                 iteration: indexEntry?.iteration
             )
+
+            // Stamp execution state onto this task node so `extractState(from:)` returns
+            // something other than `.unknown`. Absent entries default to "pending" per
+            // the contract in the ticket ("state stays pending, not unknown").
+            // Prefer not to overwrite an explicit state already in the XML props
+            // (useful for delta-driven transitions that ran ahead of the node table).
+            if case .string(let existing) = jsonProps["state"], !existing.isEmpty {
+                // keep XML-sourced state
+            } else if let entry = nodeStates[nodeId] {
+                jsonProps["state"] = .string(normalizeDevToolsNodeState(entry.state))
+                if jsonProps["iteration"] == nil {
+                    jsonProps["iteration"] = .string(String(entry.iteration))
+                }
+            } else {
+                jsonProps["state"] = .string("pending")
+            }
         }
 
         return DevToolsNode(
@@ -464,5 +602,56 @@ enum DevToolsTreeBuilder {
             return String(tag.dropFirst("smithers:".count))
         }
         return tag.isEmpty ? "node" : tag
+    }
+}
+
+// MARK: - Node state query
+
+/// SQL helper shared by the live transport and the snapshot loader. Returns the
+/// latest (highest iteration) row per `node_id` so a re-run replaces stale state.
+enum DevToolsNodeStateQuery {
+    /// SQL query text for `_smithers_nodes` loading. Exposed so the caller can pass
+    /// it to the existing sqlite3 subprocess runner in `SmithersClient`.
+    static func query(runId: String) -> String {
+        let quoted = DevToolsSQL.quote(runId)
+        return """
+        SELECT node_id, state, iteration, last_attempt
+        FROM _smithers_nodes
+        WHERE run_id=\(quoted)
+        ORDER BY iteration ASC;
+        """
+    }
+
+    /// Converts the raw row dicts produced by `execSQLite` into a node-id → entry
+    /// dictionary, choosing the highest-iteration row per node_id.
+    static func makeDict(fromRows rows: [[String: Any]]) -> [String: DevToolsNodeStateEntry] {
+        var result: [String: DevToolsNodeStateEntry] = [:]
+        for row in rows {
+            guard let nodeId = row["node_id"] as? String,
+                  let state = row["state"] as? String else { continue }
+            let iterationInt = (row["iteration"] as? NSNumber)?.intValue
+                ?? (row["iteration"] as? Int)
+                ?? Int((row["iteration"] as? String) ?? "0") ?? 0
+            let lastAttemptInt: Int? = {
+                if let n = row["last_attempt"] as? NSNumber { return n.intValue }
+                if let i = row["last_attempt"] as? Int { return i }
+                if let s = row["last_attempt"] as? String, let parsed = Int(s) { return parsed }
+                return nil
+            }()
+            let entry = DevToolsNodeStateEntry(
+                nodeId: nodeId,
+                state: state,
+                iteration: iterationInt,
+                lastAttempt: lastAttemptInt
+            )
+            if let existing = result[nodeId] {
+                if iterationInt > existing.iteration {
+                    result[nodeId] = entry
+                }
+            } else {
+                result[nodeId] = entry
+            }
+        }
+        return result
     }
 }

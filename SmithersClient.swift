@@ -1655,7 +1655,7 @@ class SmithersClient: ObservableObject {
                 cancellationBox.cancel()
             }
 
-            let task = Task.detached { [runId, smithersBin, cwd, dbPath] in
+            Task.detached { [runId, smithersBin, cwd, dbPath] in
                 AppLogger.network.info("DevTools CLI stream connect", metadata: [
                     "run_id": runId,
                     "from_seq": fromSeq.map(String.init) ?? "nil",
@@ -1803,11 +1803,6 @@ class SmithersClient: ObservableObject {
                 }
                 continuation.finish()
             }
-
-            // Make sure the Task is released when the stream ends.
-            Task {
-                _ = await task.value
-            }
         }
     }
 
@@ -1919,7 +1914,30 @@ class SmithersClient: ObservableObject {
             }
         }
 
-        let tree = DevToolsTreeBuilder.build(xml: finalXML, taskIndex: taskIndex)
+        // Also load per-node execution state from `_smithers_nodes` so tree rows
+        // render real state badges instead of "Unknown". Absent rows leave nodes
+        // in the default "pending" state the builder applies.
+        var nodeStates: [String: DevToolsNodeStateEntry] = [:]
+        do {
+            let stateRows = try await execSQLite(
+                dbPath: dbPath,
+                query: DevToolsNodeStateQuery.query(runId: runId)
+            )
+            nodeStates = DevToolsNodeStateQuery.makeDict(fromRows: stateRows)
+        } catch {
+            // Non-fatal: we still return a structural tree. The per-node badges will
+            // fall back to "pending" and we log the error so operators see it.
+            AppLogger.network.warning("DevTools node state load failed", metadata: [
+                "run_id": runId,
+                "error": String(describing: error),
+            ])
+        }
+
+        let tree = DevToolsTreeBuilder.build(
+            xml: finalXML,
+            taskIndex: taskIndex,
+            nodeStates: nodeStates
+        )
         return DevToolsSnapshot(
             runId: runId,
             frameNo: targetFrame,
