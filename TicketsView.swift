@@ -19,6 +19,11 @@ struct TicketsView: View {
     @State private var showUnsavedAlert = false
     @State private var pendingSelectionId: String?
     @State private var showDeleteAlert = false
+    @State private var neovimPath: String? = NeovimDetector.executablePath()
+    @State private var ticketContentCache = TicketContentLRUCache(capacity: 32)
+    @State private var neovimSessionCache = TicketNeovimSessionLRUCache(capacity: 6)
+    @State private var ticketPrefetchTasks: [String: Task<Void, Never>] = [:]
+    @AppStorage(AppPreferenceKeys.vimModeEnabled) private var vimModeEnabled = false
 
     private var normalizedQuery: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -31,6 +36,10 @@ struct TicketsView: View {
 
     private var hasUnsavedChanges: Bool {
         detailContent != originalContent
+    }
+
+    private var neovimAvailable: Bool {
+        neovimPath != nil
     }
 
     var body: some View {
@@ -53,6 +62,21 @@ struct TicketsView: View {
         .accessibilityIdentifier("tickets.root")
         .task(id: normalizedQuery) {
             await loadTickets()
+        }
+        .onAppear {
+            refreshNeovimPath()
+        }
+        .onDisappear {
+            cancelTicketPrefetches()
+            closeCachedNeovimSessions()
+        }
+        .onChange(of: vimModeEnabled) { _, _ in
+            refreshNeovimPath()
+            if vimModeEnabled, let selectedId {
+                _ = prepareNeovimSession(ticketId: selectedId)
+            } else {
+                closeCachedNeovimSessions()
+            }
         }
         .alert("Unsaved Changes", isPresented: $showUnsavedAlert) {
             Button("Discard", role: .destructive) {
@@ -160,7 +184,7 @@ struct TicketsView: View {
                                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                     .foregroundColor(Theme.textPrimary)
                                     .lineLimit(1)
-                                let snippet = ticketSnippet(ticket.content ?? "", maxLength: 92)
+                                let snippet = ticketSnippet(displayContent(for: ticket), maxLength: 92)
                                 if !snippet.isEmpty {
                                     Text(snippet)
                                         .font(.system(size: 11))
@@ -175,6 +199,9 @@ struct TicketsView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .onHover { hovering in
+                            handleTicketHover(ticket, hovering: hovering)
+                        }
                         .accessibilityIdentifier("tickets.row.\(ticket.id)")
                         Divider().background(Theme.border)
                     }
@@ -250,13 +277,15 @@ struct TicketsView: View {
     private var detailPane: some View {
         Group {
             if let ticket = selectedTicket {
+                let usingNeovim = neovimSession(for: ticket) != nil
+
                 VStack(spacing: 0) {
                     HStack {
                         Text(ticket.id)
                             .font(.system(size: 14, weight: .bold, design: .monospaced))
                             .foregroundColor(Theme.textPrimary)
 
-                        if hasUnsavedChanges {
+                        if hasUnsavedChanges && !usingNeovim {
                             Text("Modified")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(Theme.warning)
@@ -268,7 +297,32 @@ struct TicketsView: View {
 
                         Spacer()
 
-                        if hasUnsavedChanges {
+                        if usingNeovim {
+                            Text("Neovim")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(Theme.success)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Theme.success.opacity(0.14))
+                                .cornerRadius(4)
+
+                            Button(action: { Task { await loadTickets() } }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.clockwise")
+                                    Text("Reload")
+                                }
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(Theme.textSecondary)
+                                .padding(.horizontal, 10)
+                                .frame(height: 28)
+                                .themedPill(cornerRadius: 6)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isLoading || isDeleting)
+                            .accessibilityIdentifier("tickets.detail.nvimReload")
+                        }
+
+                        if hasUnsavedChanges && !usingNeovim {
                             Button(action: { Task { await saveSelectedTicket() } }) {
                                 HStack(spacing: 4) {
                                     if isSaving {
@@ -310,8 +364,7 @@ struct TicketsView: View {
                     .frame(height: 48)
                     .border(Theme.border, edges: [.bottom])
 
-                    MarkdownTextEditor(text: $detailContent)
-                        .accessibilityIdentifier("tickets.detail.editor")
+                    ticketEditor(for: ticket)
                 }
             } else {
                 VStack(spacing: 8) {
@@ -327,6 +380,98 @@ struct TicketsView: View {
             }
         }
         .background(Theme.surface1)
+    }
+
+    @ViewBuilder
+    private func ticketEditor(for ticket: Ticket) -> some View {
+        if let session = neovimSession(for: ticket) {
+            TerminalView(
+                sessionId: session.sessionId,
+                command: session.command,
+                workingDirectory: session.workingDirectory,
+                onClose: {
+                    Task { @MainActor in
+                        await loadTickets()
+                    }
+                }
+            )
+            .id(session.sessionId)
+            .accessibilityIdentifier("tickets.detail.nvimTerminal")
+        } else {
+            VStack(spacing: 0) {
+                if let message = neovimFallbackMessage(for: ticket) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "terminal")
+                            .font(.system(size: 11))
+                        Text(message)
+                            .font(.system(size: 11))
+                        Spacer()
+                    }
+                    .foregroundColor(Theme.warning)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Theme.warning.opacity(0.1))
+                    .border(Theme.border, edges: [.bottom])
+                    .accessibilityIdentifier("tickets.detail.nvimFallback")
+                }
+
+                MarkdownTextEditor(text: $detailContent)
+                    .accessibilityIdentifier("tickets.detail.editor")
+            }
+        }
+    }
+
+    private func neovimSession(for ticket: Ticket) -> TicketNeovimSession? {
+        guard vimModeEnabled, neovimAvailable, !hasUnsavedChanges else {
+            return nil
+        }
+        return neovimSessionCache.peek(ticket.id)
+    }
+
+    private func neovimCommand(for ticket: Ticket) -> String? {
+        guard vimModeEnabled,
+              neovimAvailable,
+              !hasUnsavedChanges,
+              let neovimPath,
+              let ticketPath = try? smithers.localTicketFilePath(for: ticket.id)
+        else {
+            return nil
+        }
+
+        return "\(ticketShellQuote(neovimPath)) \(ticketShellQuote(ticketPath))"
+    }
+
+    private func neovimWorkingDirectory(for ticket: Ticket) -> String? {
+        guard let ticketPath = try? smithers.localTicketFilePath(for: ticket.id) else {
+            return nil
+        }
+        return (ticketPath as NSString).deletingLastPathComponent
+    }
+
+    private func neovimFallbackMessage(for ticket: Ticket) -> String? {
+        guard vimModeEnabled else { return nil }
+        if !neovimAvailable {
+            return "Neovim is not available. Open Settings to refresh detection."
+        }
+        if hasUnsavedChanges {
+            return "Save or discard unsaved changes before opening this ticket in Neovim."
+        }
+        if (try? smithers.localTicketFilePath(for: ticket.id)) == nil {
+            return "Neovim mode requires this ticket to be backed by a local .smithers/tickets file."
+        }
+        if neovimSessionCache.peek(ticket.id) == nil {
+            return "Preparing Neovim for this ticket."
+        }
+        return nil
+    }
+
+    private func refreshNeovimPath() {
+        let detectedPath = NeovimDetector.executablePath()
+        neovimPath = detectedPath
+        if detectedPath == nil {
+            vimModeEnabled = false
+            closeCachedNeovimSessions()
+        }
     }
 
     private func errorBanner(_ message: String) -> some View {
@@ -362,7 +507,7 @@ struct TicketsView: View {
                 try await smithers.searchTickets(query: normalizedQuery)
             }
 
-            tickets = loadedTickets
+            tickets = mergeLoadedTicketsWithCache(loadedTickets)
 
             if let selectedId, tickets.contains(where: { $0.id == selectedId }) {
                 if !hasUnsavedChanges {
@@ -396,6 +541,7 @@ struct TicketsView: View {
         do {
             let content = newTicketContent.isEmpty ? nil : newTicketContent
             let created = try await smithers.createTicket(id: ticketId, content: content)
+            storeTicketInCache(created)
             showCreateForm = false
             newTicketId = ""
             newTicketContent = ""
@@ -432,6 +578,7 @@ struct TicketsView: View {
                     updatedAtMs: updated.updatedAtMs
                 )
                 tickets[index] = normalized
+                storeTicketInCache(normalized)
             }
             originalContent = contentToSave
         } catch {
@@ -450,6 +597,8 @@ struct TicketsView: View {
 
         do {
             try await smithers.deleteTicket(ticket.id)
+            ticketContentCache.remove(ticket.id)
+            removeCachedNeovimSession(ticket.id)
             await loadTickets()
         } catch {
             self.error = error.localizedDescription
@@ -468,9 +617,324 @@ struct TicketsView: View {
 
     private func applySelection(ticketId: String) {
         selectedId = ticketId
-        let content = tickets.first(where: { $0.id == ticketId })?.content ?? ""
+        let content = cachedContent(for: ticketId) ?? ""
         detailContent = content
         originalContent = content
+        _ = prepareNeovimSession(ticketId: ticketId)
+        scheduleTicketPrefetch(ticketId: ticketId, delayNanoseconds: 0, prewarmNeovim: false)
+    }
+
+    private func displayContent(for ticket: Ticket) -> String {
+        ticket.content ?? ticketContentCache.peek(ticket.id)?.content ?? ""
+    }
+
+    private func cachedContent(for ticketId: String) -> String? {
+        if let cached = ticketContentCache.ticket(for: ticketId),
+           let content = cached.content {
+            return content
+        }
+
+        guard let ticket = tickets.first(where: { $0.id == ticketId }) else {
+            return nil
+        }
+        storeTicketInCache(ticket)
+        return ticket.content
+    }
+
+    private func mergeLoadedTicketsWithCache(_ loadedTickets: [Ticket]) -> [Ticket] {
+        loadedTickets.map { ticket in
+            if ticket.content != nil {
+                storeTicketInCache(ticket)
+                return ticket
+            }
+            return ticketContentCache.peek(ticket.id) ?? ticket
+        }
+    }
+
+    private func mergeTicketIntoList(_ ticket: Ticket) {
+        if let index = tickets.firstIndex(where: { $0.id == ticket.id }) {
+            tickets[index] = ticket
+        }
+    }
+
+    private func storeTicketInCache(_ ticket: Ticket) {
+        guard ticket.content != nil else { return }
+        ticketContentCache.store(ticket)
+    }
+
+    private func handleTicketHover(_ ticket: Ticket, hovering: Bool) {
+        if hovering {
+            scheduleTicketPrefetch(ticketId: ticket.id, delayNanoseconds: 120_000_000, prewarmNeovim: true)
+        } else if selectedId != ticket.id {
+            cancelTicketPrefetch(ticket.id)
+        }
+    }
+
+    private func scheduleTicketPrefetch(
+        ticketId: String,
+        delayNanoseconds: UInt64,
+        prewarmNeovim: Bool
+    ) {
+        ticketPrefetchTasks[ticketId]?.cancel()
+        ticketPrefetchTasks[ticketId] = Task { @MainActor in
+            if delayNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: delayNanoseconds)
+            }
+            guard !Task.isCancelled else { return }
+            await prefetchTicket(ticketId: ticketId, prewarmNeovim: prewarmNeovim)
+            ticketPrefetchTasks[ticketId] = nil
+        }
+    }
+
+    private func cancelTicketPrefetch(_ ticketId: String) {
+        ticketPrefetchTasks[ticketId]?.cancel()
+        ticketPrefetchTasks[ticketId] = nil
+    }
+
+    private func cancelTicketPrefetches() {
+        for task in ticketPrefetchTasks.values {
+            task.cancel()
+        }
+        ticketPrefetchTasks.removeAll()
+    }
+
+    @MainActor
+    private func prefetchTicket(ticketId: String, prewarmNeovim: Bool) async {
+        var prefetchedTicket: Ticket?
+        if let cached = ticketContentCache.ticket(for: ticketId),
+           cached.content != nil {
+            prefetchedTicket = cached
+        } else if let ticket = tickets.first(where: { $0.id == ticketId }),
+                  ticket.content != nil {
+            storeTicketInCache(ticket)
+            prefetchedTicket = ticket
+        } else {
+            do {
+                let fetched = try await smithers.getTicket(ticketId)
+                guard !Task.isCancelled else { return }
+                guard selectedId == ticketId || tickets.contains(where: { $0.id == ticketId }) else { return }
+                storeTicketInCache(fetched)
+                mergeTicketIntoList(fetched)
+                prefetchedTicket = fetched
+            } catch {
+                return
+            }
+        }
+
+        if selectedId == ticketId,
+           !hasUnsavedChanges,
+           let content = prefetchedTicket?.content {
+            detailContent = content
+            originalContent = content
+        }
+
+        if prewarmNeovim {
+            _ = prepareNeovimSession(ticketId: ticketId, prewarm: true)
+        }
+    }
+
+    @discardableResult
+    private func prepareNeovimSession(ticketId: String, prewarm: Bool = false) -> TicketNeovimSession? {
+        guard vimModeEnabled,
+              neovimAvailable,
+              !hasUnsavedChanges,
+              let ticket = tickets.first(where: { $0.id == ticketId }) ?? ticketContentCache.peek(ticketId),
+              let command = neovimCommand(for: ticket),
+              let workingDirectory = neovimWorkingDirectory(for: ticket)
+        else {
+            return nil
+        }
+
+        if let selectedId, selectedId != ticketId {
+            _ = neovimSessionCache.session(for: selectedId)
+        }
+
+        let result = neovimSessionCache.upsert(
+            ticketId: ticketId,
+            command: command,
+            workingDirectory: workingDirectory
+        )
+        closeNeovimSessions(result.evicted)
+        if prewarm {
+            prewarmNeovimSession(result.session)
+        }
+        return result.session
+    }
+
+    private func prewarmNeovimSession(_ session: TicketNeovimSession) {
+        guard !UITestSupport.isEnabled,
+              let app = GhosttyApp.shared.app
+        else {
+            return
+        }
+
+        _ = TerminalSurfaceRegistry.shared.view(
+            for: session.sessionId,
+            app: app,
+            command: session.command,
+            workingDirectory: session.workingDirectory
+        )
+    }
+
+    private func removeCachedNeovimSession(_ ticketId: String) {
+        if let removed = neovimSessionCache.remove(ticketId) {
+            closeNeovimSessions([removed])
+        }
+    }
+
+    private func closeCachedNeovimSessions() {
+        closeNeovimSessions(neovimSessionCache.removeAll())
+    }
+
+    private func closeNeovimSessions(_ sessions: [TicketNeovimSession]) {
+        for session in sessions {
+            TerminalSurfaceRegistry.shared.deregister(sessionId: session.sessionId)
+        }
+    }
+}
+
+struct TicketContentLRUCache {
+    private(set) var capacity: Int
+    private var ticketsById: [String: Ticket] = [:]
+    private var recentIds: [String] = []
+
+    init(capacity: Int) {
+        self.capacity = max(1, capacity)
+    }
+
+    var idsMostRecentFirst: [String] {
+        recentIds
+    }
+
+    func peek(_ ticketId: String) -> Ticket? {
+        ticketsById[ticketId]
+    }
+
+    mutating func ticket(for ticketId: String) -> Ticket? {
+        guard let ticket = ticketsById[ticketId] else { return nil }
+        touch(ticketId)
+        return ticket
+    }
+
+    mutating func store(_ ticket: Ticket) {
+        ticketsById[ticket.id] = ticket
+        touch(ticket.id)
+        evictOverflow()
+    }
+
+    @discardableResult
+    mutating func remove(_ ticketId: String) -> Ticket? {
+        recentIds.removeAll { $0 == ticketId }
+        return ticketsById.removeValue(forKey: ticketId)
+    }
+
+    private mutating func touch(_ ticketId: String) {
+        recentIds.removeAll { $0 == ticketId }
+        recentIds.insert(ticketId, at: 0)
+    }
+
+    private mutating func evictOverflow() {
+        while recentIds.count > capacity {
+            let evictedId = recentIds.removeLast()
+            ticketsById.removeValue(forKey: evictedId)
+        }
+    }
+}
+
+struct TicketNeovimSession: Hashable {
+    let ticketId: String
+    let sessionId: String
+    let command: String
+    let workingDirectory: String
+}
+
+struct TicketNeovimSessionLRUCache {
+    struct UpsertResult {
+        let session: TicketNeovimSession
+        let evicted: [TicketNeovimSession]
+    }
+
+    private(set) var capacity: Int
+    private var sessionsByTicketId: [String: TicketNeovimSession] = [:]
+    private var recentTicketIds: [String] = []
+
+    init(capacity: Int) {
+        self.capacity = max(1, capacity)
+    }
+
+    var ticketIdsMostRecentFirst: [String] {
+        recentTicketIds
+    }
+
+    func peek(_ ticketId: String) -> TicketNeovimSession? {
+        sessionsByTicketId[ticketId]
+    }
+
+    mutating func session(for ticketId: String) -> TicketNeovimSession? {
+        guard let session = sessionsByTicketId[ticketId] else { return nil }
+        touch(ticketId)
+        return session
+    }
+
+    mutating func upsert(ticketId: String, command: String, workingDirectory: String) -> UpsertResult {
+        var evicted: [TicketNeovimSession] = []
+        let session = TicketNeovimSession(
+            ticketId: ticketId,
+            sessionId: Self.sessionId(ticketId: ticketId, command: command, workingDirectory: workingDirectory),
+            command: command,
+            workingDirectory: workingDirectory
+        )
+
+        if let existing = sessionsByTicketId[ticketId], existing.sessionId != session.sessionId {
+            evicted.append(existing)
+        }
+
+        sessionsByTicketId[ticketId] = session
+        touch(ticketId)
+        evicted.append(contentsOf: evictOverflow())
+        return UpsertResult(session: session, evicted: evicted)
+    }
+
+    @discardableResult
+    mutating func remove(_ ticketId: String) -> TicketNeovimSession? {
+        recentTicketIds.removeAll { $0 == ticketId }
+        return sessionsByTicketId.removeValue(forKey: ticketId)
+    }
+
+    mutating func removeAll() -> [TicketNeovimSession] {
+        let sessions = recentTicketIds.compactMap { sessionsByTicketId[$0] }
+        recentTicketIds.removeAll()
+        sessionsByTicketId.removeAll()
+        return sessions
+    }
+
+    private mutating func touch(_ ticketId: String) {
+        recentTicketIds.removeAll { $0 == ticketId }
+        recentTicketIds.insert(ticketId, at: 0)
+    }
+
+    private mutating func evictOverflow() -> [TicketNeovimSession] {
+        var evicted: [TicketNeovimSession] = []
+        while recentTicketIds.count > capacity {
+            let evictedId = recentTicketIds.removeLast()
+            if let session = sessionsByTicketId.removeValue(forKey: evictedId) {
+                evicted.append(session)
+            }
+        }
+        return evicted
+    }
+
+    private static func sessionId(ticketId: String, command: String, workingDirectory: String) -> String {
+        "ticket-nvim-\(stableHash(ticketId))-\(stableHash(command))-\(stableHash(workingDirectory))"
+    }
+
+    private static func stableHash(_ value: String) -> String {
+        var hash: UInt64 = 14695981039346656037
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1099511628211
+        }
+        return String(hash, radix: 16)
     }
 }
 
@@ -515,4 +979,8 @@ private func metadataLine(_ line: String) -> Bool {
     let key = rest[..<separator]
     let keyFields = key.split(separator: " ", omittingEmptySubsequences: true)
     return !key.contains(" ") || keyFields.count <= 2
+}
+
+private func ticketShellQuote(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
 }

@@ -166,6 +166,7 @@ struct VCSDashboardView: View {
                     .foregroundColor(Theme.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("vcsDashboard.refresh")
         }
         .padding(.horizontal, 20)
         .frame(height: 48)
@@ -280,13 +281,6 @@ struct VCSDashboardView: View {
     private var changesContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Changes view",
-                    accessibilityID: "vcsDashboard.route.changes"
-                ) {
-                    onNavigate?(.changes)
-                }
-
                 if sourceErrors[.changes] != nil && changes.isEmpty && !isLoading {
                     emptySection("Unable to load changes", icon: "exclamationmark.triangle")
                 } else if changes.isEmpty && !isLoading {
@@ -310,13 +304,6 @@ struct VCSDashboardView: View {
     private var landingsContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Landings view",
-                    accessibilityID: "vcsDashboard.route.landings"
-                ) {
-                    onNavigate?(.landings)
-                }
-
                 if sourceErrors[.landings] != nil && landings.isEmpty && !isLoading {
                     emptySection("Unable to load landings", icon: "exclamationmark.triangle")
                 } else if landings.isEmpty && !isLoading {
@@ -340,13 +327,6 @@ struct VCSDashboardView: View {
     private var issuesContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Issues view",
-                    accessibilityID: "vcsDashboard.route.issues"
-                ) {
-                    onNavigate?(.issues)
-                }
-
                 if sourceErrors[.issues] != nil && issues.isEmpty && !isLoading {
                     emptySection("Unable to load issues", icon: "exclamationmark.triangle")
                 } else if issues.isEmpty && !isLoading {
@@ -370,13 +350,6 @@ struct VCSDashboardView: View {
     private var ticketsContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Tickets view",
-                    accessibilityID: "vcsDashboard.route.tickets"
-                ) {
-                    onNavigate?(.tickets)
-                }
-
                 if sourceErrors[.tickets] != nil && tickets.isEmpty && !isLoading {
                     emptySection("Unable to load tickets", icon: "exclamationmark.triangle")
                 } else if tickets.isEmpty && !isLoading {
@@ -400,13 +373,6 @@ struct VCSDashboardView: View {
     private var workflowsContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full JJHub Workflows view",
-                    accessibilityID: "vcsDashboard.route.jjhubWorkflows"
-                ) {
-                    onNavigate?(.jjhubWorkflows)
-                }
-
                 if sourceErrors[.jjhubWorkflows] != nil && jjhubWorkflows.isEmpty && !isLoading {
                     emptySection("Unable to load workflows", icon: "exclamationmark.triangle")
                 } else if jjhubWorkflows.isEmpty && !isLoading {
@@ -521,11 +487,6 @@ struct VCSDashboardView: View {
         sourceErrors[source] == nil ? detail : "Unavailable"
     }
 
-    private func tabRouteButton(title: String, accessibilityID: String, action: @escaping () -> Void) -> some View {
-        TabRouteButton(title: title, action: action)
-            .accessibilityIdentifier(accessibilityID)
-    }
-
     private func errorView(_ message: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
@@ -539,6 +500,7 @@ struct VCSDashboardView: View {
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("vcsDashboard.retry")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -656,6 +618,7 @@ struct VCSChangeRow: View {
         }
         .padding(.vertical, 8)
         .themedRowHover()
+        .accessibilityIdentifier("vcsDashboard.change.\(change.id)")
     }
 }
 
@@ -696,6 +659,7 @@ struct VCSTicketRow: View {
         }
         .padding(.vertical, 8)
         .themedRowHover()
+        .accessibilityIdentifier("vcsDashboard.ticket.\(ticket.id)")
     }
 
     private var normalizedStatus: String {
@@ -752,5 +716,6 @@ struct VCSWorkflowRow: View {
         }
         .padding(.vertical, 8)
         .themedRowHover()
+        .accessibilityIdentifier("vcsDashboard.workflow.\(workflow.id)")
     }
 }

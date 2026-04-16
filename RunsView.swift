@@ -406,6 +406,7 @@ struct RunsView: View {
                         .buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(Theme.accent)
+                        .accessibilityIdentifier("runs.retry")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if filteredRuns.isEmpty && !isLoading {
@@ -513,6 +514,7 @@ struct RunsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("runs.row.\(runInspectorSafeID(run.runId))")
             .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 6) {
@@ -656,6 +658,7 @@ struct RunsView: View {
                                     .cornerRadius(4)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("runs.nodeChat.\(task.nodeId)")
                         }
                         .padding(.vertical, 4)
                         if task.id != inspection.tasks.last?.id {

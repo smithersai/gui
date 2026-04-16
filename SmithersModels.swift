@@ -58,8 +58,17 @@ struct RunSummary: Identifiable, Codable {
     var failedNodes: Int { summary?["failed"] ?? 0 }
     var completedNodes: Int { succeededNodes + failedNodes }
 
+    var progressIndicatorText: String {
+        guard totalNodes > 0 else { return "0/0 nodes" }
+        if failedNodes > 0 {
+            return "\(succeededNodes) succeeded, \(failedNodes) failed / \(totalNodes) nodes"
+        }
+        return "\(completedNodes)/\(totalNodes) nodes"
+    }
+
     var progress: Double {
         guard totalNodes > 0 else { return 0 }
+        // Failed nodes are completed work and should advance progress.
         return Double(completedNodes) / Double(totalNodes)
     }
 
@@ -148,9 +157,15 @@ extension RunSummary {
         case workflowPath
         case status
         case startedAtMs
+        case startedAtMsSnake = "started_at_ms"
         case started
+        case startedAt
+        case startedAtSnake = "started_at"
         case finishedAtMs
+        case finishedAtMsSnake = "finished_at_ms"
         case finished
+        case finishedAt
+        case finishedAtSnake = "finished_at"
         case summary
         case errorJson
         case error
@@ -177,11 +192,21 @@ extension RunSummary {
         self.status = RunStatus.normalized(status)
 
         let started = try container.decodeIfPresent(String.self, forKey: .started)
+            ?? container.decodeIfPresent(String.self, forKey: .startedAt)
+            ?? container.decodeIfPresent(String.self, forKey: .startedAtSnake)
         self.startedAtMs = container.decodeLossyInt64(forKey: .startedAtMs)
+            ?? container.decodeLossyInt64(forKey: .startedAtMsSnake)
+            ?? container.decodeLossyInt64(forKey: .startedAt)
+            ?? container.decodeLossyInt64(forKey: .startedAtSnake)
             ?? parseInspectTimestampMs(started)
 
         let finished = try container.decodeIfPresent(String.self, forKey: .finished)
+            ?? container.decodeIfPresent(String.self, forKey: .finishedAt)
+            ?? container.decodeIfPresent(String.self, forKey: .finishedAtSnake)
         self.finishedAtMs = container.decodeLossyInt64(forKey: .finishedAtMs)
+            ?? container.decodeLossyInt64(forKey: .finishedAtMsSnake)
+            ?? container.decodeLossyInt64(forKey: .finishedAt)
+            ?? container.decodeLossyInt64(forKey: .finishedAtSnake)
             ?? parseInspectTimestampMs(finished)
 
         self.summary = decodeRunSummaryMap(container, forKey: .summary)
@@ -395,6 +420,8 @@ private func cronWorkflowPathString(_ value: JSONValue?) -> String? {
         let keys = [
             "workflowPath",
             "workflow_path",
+            "workflowFile",
+            "workflow_file",
             "entryFile",
             "entry_file",
             "relativePath",
@@ -402,6 +429,7 @@ private func cronWorkflowPathString(_ value: JSONValue?) -> String? {
             "filePath",
             "file_path",
             "path",
+            "file",
         ]
         for key in keys {
             if let resolvedPath = jsonValueString(object[key]) {
@@ -418,13 +446,26 @@ private func cronPatternString(_ value: JSONValue?) -> String? {
     guard let value else { return nil }
     switch value {
     case .object(let object):
-        return jsonValueString(object["pattern"])
-            ?? jsonValueString(object["cronPattern"])
-            ?? jsonValueString(object["cron_pattern"])
-            ?? jsonValueString(object["schedule"])
-            ?? jsonValueString(object["scheduleExpression"])
-            ?? jsonValueString(object["schedule_expression"])
-            ?? jsonValueString(object["expression"])
+        let keys = [
+            "pattern",
+            "cronPattern",
+            "cron_pattern",
+            "cron",
+            "schedule",
+            "scheduleExpression",
+            "schedule_expression",
+            "cronExpression",
+            "cron_expression",
+            "expression",
+            "expr",
+            "value",
+        ]
+        for key in keys {
+            if let pattern = jsonValueString(object[key]) {
+                return pattern
+            }
+        }
+        return nil
     default:
         return jsonValueString(value)
     }
@@ -1038,9 +1079,13 @@ struct WorkflowDAGTask: Identifiable, Codable {
     private enum DecodingKeys: String, CodingKey {
         case nodeId
         case nodeIDSnake = "node_id"
+        case nodeIDPascal = "nodeID"
+        case node
         case id
         case taskId
         case taskIDSnake = "task_id"
+        case taskIDPascal = "taskID"
+        case name
         case ordinal
         case index
         case order
@@ -1048,6 +1093,7 @@ struct WorkflowDAGTask: Identifiable, Codable {
         case outputTableName
         case outputTableNameSnake = "output_table_name"
         case outputTable
+        case outputTableSnake = "output_table"
         case needsApproval
         case needsApprovalSnake = "needs_approval"
         case requiresApproval
@@ -1105,9 +1151,19 @@ struct WorkflowDAGTask: Identifiable, Codable {
         }
 
         let container = try decoder.container(keyedBy: DecodingKeys.self)
-        let decodedNodeID = try Self.firstPresentString(
+        let decodedNodeID = Self.firstPresentString(
             in: container,
-            keys: [.nodeId, .nodeIDSnake, .id, .taskId, .taskIDSnake]
+            keys: [
+                .nodeId,
+                .nodeIDSnake,
+                .nodeIDPascal,
+                .id,
+                .taskId,
+                .taskIDSnake,
+                .taskIDPascal,
+                .node,
+                .name,
+            ]
         )
         guard let decodedNodeID, !decodedNodeID.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty else {
             throw DecodingError.dataCorrupted(
@@ -1122,15 +1178,18 @@ struct WorkflowDAGTask: Identifiable, Codable {
             ?? container.decodeLossyInt(forKey: .index)
             ?? container.decodeLossyInt(forKey: .order)
         let decodedIteration = container.decodeLossyInt(forKey: .iteration)
-        let decodedOutputTableName = try container.decodeIfPresent(String.self, forKey: .outputTableName)
-            ?? container.decodeIfPresent(String.self, forKey: .outputTableNameSnake)
-            ?? container.decodeIfPresent(String.self, forKey: .outputTable)
+        let decodedOutputTableName = Self.firstPresentString(
+            in: container,
+            keys: [.outputTableName, .outputTableNameSnake, .outputTable, .outputTableSnake]
+        ) ?? Self.outputTableName(
+            from: (try? container.decodeIfPresent(JSONValue.self, forKey: .outputTable))
+                ?? (try? container.decodeIfPresent(JSONValue.self, forKey: .outputTableSnake))
+        )
         let decodedNeedsApproval = container.decodeLossyBool(forKey: .needsApproval)
             ?? container.decodeLossyBool(forKey: .needsApprovalSnake)
             ?? container.decodeLossyBool(forKey: .requiresApproval)
             ?? container.decodeLossyBool(forKey: .requiresApprovalSnake)
-        let decodedApprovalMode = try container.decodeIfPresent(String.self, forKey: .approvalMode)
-            ?? container.decodeIfPresent(String.self, forKey: .approvalModeSnake)
+        let decodedApprovalMode = Self.firstPresentString(in: container, keys: [.approvalMode, .approvalModeSnake])
         let decodedRetries = container.decodeLossyInt(forKey: .retries)
             ?? container.decodeLossyInt(forKey: .maxRetries)
             ?? container.decodeLossyInt(forKey: .maxRetriesSnake)
@@ -1140,9 +1199,8 @@ struct WorkflowDAGTask: Identifiable, Codable {
             ?? container.decodeLossyInt64(forKey: .heartbeatTimeoutMsSnake)
         let decodedContinueOnFail = container.decodeLossyBool(forKey: .continueOnFail)
             ?? container.decodeLossyBool(forKey: .continueOnFailSnake)
-        let decodedPrompt = try container.decodeIfPresent(String.self, forKey: .prompt)
-        let decodedParallelGroupID = try container.decodeIfPresent(String.self, forKey: .parallelGroupId)
-            ?? container.decodeIfPresent(String.self, forKey: .parallelGroupIDSnake)
+        let decodedPrompt = Self.firstPresentString(in: container, keys: [.prompt])
+        let decodedParallelGroupID = Self.firstPresentString(in: container, keys: [.parallelGroupId, .parallelGroupIDSnake])
 
         self = WorkflowDAGTask(
             nodeId: decodedNodeID,
@@ -1179,13 +1237,66 @@ struct WorkflowDAGTask: Identifiable, Codable {
     private static func firstPresentString(
         in container: KeyedDecodingContainer<DecodingKeys>,
         keys: [DecodingKeys]
-    ) throws -> String? {
+    ) -> String? {
         for key in keys {
-            if let value = try container.decodeIfPresent(String.self, forKey: key) {
+            if let value = decodeLossyString(in: container, forKey: key) {
                 return value
             }
         }
         return nil
+    }
+
+    private static func decodeLossyString(
+        in container: KeyedDecodingContainer<DecodingKeys>,
+        forKey key: DecodingKeys
+    ) -> String? {
+        if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+            return value
+        }
+        if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+            return String(value)
+        }
+        if let value = try? container.decodeIfPresent(Int64.self, forKey: key) {
+            return String(value)
+        }
+        if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+            return String(value)
+        }
+        if let value = try? container.decodeIfPresent(JSONValue.self, forKey: key) {
+            return nodeIdentifier(from: value)
+        }
+        return nil
+    }
+
+    private static func outputTableName(from value: JSONValue?) -> String? {
+        guard let value else { return nil }
+        switch value {
+        case .object(let object):
+            return jsonValueString(object["name"])
+                ?? jsonValueString(object["table"])
+                ?? jsonValueString(object["tableName"])
+                ?? jsonValueString(object["table_name"])
+                ?? jsonValueString(object["id"])
+                ?? jsonValueString(object["key"])
+        default:
+            return jsonValueString(value)
+        }
+    }
+
+    private static func nodeIdentifier(from value: JSONValue?) -> String? {
+        guard let value else { return nil }
+        switch value {
+        case .object(let object):
+            return jsonValueString(object["nodeId"])
+                ?? jsonValueString(object["node_id"])
+                ?? jsonValueString(object["id"])
+                ?? jsonValueString(object["taskId"])
+                ?? jsonValueString(object["task_id"])
+                ?? jsonValueString(object["name"])
+                ?? jsonValueString(object["key"])
+        default:
+            return jsonValueString(value)
+        }
     }
 }
 
@@ -1205,16 +1316,28 @@ struct WorkflowDAGEdge: Identifiable, Codable, Equatable {
         case to
         case source
         case target
+        case sourceId
+        case targetId
         case fromId
         case toId
         case fromNode
         case fromNodeSnake = "from_node"
+        case fromNodeId
+        case fromNodeIDSnake = "from_node_id"
+        case fromTaskId
+        case fromTaskIDSnake = "from_task_id"
         case toNode
         case toNodeSnake = "to_node"
+        case toNodeId
+        case toNodeIDSnake = "to_node_id"
+        case toTaskId
+        case toTaskIDSnake = "to_task_id"
         case start
         case end
         case parent
         case child
+        case src
+        case dst
         case tail
         case head
         case u
@@ -1250,11 +1373,43 @@ struct WorkflowDAGEdge: Identifiable, Codable, Equatable {
         let container = try decoder.container(keyedBy: DecodingKeys.self)
         let decodedFrom = Self.firstLossyString(
             in: container,
-            keys: [.from, .source, .fromId, .fromNode, .fromNodeSnake, .start, .parent, .tail, .u]
+            keys: [
+                .from,
+                .source,
+                .sourceId,
+                .fromId,
+                .fromNode,
+                .fromNodeSnake,
+                .fromNodeId,
+                .fromNodeIDSnake,
+                .fromTaskId,
+                .fromTaskIDSnake,
+                .start,
+                .parent,
+                .src,
+                .tail,
+                .u,
+            ]
         )
         let decodedTo = Self.firstLossyString(
             in: container,
-            keys: [.to, .target, .toId, .toNode, .toNodeSnake, .end, .child, .head, .v]
+            keys: [
+                .to,
+                .target,
+                .targetId,
+                .toId,
+                .toNode,
+                .toNodeSnake,
+                .toNodeId,
+                .toNodeIDSnake,
+                .toTaskId,
+                .toTaskIDSnake,
+                .end,
+                .child,
+                .dst,
+                .head,
+                .v,
+            ]
         )
 
         guard let decodedFrom = decodedFrom?.trimmingCharacters(in: .whitespacesAndNewlines), !decodedFrom.isEmpty,
@@ -1301,6 +1456,11 @@ struct WorkflowDAGEdge: Identifiable, Codable, Equatable {
             if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
                 return String(value)
             }
+            if let value = try? container.decodeIfPresent(JSONValue.self, forKey: key) {
+                if let decoded = nodeIdentifier(from: value) {
+                    return decoded
+                }
+            }
         }
         return nil
     }
@@ -1318,7 +1478,36 @@ struct WorkflowDAGEdge: Identifiable, Codable, Equatable {
         if let value = try? container.decode(Double.self) {
             return String(value)
         }
+        if let value = try? container.decode(JSONValue.self) {
+            return nodeIdentifier(from: value)
+        }
         return nil
+    }
+
+    private static func nodeIdentifier(from value: JSONValue?) -> String? {
+        guard let value else { return nil }
+        switch value {
+        case .object(let object):
+            let preferredKeys = [
+                "nodeId",
+                "node_id",
+                "id",
+                "taskId",
+                "task_id",
+                "name",
+                "key",
+                "index",
+                "ordinal",
+            ]
+            for key in preferredKeys {
+                if let identifier = jsonValueString(object[key]) {
+                    return identifier
+                }
+            }
+            return nil
+        default:
+            return jsonValueString(value)
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1460,6 +1649,8 @@ struct WorkflowDAG: Codable {
         case workflowID = "workflowId"
         case workflowIDSnake = "workflow_id"
         case workflowIDLegacy = "workflowID"
+        case graph
+        case dag
         case mode
         case runId
         case runIdSnake = "run_id"
@@ -1486,43 +1677,91 @@ struct WorkflowDAG: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: DecodingKeys.self)
-        workflowID = try container.decodeIfPresent(String.self, forKey: .workflowID)
-            ?? container.decodeIfPresent(String.self, forKey: .workflowIDSnake)
-            ?? container.decodeIfPresent(String.self, forKey: .workflowIDLegacy)
-        mode = try container.decodeIfPresent(String.self, forKey: .mode)
-        runId = try container.decodeIfPresent(String.self, forKey: .runId)
-            ?? container.decodeIfPresent(String.self, forKey: .runIdSnake)
+        let graphValue = (try? container.decodeIfPresent(JSONValue.self, forKey: .graph))
+            ?? (try? container.decodeIfPresent(JSONValue.self, forKey: .dag))
+
+        let workflowIDDirect = try? container.decodeIfPresent(String.self, forKey: .workflowID)
+        let workflowIDSnake = try? container.decodeIfPresent(String.self, forKey: .workflowIDSnake)
+        let workflowIDLegacy = try? container.decodeIfPresent(String.self, forKey: .workflowIDLegacy)
+        let workflowIDFromGraph = Self.stringValue(in: graphValue, keys: ["workflowId", "workflow_id", "workflowID"])
+        workflowID = workflowIDDirect ?? workflowIDSnake ?? workflowIDLegacy ?? workflowIDFromGraph
+
+        let modeDirect = try? container.decodeIfPresent(String.self, forKey: .mode)
+        mode = modeDirect ?? Self.stringValue(in: graphValue, keys: ["mode"])
+
+        let runIDDirect = try? container.decodeIfPresent(String.self, forKey: .runId)
+        let runIDSnake = try? container.decodeIfPresent(String.self, forKey: .runIdSnake)
+        let runIDFromGraph = Self.stringValue(in: graphValue, keys: ["runId", "run_id"])
+        runId = runIDDirect ?? runIDSnake ?? runIDFromGraph
+
         frameNo = container.decodeLossyInt(forKey: .frameNo)
             ?? container.decodeLossyInt(forKey: .frameNoSnake)
-        xml = try container.decodeIfPresent(WorkflowDAGXMLNode.self, forKey: .xml)
-        let decodedEdges = try container.decodeIfPresent([WorkflowDAGEdge].self, forKey: .graphEdges)
-            ?? container.decodeIfPresent([WorkflowDAGEdge].self, forKey: .links)
-            ?? []
-        let decodedTasks = try container.decodeIfPresent([WorkflowDAGTask].self, forKey: .tasks)
-            ?? container.decodeIfPresent([WorkflowDAGTask].self, forKey: .nodes)
-            ?? []
-        let resolvedTasks = Self.synthesizedTasks(from: decodedEdges, existing: decodedTasks)
-        tasks = resolvedTasks
-        graphEdges = decodedEdges.isEmpty ? nil : decodedEdges
-        let decodedFields = try container.decodeIfPresent([WorkflowLaunchField].self, forKey: .fields)
-            ?? container.decodeIfPresent([WorkflowLaunchField].self, forKey: .launchFields)
-            ?? container.decodeIfPresent([WorkflowLaunchField].self, forKey: .inputFields)
-        let decodedInputSchema = try container.decodeIfPresent(JSONValue.self, forKey: .inputSchema)
-            ?? container.decodeIfPresent(JSONValue.self, forKey: .inputSchemaSnake)
-            ?? container.decodeIfPresent(JSONValue.self, forKey: .input)
-            ?? container.decodeIfPresent(JSONValue.self, forKey: .schema)
-        let inferredFields = WorkflowLaunchField.fields(fromInputSchema: decodedInputSchema)
-        if let decodedFields, !decodedFields.isEmpty {
-            fields = decodedFields
-        } else {
-            fields = inferredFields ?? decodedFields
-        }
-        entryTaskID = try container.decodeIfPresent(String.self, forKey: .entryTaskID)
-            ?? container.decodeIfPresent(String.self, forKey: .entryTaskIDSnake)
-        message = try container.decodeIfPresent(String.self, forKey: .message)
 
-        let decodedEntryTask = try container.decodeIfPresent(String.self, forKey: .entryTask)
-            ?? container.decodeIfPresent(String.self, forKey: .entryTaskSnake)
+        let xmlDirect = try? container.decodeIfPresent(WorkflowDAGXMLNode.self, forKey: .xml)
+        let xmlFromGraph = Self.decodeFromJSONValue(
+            WorkflowDAGXMLNode.self,
+            value: Self.value(in: graphValue, keys: ["xml"])
+        )
+        xml = xmlDirect ?? xmlFromGraph
+
+        let graphEdgesValue = try? container.decodeIfPresent(JSONValue.self, forKey: .graphEdges)
+        let linksValue = try? container.decodeIfPresent(JSONValue.self, forKey: .links)
+        let fallbackEdgesValue = Self.value(in: graphValue, keys: ["edges", "links", "connections"])
+        let edgesValue = graphEdgesValue ?? linksValue ?? fallbackEdgesValue
+
+        let explicitEdges = try? container.decodeIfPresent([WorkflowDAGEdge].self, forKey: .graphEdges)
+        let legacyEdges = try? container.decodeIfPresent([WorkflowDAGEdge].self, forKey: .links)
+        let decodedEdges = explicitEdges ?? legacyEdges ?? Self.decodeEdges(from: edgesValue) ?? []
+
+        let tasksJSON = try? container.decodeIfPresent(JSONValue.self, forKey: .tasks)
+        let nodesJSON = try? container.decodeIfPresent(JSONValue.self, forKey: .nodes)
+        let fallbackTasksJSON = Self.value(in: graphValue, keys: ["tasks", "nodes", "vertices"])
+        let tasksValue = tasksJSON ?? nodesJSON ?? fallbackTasksJSON
+
+        let explicitTasks = try? container.decodeIfPresent([WorkflowDAGTask].self, forKey: .tasks)
+        let legacyTasks = try? container.decodeIfPresent([WorkflowDAGTask].self, forKey: .nodes)
+        let decodedTasks = explicitTasks ?? legacyTasks ?? Self.decodeTasks(from: tasksValue) ?? []
+
+        let normalizedEdges = Self.normalizedEdgeEndpoints(decodedEdges, tasks: decodedTasks)
+        let resolvedTasks = Self.synthesizedTasks(from: normalizedEdges, existing: decodedTasks)
+        tasks = resolvedTasks
+        graphEdges = normalizedEdges.isEmpty ? nil : normalizedEdges
+
+        let fieldsJSON = try? container.decodeIfPresent(JSONValue.self, forKey: .fields)
+        let launchFieldsJSON = try? container.decodeIfPresent(JSONValue.self, forKey: .launchFields)
+        let inputFieldsJSON = try? container.decodeIfPresent(JSONValue.self, forKey: .inputFields)
+        let fallbackFieldsJSON = Self.value(in: graphValue, keys: ["fields", "launchFields", "inputFields"])
+        let fieldsValue = fieldsJSON ?? launchFieldsJSON ?? inputFieldsJSON ?? fallbackFieldsJSON
+
+        let explicitFields = try? container.decodeIfPresent([WorkflowLaunchField].self, forKey: .fields)
+        let launchFields = try? container.decodeIfPresent([WorkflowLaunchField].self, forKey: .launchFields)
+        let inputFields = try? container.decodeIfPresent([WorkflowLaunchField].self, forKey: .inputFields)
+        let decodedFields = explicitFields
+            ?? launchFields
+            ?? inputFields
+            ?? Self.decodeFromJSONValue([WorkflowLaunchField].self, value: fieldsValue)
+
+        let inputSchema = try? container.decodeIfPresent(JSONValue.self, forKey: .inputSchema)
+        let inputSchemaSnake = try? container.decodeIfPresent(JSONValue.self, forKey: .inputSchemaSnake)
+        let inputValue = try? container.decodeIfPresent(JSONValue.self, forKey: .input)
+        let schemaValue = try? container.decodeIfPresent(JSONValue.self, forKey: .schema)
+        let fallbackInputSchema = Self.value(in: graphValue, keys: ["inputSchema", "input_schema", "input", "schema"])
+        let decodedInputSchema = inputSchema ?? inputSchemaSnake ?? inputValue ?? schemaValue ?? fallbackInputSchema
+        let inferredFields = WorkflowLaunchField.fields(fromInputSchema: decodedInputSchema)
+        fields = Self.mergedLaunchFields(decodedFields: decodedFields, inferredFields: inferredFields)
+
+        let entryTaskIDDirect = try? container.decodeIfPresent(String.self, forKey: .entryTaskID)
+        let entryTaskIDSnake = try? container.decodeIfPresent(String.self, forKey: .entryTaskIDSnake)
+        let entryTaskIDFromGraph = Self.stringValue(in: graphValue, keys: ["entryTaskId", "entry_task_id"])
+        entryTaskID = entryTaskIDDirect ?? entryTaskIDSnake ?? entryTaskIDFromGraph
+
+        let messageDirect = try? container.decodeIfPresent(String.self, forKey: .message)
+        message = messageDirect ?? Self.stringValue(in: graphValue, keys: ["message"])
+
+        let entryTaskDirect = try? container.decodeIfPresent(String.self, forKey: .entryTask)
+        let entryTaskSnake = try? container.decodeIfPresent(String.self, forKey: .entryTaskSnake)
+        let entryTaskFromGraph = Self.stringValue(in: graphValue, keys: ["entryTask", "entry_task"])
+        let decodedEntryTask = entryTaskDirect ?? entryTaskSnake ?? entryTaskFromGraph
         entryTask = decodedEntryTask ?? entryTaskID ?? Self.firstTaskId(in: xml) ?? resolvedTasks.sortedForWorkflowDAG.first?.nodeId
     }
 
@@ -1549,6 +1788,247 @@ struct WorkflowDAG: Codable {
         var isEmpty: Bool {
             starts.isEmpty && ends.isEmpty && edges.isEmpty
         }
+    }
+
+    private static func mergedLaunchFields(
+        decodedFields: [WorkflowLaunchField]?,
+        inferredFields: [WorkflowLaunchField]?
+    ) -> [WorkflowLaunchField]? {
+        let explicit = decodedFields.flatMap { $0.isEmpty ? nil : $0 }
+        let inferred = inferredFields.flatMap { $0.isEmpty ? nil : $0 }
+
+        guard let explicit else {
+            return inferred ?? decodedFields ?? inferredFields
+        }
+        guard let inferred else {
+            return explicit
+        }
+
+        let inferredByKey = Dictionary(uniqueKeysWithValues: inferred.map { ($0.key, $0) })
+        var merged: [WorkflowLaunchField] = []
+        merged.reserveCapacity(max(explicit.count, inferred.count))
+
+        var seenKeys = Set<String>()
+        for field in explicit {
+            guard seenKeys.insert(field.key).inserted else { continue }
+
+            guard let inferredField = inferredByKey[field.key] else {
+                merged.append(field)
+                continue
+            }
+
+            let resolvedName: String
+            if field.name == field.key, inferredField.name != inferredField.key {
+                resolvedName = inferredField.name
+            } else {
+                resolvedName = field.name
+            }
+
+            merged.append(
+                WorkflowLaunchField(
+                    name: resolvedName,
+                    key: field.key,
+                    type: field.type ?? inferredField.type,
+                    defaultValue: field.defaultValue ?? inferredField.defaultValue,
+                    required: field.required || inferredField.required
+                )
+            )
+        }
+
+        for field in inferred where seenKeys.insert(field.key).inserted {
+            merged.append(field)
+        }
+
+        return merged.isEmpty ? nil : merged
+    }
+
+    private static func value(in payload: JSONValue?, keys: [String]) -> JSONValue? {
+        guard case .object(let object) = payload else { return nil }
+        for key in keys {
+            if let value = object[key] {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func stringValue(in payload: JSONValue?, keys: [String]) -> String? {
+        jsonValueString(value(in: payload, keys: keys))
+    }
+
+    private static func decodeFromJSONValue<T: Decodable>(_ type: T.Type, value: JSONValue?) -> T? {
+        guard let value else { return nil }
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    private static func decodeTasks(from value: JSONValue?) -> [WorkflowDAGTask]? {
+        guard let value else { return nil }
+
+        if let decoded = decodeFromJSONValue([WorkflowDAGTask].self, value: value), !decoded.isEmpty {
+            return decoded
+        }
+
+        switch value {
+        case .array(let entries):
+            let tasks = entries.compactMap { decodeFromJSONValue(WorkflowDAGTask.self, value: $0) }
+            return tasks.isEmpty ? nil : tasks
+        case .object(let entries):
+            var tasks: [WorkflowDAGTask] = []
+            tasks.reserveCapacity(entries.count)
+            for (key, entry) in entries {
+                if case .object(var object) = entry {
+                    let hasExplicitNodeID = [
+                        "nodeId",
+                        "node_id",
+                        "nodeID",
+                        "id",
+                        "taskId",
+                        "task_id",
+                        "taskID",
+                        "node",
+                        "name",
+                    ].contains(where: { object[$0] != nil })
+                    if !hasExplicitNodeID {
+                        object["nodeId"] = .string(key)
+                    }
+                    if let task = decodeFromJSONValue(WorkflowDAGTask.self, value: .object(object)) {
+                        tasks.append(task)
+                        continue
+                    }
+                }
+                if let task = decodeFromJSONValue(WorkflowDAGTask.self, value: entry) {
+                    tasks.append(task)
+                    continue
+                }
+                if let nodeID = jsonValueString(entry), !nodeID.isEmpty {
+                    tasks.append(WorkflowDAGTask(nodeId: nodeID))
+                    continue
+                }
+                if !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    tasks.append(WorkflowDAGTask(nodeId: key))
+                }
+            }
+            return tasks.isEmpty ? nil : tasks
+        default:
+            return nil
+        }
+    }
+
+    private static func decodeEdges(from value: JSONValue?) -> [WorkflowDAGEdge]? {
+        guard let value else { return nil }
+
+        if let decoded = decodeFromJSONValue([WorkflowDAGEdge].self, value: value), !decoded.isEmpty {
+            return decoded
+        }
+        if let decodedSingle = decodeFromJSONValue(WorkflowDAGEdge.self, value: value) {
+            return [decodedSingle]
+        }
+
+        switch value {
+        case .array(let entries):
+            let edges = entries.compactMap { decodeFromJSONValue(WorkflowDAGEdge.self, value: $0) }
+            return edges.isEmpty ? nil : edges
+        case .object(let entries):
+            if let decoded = decodeFromJSONValue(WorkflowDAGEdge.self, value: value) {
+                return [decoded]
+            }
+            var edges: [WorkflowDAGEdge] = []
+            for (from, targetsValue) in entries {
+                let source = from.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !source.isEmpty else { continue }
+                let targets = decodeEdgeTargets(from: targetsValue)
+                for target in targets where !target.isEmpty {
+                    edges.append(WorkflowDAGEdge(from: source, to: target))
+                }
+            }
+            return edges.isEmpty ? nil : edges
+        default:
+            return nil
+        }
+    }
+
+    private static func decodeEdgeTargets(from value: JSONValue?) -> [String] {
+        guard let value else { return [] }
+        switch value {
+        case .array(let entries):
+            return entries.compactMap { jsonValueString($0)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        case .object(let object):
+            if let direct = jsonValueString(value)?.trimmingCharacters(in: .whitespacesAndNewlines), !direct.isEmpty {
+                return [direct]
+            }
+            let nestedTargets = Self.value(in: value, keys: ["to", "target", "targets", "children", "next"])
+            if let nestedTargets {
+                return decodeEdgeTargets(from: nestedTargets)
+            }
+            if let nodeID = jsonValueString(object["nodeId"])?.trimmingCharacters(in: .whitespacesAndNewlines), !nodeID.isEmpty {
+                return [nodeID]
+            }
+            if let nodeID = jsonValueString(object["node_id"])?.trimmingCharacters(in: .whitespacesAndNewlines), !nodeID.isEmpty {
+                return [nodeID]
+            }
+            if let nodeID = jsonValueString(object["id"])?.trimmingCharacters(in: .whitespacesAndNewlines), !nodeID.isEmpty {
+                return [nodeID]
+            }
+            return []
+        default:
+            if let target = jsonValueString(value)?.trimmingCharacters(in: .whitespacesAndNewlines), !target.isEmpty {
+                return [target]
+            }
+            return []
+        }
+    }
+
+    private static func normalizedEdgeEndpoints(_ edges: [WorkflowDAGEdge], tasks: [WorkflowDAGTask]) -> [WorkflowDAGEdge] {
+        guard !edges.isEmpty, !tasks.isEmpty else { return edges }
+
+        let directNodeIDs = Set(tasks.map(\.nodeId))
+        let orderedNodeIDs = tasks.sortedForWorkflowDAG.map(\.nodeId)
+        let nodeIDsByOrdinal = Dictionary(
+            uniqueKeysWithValues: tasks.compactMap { task -> (Int, String)? in
+                guard let ordinal = task.ordinal else { return nil }
+                return (ordinal, task.nodeId)
+            }
+        )
+
+        return edges.map { edge in
+            let from = normalizedNodeID(
+                edge.from,
+                directNodeIDs: directNodeIDs,
+                orderedNodeIDs: orderedNodeIDs,
+                nodeIDsByOrdinal: nodeIDsByOrdinal
+            )
+            let to = normalizedNodeID(
+                edge.to,
+                directNodeIDs: directNodeIDs,
+                orderedNodeIDs: orderedNodeIDs,
+                nodeIDsByOrdinal: nodeIDsByOrdinal
+            )
+            return WorkflowDAGEdge(from: from, to: to)
+        }
+    }
+
+    private static func normalizedNodeID(
+        _ rawValue: String,
+        directNodeIDs: Set<String>,
+        orderedNodeIDs: [String],
+        nodeIDsByOrdinal: [Int: String]
+    ) -> String {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+        if directNodeIDs.contains(trimmed) {
+            return trimmed
+        }
+        guard let numeric = Int(trimmed) else {
+            return trimmed
+        }
+        if let mapped = nodeIDsByOrdinal[numeric] {
+            return mapped
+        }
+        if numeric >= 0, numeric < orderedNodeIDs.count {
+            return orderedNodeIDs[numeric]
+        }
+        return trimmed
     }
 
     private static func firstTaskId(in node: WorkflowDAGXMLNode?) -> String? {
@@ -1698,12 +2178,37 @@ private extension KeyedDecodingContainer {
         if let value = try? decodeIfPresent(Bool.self, forKey: key) {
             return value
         }
+        if let value = try? decodeIfPresent(Int.self, forKey: key) {
+            return value != 0
+        }
+        if let value = try? decodeIfPresent(Int64.self, forKey: key) {
+            return value != 0
+        }
+        if let value = try? decodeIfPresent(Double.self, forKey: key) {
+            return value != 0
+        }
         if let value = try? decodeIfPresent(String.self, forKey: key) {
             switch value.lowercased() {
             case "true", "1", "yes": return true
             case "false", "0", "no": return false
             default: return nil
             }
+        }
+        return nil
+    }
+
+    func decodeLossyDouble(forKey key: Key) -> Double? {
+        if let value = try? decodeIfPresent(Double.self, forKey: key) {
+            return value
+        }
+        if let value = try? decodeIfPresent(Int.self, forKey: key) {
+            return Double(value)
+        }
+        if let value = try? decodeIfPresent(Int64.self, forKey: key) {
+            return Double(value)
+        }
+        if let value = try? decodeIfPresent(String.self, forKey: key) {
+            return Double(value)
         }
         return nil
     }
@@ -1846,7 +2351,16 @@ struct Approval: Identifiable, Codable {
     }
 
     var isPending: Bool {
-        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "pending"
+        switch status
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+            .replacingOccurrences(of: " ", with: "-") {
+        case "", "pending", "waiting", "waiting-approval", "waitingapproval", "blocked", "paused":
+            return true
+        default:
+            return false
+        }
     }
 
     var waitTime: String {
@@ -2107,6 +2621,101 @@ struct ScoreRow: Identifiable, Codable {
             }
         }
         return "Unknown"
+    }
+}
+
+extension ScoreRow {
+    enum CodingKeys: String, CodingKey {
+        case id
+        case runId
+        case runIdSnake = "run_id"
+        case nodeId
+        case nodeIdSnake = "node_id"
+        case iteration
+        case attempt
+        case scorerId
+        case scorerIdSnake = "scorer_id"
+        case scorerName
+        case scorerNameSnake = "scorer_name"
+        case source
+        case score
+        case reason
+        case metaJson
+        case metaJsonSnake = "meta_json"
+        case latencyMs
+        case latencyMsSnake = "latency_ms"
+        case scoredAtMs
+        case scoredAtMsSnake = "scored_at_ms"
+        case scoredAt
+        case scoredAtSnake = "scored_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard let decodedID = try container.decodeIfPresent(String.self, forKey: .id),
+              !decodedID.isEmpty else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.id,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected score identifier")
+            )
+        }
+
+        guard let decodedScore = container.decodeLossyDouble(forKey: .score) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.score,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected score value")
+            )
+        }
+
+        let decodedScoredAt = try container.decodeIfPresent(String.self, forKey: .scoredAt)
+        let decodedScoredAtSnake = try container.decodeIfPresent(String.self, forKey: .scoredAtSnake)
+        let decodedScoredAtMs = container.decodeLossyInt64(forKey: .scoredAtMs)
+            ?? container.decodeLossyInt64(forKey: .scoredAtMsSnake)
+            ?? parseInspectTimestampMs(decodedScoredAt)
+            ?? parseInspectTimestampMs(decodedScoredAtSnake)
+        guard let decodedScoredAtMs else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.scoredAtMs,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected score timestamp")
+            )
+        }
+
+        id = decodedID
+        runId = try container.decodeIfPresent(String.self, forKey: .runId)
+            ?? container.decodeIfPresent(String.self, forKey: .runIdSnake)
+        nodeId = try container.decodeIfPresent(String.self, forKey: .nodeId)
+            ?? container.decodeIfPresent(String.self, forKey: .nodeIdSnake)
+        iteration = container.decodeLossyInt(forKey: .iteration)
+        attempt = container.decodeLossyInt(forKey: .attempt)
+        scorerId = try container.decodeIfPresent(String.self, forKey: .scorerId)
+            ?? container.decodeIfPresent(String.self, forKey: .scorerIdSnake)
+        scorerName = try container.decodeIfPresent(String.self, forKey: .scorerName)
+            ?? container.decodeIfPresent(String.self, forKey: .scorerNameSnake)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        score = decodedScore
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        metaJson = try container.decodeIfPresent(String.self, forKey: .metaJson)
+            ?? container.decodeIfPresent(String.self, forKey: .metaJsonSnake)
+        latencyMs = container.decodeLossyInt64(forKey: .latencyMs)
+            ?? container.decodeLossyInt64(forKey: .latencyMsSnake)
+        scoredAtMs = decodedScoredAtMs
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(runId, forKey: .runId)
+        try container.encodeIfPresent(nodeId, forKey: .nodeId)
+        try container.encodeIfPresent(iteration, forKey: .iteration)
+        try container.encodeIfPresent(attempt, forKey: .attempt)
+        try container.encodeIfPresent(scorerId, forKey: .scorerId)
+        try container.encodeIfPresent(scorerName, forKey: .scorerName)
+        try container.encodeIfPresent(source, forKey: .source)
+        try container.encode(score, forKey: .score)
+        try container.encodeIfPresent(reason, forKey: .reason)
+        try container.encodeIfPresent(metaJson, forKey: .metaJson)
+        try container.encodeIfPresent(latencyMs, forKey: .latencyMs)
+        try container.encode(scoredAtMs, forKey: .scoredAtMs)
     }
 }
 
@@ -3749,21 +4358,43 @@ func deduplicatedChatBlocks(_ blocks: [ChatBlock]) -> [ChatBlock] {
     var indexByLifecycleId: [String: Int] = [:]
 
     for block in blocks {
-        guard let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty else {
-            result.append(block)
-            continue
-        }
-
-        if let existingIndex = indexByLifecycleId[lifecycleId] {
+        if let lifecycleId = block.lifecycleId,
+           !lifecycleId.isEmpty,
+           let existingIndex = indexByLifecycleId[lifecycleId],
+           result.indices.contains(existingIndex) {
             let existing = result[existingIndex]
             if existing.canMergeAssistantStream(with: block) {
                 result[existingIndex] = existing.mergingAssistantStream(with: block)
             } else {
                 result[existingIndex] = block
             }
-        } else {
-            indexByLifecycleId[lifecycleId] = result.count
-            result.append(block)
+            if let mergedLifecycleId = result[existingIndex].lifecycleId, !mergedLifecycleId.isEmpty {
+                indexByLifecycleId[mergedLifecycleId] = existingIndex
+            }
+            continue
+        }
+
+        if let lastIndex = result.indices.last {
+            let existing = result[lastIndex]
+            if existing.canMergeAssistantStream(with: block),
+               existing.hasStreamingContentOverlap(with: block) {
+                result[lastIndex] = existing.mergingAssistantStream(with: block)
+                if let existingLifecycleId = existing.lifecycleId, !existingLifecycleId.isEmpty {
+                    indexByLifecycleId[existingLifecycleId] = lastIndex
+                }
+                if let incomingLifecycleId = block.lifecycleId, !incomingLifecycleId.isEmpty {
+                    indexByLifecycleId[incomingLifecycleId] = lastIndex
+                }
+                if let mergedLifecycleId = result[lastIndex].lifecycleId, !mergedLifecycleId.isEmpty {
+                    indexByLifecycleId[mergedLifecycleId] = lastIndex
+                }
+                continue
+            }
+        }
+
+        result.append(block)
+        if let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty {
+            indexByLifecycleId[lifecycleId] = result.count - 1
         }
     }
 
@@ -3975,16 +4606,23 @@ struct CronSchedule: Identifiable, Codable {
         case cronIdSnake = "cron_id"
         case cronID
         case scheduleId
+        case scheduleIdSnake = "schedule_id"
         case scheduleID
         case pattern
         case cronPattern
         case cronPatternSnake = "cron_pattern"
+        case cron
+        case cronExpression
+        case cronExpressionSnake = "cron_expression"
         case schedule
         case scheduleExpression
         case scheduleExpressionSnake = "schedule_expression"
         case expression
+        case expr
         case workflowPath
         case workflowPathSnake = "workflow_path"
+        case workflowFile
+        case workflowFileSnake = "workflow_file"
         case entryFile
         case entryFileSnake = "entry_file"
         case relativePath
@@ -3995,15 +4633,19 @@ struct CronSchedule: Identifiable, Codable {
         case path
         case enabled
         case isEnabled
+        case enabledSnake = "is_enabled"
         case createdAtMs
         case createdAtMsSnake = "created_at_ms"
         case createdAt
+        case createdAtSnake = "created_at"
         case lastRunAtMs
         case lastRunAtMsSnake = "last_run_at_ms"
         case lastRunAt
+        case lastRunAtSnake = "last_run_at"
         case nextRunAtMs
         case nextRunAtMsSnake = "next_run_at_ms"
         case nextRunAt
+        case nextRunAtSnake = "next_run_at"
         case errorJson
         case errorJsonSnake = "error_json"
         case error
@@ -4032,24 +4674,42 @@ struct CronSchedule: Identifiable, Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         func decodeString(_ key: CodingKeys) -> String? {
-            try? container.decodeIfPresent(String.self, forKey: key)
+            if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+                return value
+            }
+            if let value = container.decodeLossyInt64(forKey: key) {
+                return String(value)
+            }
+            if let value = container.decodeLossyBool(forKey: key) {
+                return value ? "true" : "false"
+            }
+            return nil
         }
 
         let scheduleJSONValue = try? container.decodeIfPresent(JSONValue.self, forKey: .schedule)
-        let decodedPattern = Self.nonEmpty(decodeString(.pattern))
-            ?? Self.nonEmpty(decodeString(.cronPattern))
-            ?? Self.nonEmpty(decodeString(.cronPatternSnake))
-            ?? Self.nonEmpty(decodeString(.schedule))
-            ?? Self.nonEmpty(decodeString(.scheduleExpression))
-            ?? Self.nonEmpty(decodeString(.scheduleExpressionSnake))
-            ?? Self.nonEmpty(decodeString(.expression))
-            ?? Self.nonEmpty(cronPatternString(scheduleJSONValue))
+        let decodedPatternCandidates = [
+            Self.nonEmpty(decodeString(.pattern)),
+            Self.nonEmpty(decodeString(.cronPattern)),
+            Self.nonEmpty(decodeString(.cronPatternSnake)),
+            Self.nonEmpty(decodeString(.cron)),
+            Self.nonEmpty(decodeString(.cronExpression)),
+            Self.nonEmpty(decodeString(.cronExpressionSnake)),
+            Self.nonEmpty(decodeString(.schedule)),
+            Self.nonEmpty(decodeString(.scheduleExpression)),
+            Self.nonEmpty(decodeString(.scheduleExpressionSnake)),
+            Self.nonEmpty(decodeString(.expression)),
+            Self.nonEmpty(decodeString(.expr)),
+            Self.nonEmpty(cronPatternString(scheduleJSONValue)),
+        ]
+        let decodedPattern = decodedPatternCandidates.compactMap { $0 }.first
         pattern = decodedPattern ?? ""
 
         let workflowJSONValue = try? container.decodeIfPresent(JSONValue.self, forKey: .workflow)
         let workflowPathCandidates = [
             Self.nonEmpty(decodeString(.workflowPath)),
             Self.nonEmpty(decodeString(.workflowPathSnake)),
+            Self.nonEmpty(decodeString(.workflowFile)),
+            Self.nonEmpty(decodeString(.workflowFileSnake)),
             Self.nonEmpty(decodeString(.entryFile)),
             Self.nonEmpty(decodeString(.entryFileSnake)),
             Self.nonEmpty(decodeString(.relativePath)),
@@ -4064,19 +4724,29 @@ struct CronSchedule: Identifiable, Codable {
 
         enabled = container.decodeLossyBool(forKey: .enabled)
             ?? container.decodeLossyBool(forKey: .isEnabled)
+            ?? container.decodeLossyBool(forKey: .enabledSnake)
             ?? true
 
         createdAtMs = container.decodeLossyInt64(forKey: .createdAtMs)
             ?? container.decodeLossyInt64(forKey: .createdAtMsSnake)
+            ?? container.decodeLossyInt64(forKey: .createdAt)
+            ?? container.decodeLossyInt64(forKey: .createdAtSnake)
             ?? parseInspectTimestampMs(decodeString(.createdAt))
+            ?? parseInspectTimestampMs(decodeString(.createdAtSnake))
 
         lastRunAtMs = container.decodeLossyInt64(forKey: .lastRunAtMs)
             ?? container.decodeLossyInt64(forKey: .lastRunAtMsSnake)
+            ?? container.decodeLossyInt64(forKey: .lastRunAt)
+            ?? container.decodeLossyInt64(forKey: .lastRunAtSnake)
             ?? parseInspectTimestampMs(decodeString(.lastRunAt))
+            ?? parseInspectTimestampMs(decodeString(.lastRunAtSnake))
 
         nextRunAtMs = container.decodeLossyInt64(forKey: .nextRunAtMs)
             ?? container.decodeLossyInt64(forKey: .nextRunAtMsSnake)
+            ?? container.decodeLossyInt64(forKey: .nextRunAt)
+            ?? container.decodeLossyInt64(forKey: .nextRunAtSnake)
             ?? parseInspectTimestampMs(decodeString(.nextRunAt))
+            ?? parseInspectTimestampMs(decodeString(.nextRunAtSnake))
 
         let errorValue = try? container.decodeIfPresent(JSONValue.self, forKey: .error)
         if let encoded = Self.nonEmpty(decodeString(.errorJson))
@@ -4094,6 +4764,7 @@ struct CronSchedule: Identifiable, Codable {
             ?? decodeString(.cronIdSnake)
             ?? decodeString(.cronID)
             ?? decodeString(.scheduleId)
+            ?? decodeString(.scheduleIdSnake)
             ?? decodeString(.scheduleID)
 
         let resolvedID = Self.resolvedID(
@@ -4145,7 +4816,7 @@ struct CronSchedule: Identifiable, Codable {
     private static func fallbackID(pattern: String, workflowPath: String) -> String {
         let normalizedPattern = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedWorkflowPath = workflowPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedPattern.isEmpty, !normalizedWorkflowPath.isEmpty else { return "" }
+        guard !normalizedPattern.isEmpty || !normalizedWorkflowPath.isEmpty else { return "" }
 
         var data = Data("smithers.cronschedule.fallback.v1\n".utf8)
         appendField(normalizedPattern, named: "pattern", to: &data)
@@ -4170,8 +4841,11 @@ struct CronResponse: Codable {
 
     private enum CodingKeys: String, CodingKey {
         case crons
+        case cronSchedules
+        case cronSchedulesSnake = "cron_schedules"
         case schedules
         case items
+        case entries
         case results
         case data
     }
@@ -4183,35 +4857,44 @@ struct CronResponse: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
-        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .crons) {
-            self.crons = crons
-            return
+        func decodeCronList(_ key: CodingKeys) -> [CronSchedule]? {
+            if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: key) {
+                return crons
+            }
+            if let mapped = try? container.decodeIfPresent([String: CronSchedule].self, forKey: key) {
+                return mapped.keys.sorted().compactMap { mapped[$0] }
+            }
+            return nil
         }
-        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .schedules) {
-            self.crons = crons
-            return
-        }
-        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .items) {
-            self.crons = crons
-            return
-        }
-        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .results) {
-            self.crons = crons
-            return
-        }
-        if let crons = try? container.decodeIfPresent([CronSchedule].self, forKey: .data) {
-            self.crons = crons
-            return
+
+        for key in [
+            CodingKeys.crons,
+            .cronSchedules,
+            .cronSchedulesSnake,
+            .schedules,
+            .items,
+            .entries,
+            .results,
+            .data,
+        ] {
+            if let crons = decodeCronList(key) {
+                self.crons = crons
+                return
+            }
         }
         if let nested = try? container.decode(CronResponse.self, forKey: .data) {
             self.crons = nested.crons
+            return
+        }
+        if let single = try? container.decodeIfPresent(CronSchedule.self, forKey: .data) {
+            self.crons = [single]
             return
         }
 
         throw DecodingError.dataCorruptedError(
             forKey: .crons,
             in: container,
-            debugDescription: "Expected cron schedules under crons/schedules/items/results/data"
+            debugDescription: "Expected cron schedules under crons/cronSchedules/schedules/items/entries/results/data"
         )
     }
 
@@ -4534,7 +5217,14 @@ struct SSEEvent {
         self.runId = Self.normalizedRunId(runId) ?? Self.extractRunId(from: data)
     }
 
-    static func filtered(event: String?, data: String, eventRunId: String? = nil, expectedRunId: String?) -> SSEEvent? {
+    static func filtered(
+        event: String?,
+        data: String,
+        eventRunId: String? = nil,
+        expectedRunId: String?,
+        requireAttributedRunId: Bool = false
+    ) -> SSEEvent? {
+        let normalizedExpectedRunId = normalizedRunId(expectedRunId)
         let normalizedEventRunId = normalizedRunId(eventRunId)
         let payloadRunId = extractRunId(from: data)
 
@@ -4543,8 +5233,13 @@ struct SSEEvent {
         }
 
         let resolvedRunId = normalizedEventRunId ?? payloadRunId
-        guard runId(resolvedRunId, matches: expectedRunId) else { return nil }
-        return SSEEvent(event: event, data: data, runId: resolvedRunId ?? normalizedRunId(expectedRunId))
+        if requireAttributedRunId,
+           normalizedExpectedRunId != nil,
+           resolvedRunId == nil {
+            return nil
+        }
+        guard runId(resolvedRunId, matches: normalizedExpectedRunId) else { return nil }
+        return SSEEvent(event: event, data: data, runId: resolvedRunId ?? normalizedExpectedRunId)
     }
 
     func matches(runId expectedRunId: String?) -> Bool {

@@ -14,11 +14,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         textView.font = .monospacedSystemFont(ofSize: CGFloat(Theme.Metrics.editorFontSize), weight: .regular)
         textView.backgroundColor = NSColor(Theme.base)
-        textView.textColor = NSColor(Color.white.opacity(0.88))
+        textView.textColor = NSColor(Theme.textPrimary)
         textView.insertionPointColor = NSColor(Theme.accent)
         textView.selectedTextAttributes = [
             .backgroundColor: NSColor(Theme.accent.opacity(0.25)),
-            .foregroundColor: NSColor.white,
+            .foregroundColor: NSColor(Theme.textPrimary),
         ]
         textView.isRichText = true          // needed for attribute styling
         textView.allowsUndo = true
@@ -92,7 +92,7 @@ enum MarkdownHighlighter {
         guard full.length > 0 else { return }
 
         let baseFont = NSFont.monospacedSystemFont(ofSize: CGFloat(Theme.Metrics.editorFontSize), weight: .regular)
-        let baseColor = NSColor(Color.white.opacity(0.88))
+        let baseColor = NSColor(Theme.textPrimary)
         let savedSelection = textView.selectedRanges
 
         storage.beginEditing()
@@ -126,7 +126,7 @@ enum MarkdownHighlighter {
     private static func applyCodeBlocks(_ storage: NSMutableAttributedString, text: String) {
         let codeFont = NSFont.monospacedSystemFont(ofSize: CGFloat(Theme.Metrics.editorFontSize), weight: .regular)
         let fenceColor = NSColor(Theme.synComment)
-        let codeColor = NSColor(Color.white.opacity(0.75))
+        let codeColor = NSColor(Theme.diffFileFg)
         let pattern = #"(?m)^```[^\n]*\n([\s\S]*?)^```"#
         for (range, _) in ranges(of: pattern, in: text, options: .anchorsMatchLines) {
             storage.addAttributes([.font: codeFont, .foregroundColor: codeColor], range: range)
@@ -316,14 +316,14 @@ struct MarkdownContentView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.80))
+                    .foregroundColor(Theme.diffFileFg)
                     .textSelection(.enabled)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.white.opacity(0.06))
+            .background(Theme.diffFileBg)
             .cornerRadius(6)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.08), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
 
         case .unorderedList(let items):
             VStack(alignment: .leading, spacing: 4) {

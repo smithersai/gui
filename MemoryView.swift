@@ -1,6 +1,12 @@
 import SwiftUI
 
 enum MemoryNamespaceFilterState {
+    struct RefreshState {
+        let namespaces: [String]
+        let namespaceFilter: String?
+        let visibleFacts: [MemoryFact]
+    }
+
     static func namespaces(from facts: [MemoryFact]) -> [String] {
         Array(Set(facts.map(\.namespace))).sorted()
     }
@@ -15,6 +21,21 @@ enum MemoryNamespaceFilterState {
             return facts
         }
         return facts.filter { $0.namespace == namespace }
+    }
+
+    static func refreshedState(from facts: [MemoryFact], currentNamespaceFilter: String?) -> RefreshState {
+        let availableNamespaces = namespaces(from: facts)
+        let validNamespace = validatedFilter(currentNamespaceFilter, namespaces: availableNamespaces)
+        let visibleFacts = filteredFacts(
+            from: facts,
+            namespaceFilter: validNamespace,
+            namespaces: availableNamespaces
+        )
+        return RefreshState(
+            namespaces: availableNamespaces,
+            namespaceFilter: validNamespace,
+            visibleFacts: visibleFacts
+        )
     }
 }
 
@@ -38,6 +59,7 @@ struct MemoryView: View {
     @State private var factsLoadID = 0
 
     private static let minRecallTopK = 1
+    private static let recallTopKSliderDefaultMax = 50
 
     init(smithers: SmithersClient, workflowPath: String? = nil) {
         self._smithers = ObservedObject(wrappedValue: smithers)
@@ -69,6 +91,17 @@ struct MemoryView: View {
             get: { recallTopK },
             set: { recallTopK = Self.normalizedRecallTopK($0) }
         )
+    }
+
+    private var recallTopKSliderBinding: Binding<Double> {
+        Binding(
+            get: { Double(recallTopK) },
+            set: { recallTopK = Self.normalizedRecallTopK(Int($0.rounded())) }
+        )
+    }
+
+    private var recallTopKSliderMax: Double {
+        Double(max(recallTopK, Self.recallTopKSliderDefaultMax))
     }
 
     var body: some View {
@@ -114,6 +147,7 @@ struct MemoryView: View {
                     .foregroundColor(Theme.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("memory.refreshButton")
         }
         .padding(.horizontal, 20)
         .frame(height: 48)
@@ -138,6 +172,7 @@ struct MemoryView: View {
                     .themedPill(fill: mode == .list ? Theme.pillActive : Theme.pillBg, cornerRadius: 6)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("memory.mode.facts")
 
             Button(action: {
                 mode = .recall
@@ -155,6 +190,7 @@ struct MemoryView: View {
                     .themedPill(fill: mode == .recall ? Theme.pillActive : Theme.pillBg, cornerRadius: 6)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("memory.mode.recall")
 
             // Namespace filter
             Menu {
@@ -178,6 +214,7 @@ struct MemoryView: View {
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("memory.namespaceFilter")
 
             Spacer()
 
@@ -205,6 +242,7 @@ struct MemoryView: View {
                             .foregroundColor(Theme.textTertiary)
                     }
                     .frame(maxWidth: .infinity, minHeight: 200)
+                    .accessibilityIdentifier("memory.emptyState")
                 } else {
                     // Table header
                     HStack(spacing: 0) {
@@ -248,6 +286,7 @@ struct MemoryView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("memory.fact.\(fact.id)")
                         Divider().background(Theme.border)
                     }
                 }
@@ -273,6 +312,7 @@ struct MemoryView: View {
                     .foregroundColor(Theme.accent)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("memory.detail.back")
 
                 VStack(alignment: .leading, spacing: 8) {
                     metaRow("Namespace", fact.namespace)
@@ -319,6 +359,7 @@ struct MemoryView: View {
                     .background(Theme.inputBg)
                     .cornerRadius(6)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                    .accessibilityIdentifier("memory.recall.query")
 
                 topKControl
 
@@ -332,6 +373,7 @@ struct MemoryView: View {
                         .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("memory.recall.search")
                 .disabled(recallQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(20)
@@ -422,14 +464,15 @@ struct MemoryView: View {
                 .accessibilityLabel("Top-K")
                 .accessibilityIdentifier("memory.recall.topK")
 
-            Stepper(
-                "Top-K",
-                onIncrement: { recallTopK = Self.normalizedRecallTopK(recallTopK + 1) },
-                onDecrement: { recallTopK = Self.normalizedRecallTopK(recallTopK - 1) }
+            Slider(
+                value: recallTopKSliderBinding,
+                in: Double(Self.minRecallTopK)...recallTopKSliderMax,
+                step: 1
             )
-                .labelsHidden()
+                .tint(Theme.accent)
+                .frame(width: 120)
                 .accessibilityLabel("Top-K")
-                .accessibilityIdentifier("memory.recall.topK.stepper")
+                .accessibilityIdentifier("memory.recall.topK.slider")
         }
         .frame(height: 32)
     }
@@ -518,6 +561,7 @@ struct MemoryView: View {
             Text(message).font(.system(size: 13)).foregroundColor(Theme.textSecondary)
             Button("Retry") { Task { await loadFacts() } }
                 .buttonStyle(.plain).foregroundColor(Theme.accent)
+                .accessibilityIdentifier("memory.retryButton")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -539,23 +583,16 @@ struct MemoryView: View {
 
             allNamespaceFacts = allFacts
 
-            let availableNamespaces = MemoryNamespaceFilterState.namespaces(from: allFacts)
-            let currentNamespace = namespaceFilter
-            let validNamespace = MemoryNamespaceFilterState.validatedFilter(
-                currentNamespace,
-                namespaces: availableNamespaces
+            let refreshedState = MemoryNamespaceFilterState.refreshedState(
+                from: allFacts,
+                currentNamespaceFilter: namespaceFilter
             )
-            if validNamespace != currentNamespace {
-                namespaceFilter = validNamespace
+            if refreshedState.namespaceFilter != namespaceFilter {
+                namespaceFilter = refreshedState.namespaceFilter
             }
 
             facts = allFacts
-            let visibleFacts = MemoryNamespaceFilterState.filteredFacts(
-                from: allFacts,
-                namespaceFilter: validNamespace,
-                namespaces: availableNamespaces
-            )
-            if let selectedFact, !visibleFacts.contains(where: { $0.id == selectedFact.id }) {
+            if let selectedFact, !refreshedState.visibleFacts.contains(where: { $0.id == selectedFact.id }) {
                 self.selectedFact = nil
             }
         } catch {

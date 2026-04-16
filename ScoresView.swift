@@ -62,6 +62,7 @@ struct ScoresView: View {
                         .foregroundColor(Theme.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("scores.refreshButton")
             }
             .padding(.horizontal, 20)
             .frame(height: 48)
@@ -73,6 +74,7 @@ struct ScoresView: View {
                     DashboardTabButton(label: t.rawValue, isActive: tab == t) {
                         withAnimation(.easeInOut(duration: 0.2)) { tab = t }
                     }
+                    .accessibilityIdentifier("scores.tab.\(t.rawValue.lowercased())")
                 }
                 Spacer()
             }
@@ -193,6 +195,7 @@ struct ScoresView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface2)
         .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
         .themedCardHover(cornerRadius: 8)
     }
 
@@ -633,6 +636,7 @@ struct ScoresView: View {
                 .foregroundColor(Theme.textTertiary)
         }
         .frame(maxWidth: .infinity, minHeight: 200)
+        .accessibilityIdentifier("scores.emptyState")
     }
 
     private func errorView(_ message: String) -> some View {
@@ -646,6 +650,7 @@ struct ScoresView: View {
             Button("Retry") { Task { await loadRunContextAndScores() } }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("scores.retryButton")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

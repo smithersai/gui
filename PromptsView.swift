@@ -39,6 +39,12 @@ struct PromptsView: View {
     @State private var tab: DetailTab = .source
     private let previewDebounceNanoseconds: UInt64 = 300_000_000
 
+    @AppStorage(AppPreferenceKeys.vimModeEnabled) private var vimModeEnabled = false
+    @State private var neovimPath: String? = NeovimDetector.executablePath()
+    @State private var nvimSessionId: String?
+
+    private var neovimAvailable: Bool { neovimPath != nil }
+
     enum DetailTab: String, CaseIterable {
         case source = "Source"
         case inputs = "Inputs"
@@ -134,6 +140,21 @@ struct PromptsView: View {
         }
         .background(Theme.surface1)
         .task { await loadPrompts() }
+        .onDisappear {
+            if let oldId = nvimSessionId {
+                TerminalSurfaceRegistry.shared.deregister(sessionId: oldId)
+                nvimSessionId = nil
+            }
+        }
+        .onChange(of: vimModeEnabled) { _, newValue in
+            neovimPath = NeovimDetector.executablePath()
+            if newValue, let prompt = selectedPrompt {
+                refreshNvimSession(for: prompt)
+            } else if let oldId = nvimSessionId {
+                TerminalSurfaceRegistry.shared.deregister(sessionId: oldId)
+                nvimSessionId = nil
+            }
+        }
         .task(id: sourceEditGeneration) {
             await renderPreviewAfterDebounce(
                 promptId: selectedId,
@@ -322,15 +343,31 @@ struct PromptsView: View {
         .background(Theme.surface1)
     }
 
+    @ViewBuilder
     private var sourceEditor: some View {
-        SyntaxHighlightedTextEditor(
-            text: sourceBinding,
-            language: SourceCodeLanguage(fileName: selectedPrompt?.entryFile ?? "\(selectedId ?? "prompt").mdx"),
-            accessibilityIdentifier: "prompts.sourceEditor"
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.base)
-        .padding(1)
+        if vimModeEnabled, neovimAvailable, let sessionId = nvimSessionId,
+           let prompt = selectedPrompt, let entryFile = prompt.entryFile,
+           let filePath = try? smithers.localSmithersFilePath(entryFile) {
+            let command = "\(promptShellQuote(neovimPath!)) \(promptShellQuote(filePath))"
+            let workingDir = (filePath as NSString).deletingLastPathComponent
+            TerminalView(
+                sessionId: sessionId,
+                command: command,
+                workingDirectory: workingDir,
+                onClose: { Task { await loadPrompts() } }
+            )
+            .id(sessionId)
+            .accessibilityIdentifier("prompts.nvimTerminal")
+        } else {
+            SyntaxHighlightedTextEditor(
+                text: sourceBinding,
+                language: SourceCodeLanguage(fileName: selectedPrompt?.entryFile ?? "\(selectedId ?? "prompt").mdx"),
+                accessibilityIdentifier: "prompts.sourceEditor"
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.base)
+            .padding(1)
+        }
     }
 
     private var inputsView: some View {
@@ -461,6 +498,7 @@ struct PromptsView: View {
         isPreviewing = false
         savingPromptId = nil
         tab = .source
+        refreshNvimSession(for: prompt)
         sourceLoadGeneration += 1
         let loadSnapshot = PromptSourceLoadSnapshot(
             promptId: promptId,
@@ -654,6 +692,29 @@ struct PromptsView: View {
         isLoading = false
     }
 
+    private func refreshNvimSession(for prompt: SmithersPrompt) {
+        if let oldId = nvimSessionId {
+            TerminalSurfaceRegistry.shared.deregister(sessionId: oldId)
+        }
+        guard vimModeEnabled, neovimAvailable, let entryFile = prompt.entryFile,
+              let filePath = try? smithers.localSmithersFilePath(entryFile) else {
+            nvimSessionId = nil
+            return
+        }
+        nvimSessionId = "prompt-nvim-\(prompt.id)-\(filePath.hashValue)"
+        _ = prewarmPromptNvim(sessionId: nvimSessionId!, filePath: filePath)
+    }
+
+    private func prewarmPromptNvim(sessionId: String, filePath: String) -> Bool {
+        guard !UITestSupport.isEnabled, let app = GhosttyApp.shared.app else { return false }
+        let command = "\(promptShellQuote(neovimPath!)) \(promptShellQuote(filePath))"
+        let workingDir = (filePath as NSString).deletingLastPathComponent
+        _ = TerminalSurfaceRegistry.shared.view(
+            for: sessionId, app: app, command: command, workingDirectory: workingDir
+        )
+        return true
+    }
+
     private func errorView(_ message: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
@@ -668,4 +729,8 @@ struct PromptsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+private func promptShellQuote(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
 }

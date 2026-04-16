@@ -206,17 +206,28 @@ final class CodexJSONLLineBuffer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        var events = drainCompleteLines()
         let line = pending
         pending = ""
-        return decodeLine(line).map { [$0] } ?? []
+        if let event = decodeLine(line) {
+            events.append(event)
+        }
+        return events
     }
 
     private func drainCompleteLines() -> [CodexEvent] {
         var events: [CodexEvent] = []
 
-        while let newline = pending.firstIndex(of: "\n") {
-            let line = String(pending[..<newline])
-            pending.removeSubrange(...newline)
+        while let delimiter = pending.firstIndex(where: { $0 == "\n" || $0 == "\r" }) {
+            let line = String(pending[..<delimiter])
+
+            var removeEnd = pending.index(after: delimiter)
+            if pending[delimiter] == "\r",
+               removeEnd < pending.endIndex,
+               pending[removeEnd] == "\n" {
+                removeEnd = pending.index(after: removeEnd)
+            }
+            pending.removeSubrange(..<removeEnd)
 
             if let event = decodeLine(line) {
                 events.append(event)

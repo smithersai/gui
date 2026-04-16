@@ -270,6 +270,58 @@ private final class TerminalCallbackCoordinator: @unchecked Sendable {
     }
 
     @discardableResult
+    func handleAction(_ action: ghostty_action_s) -> Bool {
+        switch action.tag {
+        case GHOSTTY_ACTION_NEW_SPLIT:
+            let direction = action.action.new_split
+            asyncOnMain { surfaceView in
+                switch direction {
+                case GHOSTTY_SPLIT_DIRECTION_DOWN, GHOSTTY_SPLIT_DIRECTION_UP:
+                    surfaceView.handleSplitDownRequest()
+                default:
+                    surfaceView.handleSplitRightRequest()
+                }
+            }
+            return true
+
+        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+            let title = action.action.desktop_notification.title
+                .flatMap { String(cString: $0) } ?? ""
+            let body = action.action.desktop_notification.body
+                .flatMap { String(cString: $0) } ?? ""
+            asyncOnMain { surfaceView in
+                surfaceView.handleDesktopNotification(title: title, body: body)
+            }
+            return true
+
+        case GHOSTTY_ACTION_RING_BELL:
+            asyncOnMain { surfaceView in
+                surfaceView.handleBell()
+            }
+            return true
+
+        case GHOSTTY_ACTION_SET_TITLE, GHOSTTY_ACTION_SET_TAB_TITLE:
+            let title = action.action.set_title.title
+                .flatMap { String(cString: $0) } ?? ""
+            asyncOnMain { surfaceView in
+                surfaceView.handleTitleChange(title)
+            }
+            return true
+
+        case GHOSTTY_ACTION_PWD:
+            let pwd = action.action.pwd.pwd
+                .flatMap { String(cString: $0) } ?? ""
+            asyncOnMain { surfaceView in
+                surfaceView.handleWorkingDirectoryChange(pwd)
+            }
+            return true
+
+        default:
+            return false
+        }
+    }
+
+    @discardableResult
     private func syncOnMain<T>(_ body: @escaping @MainActor (TerminalSurfaceView) -> T) -> T? {
         if Thread.isMainThread {
             return MainActor.assumeIsolated {
@@ -301,6 +353,46 @@ private final class TerminalCallbackCoordinator: @unchecked Sendable {
     }
 }
 
+private enum TerminalRuntimeActionBridge {
+    static func handle(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
+        if target.tag == GHOSTTY_TARGET_SURFACE {
+            let userdata = ghostty_surface_userdata(target.target.surface)
+            guard let callbacks = TerminalCallbackCoordinator.from(userdata) else { return false }
+            return callbacks.handleAction(action)
+        }
+
+        return handleAppAction(action)
+    }
+
+    private static func handleAppAction(_ action: ghostty_action_s) -> Bool {
+        switch action.tag {
+        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+            let title = action.action.desktop_notification.title
+                .flatMap { String(cString: $0) } ?? ""
+            let body = action.action.desktop_notification.body
+                .flatMap { String(cString: $0) } ?? ""
+            DispatchQueue.main.async {
+                guard let surfaceId = TerminalSurfaceRegistry.shared.focusedSessionId else { return }
+                SurfaceNotificationStore.shared.addNotification(
+                    surfaceId: surfaceId,
+                    title: title,
+                    body: body
+                )
+            }
+            return true
+
+        case GHOSTTY_ACTION_RING_BELL:
+            DispatchQueue.main.async {
+                NSSound.beep()
+            }
+            return true
+
+        default:
+            return false
+        }
+    }
+}
+
 enum TerminalKeyForwardingPolicy {
     static func shouldForwardKeyEvent(_ type: NSEvent.EventType, modifierFlags _: NSEvent.ModifierFlags) -> Bool {
         switch type {
@@ -326,7 +418,6 @@ enum TerminalKeyForwardingPolicy {
         case "\r":
             return "\r"
         case "/":
-            guard !flags.contains(.shift) else { return nil }
             return "_"
         default:
             return nil
@@ -382,8 +473,8 @@ class GhosttyApp: ObservableObject {
             guard let callbacks = TerminalCallbackCoordinator.from(userdata) else { return }
             callbacks.wakeupApp()
         }
-        runtime.action_cb = { app, target, action in
-            return false
+        runtime.action_cb = { _, target, action in
+            TerminalRuntimeActionBridge.handle(target: target, action: action)
         }
         runtime.read_clipboard_cb = { userdata, loc, state in
             guard let callbacks = TerminalCallbackCoordinator.from(userdata) else { return false }
@@ -458,11 +549,22 @@ class TerminalSurfaceView: NSView {
     private(set) var sessionId: String?
     private var trackingArea: NSTrackingArea?
     private var keyEventMonitor: Any?
+    private var windowScreenObserver: NSObjectProtocol?
+    private weak var observedWindow: NSWindow?
     private var forwardedKeyDownKeyCodes = Set<UInt16>()
     private let callbacks = TerminalCallbackCoordinator()
     private var retainedCallbacks: Unmanaged<TerminalCallbackCoordinator>?
     private var cleanedUp = false
     var onClose: (() -> Void)?
+    var onFocus: (() -> Void)?
+    var onTitleChange: ((String) -> Void)?
+    var onWorkingDirectoryChange: ((String) -> Void)?
+    var onNotification: ((String, String) -> Void)?
+    var onBell: (() -> Void)?
+    var onSplitRight: (() -> Void)?
+    var onSplitDown: (() -> Void)?
+    var onOpenBrowser: (() -> Void)?
+    var onJumpToUnread: (() -> Void)?
 
     // Keep C strings alive for the lifetime of the surface
     private var commandCString: UnsafeMutablePointer<CChar>?
@@ -517,6 +619,7 @@ class TerminalSurfaceView: NSView {
         cleanedUp = true
 
         removeKeyEventMonitor()
+        removeWindowScreenObserver()
         callbacks.invalidate()
         if let surface {
             ghostty_surface_free(surface)
@@ -536,6 +639,8 @@ class TerminalSurfaceView: NSView {
             ghostty_surface_set_focus(surface, true)
         }
         GhosttyApp.shared.setClipboardSurface(self)
+        TerminalSurfaceRegistry.shared.recordFocus(sessionId: sessionId)
+        onFocus?()
         return true
     }
 
@@ -553,6 +658,10 @@ class TerminalSurfaceView: NSView {
         }
 
         if handleClipboardShortcut(event) {
+            return true
+        }
+
+        if handleWorkspaceShortcut(event) {
             return true
         }
 
@@ -589,6 +698,8 @@ class TerminalSurfaceView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         GhosttyApp.shared.setClipboardSurface(self)
+        updateWindowScreenObserver()
+        updateSurfaceDisplayID()
         syncSurfaceBackingMetrics()
         updateKeyEventMonitor()
         requestKeyboardFocus()
@@ -602,6 +713,9 @@ class TerminalSurfaceView: NSView {
     // MARK: - Keyboard Input
 
     override func keyDown(with event: NSEvent) {
+        if handleWorkspaceShortcut(event) {
+            return
+        }
         if !forwardKeyDown(with: terminalKeyEvent(for: event)) {
             super.keyDown(with: event)
         }
@@ -622,20 +736,24 @@ class TerminalSurfaceView: NSView {
     // MARK: - Mouse Input
 
     override func mouseDown(with event: NSEvent) {
-        _ = forwardMouseButton(
+        if !forwardMouseButton(
             with: event,
             action: GHOSTTY_MOUSE_PRESS,
             button: GHOSTTY_MOUSE_LEFT,
             focusOnPress: true
-        )
+        ) {
+            super.mouseDown(with: event)
+        }
     }
 
     override func mouseUp(with event: NSEvent) {
-        _ = forwardMouseButton(
+        if !forwardMouseButton(
             with: event,
             action: GHOSTTY_MOUSE_RELEASE,
             button: GHOSTTY_MOUSE_LEFT
-        )
+        ) {
+            super.mouseUp(with: event)
+        }
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -877,6 +995,46 @@ class TerminalSurfaceView: NSView {
         self.keyEventMonitor = nil
     }
 
+    private func updateWindowScreenObserver() {
+        guard observedWindow !== window else { return }
+        removeWindowScreenObserver()
+        guard let window else { return }
+        observedWindow = window
+        windowScreenObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleWindowScreenChange()
+        }
+    }
+
+    private func removeWindowScreenObserver() {
+        if let windowScreenObserver {
+            NotificationCenter.default.removeObserver(windowScreenObserver)
+        }
+        windowScreenObserver = nil
+        observedWindow = nil
+    }
+
+    private func handleWindowScreenChange() {
+        updateSurfaceDisplayID()
+        syncSurfaceBackingMetrics()
+    }
+
+    private func updateSurfaceDisplayID() {
+        guard let surface else { return }
+        ghostty_surface_set_display_id(surface, currentDisplayID())
+    }
+
+    private func currentDisplayID() -> UInt32 {
+        guard let screen = window?.screen,
+              let value = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return 0
+        }
+        return value.uint32Value
+    }
+
     private func handleMonitoredKeyEvent(_ event: NSEvent) -> NSEvent? {
         guard canReceiveTerminalKeyEvents,
               isEventFromCurrentWindow(event) else {
@@ -885,6 +1043,9 @@ class TerminalSurfaceView: NSView {
 
         switch event.type {
         case .keyDown:
+            if handleWorkspaceShortcut(event) {
+                return nil
+            }
             return forwardKeyDown(with: terminalKeyEvent(for: event)) ? nil : event
 
         case .keyUp:
@@ -911,25 +1072,27 @@ class TerminalSurfaceView: NSView {
     private func forwardKeyDown(with event: NSEvent) -> Bool {
         guard let surface else { return false }
         if handleClipboardShortcut(event) { return true }
+        if handleWorkspaceShortcut(event) { return true }
 
         let translationFlags = translatedModifierFlags(for: event, surface: surface)
         let action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
-        forwardedKeyDownKeyCodes.insert(event.keyCode)
-        _ = sendKey(
+        let handled = sendKey(
             action,
             event: event,
             translationFlags: translationFlags,
             text: ghosttyCharacters(for: event, translationFlags: translationFlags)
         )
-        return true
+        if handled {
+            forwardedKeyDownKeyCodes.insert(event.keyCode)
+        }
+        return handled
     }
 
     @discardableResult
     private func forwardKeyUp(with event: NSEvent) -> Bool {
         guard surface != nil else { return false }
         guard forwardedKeyDownKeyCodes.remove(event.keyCode) != nil else { return false }
-        _ = sendKey(GHOSTTY_ACTION_RELEASE, event: event)
-        return true
+        return sendKey(GHOSTTY_ACTION_RELEASE, event: event)
     }
 
     @discardableResult
@@ -952,8 +1115,7 @@ class TerminalSurfaceView: NSView {
             action = GHOSTTY_ACTION_PRESS
         }
 
-        _ = sendKey(action, event: event)
-        return true
+        return sendKey(action, event: event)
     }
 
     private func terminalKeyEvent(for event: NSEvent) -> NSEvent {
@@ -1107,6 +1269,31 @@ class TerminalSurfaceView: NSView {
         onClose?()
     }
 
+    func handleTitleChange(_ title: String) {
+        onTitleChange?(title)
+    }
+
+    func handleWorkingDirectoryChange(_ workingDirectory: String) {
+        onWorkingDirectoryChange?(workingDirectory)
+    }
+
+    func handleDesktopNotification(title: String, body: String) {
+        onNotification?(title, body)
+    }
+
+    func handleBell() {
+        NSSound.beep()
+        onBell?()
+    }
+
+    func handleSplitRightRequest() {
+        onSplitRight?()
+    }
+
+    func handleSplitDownRequest() {
+        onSplitDown?()
+    }
+
     @discardableResult
     func completeClipboardRequest(
         data: String,
@@ -1172,6 +1359,37 @@ class TerminalSurfaceView: NSView {
         }
 
         return true
+    }
+
+    private func handleWorkspaceShortcut(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.command),
+              !flags.contains(.control),
+              !flags.contains(.option) else {
+            return false
+        }
+
+        let key = event.charactersIgnoringModifiers?.lowercased()
+        let shifted = flags.contains(.shift)
+
+        switch key {
+        case "d":
+            if shifted {
+                onSplitDown?()
+            } else {
+                onSplitRight?()
+            }
+            return true
+        case "l" where shifted:
+            onOpenBrowser?()
+            return true
+        case "u" where shifted:
+            onJumpToUnread?()
+            return true
+        default:
+            return false
+        }
     }
 
     private func clipboardShortcut(for event: NSEvent) -> ClipboardShortcut? {
@@ -1329,6 +1547,7 @@ final class TerminalSurfaceRegistry {
     static let shared = TerminalSurfaceRegistry()
 
     private var views: [String: TerminalSurfaceView] = [:]
+    private(set) var focusedSessionId: String?
 
     private init() {}
 
@@ -1354,18 +1573,29 @@ final class TerminalSurfaceRegistry {
 
     func deregister(sessionId: String) {
         guard let view = views.removeValue(forKey: sessionId) else { return }
+        if focusedSessionId == sessionId {
+            focusedSessionId = nil
+        }
         view.shutdownSurface()
     }
 
     func deregister(sessionId: String, view: TerminalSurfaceView) {
         guard views[sessionId] === view else { return }
         views.removeValue(forKey: sessionId)
+        if focusedSessionId == sessionId {
+            focusedSessionId = nil
+        }
         view.shutdownSurface()
+    }
+
+    func recordFocus(sessionId: String?) {
+        focusedSessionId = sessionId
     }
 
     func removeAll() {
         let retainedViews = Array(views.values)
         views.removeAll()
+        focusedSessionId = nil
         for view in retainedViews {
             view.shutdownSurface()
         }
@@ -1379,6 +1609,15 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
     var workingDirectory: String? = nil
     var layoutSize: CGSize = .zero
     var onClose: (() -> Void)? = nil
+    var onFocus: (() -> Void)? = nil
+    var onTitleChange: ((String) -> Void)? = nil
+    var onWorkingDirectoryChange: ((String) -> Void)? = nil
+    var onNotification: ((String, String) -> Void)? = nil
+    var onBell: (() -> Void)? = nil
+    var onSplitRight: (() -> Void)? = nil
+    var onSplitDown: (() -> Void)? = nil
+    var onOpenBrowser: (() -> Void)? = nil
+    var onJumpToUnread: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> TerminalSurfaceView {
         let view: TerminalSurfaceView
@@ -1393,7 +1632,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
             view = TerminalSurfaceView(app: app, command: command, workingDirectory: workingDirectory)
         }
 
-        view.onClose = onClose
+        applyCallbacks(to: view)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             guard view.window != nil else { return }
@@ -1404,7 +1643,20 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
 
     func updateNSView(_ nsView: TerminalSurfaceView, context: Context) {
         nsView.synchronizeLayoutSize(layoutSize)
-        nsView.onClose = onClose
+        applyCallbacks(to: nsView)
+    }
+
+    private func applyCallbacks(to view: TerminalSurfaceView) {
+        view.onClose = onClose
+        view.onFocus = onFocus
+        view.onTitleChange = onTitleChange
+        view.onWorkingDirectoryChange = onWorkingDirectoryChange
+        view.onNotification = onNotification
+        view.onBell = onBell
+        view.onSplitRight = onSplitRight
+        view.onSplitDown = onSplitDown
+        view.onOpenBrowser = onOpenBrowser
+        view.onJumpToUnread = onJumpToUnread
     }
 
     static func dismantleNSView(_ nsView: TerminalSurfaceView, coordinator: ()) {
@@ -1425,6 +1677,15 @@ struct TerminalView: View {
     var command: String? = nil
     var workingDirectory: String? = nil
     var onClose: (() -> Void)? = nil
+    var onFocus: (() -> Void)? = nil
+    var onTitleChange: ((String) -> Void)? = nil
+    var onWorkingDirectoryChange: ((String) -> Void)? = nil
+    var onNotification: ((String, String) -> Void)? = nil
+    var onBell: (() -> Void)? = nil
+    var onSplitRight: (() -> Void)? = nil
+    var onSplitDown: (() -> Void)? = nil
+    var onOpenBrowser: (() -> Void)? = nil
+    var onJumpToUnread: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1462,7 +1723,16 @@ struct TerminalView: View {
                         command: command,
                         workingDirectory: workingDirectory,
                         layoutSize: geometry.size,
-                        onClose: onClose
+                        onClose: onClose,
+                        onFocus: onFocus,
+                        onTitleChange: onTitleChange,
+                        onWorkingDirectoryChange: onWorkingDirectoryChange,
+                        onNotification: onNotification,
+                        onBell: onBell,
+                        onSplitRight: onSplitRight,
+                        onSplitDown: onSplitDown,
+                        onOpenBrowser: onOpenBrowser,
+                        onJumpToUnread: onJumpToUnread
                     )
                 }
             } else {

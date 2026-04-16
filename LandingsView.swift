@@ -226,11 +226,17 @@ struct LandingsView: View {
 
             Menu {
                 Button("All") { stateFilter = nil }
+                    .accessibilityIdentifier("landings.filter.all")
                 Button("Open") { stateFilter = "open" }
+                    .accessibilityIdentifier("landings.filter.open")
                 Button("Draft") { stateFilter = "draft" }
+                    .accessibilityIdentifier("landings.filter.draft")
                 Button("Merged") { stateFilter = "merged" }
+                    .accessibilityIdentifier("landings.filter.merged")
                 Button("Closed") { stateFilter = "closed" }
+                    .accessibilityIdentifier("landings.filter.closed")
                 Button("Other") { stateFilter = "other" }
+                    .accessibilityIdentifier("landings.filter.other")
             } label: {
                 HStack(spacing: 4) {
                     Text(stateFilter?.capitalized ?? "All")
@@ -245,6 +251,7 @@ struct LandingsView: View {
                 .cornerRadius(6)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("landings.filterMenu")
 
             Button(action: { showCreate.toggle() }) {
                 Image(systemName: showCreate ? "xmark" : "plus")
@@ -252,6 +259,7 @@ struct LandingsView: View {
                     .foregroundColor(Theme.accent)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("landings.createToggle")
 
             if isLoading {
                 ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
@@ -262,6 +270,7 @@ struct LandingsView: View {
                     .foregroundColor(Theme.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("landings.refreshButton")
         }
         .padding(.horizontal, 20)
         .frame(height: 48)
@@ -284,6 +293,7 @@ struct LandingsView: View {
                             .foregroundColor(Theme.textTertiary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("landings.dismissError")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -319,6 +329,7 @@ struct LandingsView: View {
                             .foregroundColor(Theme.textTertiary)
                     }
                     .frame(maxWidth: .infinity, minHeight: 200)
+                    .accessibilityIdentifier("landings.emptyState")
                 } else {
                     ForEach(filteredLandings) { landing in
                         Button(action: { selectLanding(landing) }) {
@@ -362,6 +373,7 @@ struct LandingsView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("landings.row.\(landing.id)")
                         Divider().background(Theme.border)
                     }
                 }
@@ -385,6 +397,7 @@ struct LandingsView: View {
                 .background(Theme.inputBg)
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                .accessibilityIdentifier("landings.create.title")
 
             TextEditor(text: $newBody)
                 .font(.system(size: 12))
@@ -394,6 +407,7 @@ struct LandingsView: View {
                 .background(Theme.inputBg)
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                .accessibilityIdentifier("landings.create.body")
 
             TextField("Target bookmark (optional)", text: $newTarget)
                 .textFieldStyle(.plain)
@@ -403,6 +417,7 @@ struct LandingsView: View {
                 .background(Theme.inputBg)
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                .accessibilityIdentifier("landings.create.target")
 
             HStack(spacing: 8) {
                 Button(action: { Task { await createLanding() } }) {
@@ -421,6 +436,7 @@ struct LandingsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreating)
+                .accessibilityIdentifier("landings.create.submit")
 
                 Button("Cancel") {
                     showCreate = false
@@ -431,6 +447,7 @@ struct LandingsView: View {
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textSecondary)
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("landings.create.cancel")
             }
         }
         .padding(16)
@@ -454,6 +471,7 @@ struct LandingsView: View {
                                     .padding(.vertical, 8)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("landings.tab.\(tab.rawValue.lowercased())")
                             .overlay(alignment: .bottom) {
                                 if detailTab == tab {
                                     Rectangle().fill(Theme.accent).frame(height: 2)
@@ -465,8 +483,11 @@ struct LandingsView: View {
                         if !isTerminalLandingState(landing.state) {
                             Menu {
                                 Button("Approve") { beginReview(.approve) }
+                                    .accessibilityIdentifier("landings.review.approve")
                                 Button("Request Changes") { beginReview(.requestChanges) }
+                                    .accessibilityIdentifier("landings.review.requestChanges")
                                 Button("Comment") { beginReview(.comment) }
+                                    .accessibilityIdentifier("landings.review.comment")
                             } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: "text.bubble")
@@ -480,6 +501,7 @@ struct LandingsView: View {
                                 .cornerRadius(6)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("landings.reviewMenu")
 
                             if canLandLanding(landing) {
                                 Button(action: { requestLandLanding(landing) }) {
@@ -495,6 +517,7 @@ struct LandingsView: View {
                                     .cornerRadius(6)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityIdentifier("landings.landButton")
                             }
 
                             Spacer().frame(width: 12)
@@ -521,6 +544,7 @@ struct LandingsView: View {
                         .foregroundColor(Theme.textTertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("landings.noSelection")
             }
         }
         .background(Theme.surface1)
@@ -571,6 +595,7 @@ struct LandingsView: View {
                     .frame(maxWidth: .infinity, minHeight: 100)
             }
         }
+        .textSelection(.enabled)
         .background(Theme.base)
     }
 
@@ -632,6 +657,7 @@ struct LandingsView: View {
                 .background(Theme.inputBg)
                 .cornerRadius(8)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+                .accessibilityIdentifier("landings.review.body")
 
             Text(action.placeholder)
                 .font(.system(size: 11))
@@ -651,6 +677,7 @@ struct LandingsView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.textSecondary)
+                .accessibilityIdentifier("landings.review.cancel")
 
                 Button(action: { Task { await submitReview(action) } }) {
                     HStack(spacing: 6) {
@@ -668,6 +695,7 @@ struct LandingsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isSubmittingReview || (action.requiresBody && trimmedBody.isEmpty))
+                .accessibilityIdentifier("landings.review.submit")
             }
         }
         .padding(20)
@@ -1002,6 +1030,7 @@ struct LandingsView: View {
             Button("Retry") { Task { await loadLandings() } }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("landings.retryButton")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

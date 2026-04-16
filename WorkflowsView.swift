@@ -33,6 +33,12 @@ struct WorkflowsView: View {
     @State private var showUnsavedAlert = false
     @State private var pendingWorkflow: Workflow?
 
+    // Vim mode
+    @AppStorage(AppPreferenceKeys.vimModeEnabled) private var vimModeEnabled = false
+    @State private var neovimPath: String? = NeovimDetector.executablePath()
+    @State private var nvimSessionId: String?
+    @State private var nvimImportSessionId: String?
+
     // Runs state
     @State private var workflowRuns: [RunSummary] = []
     @State private var isLoadingRuns = false
@@ -168,6 +174,18 @@ struct WorkflowsView: View {
         .background(Theme.surface1)
         .accessibilityIdentifier("workflows.root")
         .task { await loadWorkflows() }
+        .onDisappear { cleanupNvimSessions() }
+        .onChange(of: vimModeEnabled) { _, newValue in
+            neovimPath = NeovimDetector.executablePath()
+            if newValue, let workflow = selectedWorkflow {
+                refreshNvimSession(for: workflow)
+            } else {
+                cleanupNvimSessions()
+            }
+        }
+        .onChange(of: selectedFileIndex) { _, _ in
+            refreshNvimImportSession()
+        }
         .alert("Unsaved Changes", isPresented: $showUnsavedAlert) {
             Button("Discard", role: .destructive) {
                 if let w = pendingWorkflow {
@@ -217,6 +235,7 @@ struct WorkflowsView: View {
                     .foregroundColor(Theme.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("workflows.refresh")
         }
         .padding(.horizontal, 20)
         .frame(height: 48)
@@ -439,30 +458,46 @@ struct WorkflowsView: View {
 
     // MARK: - Workflow Source Editor
 
+    @ViewBuilder
     private var workflowSourceEditor: some View {
-        VStack(spacing: 0) {
-            // Modified indicator
-            if workflowSource != originalWorkflowSource {
-                HStack {
-                    Circle().fill(Theme.warning).frame(width: 6, height: 6)
-                    Text("Modified")
-                        .font(.system(size: 10))
-                        .foregroundColor(Theme.warning)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background(Theme.warning.opacity(0.08))
-            }
-
-            SyntaxHighlightedTextEditor(
-                text: $workflowSource,
-                language: SourceCodeLanguage(fileName: selectedWorkflow?.filePath ?? "workflow.tsx"),
-                accessibilityIdentifier: "workflows.sourceEditor"
+        if vimModeEnabled, neovimPath != nil, let sessionId = nvimSessionId,
+           let workflow = selectedWorkflow, let filePath = workflow.filePath,
+           let absPath = try? smithers.localSmithersFilePath(filePath) {
+            let command = "\(workflowShellQuote(neovimPath!)) \(workflowShellQuote(absPath))"
+            let workingDir = (absPath as NSString).deletingLastPathComponent
+            TerminalView(
+                sessionId: sessionId,
+                command: command,
+                workingDirectory: workingDir,
+                onClose: { Task { await loadWorkflows() } }
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.base)
-            .padding(1)
+            .id(sessionId)
+            .accessibilityIdentifier("workflows.nvimTerminal")
+        } else {
+            VStack(spacing: 0) {
+                // Modified indicator
+                if workflowSource != originalWorkflowSource {
+                    HStack {
+                        Circle().fill(Theme.warning).frame(width: 6, height: 6)
+                        Text("Modified")
+                            .font(.system(size: 10))
+                            .foregroundColor(Theme.warning)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Theme.warning.opacity(0.08))
+                }
+
+                SyntaxHighlightedTextEditor(
+                    text: $workflowSource,
+                    language: SourceCodeLanguage(fileName: selectedWorkflow?.filePath ?? "workflow.tsx"),
+                    accessibilityIdentifier: "workflows.sourceEditor"
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.base)
+                .padding(1)
+            }
         }
     }
 
@@ -538,14 +573,7 @@ struct WorkflowsView: View {
                     .background(Theme.surface2)
                     .border(Theme.border, edges: [.bottom])
 
-                    SyntaxHighlightedTextEditor(
-                        text: $importedFiles[idx].source,
-                        language: SourceCodeLanguage(fileName: importedFiles[idx].id),
-                        accessibilityIdentifier: "workflows.importEditor.\(importedFiles[idx].name)"
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Theme.base)
-                    .padding(1)
+                    importFileEditor(for: idx)
                 }
             } else {
                 VStack(spacing: 8) {
@@ -605,6 +633,7 @@ struct WorkflowsView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("workflows.import.\(file.name)")
             Divider().background(Theme.border).padding(.leading, 36)
         }
     }
@@ -1127,6 +1156,7 @@ struct WorkflowsView: View {
                             .foregroundColor(Theme.textSecondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("workflows.runs.refresh")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -1241,6 +1271,7 @@ struct WorkflowsView: View {
         workflowRuns = []
         isLoadingRuns = false
         tab = .source
+        refreshNvimSession(for: workflow)
 
         Task {
             await loadDAG(workflow)
@@ -1708,6 +1739,83 @@ struct WorkflowsView: View {
         }
     }
 
+    // MARK: - Vim Mode
+
+    @ViewBuilder
+    private func importFileEditor(for idx: Int) -> some View {
+        if vimModeEnabled, neovimPath != nil, let sessionId = nvimImportSessionId,
+           let absPath = try? smithers.localSmithersFilePath(importedFiles[idx].id) {
+            let command = "\(workflowShellQuote(neovimPath!)) \(workflowShellQuote(absPath))"
+            let workingDir = (absPath as NSString).deletingLastPathComponent
+            TerminalView(
+                sessionId: sessionId,
+                command: command,
+                workingDirectory: workingDir,
+                onClose: { Task { await loadWorkflows() } }
+            )
+            .id(sessionId)
+            .accessibilityIdentifier("workflows.nvimImportTerminal")
+        } else {
+            SyntaxHighlightedTextEditor(
+                text: $importedFiles[idx].source,
+                language: SourceCodeLanguage(fileName: importedFiles[idx].id),
+                accessibilityIdentifier: "workflows.importEditor.\(importedFiles[idx].name)"
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.base)
+            .padding(1)
+        }
+    }
+
+    private func refreshNvimSession(for workflow: Workflow) {
+        cleanupNvimSessions()
+        guard vimModeEnabled, neovimPath != nil, let filePath = workflow.filePath,
+              let absPath = try? smithers.localSmithersFilePath(filePath) else {
+            return
+        }
+        let sessionId = "workflow-nvim-\(workflow.id)-\(absPath.hashValue)"
+        nvimSessionId = sessionId
+        if !UITestSupport.isEnabled, let app = GhosttyApp.shared.app {
+            let command = "\(workflowShellQuote(neovimPath!)) \(workflowShellQuote(absPath))"
+            let workingDir = (absPath as NSString).deletingLastPathComponent
+            _ = TerminalSurfaceRegistry.shared.view(
+                for: sessionId, app: app, command: command, workingDirectory: workingDir
+            )
+        }
+    }
+
+    private func refreshNvimImportSession() {
+        if let oldId = nvimImportSessionId {
+            TerminalSurfaceRegistry.shared.deregister(sessionId: oldId)
+            nvimImportSessionId = nil
+        }
+        guard vimModeEnabled, neovimPath != nil,
+              let idx = selectedFileIndex, idx < importedFiles.count,
+              let absPath = try? smithers.localSmithersFilePath(importedFiles[idx].id) else {
+            return
+        }
+        let sessionId = "workflow-import-nvim-\(importedFiles[idx].id)-\(absPath.hashValue)"
+        nvimImportSessionId = sessionId
+        if !UITestSupport.isEnabled, let app = GhosttyApp.shared.app {
+            let command = "\(workflowShellQuote(neovimPath!)) \(workflowShellQuote(absPath))"
+            let workingDir = (absPath as NSString).deletingLastPathComponent
+            _ = TerminalSurfaceRegistry.shared.view(
+                for: sessionId, app: app, command: command, workingDirectory: workingDir
+            )
+        }
+    }
+
+    private func cleanupNvimSessions() {
+        if let id = nvimSessionId {
+            TerminalSurfaceRegistry.shared.deregister(sessionId: id)
+            nvimSessionId = nil
+        }
+        if let id = nvimImportSessionId {
+            TerminalSurfaceRegistry.shared.deregister(sessionId: id)
+            nvimImportSessionId = nil
+        }
+    }
+
     private func errorView(_ message: String) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
@@ -1719,7 +1827,12 @@ struct WorkflowsView: View {
             Button("Retry") { Task { await loadWorkflows() } }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("workflows.retry")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+private func workflowShellQuote(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
 }

@@ -226,6 +226,7 @@ struct UnifiedDiffView: View {
                 }
             }
         }
+        .textSelection(.enabled)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -302,6 +303,7 @@ struct UnifiedDiffView: View {
                 .foregroundColor(fg)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .textSelection(.enabled)
 
             Spacer(minLength: 0)
         }

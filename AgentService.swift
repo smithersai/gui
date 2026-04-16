@@ -21,9 +21,9 @@ final class CodexBridge: CodexBridgeControlling, @unchecked Sendable {
         reasoningEffort: CodexReasoningEffort?,
         approvalPolicy: CodexApprovalPolicy?,
         sandboxMode: CodexSandboxMode?,
-        createCancellationToken: CodexCreateCancellationToken?
+        createCancellationToken: CodexCreateCancellationToken
     ) {
-        let createCancellationTokenID = createCancellationToken?.id ?? 0
+        let createCancellationTokenID = createCancellationToken.id
         AppLogger.codex.info(
             "CodexBridge init",
             metadata: [
@@ -248,7 +248,7 @@ private final class CodexBridgeCreationQueue: @unchecked Sendable {
         reasoningEffort: CodexReasoningEffort?,
         approvalPolicy: CodexApprovalPolicy?,
         sandboxMode: CodexSandboxMode?,
-        createCancellationToken: CodexCreateCancellationToken?,
+        createCancellationToken: CodexCreateCancellationToken,
         if shouldCreate: () -> Bool
     ) -> CodexBridge? {
         lock.lock()
@@ -386,7 +386,11 @@ class AgentService: ObservableObject {
         let sandboxModeOverride = sandboxModeOverride
         let bridgeLifecycle = bridgeLifecycle
         let bridgeCreationQueue = bridgeCreationQueue
-        let bridgeCreationCancellationToken = CodexCreateCancellationToken()
+        guard let bridgeCreationCancellationToken = CodexCreateCancellationToken() else {
+            AppLogger.agent.error("AgentService create cancellation token allocation failed")
+            handleBridgeCreationFailure(cwd: cwd, turnID: turnID)
+            return
+        }
         self.bridgeCreationCancellationToken = bridgeCreationCancellationToken
 
         bridgeTask = Task.detached {
@@ -498,7 +502,7 @@ class AgentService: ObservableObject {
         bridgeCreationCancellationToken = nil
     }
 
-    private func clearBridgeCreationTokenIfCurrent(_ token: CodexCreateCancellationToken?, turnID: UUID) {
+    private func clearBridgeCreationTokenIfCurrent(_ token: CodexCreateCancellationToken, turnID: UUID) {
         guard currentTurnID == turnID else { return }
         guard bridgeCreationCancellationToken === token else { return }
         bridgeCreationCancellationToken = nil

@@ -155,11 +155,50 @@ private func cliJSONPayloadCandidates(from data: Data) -> [Data] {
         }
     }
 
+    // Try extracting just the first balanced JSON value (handles CLI output
+    // that appends non-JSON text such as TOON after the JSON object).
+    if let firstJSON = cliFirstBalancedJSON(from: data),
+       let firstJSONString = String(data: firstJSON, encoding: .utf8) {
+        append(firstJSONString)
+    }
+
     append(trimmed)
     for index in trimmed.indices where trimmed[index] == "{" || trimmed[index] == "[" {
         append(String(trimmed[index...]))
     }
     return candidates
+}
+
+/// Extracts the first balanced JSON object or array from data that may contain
+/// trailing non-JSON content (e.g. TOON output appended by the CLI).
+private func cliFirstBalancedJSON(from data: Data) -> Data? {
+    let bytes = [UInt8](data)
+    guard let start = bytes.firstIndex(where: { $0 == 0x7B || $0 == 0x5B }) else {
+        return nil
+    }
+    let open = bytes[start]
+    let close: UInt8 = open == 0x7B ? 0x7D : 0x5D
+    var depth = 0
+    var inString = false
+    var escaped = false
+    for index in start..<bytes.count {
+        let byte = bytes[index]
+        if inString {
+            if escaped { escaped = false }
+            else if byte == 0x5C { escaped = true }
+            else if byte == 0x22 { inString = false }
+            continue
+        }
+        if byte == 0x22 { inString = true }
+        else if byte == open { depth += 1 }
+        else if byte == close {
+            depth -= 1
+            if depth == 0 {
+                return data.subdata(in: start..<(index + 1))
+            }
+        }
+    }
+    return nil
 }
 
 /// Client for Smithers — uses the `smithers` CLI as primary transport (like the TUI),
@@ -295,7 +334,11 @@ class SmithersClient: ObservableObject {
         jjhubBin: String = "jjhub",
         codexHome: String? = nil
     ) {
-        self.cwd = CWDResolver.resolve(cwd)
+        let trimmedCwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedCwd = (trimmedCwd?.isEmpty == false)
+            ? trimmedCwd
+            : FileManager.default.currentDirectoryPath
+        self.cwd = CWDResolver.resolve(resolvedCwd)
         // Don't spawn a process during init — just use "smithers" and rely on PATH
         self.smithersBin = smithersBin
         self.jjhubBin = jjhubBin
@@ -1289,6 +1332,10 @@ class SmithersClient: ObservableObject {
         return resolvedPath
     }
 
+    func localSmithersFilePath(_ relativePath: String) throws -> String {
+        try smithersFilePath(relativePath)
+    }
+
     func readWorkflowSource(_ relativePath: String) async throws -> String {
         if UITestSupport.isEnabled {
             return "// Mock workflow source for \(relativePath)"
@@ -1441,6 +1488,10 @@ class SmithersClient: ObservableObject {
         _ = try await exec("cancel", runId)
     }
 
+    nonisolated static func hijackRunCLIArgs(runId: String) -> [String] {
+        ["hijack", runId, "--launch=false", "--format", "json"]
+    }
+
     nonisolated static func approveNodeCLIArgs(runId: String, nodeId: String, iteration: Int? = nil, note: String? = nil) -> [String] {
         var args = ["approve", runId, "--node", nodeId]
         if let iteration { args += ["--iteration", String(iteration)] }
@@ -1544,21 +1595,26 @@ class SmithersClient: ObservableObject {
         guard let url = resolvedHTTPTransportURL(path: Self.runEventsPath(runId: filterRunId), fallbackPort: port) else {
             return emptySSEStream()
         }
-        return sseStream(url: url, runId: filterRunId)
+        return sseStream(url: url, runId: filterRunId, requireAttributedRunId: filterRunId != nil)
     }
 
     func streamChat(_ runId: String, port: Int = SmithersClient.defaultHTTPTransportPort) -> AsyncStream<SSEEvent> {
         let encodedRunId = Self.encodedURLPathComponent(runId)
-        let paths = [
-            "/v1/runs/\(encodedRunId)/chat/stream",
-            "/chat/stream?runId=\(encodedRunId)",
-            "/chat/stream",
+        let candidates = [
+            (path: "/v1/runs/\(encodedRunId)/chat/stream", requireAttributedRunId: false),
+            (path: "/chat/stream?runId=\(encodedRunId)", requireAttributedRunId: false),
+            (path: "/chat/stream", requireAttributedRunId: true),
         ]
-        let urls = paths.compactMap { resolvedHTTPTransportURL(path: $0, fallbackPort: port) }
-        guard !urls.isEmpty else {
+        let resolvedCandidates = candidates.compactMap { candidate -> SSECandidateURL? in
+            guard let url = resolvedHTTPTransportURL(path: candidate.path, fallbackPort: port) else {
+                return nil
+            }
+            return SSECandidateURL(url: url, requireAttributedRunId: candidate.requireAttributedRunId)
+        }
+        guard !resolvedCandidates.isEmpty else {
             return emptySSEStream()
         }
-        return sseStream(urls: urls, runId: SSEEvent.normalizedRunId(runId))
+        return sseStream(candidates: resolvedCandidates, runId: SSEEvent.normalizedRunId(runId))
     }
 
     private nonisolated static func sseFilterRunId(_ runId: String?) -> String? {
@@ -1601,9 +1657,27 @@ class SmithersClient: ObservableObject {
             return blocks
         }
 
-        return try await getChatOutputCLI([
+        // Try without --tail first (gets earliest blocks), then with --tail (gets latest).
+        // Merge both so we cover the full run despite per-call output truncation.
+        var allBlocks: [ChatBlock] = []
+        if let early = try? await getChatOutputCLI([
+            "chat", runId, "--all", "true", "--format", "json",
+        ], timeoutSeconds: 10) {
+            allBlocks = early
+        }
+        if let recent = try? await getChatOutputCLI([
             "chat", runId, "--all", "true", "--tail", "500", "--format", "json",
-        ], timeoutSeconds: 10)
+        ], timeoutSeconds: 10) {
+            // Merge: add recent blocks not already present
+            let existingIds = Set(allBlocks.compactMap(\.lifecycleId))
+            for block in recent where block.lifecycleId == nil || !existingIds.contains(block.lifecycleId!) {
+                allBlocks.append(block)
+            }
+        }
+        if !allBlocks.isEmpty {
+            return allBlocks
+        }
+        throw SmithersError.api("Unable to load chat output for run \(runId)")
     }
 
     func hijackRun(_ runId: String, port: Int = SmithersClient.defaultHTTPTransportPort) async throws -> HijackSession {
@@ -1622,7 +1696,7 @@ class SmithersClient: ObservableObject {
             return session
         }
 
-        let data = try await exec("hijack", runId, "--launch", "false", "--format", "json")
+        let data = try await execArgs(Self.hijackRunCLIArgs(runId: runId))
         return try decodeHijackSession(from: data)
     }
 
@@ -2455,6 +2529,20 @@ class SmithersClient: ObservableObject {
         return standardizedPath
     }
 
+    func localTicketFilePath(for ticketId: String, requireExisting: Bool = true) throws -> String {
+        let trimmedId = ticketId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else {
+            throw SmithersError.api("ticketID must not be empty")
+        }
+
+        let path = try ticketPath(for: trimmedId)
+        if requireExisting && !FileManager.default.fileExists(atPath: path) {
+            throw SmithersError.notFound
+        }
+
+        return path
+    }
+
     private func loadTicketsFromFilesystem() throws -> [Ticket] {
         let ticketsDir = ticketsDirectoryPath()
         let fm = FileManager.default
@@ -3264,6 +3352,36 @@ class SmithersClient: ObservableObject {
         )
     }
 
+    nonisolated private static func mergedPromptInputs(
+        preferred: [PromptInput],
+        fallback: [PromptInput]
+    ) -> [PromptInput] {
+        var order: [String] = []
+        var inputsByName: [String: PromptInput] = [:]
+
+        for input in preferred {
+            appendPromptInput(
+                name: input.name,
+                type: input.type,
+                defaultValue: input.defaultValue,
+                order: &order,
+                byName: &inputsByName
+            )
+        }
+
+        for input in fallback {
+            appendPromptInput(
+                name: input.name,
+                type: input.type,
+                defaultValue: input.defaultValue,
+                order: &order,
+                byName: &inputsByName
+            )
+        }
+
+        return order.compactMap { inputsByName[$0] }
+    }
+
     nonisolated private static func parseYAMLKeyValue(from line: String) -> (String, String)? {
         guard let separator = line.firstIndex(of: ":") else { return nil }
         let key = String(line[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3415,24 +3533,33 @@ class SmithersClient: ObservableObject {
         }
 
         let encodedID = Self.encodedURLPathComponent(promptId)
+        var transportInputs: [PromptInput] = []
         if let data = try? await httpRequestRaw(method: "GET", path: "/prompt/props/\(encodedID)"),
            let props = try? decodePromptProps(from: data) {
-            return props
+            transportInputs = props
         }
 
-        if let prompt = try? getPromptFromFilesystem(promptId) {
-            if let inputs = prompt.inputs, !inputs.isEmpty {
-                return inputs
+        do {
+            // Always parse source locally so MDX frontmatter/component props are included
+            // even when transport-provided inputs only include template syntax.
+            let prompt = try await getPrompt(promptId)
+            let promptInputs = prompt.inputs ?? []
+            let sourceInputs = Self.discoverPromptInputs(in: prompt.source ?? "")
+
+            let fallbackInputs = Self.mergedPromptInputs(
+                preferred: promptInputs,
+                fallback: transportInputs
+            )
+            return Self.mergedPromptInputs(
+                preferred: sourceInputs,
+                fallback: fallbackInputs
+            )
+        } catch {
+            if !transportInputs.isEmpty {
+                return transportInputs
             }
-            return Self.discoverPromptInputs(in: prompt.source ?? "")
+            throw error
         }
-
-        let data = try await exec("prompt", "get", promptId, "--format", "json")
-        let prompt = try decodePrompt(from: data)
-        if let inputs = prompt.inputs, !inputs.isEmpty {
-            return inputs
-        }
-        return Self.discoverPromptInputs(in: prompt.source ?? "")
     }
 
     func updatePrompt(_ promptId: String, source: String) async throws {
@@ -3957,6 +4084,11 @@ class SmithersClient: ObservableObject {
            let wrapped = envelope.data {
             return wrapped.crons
         }
+        if let envelope = try? decodeCLIJSON(APIEnvelope<DataEnvelope<CronResponse>>.self, from: data),
+           envelope.ok,
+           let wrapped = envelope.data {
+            return wrapped.data.crons
+        }
         if let envelope = try? decodeCLIJSON(DataEnvelope<CronResponse>.self, from: data) {
             return envelope.data.crons
         }
@@ -3965,8 +4097,16 @@ class SmithersClient: ObservableObject {
            let crons = envelope.data {
             return crons
         }
+        if let envelope = try? decodeCLIJSON(APIEnvelope<DataEnvelope<[CronSchedule]>>.self, from: data),
+           envelope.ok,
+           let wrapped = envelope.data {
+            return wrapped.data
+        }
         if let envelope = try? decodeCLIJSON(DataEnvelope<[CronSchedule]>.self, from: data) {
             return envelope.data
+        }
+        if let single = try? decodeCLIJSON(CronSchedule.self, from: data) {
+            return [single]
         }
         return try decodeCLIJSON([CronSchedule].self, from: data)
     }
@@ -6265,9 +6405,13 @@ class SmithersClient: ObservableObject {
         guard !orderedLines.isEmpty else { return [] }
 
         let headerPattern = #"^===\s+(.+?)\s+·\s+attempt\s+(\d+)\b.*===$"#
-        let rowPattern = #"^\[[^\]]+\]\s+([^\s]+)\s+([^:]+):\s*(.*)$"#
+        // Primary: nodeId may contain colons — use #\d+: as the boundary
+        let rowWithAttemptPattern = #"^\[[^\]]+\]\s+(\S+)\s+(.+)#(\d+):\s*(.*)$"#
+        // Fallback for lines without #attempt suffix
+        let rowFallbackPattern = #"^\[[^\]]+\]\s+(\S+)\s+(.+?):\s*(.*)$"#
         let headerRegex = try? NSRegularExpression(pattern: headerPattern)
-        let rowRegex = try? NSRegularExpression(pattern: rowPattern, options: [.dotMatchesLineSeparators])
+        let rowWithAttemptRegex = try? NSRegularExpression(pattern: rowWithAttemptPattern, options: [.dotMatchesLineSeparators])
+        let rowFallbackRegex = try? NSRegularExpression(pattern: rowFallbackPattern, options: [.dotMatchesLineSeparators])
 
         var currentNodeId: String?
         var currentAttempt = 0
@@ -6288,8 +6432,33 @@ class SmithersClient: ObservableObject {
                 continue
             }
 
-            if let rowRegex,
-               let match = rowRegex.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) {
+            // Try primary pattern first (handles nodeIds with colons like "ticket:implement#1: content")
+            if let rowWithAttemptRegex,
+               let match = rowWithAttemptRegex.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) {
+                let ns = line as NSString
+                let rawRole = ns.substring(with: match.range(at: 1))
+                let nodeToken = ns.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                let attemptText = ns.substring(with: match.range(at: 3))
+                let message = ns.substring(with: match.range(at: 4))
+
+                var attempt = currentAttempt
+                if let oneBasedAttempt = Int(attemptText) {
+                    attempt = max(0, oneBasedAttempt - 1)
+                }
+
+                blocks.append(
+                    ChatBlock(
+                        id: "legacy-\(index)",
+                        runId: nil,
+                        nodeId: nodeToken.isEmpty ? currentNodeId : nodeToken,
+                        attempt: attempt,
+                        role: normalizeChatRole(rawRole),
+                        content: message.isEmpty ? line : message,
+                        timestampMs: nil
+                    )
+                )
+            } else if let rowFallbackRegex,
+               let match = rowFallbackRegex.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) {
                 let ns = line as NSString
                 let rawRole = ns.substring(with: match.range(at: 1))
                 var nodeToken = ns.substring(with: match.range(at: 2))
@@ -6441,6 +6610,11 @@ class SmithersClient: ObservableObject {
         let runId: String?
     }
 
+    private struct SSECandidateURL {
+        let url: URL
+        let requireAttributedRunId: Bool
+    }
+
     private struct SSEParser {
         private var eventType: String?
         private var dataLines: [String] = []
@@ -6500,15 +6674,21 @@ class SmithersClient: ObservableObject {
         }
     }
 
-    private func sseStream(url: URL, runId: String?) -> AsyncStream<SSEEvent> {
-        return sseStream(urls: [url], runId: runId)
+    private func sseStream(url: URL, runId: String?, requireAttributedRunId: Bool = false) -> AsyncStream<SSEEvent> {
+        let candidate = SSECandidateURL(url: url, requireAttributedRunId: requireAttributedRunId)
+        return sseStream(candidates: [candidate], runId: runId)
     }
 
-    private func sseStream(urls: [URL], runId: String?) -> AsyncStream<SSEEvent> {
+    private func sseStream(urls: [URL], runId: String?, requireAttributedRunId: Bool = false) -> AsyncStream<SSEEvent> {
+        let candidates = urls.map { SSECandidateURL(url: $0, requireAttributedRunId: requireAttributedRunId) }
+        return sseStream(candidates: candidates, runId: runId)
+    }
+
+    private func sseStream(candidates: [SSECandidateURL], runId: String?) -> AsyncStream<SSEEvent> {
         return AsyncStream { continuation in
             let streamID = Self.makeOperationID(prefix: "sse")
             let task = Task.detached { [streamSession] in
-                guard !urls.isEmpty else {
+                guard !candidates.isEmpty else {
                     AppLogger.network.warning("SSE stream has no candidate URLs", metadata: [
                         "stream_id": streamID,
                         "run_id": runId ?? ""
@@ -6521,7 +6701,7 @@ class SmithersClient: ObservableObject {
                 var yieldedEvents = 0
                 var filteredEvents = 0
 
-                for (index, url) in urls.enumerated() {
+                for (index, candidate) in candidates.enumerated() {
                     if Task.isCancelled {
                         let ms = Int((CFAbsoluteTimeGetCurrent() - streamStart) * 1000)
                         AppLogger.network.debug("SSE stream cancelled", metadata: [
@@ -6535,6 +6715,7 @@ class SmithersClient: ObservableObject {
                         return
                     }
 
+                    let url = candidate.url
                     var request = URLRequest(url: url)
                     request.timeoutInterval = .infinity
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
@@ -6545,7 +6726,7 @@ class SmithersClient: ObservableObject {
                         "stream_id": streamID,
                         "run_id": runId ?? "",
                         "attempt": String(index + 1),
-                        "attempts": String(urls.count),
+                        "attempts": String(candidates.count),
                         "url": url.absoluteString
                     ])
 
@@ -6559,7 +6740,7 @@ class SmithersClient: ObservableObject {
                                 "attempt": String(index + 1),
                                 "duration_ms": String(ms)
                             ])
-                            if index == urls.count - 1 {
+                            if index == candidates.count - 1 {
                                 continuation.finish()
                             }
                             continue
@@ -6573,7 +6754,7 @@ class SmithersClient: ObservableObject {
                                 "status": String(http.statusCode),
                                 "duration_ms": String(ms)
                             ])
-                            if index == urls.count - 1 {
+                            if index == candidates.count - 1 {
                                 continuation.finish()
                             }
                             continue
@@ -6593,7 +6774,8 @@ class SmithersClient: ObservableObject {
                                 event: parsed.event,
                                 data: parsed.data,
                                 eventRunId: parsed.runId,
-                                expectedRunId: runId
+                                expectedRunId: runId,
+                                requireAttributedRunId: candidate.requireAttributedRunId
                             ) {
                                 yieldedEvents += 1
                                 continuation.yield(event)
@@ -6630,7 +6812,7 @@ class SmithersClient: ObservableObject {
                             "error": error.localizedDescription,
                             "duration_ms": String(ms)
                         ])
-                        if index == urls.count - 1 {
+                        if index == candidates.count - 1 {
                             let totalMs = Int((CFAbsoluteTimeGetCurrent() - streamStart) * 1000)
                             AppLogger.network.info("SSE exhausted candidates", metadata: [
                                 "stream_id": streamID,
@@ -6770,7 +6952,10 @@ private struct CLIRunEntry: Decodable {
         case status
         case step
         case started
+        case startedAt
+        case startedAtSnake = "started_at"
         case startedAtMs
+        case startedAtMsSnake = "started_at_ms"
     }
 
     init(from decoder: Decoder) throws {
@@ -6780,7 +6965,12 @@ private struct CLIRunEntry: Decodable {
         self.status = try container.decodeIfPresent(String.self, forKey: .status) ?? RunStatus.unknown.rawValue
         self.step = normalizeCLIString(try container.decodeIfPresent(String.self, forKey: .step))
         self.started = try container.decodeIfPresent(String.self, forKey: .started)
+            ?? container.decodeIfPresent(String.self, forKey: .startedAt)
+            ?? container.decodeIfPresent(String.self, forKey: .startedAtSnake)
         self.startedAtMs = decodeCLIInt64(container, forKey: .startedAtMs)
+            ?? decodeCLIInt64(container, forKey: .startedAtMsSnake)
+            ?? decodeCLIInt64(container, forKey: .startedAt)
+            ?? decodeCLIInt64(container, forKey: .startedAtSnake)
             ?? parseCLITimestampMs(started)
     }
 

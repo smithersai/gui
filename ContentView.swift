@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 private struct RunSnapshotsSelection: Identifiable, Equatable {
     let runId: String
@@ -106,6 +109,7 @@ private struct SnapshotsRouteView: View {
                 .buttonStyle(.plain)
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("snapshots.retry")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(20)
@@ -289,13 +293,259 @@ private struct SnapshotsRouteView: View {
     }
 }
 
+struct SettingsView: View {
+    @AppStorage(AppPreferenceKeys.vimModeEnabled) private var vimModeEnabled = false
+    @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
+    @AppStorage(AppPreferenceKeys.externalAgentUnsafeFlagsEnabled) private var externalAgentUnsafeFlagsEnabled = false
+    @AppStorage(AppPreferenceKeys.browserSearchEngine) private var browserSearchEngine = BrowserSearchEngine.duckDuckGo.rawValue
+    @State private var neovimPath: String? = NeovimDetector.executablePath()
+
+    private var neovimAvailable: Bool {
+        neovimPath != nil
+    }
+
+    private var neovimToggle: Binding<Bool> {
+        Binding(
+            get: { vimModeEnabled && neovimAvailable },
+            set: { enabled in
+                vimModeEnabled = enabled && neovimAvailable
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    developerToolsSection
+                    externalAgentSafetySection
+                    browserSearchSection
+                    neovimSection
+                }
+                .padding(20)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(Theme.surface1)
+        .onAppear(perform: refreshNeovimPath)
+        .accessibilityIdentifier("settings.root")
+    }
+
+    private var header: some View {
+        HStack {
+            Text("Settings")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundColor(Theme.textPrimary)
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 48)
+        .border(Theme.border, edges: [.bottom])
+    }
+
+    private var developerToolsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .font(.system(size: 18))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Developer tools")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Show the developer debug panel and related diagnostics.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $developerToolsEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .accessibilityIdentifier("settings.developerTools.toggle")
+            }
+        }
+        .padding(16)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+        .accessibilityIdentifier("settings.developerTools.section")
+    }
+
+    private var neovimSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 18))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Vim mode")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Open files in Neovim instead of the built-in editor.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: neovimToggle)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(!neovimAvailable)
+                    .accessibilityIdentifier("settings.neovim.toggle")
+            }
+
+            Divider().background(Theme.border)
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(neovimAvailable ? "Detected" : "Not detected")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(neovimAvailable ? Theme.success : Theme.warning)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background((neovimAvailable ? Theme.success : Theme.warning).opacity(0.14))
+                    .cornerRadius(5)
+
+                Text(neovimPath ?? "Install nvim or add it to PATH.")
+                    .font(.system(size: 11, design: neovimAvailable ? .monospaced : .default))
+                    .foregroundColor(Theme.textTertiary)
+                    .lineLimit(2)
+
+                Spacer()
+
+                Button("Refresh") {
+                    refreshNeovimPath()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("settings.neovim.refresh")
+            }
+        }
+        .padding(16)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+        .accessibilityIdentifier("settings.neovim.section")
+    }
+
+    private var externalAgentSafetySection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 18))
+                    .foregroundColor(Theme.warning)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("External agent unsafe flags")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Opt in to append --dangerously-skip-permissions / --yolo when launching external agent CLIs.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $externalAgentUnsafeFlagsEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .accessibilityIdentifier("settings.externalAgentUnsafeFlags.toggle")
+            }
+        }
+        .padding(16)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+        .accessibilityIdentifier("settings.externalAgentUnsafeFlags.section")
+    }
+
+    private var browserSearchSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 18))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Browser search engine")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Choose the search fallback used by browser surfaces when the address is plain text.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer()
+
+                Picker("Search engine", selection: $browserSearchEngine) {
+                    ForEach(BrowserSearchEngine.allCases) { engine in
+                        Text(engine.label).tag(engine.rawValue)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 140)
+                .accessibilityIdentifier("settings.browserSearchEngine.picker")
+            }
+        }
+        .padding(16)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+        .accessibilityIdentifier("settings.browserSearchEngine.section")
+    }
+
+    private func refreshNeovimPath() {
+        let detectedPath = NeovimDetector.executablePath()
+        neovimPath = detectedPath
+        if detectedPath == nil {
+            vimModeEnabled = false
+        }
+    }
+}
+
 struct ContentView: View {
     @StateObject private var store = SessionStore()
     @StateObject private var smithers = SmithersClient()
+    @StateObject private var fileSearchIndex = WorkspaceFileSearchIndex(rootPath: CWDResolver.resolve(nil))
+    @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
     @State private var destination: NavDestination = .dashboard
     @State private var runSnapshotsSelection: RunSnapshotsSelection?
     @State private var isLoading = true
-    @State private var developerDebugPanelVisible = DeveloperDebugMode.isEnabled
+    @State private var developerDebugPanelVisible = false
+    @State private var guiControlSidebarExpanded = false
+    @State private var pendingTerminalCloseId: String?
+    @State private var pendingTerminalCloseTitle: String = ""
+    @State private var commandPaletteVisible = false
+    @State private var commandPaletteSeedQuery = ""
+    @State private var detailRefreshNonce = 0
+    @State private var keyboardShortcutController = KeyboardShortcutController()
+    @State private var paletteWorkflows: [Workflow] = []
+    @State private var palettePrompts: [SmithersPrompt] = []
+    @State private var paletteIssues: [SmithersIssue] = []
+    @State private var paletteTickets: [Ticket] = []
+    @State private var paletteLandings: [Landing] = []
+    @State private var paletteDataLastRefreshAt: Date = .distantPast
+    @State private var paletteDataRefreshTask: Task<Void, Never>?
+
+    private var paletteSlashCommands: [SlashCommandItem] {
+        let dynamic = SlashCommandRegistry.dynamicCommands(
+            workflows: paletteWorkflows,
+            prompts: palettePrompts
+        )
+        return SlashCommandRegistry.builtInCommands + dynamic.workflows + dynamic.prompts
+    }
 
     @ViewBuilder
     private var detailContent: some View {
@@ -309,8 +559,16 @@ struct ContentView: View {
                         store.sendMessage(request.prompt, displayText: request.displayText)
                     },
                     smithers: smithers,
-                    onNavigate: { destination = $0 },
+                    onNavigate: handleNavigation,
+                    onLaunchExternalAgent: { target in
+                        let terminalId = store.launchExternalAgentTab(
+                            name: target.name,
+                            command: target.binary
+                        )
+                        destination = .terminal(id: terminalId)
+                    },
                     onToggleDeveloperDebug: toggleDeveloperDebugPanel,
+                    developerToolsEnabled: developerToolsEnabled,
                     onNewChat: {
                         store.newSession(reusingEmptyPlaceholder: false)
                         destination = .chat
@@ -335,9 +593,15 @@ struct ContentView: View {
                     .accessibilityIdentifier("view.chat.empty")
             }
         case .terminal(let id):
-            TerminalView(sessionId: id, onClose: { destination = .dashboard })
+            TerminalWorkspaceRouteView(
+                store: store,
+                terminalId: id,
+                onClose: {
+                    requestTerminalClose(id)
+                }
+            )
                 .id(id)
-                .logLifecycle("TerminalView")
+                .logLifecycle("TerminalWorkspaceView")
                 .accessibilityIdentifier("view.terminal")
         case .terminalCommand(let binary, let workingDirectory, let name):
             TerminalView(command: binary, workingDirectory: workingDirectory, onClose: { destination = .dashboard })
@@ -352,6 +616,7 @@ struct ContentView: View {
             )
             .id("live-run-\(runId)-\(nodeId ?? "all")")
             .logLifecycle("LiveRunChatView")
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("view.liveRun")
         case .runInspect(let runId, let workflowName):
             RunInspectView(
@@ -361,9 +626,7 @@ struct ContentView: View {
                     let preview = nodeId.map { "Node \($0)" } ?? "Live run"
                     openRunTab(runId: runId, title: workflowName, preview: preview, nodeId: nodeId)
                 },
-                onOpenTerminalCommand: { command, workingDirectory, name in
-                    destination = .terminalCommand(binary: command, workingDirectory: workingDirectory, name: name)
-                },
+                onOpenTerminalCommand: openTerminalCommandTab,
                 onClose: { destination = .runs }
             )
             .id("run-inspect-\(runId)")
@@ -411,9 +674,7 @@ struct ContentView: View {
                 onOpenRunSnapshots: { run in
                     runSnapshotsSelection = RunSnapshotsSelection(runId: run.runId, workflowName: run.workflowName)
                 },
-                onOpenTerminalCommand: { command, workingDirectory, name in
-                    destination = .terminalCommand(binary: command, workingDirectory: workingDirectory, name: name)
-                }
+                onOpenTerminalCommand: openTerminalCommandTab
             )
             .logLifecycle("RunsView")
             .accessibilityIdentifier("view.runs")
@@ -488,6 +749,10 @@ struct ContentView: View {
             LogViewerView()
                 .logLifecycle("LogViewerView")
                 .accessibilityIdentifier("view.logs")
+        case .settings:
+            SettingsView()
+                .logLifecycle("SettingsView")
+                .accessibilityIdentifier("view.settings")
         }
     }
 
@@ -525,12 +790,13 @@ struct ContentView: View {
                         store: store,
                         destination: $destination,
                         developerDebugPanelVisible: $developerDebugPanelVisible,
-                        developerDebugAvailable: DeveloperDebugMode.isEnabled
+                        developerDebugAvailable: developerToolsEnabled
                     )
                     .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
                 } detail: {
                     Group {
                         detailContent
+                            .id("\(String(describing: destination)):\(detailRefreshNonce)")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
@@ -547,33 +813,22 @@ struct ContentView: View {
                 .frame(minWidth: 800, minHeight: 600)
                 .background(Theme.base)
                 .overlay(alignment: .topLeading) {
-                    VStack(spacing: 0) {
-                        Button("New Chat") {
-                            store.newSession(reusingEmptyPlaceholder: true)
-                            destination = .chat
-                        }
-                        .keyboardShortcut("n", modifiers: [.command])
-                        .accessibilityIdentifier("shortcut.newChat")
-                        .frame(width: 1, height: 1)
-                        .opacity(0.01)
-
-                        if DeveloperDebugMode.isEnabled {
-                            Button("Toggle Developer Debug") {
-                                toggleDeveloperDebugPanel()
-                            }
-                            .keyboardShortcut("d", modifiers: [.command, .shift])
-                            .accessibilityIdentifier("shortcut.toggleDeveloperDebug")
-                            .frame(width: 1, height: 1)
-                            .opacity(0.01)
-                        }
-                    }
+                    hiddenShortcutButtons
                 }
                 .accessibilityIdentifier("app.root")
                 .onChange(of: destination) { _, newValue in
                     AppLogger.ui.debug("Navigate to \(newValue.label)")
                 }
 
-                if developerDebugPanelVisible && DeveloperDebugMode.isEnabled {
+                GUIControlSidebar(
+                    isExpanded: $guiControlSidebarExpanded,
+                    store: store,
+                    smithers: smithers,
+                    destination: destination,
+                    onNavigate: handleNavigation
+                )
+
+                if developerDebugPanelVisible && developerToolsEnabled {
                     DeveloperDebugPanel(
                         store: store,
                         smithers: smithers,
@@ -587,8 +842,604 @@ struct ContentView: View {
             .overlay(alignment: .topTrailing) {
                 AppToastOverlay()
             }
+            .overlay {
+                if commandPaletteVisible {
+                    CommandPaletteView(
+                        initialQuery: commandPaletteSeedQuery,
+                        itemsProvider: { query in
+                            commandPaletteItems(for: query)
+                        },
+                        onExecute: { item, query in
+                            executePaletteItem(item, rawQuery: query)
+                        },
+                        onDismiss: {
+                            commandPaletteVisible = false
+                        }
+                    )
+                    .transition(.opacity)
+                }
+            }
             .background(Theme.base)
+            .onAppear {
+                installKeyboardShortcutMonitor()
+                fileSearchIndex.updateRootPath(store.workspaceRootPath)
+                fileSearchIndex.ensureLoaded()
+            }
+            .onDisappear {
+                keyboardShortcutController.uninstall()
+                paletteDataRefreshTask?.cancel()
+                paletteDataRefreshTask = nil
+            }
+            .confirmationDialog(
+                "Terminate Terminal?",
+                isPresented: terminateTerminalConfirmationBinding,
+                titleVisibility: .visible
+            ) {
+                Button("Terminate Terminal", role: .destructive) {
+                    confirmTerminalClose()
+                }
+                Button("Cancel", role: .cancel) {
+                    clearPendingTerminalClose()
+                }
+            } message: {
+                Text("Terminate \"\(pendingTerminalCloseTitle)\"? This will stop the terminal session and close the tab. This action cannot be undone.")
+            }
         } // end else (isLoading)
+    }
+
+    @ViewBuilder
+    private var hiddenShortcutButtons: some View {
+        VStack(spacing: 0) {
+            Button("Open Launcher") {
+                openCommandPalette(prefill: "")
+            }
+            .keyboardShortcut("p", modifiers: [.command])
+            .accessibilityIdentifier("shortcut.openLauncher")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Open Command Palette") {
+                openCommandPalette(prefill: ">")
+            }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+            .accessibilityIdentifier("shortcut.commandPalette")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Open Ask AI Launcher") {
+                openCommandPalette(prefill: "?")
+            }
+            .keyboardShortcut("k", modifiers: [.command])
+            .accessibilityIdentifier("shortcut.askAI")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("New Chat") {
+                startNewChat()
+            }
+            .keyboardShortcut("n", modifiers: [.command])
+            .accessibilityIdentifier("shortcut.newChat")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("New Terminal Tab") {
+                createNewTerminalTab()
+            }
+            .keyboardShortcut("t", modifiers: [.command])
+            .accessibilityIdentifier("shortcut.newTerminal")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Reopen Closed Tab") {
+                AppNotifications.shared.post(
+                    title: "Tabs",
+                    message: "Reopen closed tab is not available yet.",
+                    level: .info
+                )
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .accessibilityIdentifier("shortcut.reopenTab")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Previous Visible Tab") {
+                moveVisibleTab(offset: -1)
+            }
+            .keyboardShortcut("[", modifiers: [.command, .shift])
+            .accessibilityIdentifier("shortcut.previousTab")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Next Visible Tab") {
+                moveVisibleTab(offset: 1)
+            }
+            .keyboardShortcut("]", modifiers: [.command, .shift])
+            .accessibilityIdentifier("shortcut.nextTab")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Find in Context") {
+                handleFindShortcut()
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+            .accessibilityIdentifier("shortcut.find")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Global Search") {
+                destination = .search
+            }
+            .keyboardShortcut("f", modifiers: [.command, .shift])
+            .accessibilityIdentifier("shortcut.globalSearch")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Refresh Current View") {
+                refreshCurrentView()
+            }
+            .keyboardShortcut("r", modifiers: [.command])
+            .accessibilityIdentifier("shortcut.refresh")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Cancel Current Operation") {
+                cancelCurrentOperation()
+            }
+            .keyboardShortcut(".", modifiers: [.command])
+            .accessibilityIdentifier("shortcut.cancel")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Shortcut Cheat Sheet") {
+                openCommandPalette(prefill: ">shortcut")
+            }
+            .keyboardShortcut("/", modifiers: [.command])
+            .accessibilityIdentifier("shortcut.cheatSheet")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            ForEach(1...9, id: \.self) { index in
+                Button("Switch to Tab \(index)") {
+                    switchVisibleTab(at: index - 1)
+                }
+                .keyboardShortcut(KeyEquivalent(Character(String(index))), modifiers: [.command])
+                .accessibilityIdentifier("shortcut.switchTab.\(index)")
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
+            }
+
+            if developerToolsEnabled {
+                Button("Toggle Developer Debug") {
+                    toggleDeveloperDebugPanel()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .accessibilityIdentifier("shortcut.toggleDeveloperDebug")
+                .frame(width: 1, height: 1)
+                .opacity(0.01)
+            }
+        }
+    }
+
+    private func installKeyboardShortcutMonitor() {
+        keyboardShortcutController.install(
+            onAction: { action in
+                executePaletteAction(action, rawQuery: "")
+            },
+            focusState: {
+                let window = NSApp.keyWindow
+                return KeyboardShortcutFocusState(
+                    textInputFocused: KeyboardShortcutController.isTextInputFocused(window: window),
+                    terminalFocused: KeyboardShortcutController.isTerminalFocused(window: window),
+                    paletteVisible: commandPaletteVisible
+                )
+            },
+            shouldHandleCommandW: {
+                true
+            }
+        )
+    }
+
+    private func openCommandPalette(prefill: String) {
+        commandPaletteSeedQuery = prefill
+        commandPaletteVisible = true
+        fileSearchIndex.updateRootPath(store.workspaceRootPath)
+        fileSearchIndex.ensureLoaded()
+        refreshPaletteDataIfNeeded()
+    }
+
+    private func refreshPaletteDataIfNeeded(force: Bool = false) {
+        let now = Date()
+        if !force, now.timeIntervalSince(paletteDataLastRefreshAt) < 30 {
+            return
+        }
+
+        paletteDataLastRefreshAt = now
+        paletteDataRefreshTask?.cancel()
+        paletteDataRefreshTask = Task {
+            async let workflowsTask = smithers.listWorkflows()
+            async let promptsTask = smithers.listPrompts()
+            async let issuesTask = smithers.listIssues(state: "open")
+            async let ticketsTask = smithers.listTickets()
+            async let landingsTask = smithers.listLandings(state: "open")
+
+            let workflows = (try? await workflowsTask) ?? []
+            let prompts = (try? await promptsTask) ?? []
+            let issues = (try? await issuesTask) ?? []
+            let tickets = (try? await ticketsTask) ?? []
+            let landings = (try? await landingsTask) ?? []
+
+            guard !Task.isCancelled else { return }
+            paletteWorkflows = workflows
+            palettePrompts = prompts
+            paletteIssues = issues
+            paletteTickets = tickets
+            paletteLandings = landings
+        }
+    }
+
+    private func commandPaletteItems(for rawQuery: String) -> [CommandPaletteItem] {
+        let parsed = CommandPaletteQueryParser.parse(rawQuery)
+        let tabQuery = parsed.mode == .openAnything ? parsed.searchText : ""
+        let fileQuery = (parsed.mode == .openAnything || parsed.mode == .mentionFile) ? parsed.searchText : ""
+
+        let context = CommandPaletteContext(
+            destination: destination,
+            sidebarTabs: store.sidebarTabs(matching: tabQuery),
+            runTabs: store.runTabs,
+            workflows: paletteWorkflows,
+            prompts: palettePrompts,
+            issues: paletteIssues,
+            tickets: paletteTickets,
+            landings: paletteLandings,
+            slashCommands: paletteSlashCommands,
+            files: fileSearchIndex.matches(for: fileQuery),
+            developerToolsEnabled: developerToolsEnabled
+        )
+
+        return CommandPaletteBuilder.items(for: rawQuery, context: context)
+    }
+
+    private func executePaletteItem(_ item: CommandPaletteItem, rawQuery: String) {
+        commandPaletteVisible = false
+        executePaletteAction(item.action, rawQuery: rawQuery)
+    }
+
+    private func executePaletteAction(_ action: CommandPaletteAction, rawQuery: String) {
+        switch action {
+        case .navigate(let next):
+            navigateFromPalette(to: next)
+        case .selectSidebarTab(let id):
+            activateSidebarTab(withID: id)
+        case .newChat:
+            startNewChat()
+        case .newTerminal:
+            createNewTerminalTab()
+        case .closeCurrentTab:
+            closeCurrentTab()
+        case .askAI(let query):
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                openCommandPalette(prefill: "?")
+            } else {
+                askMainAI(trimmed)
+            }
+        case .slashCommand(let name):
+            executeSlashCommandFromPalette(name)
+        case .openFile(let path):
+            openFileFromPalette(path)
+        case .globalSearch(let query):
+            _ = query
+            destination = .search
+        case .refreshCurrentView:
+            refreshCurrentView()
+        case .cancelCurrentOperation:
+            cancelCurrentOperation()
+        case .toggleDeveloperDebug:
+            toggleDeveloperDebugPanel()
+        case .switchToTabIndex(let index):
+            switchVisibleTab(at: index)
+        case .nextVisibleTab:
+            moveVisibleTab(offset: 1)
+        case .previousVisibleTab:
+            moveVisibleTab(offset: -1)
+        case .showShortcutCheatSheet:
+            openCommandPalette(prefill: ">shortcut")
+        case .openTabSwitcher:
+            openCommandPalette(prefill: "tab")
+        case .findTab:
+            openCommandPalette(prefill: "tab")
+        case .unsupported(let message):
+            AppNotifications.shared.post(
+                title: "Command Palette",
+                message: message,
+                level: .info
+            )
+        }
+
+        if !rawQuery.isEmpty {
+            commandPaletteSeedQuery = ""
+        }
+    }
+
+    private func navigateFromPalette(to next: NavDestination) {
+        switch next {
+        case .terminal(id: _):
+            let terminalId = store.ensureTerminalTab()
+            destination = .terminal(id: terminalId)
+        default:
+            handleNavigation(next)
+        }
+    }
+
+    private func startNewChat() {
+        store.newSession(reusingEmptyPlaceholder: true)
+        destination = .chat
+    }
+
+    private func createNewTerminalTab() {
+        let terminalId = store.addTerminalTab()
+        destination = .terminal(id: terminalId)
+    }
+
+    private func handleFindShortcut() {
+        if destination == .search {
+            return
+        }
+        openCommandPalette(prefill: "\(destination.label.lowercased()) ")
+    }
+
+    private func refreshCurrentView() {
+        detailRefreshNonce += 1
+    }
+
+    private func cancelCurrentOperation() {
+        if destination == .chat,
+           let agent = store.activeAgent,
+           agent.isRunning {
+            agent.cancel()
+            AppNotifications.shared.post(
+                title: "Chat",
+                message: "Stopped active chat turn.",
+                level: .info
+            )
+            return
+        }
+
+        if case .liveRun(let runId, _) = destination {
+            Task { @MainActor in
+                do {
+                    try await smithers.cancelRun(runId)
+                    AppNotifications.shared.post(
+                        title: "Runs",
+                        message: "Cancel requested for run \(runId).",
+                        level: .info
+                    )
+                } catch {
+                    AppNotifications.shared.post(
+                        title: "Runs",
+                        message: error.localizedDescription,
+                        level: .warning
+                    )
+                }
+            }
+            return
+        }
+
+        AppNotifications.shared.post(
+            title: "Cancel",
+            message: "No cancellable operation is active.",
+            level: .info
+        )
+    }
+
+    private func askMainAI(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let _ = store.ensureActiveSession()
+        destination = .chat
+
+        guard !trimmed.isEmpty else { return }
+        store.sendMessage(trimmed)
+    }
+
+    private func closeCurrentTab() {
+        switch destination {
+        case .chat:
+            guard let sessionID = store.activeSessionId else { return }
+            if store.discardSessionIfEmpty(sessionID) {
+                let _ = store.ensureActiveSession()
+                destination = .chat
+                return
+            }
+
+            if store.canArchiveSession(sessionID) {
+                store.archiveSession(sessionID)
+                destination = .chat
+            } else {
+                AppNotifications.shared.post(
+                    title: "Chat",
+                    message: "The active chat is running and cannot be closed yet.",
+                    level: .warning
+                )
+            }
+
+        case .terminal(let terminalID):
+            requestTerminalClose(terminalID)
+
+        case .liveRun(let runId, _):
+            store.removeRunTab(runId)
+            destination = .runs
+
+        case .runInspect(runId: _, workflowName: _):
+            destination = .runs
+
+        default:
+            break
+        }
+    }
+
+    private func switchVisibleTab(at index: Int) {
+        let tabs = store.sidebarTabs(matching: "")
+        guard tabs.indices.contains(index) else { return }
+        activateSidebarTab(tabs[index])
+    }
+
+    private func moveVisibleTab(offset: Int) {
+        let tabs = store.sidebarTabs(matching: "")
+        guard !tabs.isEmpty else { return }
+
+        let currentIndex = activeVisibleTabIndex(in: tabs) ?? 0
+        let nextIndex = (currentIndex + offset + tabs.count) % tabs.count
+        activateSidebarTab(tabs[nextIndex])
+    }
+
+    private func activeVisibleTabIndex(in tabs: [SidebarTab]) -> Int? {
+        tabs.firstIndex { tab in
+            switch tab.kind {
+            case .chat:
+                return destination == .chat && store.activeSessionId == tab.chatSessionId
+            case .run:
+                if case .liveRun(let runId, _) = destination {
+                    return runId == tab.runId
+                }
+                return false
+            case .terminal:
+                if case .terminal(let terminalId) = destination {
+                    return terminalId == tab.terminalId
+                }
+                return false
+            }
+        }
+    }
+
+    private func activateSidebarTab(withID tabID: String) {
+        guard let tab = store.sidebarTabs(matching: "").first(where: { $0.id == tabID }) else { return }
+        activateSidebarTab(tab)
+    }
+
+    private func activateSidebarTab(_ tab: SidebarTab) {
+        switch tab.kind {
+        case .chat:
+            if let sessionID = tab.chatSessionId {
+                store.selectSession(sessionID)
+                destination = .chat
+            }
+        case .run:
+            if let runID = tab.runId {
+                destination = .liveRun(runId: runID, nodeId: nil)
+            }
+        case .terminal:
+            if let terminalID = tab.terminalId {
+                destination = .terminal(id: terminalID)
+            }
+        }
+    }
+
+    private func executeSlashCommandFromPalette(_ name: String) {
+        guard let command = paletteSlashCommands.first(where: { $0.name == name }) else {
+            AppNotifications.shared.post(
+                title: "Slash Command",
+                message: "Command /\(name) is not currently available.",
+                level: .warning
+            )
+            return
+        }
+
+        switch command.action {
+        case .navigate(let nav):
+            navigateFromPalette(to: nav)
+        case .toggleDeveloperDebug:
+            toggleDeveloperDebugPanel()
+        case .clearChat:
+            let _ = store.ensureActiveSession()
+            destination = .chat
+            store.activeAgent?.messages.removeAll()
+        case .showHelp:
+            openCommandPalette(prefill: ">")
+        case .runWorkflow(_):
+            destination = .workflows
+            AppNotifications.shared.post(
+                title: "Workflow Command",
+                message: "Use /\(name) in the chat composer to run this workflow with arguments.",
+                level: .info
+            )
+        case .runSmithersPrompt(_):
+            destination = .prompts
+            AppNotifications.shared.post(
+                title: "Prompt Command",
+                message: "Use /\(name) in the chat composer to run this prompt with arguments.",
+                level: .info
+            )
+        case .codex(let codexCommand):
+            executeCodexSlashCommandFromPalette(codexCommand, name: name)
+        }
+    }
+
+    private func executeCodexSlashCommandFromPalette(_ command: CodexSlashCommand, name: String) {
+        switch command {
+        case .new:
+            startNewChat()
+        case .review:
+            askMainAI("Review my current changes and find issues. Prioritize bugs, regressions, and missing tests.")
+        case .compact:
+            askMainAI("Summarize the important context from this conversation so we can continue with a shorter working history.")
+        case .mention:
+            openCommandPalette(prefill: "@")
+        case .status:
+            AppNotifications.shared.post(
+                title: "Session Status",
+                message: sessionStatusText(),
+                level: .info
+            )
+        case .initialize:
+            askMainAI(SlashCommandRegistry.initPrompt)
+        case .diff:
+            askMainAI("Summarize the current git diff.")
+        case .model, .approvals, .mcp, .logout, .quit, .feedback:
+            destination = .chat
+            AppNotifications.shared.post(
+                title: "Slash Command",
+                message: "/\(name) is available from the chat composer.",
+                level: .info
+            )
+        }
+    }
+
+    private func sessionStatusText() -> String {
+        let sessionState = store.activeSessionId == nil ? "No active session" : "Active session ready"
+        let runningState = store.activeAgent?.isRunning == true ? "running" : "idle"
+        return "\(sessionState) · Agent is \(runningState)."
+    }
+
+    private func openFileFromPalette(_ path: String) {
+        let fileMention = "@\(path)"
+        if destination == .chat {
+            copyTextToClipboard(fileMention)
+            AppNotifications.shared.post(
+                title: "File Mention Copied",
+                message: "Paste \(fileMention) into chat.",
+                level: .info
+            )
+            return
+        }
+
+        let absolutePath = (store.workspaceRootPath as NSString).appendingPathComponent(path)
+        let fileURL = URL(fileURLWithPath: absolutePath)
+        if FileManager.default.fileExists(atPath: absolutePath) {
+            NSWorkspace.shared.open(fileURL)
+        } else {
+            copyTextToClipboard(fileMention)
+            AppNotifications.shared.post(
+                title: "File Missing",
+                message: "Copied \(fileMention) to clipboard instead.",
+                level: .warning
+            )
+        }
+    }
+
+    private func copyTextToClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     private func openRunTab(run: RunSummary, nodeId: String?) {
@@ -610,8 +1461,56 @@ struct ContentView: View {
         destination = .liveRun(runId: runId, nodeId: nodeId)
     }
 
+    private var terminateTerminalConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { pendingTerminalCloseId != nil },
+            set: { presented in
+                if !presented {
+                    clearPendingTerminalClose()
+                }
+            }
+        )
+    }
+
+    private func requestTerminalClose(_ terminalId: String) {
+        pendingTerminalCloseId = terminalId
+        pendingTerminalCloseTitle = store.terminalTabs.first(where: { $0.terminalId == terminalId })?.title ?? terminalId
+    }
+
+    private func confirmTerminalClose() {
+        guard let terminalId = pendingTerminalCloseId else { return }
+        store.removeTerminalTab(terminalId)
+        if case .terminal(let activeId) = destination, activeId == terminalId {
+            destination = .dashboard
+        }
+        clearPendingTerminalClose()
+    }
+
+    private func clearPendingTerminalClose() {
+        pendingTerminalCloseId = nil
+        pendingTerminalCloseTitle = ""
+    }
+
+    private func handleNavigation(_ next: NavDestination) {
+        switch next {
+        case .terminalCommand(let binary, let workingDirectory, let name):
+            openTerminalCommandTab(command: binary, workingDirectory: workingDirectory, name: name)
+        default:
+            destination = next
+        }
+    }
+
+    private func openTerminalCommandTab(command: String, workingDirectory: String, name: String) {
+        let terminalId = store.addTerminalTab(
+            title: name,
+            workingDirectory: workingDirectory,
+            command: SessionStore.applyDefaultAgentFlags(command)
+        )
+        destination = .terminal(id: terminalId)
+    }
+
     private func toggleDeveloperDebugPanel() {
-        guard DeveloperDebugMode.isEnabled else { return }
+        guard developerToolsEnabled else { return }
         developerDebugPanelVisible.toggle()
         AppLogger.ui.info(
             "Developer debug panel toggled",

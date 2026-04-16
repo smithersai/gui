@@ -35,6 +35,10 @@ struct LiveRunChatView: View {
     @State private var follow = true
     @State private var showContextPane = false
     @State private var scrollRequest = UUID()
+    @State private var selectedNodeId: String?
+    @State private var hideNoise = true
+
+    @State private var pollTask: Task<Void, Never>?
 
     @State private var hijacking = false
     @State private var hijackError: String?
@@ -45,10 +49,40 @@ struct LiveRunChatView: View {
 
     private let bottomAnchor = "live-run-chat-bottom"
 
-    private var displayBlocks: [ChatBlock] {
-        let blocks = attempts.isEmpty ? allBlocks : attempts[currentAttempt] ?? []
-        return deduplicatedChatBlocks(blocks)
+    // MARK: - Noise filtering
+
+    private static func isNoiseBlock(_ block: ChatBlock) -> Bool {
+        let role = block.role.lowercased()
+        guard role == "system" || role == "stderr" || role == "status" else { return false }
+        let content = block.content
+        if content.contains("ERROR codex_core::") || content.contains("ERROR codex_") { return true }
+        if content.contains("state db missing rollout path") { return true }
+        if content.range(of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+(ERROR|WARN)\s+"#, options: .regularExpression) != nil { return true }
+        return false
     }
+
+    /// Returns meaningful (non-noise) blocks for a given nodeId, deduped.
+    /// Matches both exact nodeId and nodeId with iteration suffix (e.g. "task:review" matches "task:review:0").
+    private func blocksForNode(_ nid: String) -> [ChatBlock] {
+        let blocks = attempts.isEmpty ? allBlocks : attempts[currentAttempt] ?? []
+        let prefix = nid + ":"
+        return deduplicatedChatBlocks(blocks).filter { block in
+            guard let blockNodeId = block.nodeId, !Self.isNoiseBlock(block) else { return false }
+            return blockNodeId == nid || blockNodeId.hasPrefix(prefix)
+        }
+    }
+
+    /// Last few meaningful messages for a node (assistant/tool only)
+    private func tailBlocks(for nid: String, count: Int = 3) -> [ChatBlock] {
+        let all = blocksForNode(nid)
+        let meaningful = all.filter {
+            let role = $0.role.lowercased()
+            return role == "assistant" || role == "agent" || role == "tool" || role == "tool_call" || role == "tool_result"
+        }
+        return Array(meaningful.suffix(count))
+    }
+
+    // MARK: - Computed
 
     private var shortRunId: String {
         String(runId.prefix(8))
@@ -64,23 +98,6 @@ struct LiveRunChatView: View {
     private var nodeLabel: String? {
         guard let nodeId, !nodeId.isEmpty else { return nil }
         return nodeId
-    }
-
-    private var statusLine: String {
-        var parts: [String] = []
-        if let nodeLabel {
-            parts.append("Node: \(nodeLabel)")
-        }
-        if maxAttempt > 0 {
-            parts.append("Attempt \(currentAttempt + 1) of \(maxAttempt + 1)")
-        }
-        if follow {
-            parts.append("LIVE")
-        }
-        if newBlocksInLatest > 0 && currentAttempt < maxAttempt {
-            parts.append("\(newBlocksInLatest) new in latest attempt")
-        }
-        return parts.joined(separator: " · ")
     }
 
     private var bodyError: String? {
@@ -107,41 +124,63 @@ struct LiveRunChatView: View {
             .sorted { $0.0 < $1.0 }
     }
 
+    // MARK: - Body
+
     var body: some View {
         VStack(spacing: 0) {
-            header
-            controls
+            runHeader
             hijackBanner
 
-            HStack(spacing: 0) {
-                transcriptPane
-                if showContextPane {
-                    Divider().background(Theme.border)
-                    contextPane
-                        .frame(width: 280)
-                        .background(Theme.surface2)
-                }
+            if let expandedNode = selectedNodeId {
+                expandedTaskView(nodeId: expandedNode)
+            } else {
+                taskDashboard
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Theme.surface1)
         .task {
             await loadAll()
+            startPollingRunState()
         }
         .onDisappear {
             stopStreaming()
+            pollTask?.cancel()
+            pollTask = nil
         }
     }
 
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Live Run Chat")
-                    .font(.system(size: 15, weight: .bold))
+    // MARK: - Run Header
+
+    private var runHeader: some View {
+        HStack(spacing: 12) {
+            if let run {
+                runStatusBadge(run.status)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(run?.workflowName ?? shortRunId)
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundColor(Theme.textPrimary)
-                Text(runTitle)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(Theme.textTertiary)
+                HStack(spacing: 8) {
+                    Text(shortRunId)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(Theme.textTertiary)
+                    if let run {
+                        Text(run.elapsedString)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+                    if runningCount > 0 {
+                        HStack(spacing: 3) {
+                            ProgressView()
+                                .scaleEffect(0.4)
+                                .frame(width: 10, height: 10)
+                            Text("\(runningCount) active")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(Theme.accent)
+                        }
+                    }
+                }
             }
 
             Spacer()
@@ -152,6 +191,18 @@ struct LiveRunChatView: View {
                     .frame(width: 16, height: 16)
             }
 
+            pillButton("Refresh", icon: "arrow.clockwise") {
+                Task { await refresh() }
+            }
+            .accessibilityIdentifier("liverun.refresh")
+
+            pillButton(hijacking ? "Hijacking..." : "Hijack", icon: "arrow.trianglehead.branch") {
+                startHijack()
+            }
+            .disabled(hijacking)
+            .opacity(hijacking ? 0.6 : 1)
+            .accessibilityIdentifier("liverun.hijack")
+
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .bold))
@@ -161,95 +212,72 @@ struct LiveRunChatView: View {
                     .cornerRadius(6)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("liverun.close")
         }
         .padding(.horizontal, 16)
-        .frame(height: 52)
+        .frame(height: 48)
         .border(Theme.border, edges: [.bottom])
     }
 
-    private var controls: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button(action: previousAttempt) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Theme.textSecondary)
-                        .frame(width: 24, height: 24)
-                        .background(Theme.inputBg)
-                        .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
-                .disabled(currentAttempt <= 0)
-                .opacity(currentAttempt <= 0 ? 0.45 : 1)
-
-                Button(action: nextAttempt) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Theme.textSecondary)
-                        .frame(width: 24, height: 24)
-                        .background(Theme.inputBg)
-                        .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
-                .disabled(currentAttempt >= maxAttempt)
-                .opacity(currentAttempt >= maxAttempt ? 0.45 : 1)
-
-                if maxAttempt > 0 {
-                    Text("Attempt \(currentAttempt + 1) / \(maxAttempt + 1)")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(currentAttempt == maxAttempt ? Theme.success : Theme.textSecondary)
-                }
-
-                if newBlocksInLatest > 0 && currentAttempt < maxAttempt {
-                    Button("\(newBlocksInLatest) new in latest") {
-                        currentAttempt = maxAttempt
-                        newBlocksInLatest = 0
-                        follow = true
-                        scrollRequest = UUID()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(Theme.warning)
-                }
-
-                Spacer()
-
-                pillButton(follow ? "Following" : "Follow", icon: "dot.radiowaves.left.and.right") {
-                    follow.toggle()
-                    if follow {
-                        scrollRequest = UUID()
-                    }
-                }
-
-                pillButton(showContextPane ? "Hide Context" : "Context", icon: "sidebar.right") {
-                    showContextPane.toggle()
-                }
-
-                pillButton("Refresh", icon: "arrow.clockwise") {
-                    Task { await refresh() }
-                }
-
-                pillButton(hijacking ? "Hijacking..." : "Hijack", icon: "arrow.trianglehead.branch") {
-                    startHijack()
-                }
-                .disabled(hijacking)
-                .opacity(hijacking ? 0.6 : 1)
+    private func runStatusBadge(_ status: RunStatus) -> some View {
+        let (icon, color): (String, Color) = {
+            switch status {
+            case .running: return ("circle.fill", Theme.accent)
+            case .finished: return ("checkmark.circle.fill", Theme.success)
+            case .failed: return ("xmark.circle.fill", Theme.danger)
+            case .cancelled: return ("minus.circle.fill", Theme.warning)
+            case .waitingApproval: return ("pause.circle.fill", Theme.warning)
+            case .unknown: return ("questionmark.circle", Theme.textTertiary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+        }()
+        return Image(systemName: icon)
+            .font(.system(size: 14))
+            .foregroundColor(color)
+    }
 
-            if !statusLine.isEmpty {
-                HStack {
-                    Text(statusLine)
-                        .font(.system(size: 10))
-                        .foregroundColor(Theme.textTertiary)
-                    Spacer()
+    // MARK: - Task Helpers
+
+    private var uniqueTasks: [RunTask] {
+        var seen: [String: RunTask] = [:]
+        for task in tasks { seen[task.nodeId] = task }
+        return tasks.filter { seen[$0.nodeId]?.id == $0.id }
+            .reduce(into: [RunTask]()) { result, task in
+                if !result.contains(where: { $0.nodeId == task.nodeId }) {
+                    result.append(task)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
             }
+    }
+
+    private var runningCount: Int {
+        uniqueTasks.filter { $0.state == "running" || $0.state == "in-progress" }.count
+    }
+
+    private func taskStateInfo(_ state: String) -> (icon: String, color: Color, label: String) {
+        switch state {
+        case "running", "in-progress":
+            return ("circle.dotted.circle", Theme.accent, "Running")
+        case "finished", "complete":
+            return ("checkmark.circle.fill", Theme.success, "Finished")
+        case "failed", "error":
+            return ("xmark.circle.fill", Theme.danger, "Failed")
+        case "blocked", "waiting-approval":
+            return ("pause.circle.fill", Theme.warning, "Blocked")
+        case "skipped":
+            return ("forward.fill", Theme.textTertiary, "Skipped")
+        default:
+            return ("circle", Theme.textTertiary, "Pending")
         }
-        .border(Theme.border, edges: [.bottom])
+    }
+
+    private func taskSortOrder(_ state: String) -> Int {
+        switch state {
+        case "running", "in-progress": return 0
+        case "blocked", "waiting-approval": return 1
+        case "failed", "error": return 2
+        case "pending": return 3
+        case "finished", "complete": return 4
+        default: return 5
+        }
     }
 
     private func pillButton(_ label: String, icon: String, action: @escaping () -> Void) -> some View {
@@ -315,60 +343,334 @@ struct LiveRunChatView: View {
         .border(Theme.border, edges: [.bottom])
     }
 
-    private var transcriptPane: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if !displayBlocks.isEmpty {
-                        ForEach(displayBlocks, id: \.stableId) { block in
-                            transcriptBlockRow(block)
+    // MARK: - Task Dashboard (default view)
+
+    private var taskDashboard: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                if loadingRun && tasks.isEmpty {
+                    loadingBody
+                } else if let bodyError {
+                    errorBody(bodyError)
+                } else if uniqueTasks.isEmpty {
+                    emptyBody
+                } else {
+                    let sorted = uniqueTasks.sorted { lhs, rhs in
+                        taskSortOrder(lhs.state) < taskSortOrder(rhs.state)
+                    }
+                    ForEach(sorted) { task in
+                        taskCard(task)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func taskCard(_ task: RunTask) -> some View {
+        let info = taskStateInfo(task.state)
+        let isActive = task.state == "running" || task.state == "in-progress"
+        let tail = isActive ? tailBlocks(for: task.nodeId, count: 3) : []
+        let totalMessages = blocksForNode(task.nodeId).count
+
+        return Button(action: {
+            let matchCount = blocksForNode(task.nodeId).count
+            AppLogger.ui.info("Task selected", metadata: [
+                "nodeId": task.nodeId,
+                "state": task.state,
+                "matching_blocks": "\(matchCount)",
+                "total_blocks": "\(allBlocks.count)",
+            ])
+            selectedNodeId = task.nodeId
+        }) {
+            VStack(alignment: .leading, spacing: 0) {
+                // Task header row
+                HStack(spacing: 8) {
+                    Image(systemName: info.icon)
+                        .font(.system(size: 12))
+                        .foregroundColor(info.color)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(task.label ?? task.nodeId)
+                            .font(.system(size: 13, weight: isActive ? .bold : .medium))
+                            .foregroundColor(Theme.textPrimary)
+                        HStack(spacing: 6) {
+                            Text(info.label.uppercased())
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(info.color)
+                            if totalMessages > 0 {
+                                Text("\(totalMessages) messages")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+                            if let attempt = task.lastAttempt, attempt > 1 {
+                                Text("attempt \(attempt)")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
                         }
-                    } else if loadingRun || loadingBlocks {
-                        loadingBody
-                    } else if let bodyError {
-                        errorBody(bodyError)
-                    } else {
-                        emptyBody
                     }
-
-                    if isStreamingIndicatorVisible {
-                        Text("(streaming...)")
-                            .font(.system(size: 10))
-                            .foregroundColor(Theme.textTertiary)
+                    Spacer()
+                    if isActive {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 14, height: 14)
                     }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .id(bottomAnchor)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
                 }
-                .padding(16)
-            }
-            .refreshable { await refresh() }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 2).onChanged { _ in
-                    if follow {
-                        follow = false
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                // Live tail for running tasks
+                if isActive && !tail.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(tail, id: \.stableId) { block in
+                            tailMessageRow(block)
+                        }
                     }
-                }
-            )
-            .onChange(of: displayBlocks.count) { _, _ in
-                guard follow else { return }
-                withAnimation(.easeOut(duration: 0.16)) {
-                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
                 }
             }
-            .onChange(of: scrollRequest) { _, _ in
-                withAnimation(.easeOut(duration: 0.16)) {
-                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
+            .background(isActive ? Theme.accent.opacity(0.04) : Color.clear)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("liverun.task.\(task.nodeId)")
+        .border(Theme.border, edges: [.bottom])
+    }
+
+    private func tailMessageRow(_ block: ChatBlock) -> some View {
+        let role = block.role.lowercased()
+        let isAssistant = role == "assistant" || role == "agent"
+        let content = decodeHTMLEntities(block.content)
+        let icon = isAssistant ? "sparkles" : "wrench"
+        let color = isAssistant ? Theme.accent : Theme.warning
+
+        return HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 8))
+                .foregroundColor(color)
+                .frame(width: 12, alignment: .center)
+                .padding(.top, 2)
+            Text(content)
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(3)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - Expanded Task View (drill-in)
+
+    private func expandedTaskView(nodeId expandedNodeId: String) -> some View {
+        let blocks = blocksForNode(expandedNodeId)
+        let task = uniqueTasks.first(where: { $0.nodeId == expandedNodeId })
+        let info: (icon: String, color: Color, label: String) = task.map { taskStateInfo($0.state) } ?? ("circle", Theme.textTertiary, "Unknown")
+
+        return VStack(spacing: 0) {
+            // Back bar
+            HStack(spacing: 8) {
+                Button(action: { selectedNodeId = nil }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("All Tasks")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(Theme.accent)
                 }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("liverun.backToTasks")
+
+                Divider().frame(height: 14)
+
+                Image(systemName: info.icon)
+                    .font(.system(size: 10))
+                    .foregroundColor(info.color)
+                Text(task?.label ?? expandedNodeId)
+                    .accessibilityIdentifier("liverun.expandedTask.\(expandedNodeId)")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Theme.textPrimary)
+                Text(info.label.uppercased())
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(info.color)
+
+                Spacer()
+
+                Text("\(blocks.count) messages")
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.textTertiary)
+                    .accessibilityIdentifier("liverun.messageCount")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Theme.surface2.opacity(0.5))
+            .border(Theme.border, edges: [.bottom])
+
+            // Chat transcript for this node
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(blocks, id: \.stableId) { block in
+                            expandedBlockRow(block)
+                        }
+
+                        if let task, (task.state == "running" || task.state == "in-progress") {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                                    .frame(width: 12, height: 12)
+                                Text("Running...")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 4)
+                        } else if blocks.isEmpty, let task {
+                            VStack(spacing: 10) {
+                                Image(systemName: task.state == "failed" ? "xmark.circle" : "doc.text.magnifyingglass")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(task.state == "failed" ? Theme.danger : Theme.textTertiary)
+                                Text(task.state == "failed"
+                                     ? "This task failed without producing output."
+                                     : "No output available for this task.")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(Theme.textSecondary)
+                                if task.state == "failed" {
+                                    Text("smithers logs \(runId) | grep \"\(expandedNodeId)\"")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(Theme.textTertiary)
+                                        .textSelection(.enabled)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Theme.surface2)
+                                        .cornerRadius(4)
+                                }
+                                if let attempt = task.lastAttempt {
+                                    Text("Attempt \(attempt)")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(Theme.textTertiary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 120)
+                            .padding(.top, 20)
+                        }
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(bottomAnchor)
+                    }
+                    .padding(16)
+                }
+                .onChange(of: blocks.count) { _, _ in
+                    guard follow else { return }
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                    }
+                }
+                .onChange(of: scrollRequest) { _, _ in
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        proxy.scrollTo(bottomAnchor, anchor: .bottom)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func expandedBlockRow(_ block: ChatBlock) -> some View {
+        let role = block.role.lowercased()
+        let content = decodeHTMLEntities(block.content)
+        let timestamp = timestampLabel(for: block)
+
+        return Group {
+            if role == "assistant" || role == "agent" {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9))
+                            .foregroundColor(Theme.accent)
+                        Text("ASSISTANT")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(Theme.accent)
+                        Spacer()
+                        if !timestamp.isEmpty {
+                            Text(timestamp)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(Theme.textTertiary)
+                        }
+                    }
+                    Text(content)
+                        .font(.system(size: 13))
+                        .foregroundColor(Theme.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .padding(12)
+                .background(Theme.bubbleAssistant)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.accent.opacity(0.25), lineWidth: 1))
+            } else if role == "user" {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 5) {
+                        Text("PROMPT")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(Theme.success)
+                        Spacer()
+                        if !timestamp.isEmpty {
+                            Text(timestamp)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(Theme.textTertiary)
+                        }
+                    }
+                    Text(content)
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .lineLimit(8)
+                }
+                .padding(10)
+                .background(Theme.bubbleUser.opacity(0.5))
+                .cornerRadius(8)
+            } else if role == "tool" || role == "tool_call" || role == "tool_result" {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "wrench")
+                        .font(.system(size: 8))
+                        .foregroundColor(Theme.warning)
+                        .padding(.top, 2)
+                    Text(content)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(Theme.textTertiary)
+                        .lineLimit(4)
+                        .textSelection(.enabled)
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+            } else {
+                HStack(spacing: 4) {
+                    Text(content)
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary.opacity(0.7))
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
             }
         }
     }
 
+    // MARK: - Loading / Error / Empty
+
     private var loadingBody: some View {
         HStack(spacing: 8) {
             ProgressView().scaleEffect(0.6)
-            Text("Loading chat...")
+            Text("Loading...")
                 .font(.system(size: 12))
                 .foregroundColor(Theme.textTertiary)
         }
@@ -392,63 +694,13 @@ struct LiveRunChatView: View {
     }
 
     private var emptyBody: some View {
-        Text("No messages yet.")
+        Text("No tasks yet.")
             .font(.system(size: 12))
             .foregroundColor(Theme.textTertiary)
             .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
     }
 
-    private func transcriptBlockRow(_ block: ChatBlock) -> some View {
-        let role = block.role.lowercased()
-        let roleText = role.isEmpty ? "status" : role
-        let timestamp = timestampLabel(for: block)
-        let headerColor: Color = {
-            switch role {
-            case "assistant": return Theme.accent
-            case "user": return Theme.success
-            case "tool": return Theme.warning
-            default: return Theme.textTertiary
-            }
-        }()
-
-        let background: Color = {
-            switch role {
-            case "assistant": return Theme.bubbleAssistant
-            case "user": return Theme.bubbleUser
-            case "tool": return Theme.warning.opacity(0.10)
-            default: return Theme.surface2.opacity(0.45)
-            }
-        }()
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                if !timestamp.isEmpty {
-                    Text(timestamp)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(Theme.textTertiary)
-                }
-                Text(roleText.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(headerColor)
-                if let node = block.nodeId, !node.isEmpty, node != nodeId {
-                    Text(node)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(Theme.textTertiary)
-                }
-                Spacer()
-            }
-
-            Text(block.content)
-                .font(.system(size: 12))
-                .foregroundColor(Theme.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-        }
-        .padding(10)
-        .background(background)
-        .cornerRadius(8)
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
-    }
+    // MARK: - Context Pane (kept for potential use)
 
     private var contextPane: some View {
         ScrollView {
@@ -467,8 +719,6 @@ struct LiveRunChatView: View {
                 if let nodeLabel {
                     contextRow("Node", nodeLabel)
                 }
-                contextRow("Attempt", "\(currentAttempt + 1) / \(maxAttempt + 1)")
-                contextRow("Blocks", "\(displayBlocks.count)")
 
                 if let elapsed = run?.elapsedString, !elapsed.isEmpty {
                     contextRow("Elapsed", elapsed)
@@ -522,6 +772,8 @@ struct LiveRunChatView: View {
         }
     }
 
+    // MARK: - Utilities
+
     private func timestampLabel(for block: ChatBlock) -> String {
         guard let blockTS = block.timestampMs else { return "" }
         if let runStart = run?.startedAtMs {
@@ -558,9 +810,13 @@ struct LiveRunChatView: View {
         scrollRequest = UUID()
     }
 
+    // MARK: - Data Loading
+
     private func refresh() async {
         stopStreaming()
+        pollTask?.cancel()
         await loadAll()
+        startPollingRunState()
     }
 
     private func loadAll() async {
@@ -572,12 +828,24 @@ struct LiveRunChatView: View {
     private func loadRun() async {
         loadingRun = true
         runError = nil
-        do {
-            let inspection = try await smithers.inspectRun(runId)
-            run = inspection.run
-            tasks = inspection.tasks
-        } catch {
-            runError = error.localizedDescription
+        // Retry a few times — after a detached launch the server may not have
+        // registered the run yet, leading to a transient RUN_NOT_FOUND error.
+        for attempt in 0..<5 {
+            do {
+                let inspection = try await smithers.inspectRun(runId)
+                run = inspection.run
+                tasks = inspection.tasks
+                loadingRun = false
+                return
+            } catch {
+                let isNotFound = error.localizedDescription.contains("RUN_NOT_FOUND")
+                    || error.localizedDescription.contains("Run not found")
+                if isNotFound && attempt < 4 {
+                    try? await Task.sleep(nanoseconds: UInt64((attempt + 1)) * 500_000_000)
+                    continue
+                }
+                runError = error.localizedDescription
+            }
         }
         loadingRun = false
     }
@@ -589,12 +857,18 @@ struct LiveRunChatView: View {
         bufferingInitialStream = true
         initialStreamBuffer = []
 
-        // Start streaming immediately so messages appear while initial load is in progress
         startStreaming()
 
         do {
             var blocks = try await smithers.getChatOutput(runId)
             blocks = blocks.filter(matchesNodeFilter)
+            let uniqueNodeIds = Set(blocks.compactMap(\.nodeId))
+            AppLogger.ui.info("loadBlocks complete", metadata: [
+                "run_id": runId,
+                "total_blocks": "\(blocks.count)",
+                "unique_nodeIds": "\(uniqueNodeIds.count)",
+                "sample_nodeIds": "\(Array(uniqueNodeIds.prefix(5)).joined(separator: ", "))",
+            ])
             let bufferedBlocks = initialStreamBuffer
             bufferingInitialStream = false
             initialStreamBuffer = []
@@ -603,9 +877,9 @@ struct LiveRunChatView: View {
                 appendStreamBlock(block)
             }
         } catch {
+            AppLogger.ui.warning("loadBlocks failed", metadata: ["run_id": runId, "error": "\(error.localizedDescription)"])
             bufferingInitialStream = false
             initialStreamBuffer = []
-            // Only show error if we also have no streamed blocks
             if allBlocks.isEmpty {
                 blocksError = error.localizedDescription
             }
@@ -613,6 +887,8 @@ struct LiveRunChatView: View {
 
         loadingBlocks = false
     }
+
+    // MARK: - Streaming
 
     private func startStreaming() {
         streamTask?.cancel()
@@ -632,6 +908,31 @@ struct LiveRunChatView: View {
             await MainActor.run {
                 guard streamGeneration == generation, !Task.isCancelled else { return }
                 streamDone = true
+            }
+        }
+    }
+
+    private func startPollingRunState() {
+        pollTask?.cancel()
+        pollTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+                guard !Task.isCancelled else { break }
+                if let inspection = try? await smithers.inspectRun(runId) {
+                    run = inspection.run
+                    tasks = inspection.tasks
+                }
+                // Re-fetch blocks when SSE isn't delivering them
+                if streamDone || allBlocks.isEmpty {
+                    if var blocks = try? await smithers.getChatOutput(runId) {
+                        blocks = blocks.filter(matchesNodeFilter)
+                        rebuildAttempts(with: blocks)
+                    }
+                }
+                let isTerminal = run?.status == .finished
+                    || run?.status == .failed
+                    || run?.status == .cancelled
+                if isTerminal { break }
             }
         }
     }
@@ -670,7 +971,9 @@ struct LiveRunChatView: View {
                 }
                 return
             }
-        } else if replaceLastAnonymousAssistantStreamBlock(block) {
+        }
+
+        if replaceLastAssistantOverlapStreamBlock(block) {
             if follow {
                 scrollRequest = UUID()
             }
@@ -739,17 +1042,24 @@ struct LiveRunChatView: View {
         return true
     }
 
-    private func replaceLastAnonymousAssistantStreamBlock(_ block: ChatBlock) -> Bool {
-        guard block.lifecycleId == nil else { return false }
+    private func replaceLastAssistantOverlapStreamBlock(_ block: ChatBlock) -> Bool {
         guard let index = allBlocks.indices.last else { return false }
         let existing = allBlocks[index]
-        guard existing.lifecycleId == nil,
-              existing.canMergeAssistantStream(with: block),
+        guard existing.canMergeAssistantStream(with: block),
               existing.hasStreamingContentOverlap(with: block) else {
             return false
         }
 
         allBlocks[index] = existing.mergingAssistantStream(with: block)
+        if let existingLifecycleId = existing.lifecycleId, !existingLifecycleId.isEmpty {
+            inFlightBlockIndexByLifecycleId[existingLifecycleId] = index
+        }
+        if let incomingLifecycleId = block.lifecycleId, !incomingLifecycleId.isEmpty {
+            inFlightBlockIndexByLifecycleId[incomingLifecycleId] = index
+        }
+        if let mergedLifecycleId = allBlocks[index].lifecycleId, !mergedLifecycleId.isEmpty {
+            inFlightBlockIndexByLifecycleId[mergedLifecycleId] = index
+        }
         rebuildAttemptIndexPreservingSelection()
         return true
     }
@@ -770,6 +1080,8 @@ struct LiveRunChatView: View {
         guard let nodeId, !nodeId.isEmpty else { return true }
         return block.nodeId == nodeId
     }
+
+    // MARK: - Hijack
 
     private func startHijack() {
         guard !hijacking else { return }
@@ -936,4 +1248,27 @@ private final class HijackProcessOutputBuffer: @unchecked Sendable {
 private struct StreamBlockEnvelope: Decodable {
     let block: ChatBlock?
     let data: ChatBlock?
+}
+
+// MARK: - HTML Entity Decoding
+
+private func decodeHTMLEntities(_ text: String) -> String {
+    guard text.contains("&") else { return text }
+    let entities: [(String, String)] = [
+        ("&quot;", "\""),
+        ("&amp;", "&"),
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&apos;", "'"),
+        ("&#39;", "'"),
+        ("&#x27;", "'"),
+        ("&#34;", "\""),
+        ("&#x22;", "\""),
+        ("&nbsp;", " "),
+    ]
+    var result = text
+    for (entity, replacement) in entities {
+        result = result.replacingOccurrences(of: entity, with: replacement)
+    }
+    return result
 }

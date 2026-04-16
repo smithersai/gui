@@ -88,6 +88,7 @@ struct LogViewerView: View {
                     }
                 }
                 .frame(width: 120)
+                .accessibilityIdentifier("logs.levelFilter")
 
                 Picker("Category", selection: $categoryFilter) {
                     Text("All Categories").tag(LogCategory?.none)
@@ -96,34 +97,43 @@ struct LogViewerView: View {
                     }
                 }
                 .frame(width: 140)
+                .accessibilityIdentifier("logs.categoryFilter")
 
                 TextField("Search...", text: $searchText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 180)
+                    .accessibilityIdentifier("logs.searchField")
 
                 Toggle("Auto", isOn: $autoRefresh)
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                    .accessibilityIdentifier("logs.autoRefresh")
 
                 Button(action: { showClearLogsConfirmation = true }) {
                     Image(systemName: "trash")
                 }
                 .help("Clear logs")
+                .accessibilityIdentifier("logs.clearButton")
 
                 Button(action: exportLogs) {
                     Image(systemName: "square.and.arrow.up")
                 }
                 .help("Export logs")
+                .accessibilityIdentifier("logs.exportButton")
 
                 Button(action: revealLogs) {
                     Image(systemName: "folder")
                 }
                 .help("Reveal log file")
+                .accessibilityIdentifier("logs.revealButton")
 
-                Button(action: loadEntries) {
+                Button(action: {
+                    Task { await loadEntries() }
+                }) {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("Refresh")
+                .accessibilityIdentifier("logs.refreshButton")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -200,35 +210,29 @@ struct LogViewerView: View {
             .border(Theme.border, edges: [.bottom])
 
             // Log entries
-            if filteredEntries.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 32))
-                        .foregroundColor(Theme.textTertiary)
-                    Text(entries.isEmpty ? "No log entries yet" : "No entries match filters")
-                        .font(.system(size: 14))
-                        .foregroundColor(Theme.textTertiary)
+            ScrollViewReader { proxy in
+                List(filteredEntries) { entry in
+                    LogEntryRow(entry: entry)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollViewReader { proxy in
-                    List(filteredEntries) { entry in
-                        LogEntryRow(entry: entry)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
+                .listStyle(.plain)
+                .overlay {
+                    if filteredEntries.isEmpty {
+                        emptyState
                     }
-                    .listStyle(.plain)
-                    .onChange(of: entries.count) { _, _ in
-                        if let last = filteredEntries.last {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
+                }
+                .refreshable { await loadEntries() }
+                .onChange(of: entries.count) { _, _ in
+                    if let last = filteredEntries.last {
+                        proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
             }
         }
         .background(Theme.base)
-        .task { loadEntries() }
+        .task { await loadEntries() }
         .onAppear { startAutoRefresh() }
         .onDisappear { stopAutoRefresh() }
         .onChange(of: autoRefresh) { _, newValue in
@@ -240,9 +244,11 @@ struct LogViewerView: View {
             titleVisibility: .visible
         ) {
             Button("Clear Logs", role: .destructive) {
-                clearLogs()
+                Task { await clearLogs() }
             }
+            .accessibilityIdentifier("logs.confirmClear")
             Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("logs.cancelClear")
         } message: {
             Text("Clear all local log entries? This action cannot be undone.")
         }
@@ -253,37 +259,44 @@ struct LogViewerView: View {
         LogViewerFormatting.fileSizeString(logFileSize)
     }
 
-    private func loadEntries() {
-        Task {
-            entries = await AppLogger.fileWriter.readEntries(limit: 1000)
-            let stats = await AppLogger.fileWriter.stats()
-            totalEntryCount = stats.entryCount
-            logFileSize = stats.sizeBytes
-            logFileURL = stats.fileURL
-            droppedWriteCount = stats.droppedWriteCount
-            lastWriteError = stats.lastWriteError
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 32))
+                .foregroundColor(Theme.textTertiary)
+            Text(entries.isEmpty ? "No log entries yet" : "No entries match filters")
+                .font(.system(size: 14))
+                .foregroundColor(Theme.textTertiary)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
     }
 
-    private func clearLogs() {
-        Task {
-            await AppLogger.fileWriter.clearLog()
-            AppLogger.lifecycle.info("Log file cleared from viewer")
-            entries = []
-            let stats = await AppLogger.fileWriter.stats()
-            totalEntryCount = stats.entryCount
-            logFileSize = stats.sizeBytes
-            logFileURL = stats.fileURL
-            droppedWriteCount = stats.droppedWriteCount
-            lastWriteError = stats.lastWriteError
-        }
+    @MainActor
+    private func loadEntries() async {
+        async let loadedEntries = AppLogger.fileWriter.readEntries(limit: 1000)
+        async let loadedStats = AppLogger.fileWriter.stats()
+        entries = await loadedEntries
+        let stats = await loadedStats
+        totalEntryCount = stats.entryCount
+        logFileSize = stats.sizeBytes
+        logFileURL = stats.fileURL
+        droppedWriteCount = stats.droppedWriteCount
+        lastWriteError = stats.lastWriteError
+    }
+
+    @MainActor
+    private func clearLogs() async {
+        await AppLogger.fileWriter.clearLog()
+        AppLogger.lifecycle.info("Log file cleared from viewer")
+        await loadEntries()
     }
 
     private func startAutoRefresh() {
         stopAutoRefresh()
         guard autoRefresh else { return }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
-            loadEntries()
+            Task { await loadEntries() }
         }
     }
 

@@ -215,6 +215,7 @@ struct DashboardView: View {
                     .foregroundColor(Theme.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("dashboard.refresh")
         }
         .padding(.horizontal, 20)
         .frame(height: 48)
@@ -352,13 +353,6 @@ struct DashboardView: View {
     private var runsContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Runs view",
-                    accessibilityID: "dashboard.route.runs"
-                ) {
-                    onNavigate?(.runs)
-                }
-
                 if sourceErrors[.runs] != nil && runs.isEmpty && !isLoading {
                     emptySection("Unable to load runs", icon: "exclamationmark.triangle")
                 } else if sortedRuns.isEmpty && !isLoading {
@@ -382,13 +376,6 @@ struct DashboardView: View {
     private var workflowsContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Workflows view",
-                    accessibilityID: "dashboard.route.workflows"
-                ) {
-                    onNavigate?(.workflows)
-                }
-
                 if sourceErrors[.workflows] != nil && workflows.isEmpty && !isLoading {
                     emptySection("Unable to load workflows", icon: "exclamationmark.triangle")
                 } else if workflows.isEmpty && !isLoading {
@@ -412,13 +399,6 @@ struct DashboardView: View {
     private var approvalsContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Approvals view",
-                    accessibilityID: "dashboard.route.approvals"
-                ) {
-                    onNavigate?(.approvals)
-                }
-
                 if sourceErrors[.approvals] != nil && approvals.isEmpty && !isLoading {
                     emptySection("Unable to load approvals", icon: "exclamationmark.triangle")
                 } else if pendingApprovals.isEmpty && !isLoading {
@@ -442,13 +422,6 @@ struct DashboardView: View {
     private var sessionsContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open chat sessions",
-                    accessibilityID: "dashboard.route.chat"
-                ) {
-                    onNavigate?(.chat)
-                }
-
                 if sessionSnapshots.isEmpty {
                     emptySection("No sessions yet", icon: "message")
                 } else {
@@ -471,13 +444,6 @@ struct DashboardView: View {
     private var landingsContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Landings view",
-                    accessibilityID: "dashboard.route.landings"
-                ) {
-                    onNavigate?(.landings)
-                }
-
                 if sourceErrors[.landings] != nil && landings.isEmpty && !isLoading {
                     emptySection("Unable to load landings", icon: "exclamationmark.triangle")
                 } else if landings.isEmpty && !isLoading {
@@ -499,13 +465,6 @@ struct DashboardView: View {
     private var issuesContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Issues view",
-                    accessibilityID: "dashboard.route.issues"
-                ) {
-                    onNavigate?(.issues)
-                }
-
                 if sourceErrors[.issues] != nil && issues.isEmpty && !isLoading {
                     emptySection("Unable to load issues", icon: "exclamationmark.triangle")
                 } else if issues.isEmpty && !isLoading {
@@ -527,13 +486,6 @@ struct DashboardView: View {
     private var workspacesContent: some View {
         ScrollView {
             VStack(spacing: 0) {
-                tabRouteButton(
-                    title: "Open full Workspaces view",
-                    accessibilityID: "dashboard.route.workspaces"
-                ) {
-                    onNavigate?(.workspaces)
-                }
-
                 if sourceErrors[.workspaces] != nil && workspaces.isEmpty && !isLoading {
                     emptySection("Unable to load workspaces", icon: "exclamationmark.triangle")
                 } else if workspaces.isEmpty && !isLoading {
@@ -716,11 +668,6 @@ struct DashboardView: View {
         .accessibilityIdentifier(accessibilityID)
     }
 
-    private func tabRouteButton(title: String, accessibilityID: String, action: @escaping () -> Void) -> some View {
-        TabRouteButton(title: title, action: action)
-            .accessibilityIdentifier(accessibilityID)
-    }
-
     private func actionErrorBanner(_ message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -751,6 +698,7 @@ struct DashboardView: View {
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("dashboard.retry")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -883,38 +831,6 @@ struct HeaderIndicator: View {
     }
 }
 
-struct TabRouteButton: View {
-    let title: String
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "arrowshape.turn.up.right")
-                    .font(.system(size: 10))
-                Text(title)
-                    .font(.system(size: 11, weight: .medium))
-                Spacer()
-                if isHovered {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 9))
-                        .transition(.opacity.combined(with: .move(edge: .trailing)))
-                }
-            }
-            .foregroundColor(Theme.accent)
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(isHovered ? Theme.accent.opacity(0.18) : Theme.accent.opacity(0.12))
-            .cornerRadius(6)
-            .padding(.bottom, 10)
-        }
-        .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.15), value: isHovered)
-        .onHover { isHovered = $0 }
-    }
-}
-
 struct DashboardActionRow: View {
     let icon: String
     let title: String
@@ -1022,6 +938,7 @@ struct LandingSummaryRow: View {
         }
         .padding(.vertical, 8)
         .themedRowHover()
+        .accessibilityIdentifier("dashboard.landing.\(landing.id)")
     }
 
     private var normalizedState: String {
@@ -1080,6 +997,7 @@ struct IssueSummaryRow: View {
         }
         .padding(.vertical, 8)
         .themedRowHover()
+        .accessibilityIdentifier("dashboard.issue.\(issue.id)")
     }
 
     private var isOpen: Bool {
@@ -1128,6 +1046,7 @@ struct WorkspaceSummaryRow: View {
         }
         .padding(.vertical, 8)
         .themedRowHover()
+        .accessibilityIdentifier("dashboard.workspace.\(workspace.id)")
     }
 
     private var statusColor: Color {
@@ -1206,6 +1125,7 @@ struct RunRow: View {
         }
         .padding(.vertical, 8)
         .themedRowHover()
+        .accessibilityIdentifier("dashboard.run.\(run.id)")
     }
 
     private var nodeProgressText: String {
@@ -1253,6 +1173,7 @@ struct WorkflowRow: View {
         }
         .padding(.vertical, 8)
         .themedRowHover()
+        .accessibilityIdentifier("dashboard.workflow.\(workflow.id)")
     }
 
     private func workflowStatusColor(_ status: WorkflowStatus) -> Color {
@@ -1292,6 +1213,7 @@ struct ApprovalRow: View {
         }
         .padding(.vertical, 8)
         .themedRowHover()
+        .accessibilityIdentifier("dashboard.approval.\(approval.id)")
     }
 }
 

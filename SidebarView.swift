@@ -32,6 +32,7 @@ enum NavDestination: Hashable {
     case runInspect(runId: String, workflowName: String?)
     case workspaces
     case logs
+    case settings
 
     var isTerminal: Bool {
         if case .terminal = self { return true }
@@ -66,6 +67,7 @@ enum NavDestination: Hashable {
         case .issues: return "Issues"
         case .workspaces: return "Workspaces"
         case .logs: return "Logs"
+        case .settings: return "Settings"
         }
     }
 
@@ -96,6 +98,7 @@ enum NavDestination: Hashable {
         case .issues: return "exclamationmark.circle"
         case .workspaces: return "desktopcomputer"
         case .logs: return "doc.text.below.ecg"
+        case .settings: return "gearshape"
         }
     }
 }
@@ -104,6 +107,7 @@ enum NavDestination: Hashable {
 
 struct SidebarView: View {
     @ObservedObject var store: SessionStore
+    @ObservedObject private var surfaceNotifications = SurfaceNotificationStore.shared
     @Binding var destination: NavDestination
     @Binding private var developerDebugPanelVisible: Bool
     @State private var searchText: String = ""
@@ -111,8 +115,12 @@ struct SidebarView: View {
     @State private var vcsCollapsed = true
     @State private var renameSessionID: String?
     @State private var renameSessionTitle: String = ""
+    @State private var renameTerminalID: String?
+    @State private var renameTerminalTitle: String = ""
     @State private var deleteSessionID: String?
     @State private var deleteSessionTitle: String = ""
+    @State private var terminateTerminalID: String?
+    @State private var terminateTerminalTitle: String = ""
     private let developerDebugAvailable: Bool
 
     init(
@@ -175,6 +183,18 @@ struct SidebarView: View {
                     .padding(.top, 14)
                     .padding(.bottom, 8)
 
+                    CollapsibleSidebarSection(title: "SMITHERS", isCollapsed: $smithersCollapsed) {
+                        ForEach(smithersNav, id: \.self) { nav in
+                            navRow(for: nav)
+                        }
+                    }
+
+                    CollapsibleSidebarSection(title: "VCS", isCollapsed: $vcsCollapsed) {
+                        ForEach(vcsNav, id: \.self) { nav in
+                            navRow(for: nav)
+                        }
+                    }
+
                     SidebarSection(title: "TABS") {
                         NewChatMenuRow(
                             newChatAction: startNewChat,
@@ -202,9 +222,22 @@ struct SidebarView: View {
                     }
                 }
             }
+
+            VStack(spacing: 0) {
+                Divider().background(Theme.border)
+                NavRow(
+                    icon: NavDestination.settings.icon,
+                    label: NavDestination.settings.label,
+                    isSelected: destination == .settings
+                ) {
+                    destination = .settings
+                }
+                .padding(.vertical, 8)
+            }
         }
         .alert("Rename thread", isPresented: renameAlertBinding) {
             TextField("Session title", text: $renameSessionTitle)
+                .accessibilityIdentifier("sidebar.rename.field")
             Button("Cancel", role: .cancel) {
                 renameSessionID = nil
                 renameSessionTitle = ""
@@ -218,6 +251,23 @@ struct SidebarView: View {
             }
         } message: {
             Text("Enter a new title for this thread.")
+        }
+        .alert("Rename terminal", isPresented: renameTerminalAlertBinding) {
+            TextField("Terminal title", text: $renameTerminalTitle)
+                .accessibilityIdentifier("sidebar.renameTerminal.field")
+            Button("Cancel", role: .cancel) {
+                renameTerminalID = nil
+                renameTerminalTitle = ""
+            }
+            Button("Save") {
+                if let terminalID = renameTerminalID {
+                    store.renameTerminalTab(terminalID, to: renameTerminalTitle)
+                }
+                renameTerminalID = nil
+                renameTerminalTitle = ""
+            }
+        } message: {
+            Text("Enter a new title for this terminal.")
         }
         .alert("Delete Session?", isPresented: deleteAlertBinding) {
             Button("Cancel", role: .cancel) {
@@ -233,6 +283,20 @@ struct SidebarView: View {
             }
         } message: {
             Text("This permanently removes \"\(deleteSessionTitle)\" and its chat history.")
+        }
+        .confirmationDialog(
+            "Terminate Terminal?",
+            isPresented: terminateTerminalConfirmationBinding,
+            titleVisibility: .visible
+        ) {
+            Button("Terminate Terminal", role: .destructive) {
+                confirmTerminateTerminal()
+            }
+            Button("Cancel", role: .cancel) {
+                clearTerminateTerminalSelection()
+            }
+        } message: {
+            Text("Terminate \"\(terminateTerminalTitle)\"? This will stop the terminal session and close the tab. This action cannot be undone.")
         }
         .background(Theme.sidebarBg)
         .accessibilityIdentifier("sidebar")
@@ -281,6 +345,8 @@ struct SidebarView: View {
             .padding(.bottom, 4)
 
             let groups = ["Pinned", "Today", "Yesterday", "Older"]
+            let _ = surfaceNotifications.unreadSurfaceIds
+            let _ = surfaceNotifications.focusedIndicatorSurfaceIds
             let allTabs = store.sidebarTabs(matching: searchText)
 
             if allTabs.isEmpty {
@@ -353,11 +419,27 @@ struct SidebarView: View {
                                 .disabled(!store.canArchiveSession(sessionID))
                             }
                             if tab.kind == .terminal, let terminalId = tab.terminalId {
-                                Button("Close Terminal", role: .destructive) {
-                                    if case .terminal(let activeId) = destination, activeId == terminalId {
-                                        destination = .dashboard
-                                    }
-                                    store.removeTerminalTab(terminalId)
+                                Button(tab.isPinned ? "Unpin terminal" : "Pin terminal") {
+                                    store.toggleTerminalPinned(terminalId)
+                                }
+                                Button("Rename terminal") {
+                                    beginRenameTerminal(terminalID: terminalId, currentTitle: tab.title)
+                                }
+                                Divider()
+                                Button("Copy working directory") {
+                                    copyTextToClipboard(tab.workingDirectory ?? store.terminalWorkingDirectory(terminalId) ?? "")
+                                }
+                                .disabled((tab.workingDirectory ?? store.terminalWorkingDirectory(terminalId)) == nil)
+                                Button("Copy terminal ID") {
+                                    copyTextToClipboard(terminalId)
+                                }
+                                Button("Copy tmux attach command") {
+                                    copyTextToClipboard(store.terminalAttachCommand(terminalId) ?? "")
+                                }
+                                .disabled(store.terminalAttachCommand(terminalId) == nil)
+                                Divider()
+                                Button("Terminate terminal", role: .destructive) {
+                                    requestTerminateTerminal(terminalId: terminalId, title: tab.title)
                                 }
                             }
                         }
@@ -382,6 +464,17 @@ struct SidebarView: View {
             if let terminalId = tab.terminalId {
                 destination = .terminal(id: terminalId)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func navRow(for nav: NavDestination) -> some View {
+        NavRow(
+            icon: nav.icon,
+            label: nav.label,
+            isSelected: isSelected(nav)
+        ) {
+            destination = nav
         }
     }
 
@@ -421,6 +514,18 @@ struct SidebarView: View {
         )
     }
 
+    private var renameTerminalAlertBinding: Binding<Bool> {
+        Binding(
+            get: { renameTerminalID != nil },
+            set: { presented in
+                if !presented {
+                    renameTerminalID = nil
+                    renameTerminalTitle = ""
+                }
+            }
+        )
+    }
+
     private var deleteAlertBinding: Binding<Bool> {
         Binding(
             get: { deleteSessionID != nil },
@@ -433,9 +538,44 @@ struct SidebarView: View {
         )
     }
 
+    private var terminateTerminalConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { terminateTerminalID != nil },
+            set: { presented in
+                if !presented {
+                    clearTerminateTerminalSelection()
+                }
+            }
+        )
+    }
+
+    private func requestTerminateTerminal(terminalId: String, title: String) {
+        terminateTerminalID = terminalId
+        terminateTerminalTitle = title
+    }
+
+    private func confirmTerminateTerminal() {
+        guard let terminalId = terminateTerminalID else { return }
+        if case .terminal(let activeId) = destination, activeId == terminalId {
+            destination = .dashboard
+        }
+        store.removeTerminalTab(terminalId)
+        clearTerminateTerminalSelection()
+    }
+
+    private func clearTerminateTerminalSelection() {
+        terminateTerminalID = nil
+        terminateTerminalTitle = ""
+    }
+
     private func beginRenameSession(sessionID: String, currentTitle: String) {
         renameSessionID = sessionID
         renameSessionTitle = currentTitle
+    }
+
+    private func beginRenameTerminal(terminalID: String, currentTitle: String) {
+        renameTerminalID = terminalID
+        renameTerminalTitle = currentTitle
     }
 
     private func beginDeleteSession(sessionID: String, currentTitle: String) {

@@ -292,6 +292,7 @@ struct DeveloperDebugPanel: View {
             }
             .pickerStyle(.segmented)
             .padding(12)
+            .accessibilityIdentifier("developerDebug.tabPicker")
 
             Divider()
                 .overlay(Theme.border)
@@ -338,6 +339,7 @@ struct DeveloperDebugPanel: View {
                 .controlSize(.small)
                 .labelsHidden()
                 .help("Auto refresh diagnostics")
+                .accessibilityIdentifier("developerDebug.autoRefresh")
 
             Button {
                 Task { await refreshDiagnostics() }
@@ -346,12 +348,14 @@ struct DeveloperDebugPanel: View {
             }
             .buttonStyle(.plain)
             .help("Refresh diagnostics")
+            .accessibilityIdentifier("developerDebug.refresh")
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.plain)
             .help("Close developer debug")
+            .accessibilityIdentifier("developerDebug.close")
         }
         .padding(.horizontal, 12)
         .frame(height: 44)
@@ -423,14 +427,17 @@ struct DeveloperDebugPanel: View {
                         }
                     }
                     .frame(width: 110)
+                    .accessibilityIdentifier("developerDebug.logs.levelFilter")
 
                     TextField("Search logs", text: $logSearchText)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("developerDebug.logs.search")
 
                     Button(action: onOpenLogs) {
                         Image(systemName: "arrow.up.right.square")
                     }
                     .help("Open full log viewer")
+                    .accessibilityIdentifier("developerDebug.logs.openFull")
                 }
             }
             .padding(12)
@@ -758,6 +765,8 @@ extension NavDestination {
             return "tickets"
         case .issues:
             return "issues"
+        case .settings:
+            return "settings"
         case .workspaces:
             return "workspaces"
         case .logs:

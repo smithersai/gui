@@ -127,7 +127,9 @@ struct ChatView: View {
     var onSendRequest: ((ChatSendRequest) -> Void)? = nil
     var smithers: SmithersClient? = nil
     var onNavigate: ((NavDestination) -> Void)? = nil
+    var onLaunchExternalAgent: ((ChatTargetOption) -> Void)? = nil
     var onToggleDeveloperDebug: (() -> Void)? = nil
+    var developerToolsEnabled: Bool = false
     var onNewChat: (() -> Void)? = nil
     var onRunStarted: ((String, String?) -> Void)? = nil
     var codexModelSelection: CodexModelSelection = .fallback
@@ -1038,11 +1040,15 @@ struct ChatView: View {
 
         // Launch in embedded terminal
         showTargetPicker = false
-        onNavigate?(.terminalCommand(
-            binary: target.binary,
-            workingDirectory: agent.workingDirectory,
-            name: target.name
-        ))
+        if let onLaunchExternalAgent {
+            onLaunchExternalAgent(target)
+        } else {
+            onNavigate?(.terminalCommand(
+                binary: target.binary,
+                workingDirectory: agent.workingDirectory,
+                name: target.name
+            ))
+        }
     }
 
     private func loadChatTargetsIfNeeded() async {
@@ -1156,7 +1162,7 @@ struct ChatView: View {
             inputText: inputText,
             commands: slashCommands,
             chatReady: chatReady,
-            developerDebugEnabled: DeveloperDebugMode.isEnabled,
+            developerDebugEnabled: developerToolsEnabled,
             canNavigate: onNavigate != nil,
             canToggleDeveloperDebug: onToggleDeveloperDebug != nil,
             canStartNewChat: onNewChat != nil,
@@ -3008,9 +3014,10 @@ struct MessageRow: View {
                     VStack(alignment: .leading, spacing: 8) {
                         ZStack(alignment: .topLeading) {
                             SyntaxHighlightedText(diff.snippet, font: .system(size: 11, design: .monospaced))
+                                .textSelection(.enabled)
                             Text(diff.snippet)
                                 .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.clear)
+                                .foregroundColor(Theme.textPrimary.opacity(0))
                                 .textSelection(.enabled)
                         }
                         HStack(spacing: 12) {

@@ -7,6 +7,7 @@ struct Session: Identifiable {
     var title: String
     var preview: String
     var timestamp: Date
+    let createdAt: Date
     var agent: AgentService
     var codexSelection: CodexModelSelection = .fallback
     var codexApprovalSelection: CodexApprovalSelection = .fallback
@@ -33,12 +34,14 @@ enum SessionForkError: LocalizedError {
 }
 
 @MainActor
-class SessionStore: ObservableObject {
-    nonisolated static let defaultChatTitle = "Claude Code"
+class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
+    nonisolated static let defaultChatTitle = "New Chat"
+    private nonisolated static let legacyDefaultChatTitle = "Claude Code"
 
     @Published var sessions: [Session] = []
     @Published var runTabs: [RunTab] = []
     @Published var terminalTabs: [TerminalTab] = []
+    @Published var terminalWorkspaces: [String: TerminalWorkspace] = [:]
     @Published var activeSessionId: String?
     @Published var codexSelectionDefaults: CodexModelSelection
     @Published var codexApprovalDefaults: CodexApprovalSelection
@@ -57,10 +60,14 @@ class SessionStore: ObservableObject {
 
     private let persistence: SessionPersisting?
     private let workingDirectory: String
+    private let userDefaults: UserDefaults
     private var messageCancellables: [String: AnyCancellable] = [:]
     private var loadedSessionMessageIDs: Set<String> = []
     private var persistenceSuppressedSessionIDs: Set<String> = []
     private var persistedMessageStateBySessionID: [String: [String: PersistedMessageState]] = [:]
+    private var persistedTerminalWorkspaceSnapshots: [String: TerminalWorkspaceSnapshot] = [:]
+    private let terminalWorkspaceEncoder = JSONEncoder()
+    private let terminalWorkspaceDecoder = JSONDecoder()
 
     var activeSession: Session? {
         sessions.first { $0.id == activeSessionId }
@@ -78,21 +85,35 @@ class SessionStore: ObservableObject {
         activeSession?.codexApprovalSelection
     }
 
-    init(workingDirectory: String? = nil, persistence: SessionPersisting? = nil) {
+    var workspaceRootPath: String {
+        workingDirectory
+    }
+
+    init(
+        workingDirectory: String? = nil,
+        persistence: SessionPersisting? = nil,
+        userDefaults: UserDefaults = .standard
+    ) {
         let cwd = CWDResolver.resolve(workingDirectory)
         self.workingDirectory = cwd
+        self.userDefaults = userDefaults
         codexSelectionDefaults = CodexModelConfigStore.loadSelection(cwd: cwd)
         codexApprovalDefaults = CodexApprovalConfigStore.loadSelection(cwd: cwd)
         if let persistence {
             self.persistence = persistence
-        } else if UITestSupport.isRunningUnitTests {
+        } else if UITestSupport.isRunningUnitTests || UITestSupport.isEnabled {
             self.persistence = nil
         } else {
             self.persistence = SQLiteSessionPersistence(workingDirectory: cwd)
         }
 
+        terminalWorkspaceEncoder.dateEncodingStrategy = .secondsSince1970
+        terminalWorkspaceDecoder.dateDecodingStrategy = .secondsSince1970
+
         AppLogger.state.info("SessionStore init")
-        if !loadPersistedSessions() {
+        let loadedSessions = loadPersistedSessions()
+        loadPersistedTerminalTabs()
+        if !loadedSessions {
             newSession()
         }
     }
@@ -119,11 +140,13 @@ class SessionStore: ObservableObject {
             approvalPolicyOverride: initialApprovalSelection.approvalPolicy,
             sandboxModeOverride: initialApprovalSelection.sandboxMode
         )
+        let now = Date()
         let session = Session(
             id: id,
             title: Self.defaultChatTitle,
             preview: "",
-            timestamp: Date(),
+            timestamp: now,
+            createdAt: now,
             agent: agent,
             codexSelection: initialSelection,
             codexApprovalSelection: initialApprovalSelection
@@ -252,6 +275,36 @@ class SessionStore: ObservableObject {
     }
 
     @discardableResult
+    func discardSessionIfEmpty(_ id: String) -> Bool {
+        guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return false }
+        let session = sessions[idx]
+        guard session.preview.isEmpty,
+              session.agent.messages.isEmpty,
+              !session.agent.isRunning
+        else {
+            return false
+        }
+
+        sessions.remove(at: idx)
+        messageCancellables[id] = nil
+        loadedSessionMessageIDs.remove(id)
+        persistenceSuppressedSessionIDs.remove(id)
+        persistedMessageStateBySessionID[id] = nil
+        persistDeleteSession(id)
+
+        if activeSessionId == id {
+            if let next = sessions.first(where: { !$0.isArchived }) {
+                activeSessionId = next.id
+                loadSessionMessages(sessionID: next.id, force: false)
+            } else {
+                activeSessionId = nil
+            }
+        }
+
+        return true
+    }
+
+    @discardableResult
     func addRunTab(runId: String, title: String?, preview: String? = nil) -> String {
         let displayTitle = runTabTitle(runId: runId, title: title)
         let displayPreview = runTabPreview(preview)
@@ -265,7 +318,7 @@ class SessionStore: ObservableObject {
             runTabs.insert(tab, at: 0)
         } else {
             runTabs.insert(
-                RunTab(runId: runId, title: displayTitle, preview: displayPreview, timestamp: now),
+                RunTab(runId: runId, title: displayTitle, preview: displayPreview, timestamp: now, createdAt: now),
                 at: 0
             )
         }
@@ -273,34 +326,220 @@ class SessionStore: ObservableObject {
         return runId
     }
 
+    func removeRunTab(_ runId: String) {
+        runTabs.removeAll { $0.runId == runId }
+    }
+
     @discardableResult
-    func addTerminalTab() -> String {
+    func addTerminalTab(
+        title requestedTitle: String? = nil,
+        workingDirectory requestedWorkingDirectory: String? = nil,
+        command: String? = nil
+    ) -> String {
         let id = UUID().uuidString
         let tabNumber = terminalTabs.count + 1
+        let title = normalizedOptionalText(requestedTitle) ?? "Terminal \(tabNumber)"
+        let cwd = normalizedOptionalText(requestedWorkingDirectory) ?? workingDirectory
+        let rootSurfaceId = TmuxController.rootSurfaceId(for: id)
+        let socketName = TmuxController.socketName(for: cwd)
+        let sessionName = TmuxController.sessionName(for: rootSurfaceId)
         AppLogger.state.info("SessionStore addTerminalTab", metadata: ["id": String(id.prefix(8))])
+        let workspace = TerminalWorkspace(
+            id: id,
+            title: title,
+            workingDirectory: cwd,
+            command: command,
+            rootSurfaceId: rootSurfaceId,
+            backend: .tmux,
+            tmuxSocketName: socketName
+        )
+        attachTerminalWorkspaceChangeHandler(workspace)
+        terminalWorkspaces[id] = workspace
+        let now = Date()
         terminalTabs.insert(
             TerminalTab(
                 terminalId: id,
-                title: "Terminal \(tabNumber)",
-                preview: "Shell session",
-                timestamp: Date()
+                title: title,
+                preview: command ?? workspace.displayPreview,
+                timestamp: now,
+                createdAt: now,
+                workingDirectory: cwd,
+                command: command,
+                backend: .tmux,
+                rootSurfaceId: rootSurfaceId,
+                tmuxSocketName: socketName,
+                tmuxSessionName: sessionName
             ),
             at: 0
         )
+        persistTerminalTab(id)
         return id
+    }
+
+    @discardableResult
+    func launchExternalAgentTab(name: String, command: String) -> String {
+        let placeholderSessionId = activeSessionId
+        let cwd = activeAgent?.workingDirectory ?? workingDirectory
+        let terminalId = addTerminalTab(
+            title: name,
+            workingDirectory: cwd,
+            command: Self.applyDefaultAgentFlags(command, userDefaults: userDefaults)
+        )
+        if let placeholderSessionId {
+            discardSessionIfEmpty(placeholderSessionId)
+        }
+        return terminalId
     }
 
     @discardableResult
     func ensureTerminalTab() -> String {
         if let terminalId = terminalTabs.first?.terminalId {
+            ensureTerminalWorkspace(terminalId)
             return terminalId
         }
         return addTerminalTab()
     }
 
+    @discardableResult
+    func ensureTerminalWorkspace(_ terminalId: String) -> TerminalWorkspace {
+        if let workspace = terminalWorkspaces[terminalId] {
+            workspace.prepareAllTerminalSessions()
+            return workspace
+        }
+
+        let tab = terminalTabs.first(where: { $0.terminalId == terminalId })
+        let title = tab?.title ?? "Terminal"
+        let cwd = normalizedOptionalText(tab?.workingDirectory) ?? workingDirectory
+        let socketName = normalizedOptionalText(tab?.tmuxSocketName) ?? TmuxController.socketName(for: cwd)
+        let workspace: TerminalWorkspace
+
+        if let snapshot = persistedTerminalWorkspaceSnapshots[terminalId] {
+            workspace = TerminalWorkspace(
+                id: terminalId,
+                snapshot: snapshot,
+                workingDirectory: cwd,
+                backend: tab?.backend ?? .tmux,
+                tmuxSocketName: socketName
+            )
+        } else {
+            workspace = TerminalWorkspace(
+                id: terminalId,
+                title: title,
+                workingDirectory: cwd,
+                command: tab?.command,
+                rootSurfaceId: tab?.rootSurfaceId ?? TmuxController.rootSurfaceId(for: terminalId),
+                backend: tab?.backend ?? .tmux,
+                tmuxSocketName: socketName
+            )
+        }
+        attachTerminalWorkspaceChangeHandler(workspace)
+        terminalWorkspaces[terminalId] = workspace
+        syncTerminalTabMetadata(from: workspace)
+
+        if !terminalTabs.contains(where: { $0.terminalId == terminalId }) {
+            let rootSurfaceId = TmuxController.rootSurfaceId(for: terminalId)
+            let now = Date()
+            terminalTabs.insert(
+                TerminalTab(
+                    terminalId: terminalId,
+                    title: title,
+                    preview: "Shell session",
+                    timestamp: now,
+                    createdAt: now,
+                    workingDirectory: cwd,
+                    backend: .tmux,
+                    rootSurfaceId: rootSurfaceId,
+                    tmuxSocketName: socketName,
+                    tmuxSessionName: TmuxController.sessionName(for: rootSurfaceId)
+                ),
+                at: 0
+            )
+            persistTerminalTab(terminalId)
+        }
+
+        return workspace
+    }
+
+    func terminalWorkspaceIfAvailable(_ terminalId: String) -> TerminalWorkspace? {
+        terminalWorkspaces[terminalId]
+    }
+
+    func renameTerminalTab(_ terminalId: String, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }) else { return }
+
+        terminalTabs[idx].title = trimmed
+        terminalTabs[idx].timestamp = Date()
+        if let workspace = terminalWorkspaces[terminalId] {
+            workspace.updateWorkspaceTitle(trimmed)
+        }
+        persistTerminalTab(terminalId)
+    }
+
+    func toggleTerminalPinned(_ terminalId: String) {
+        guard let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }) else { return }
+        terminalTabs[idx].isPinned.toggle()
+        terminalTabs[idx].timestamp = Date()
+        persistTerminalTab(terminalId)
+    }
+
+    func terminalWorkingDirectory(_ terminalId: String) -> String? {
+        if let workspace = terminalWorkspaces[terminalId],
+           let cwd = workspace.orderedSurfaces.first(where: { $0.kind == .terminal })?.terminalWorkingDirectory {
+            return normalizedOptionalText(cwd)
+        }
+        return normalizedOptionalText(terminalTabs.first(where: { $0.terminalId == terminalId })?.workingDirectory)
+    }
+
+    func terminalAttachCommand(_ terminalId: String) -> String? {
+        if let workspace = terminalWorkspaces[terminalId],
+           let surface = workspace.orderedSurfaces.first(where: { $0.kind == .terminal }) {
+            return TmuxController.attachCommand(
+                socketName: surface.tmuxSocketName,
+                sessionName: surface.tmuxSessionName
+            )
+        }
+        guard let tab = terminalTabs.first(where: { $0.terminalId == terminalId }) else { return nil }
+        return TmuxController.attachCommand(
+            socketName: tab.tmuxSocketName,
+            sessionName: tab.tmuxSessionName
+        )
+    }
+
     func removeTerminalTab(_ terminalId: String) {
+        if let workspace = terminalWorkspaces.removeValue(forKey: terminalId) {
+            let snapshot = workspace.snapshot
+            for surface in snapshot.surfaces {
+                SurfaceNotificationStore.shared.unregister(surfaceId: surface.id)
+                switch surface.kind {
+                case .terminal:
+                    TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id)
+                case .browser:
+                    BrowserSurfaceRegistry.shared.remove(surfaceId: surface.id)
+                }
+            }
+            terminateTmuxSessions(in: snapshot)
+        } else if let snapshot = persistedTerminalWorkspaceSnapshots[terminalId] {
+            for surface in snapshot.surfaces {
+                SurfaceNotificationStore.shared.unregister(surfaceId: surface.id)
+                if surface.kind == .terminal {
+                    TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id)
+                } else if surface.kind == .browser {
+                    BrowserSurfaceRegistry.shared.remove(surfaceId: surface.id)
+                }
+            }
+            terminateTmuxSessions(in: snapshot)
+        } else if let tab = terminalTabs.first(where: { $0.terminalId == terminalId }) {
+            TmuxController.terminateSession(
+                socketName: tab.tmuxSocketName,
+                sessionName: tab.tmuxSessionName
+            )
+        }
         terminalTabs.removeAll { $0.terminalId == terminalId }
+        persistedTerminalWorkspaceSnapshots[terminalId] = nil
         TerminalSurfaceRegistry.shared.deregister(sessionId: terminalId)
+        persistDeleteTerminalTab(terminalId)
     }
 
     @discardableResult
@@ -349,7 +588,7 @@ class SessionStore: ObservableObject {
                 let newTitle = runTabTitle(runId: run.runId, title: run.workflowName)
                 let newPreview = runPreview(for: run)
                 if existing.title != newTitle || existing.preview != newPreview {
-                    runTabs[idx] = RunTab(runId: existing.runId, title: newTitle, preview: newPreview, timestamp: existing.timestamp)
+                    runTabs[idx] = RunTab(runId: existing.runId, title: newTitle, preview: newPreview, timestamp: existing.timestamp, createdAt: existing.createdAt)
                 }
                 continue
             }
@@ -359,7 +598,8 @@ class SessionStore: ObservableObject {
                     runId: run.runId,
                     title: runTabTitle(runId: run.runId, title: run.workflowName),
                     preview: runPreview(for: run),
-                    timestamp: now
+                    timestamp: now,
+                    createdAt: now
                 ),
                 at: 0
             )
@@ -444,6 +684,7 @@ class SessionStore: ObservableObject {
                 title: session.title,
                 preview: session.preview,
                 date: session.timestamp,
+                createdDate: session.createdAt,
                 now: now,
                 isPinned: session.isPinned,
                 isArchived: session.isArchived,
@@ -462,20 +703,28 @@ class SessionStore: ObservableObject {
                 title: tab.title,
                 preview: tab.preview,
                 date: tab.timestamp,
+                createdDate: tab.createdAt,
                 now: now
             )
         }
-        let terminalTabs = terminalTabs.map { tab in
-            makeSidebarTab(
+        let terminalTabs: [SidebarTab] = terminalTabs.map { tab in
+            let workspace = terminalWorkspaces[tab.terminalId]
+            let hasWorkspaceIndicator = SurfaceNotificationStore.shared.workspaceHasIndicator(tab.terminalId)
+            return makeSidebarTab(
                 id: "terminal:\(tab.terminalId)",
                 kind: .terminal,
                 chatSessionId: nil,
                 runId: nil,
                 terminalId: tab.terminalId,
-                title: tab.title,
-                preview: tab.preview,
+                title: workspace?.title ?? tab.title,
+                preview: workspace?.displayPreview ?? tab.preview,
                 date: tab.timestamp,
-                now: now
+                createdDate: tab.createdAt,
+                now: now,
+                isPinned: tab.isPinned,
+                isUnread: hasWorkspaceIndicator,
+                workingDirectory: terminalWorkingDirectory(tab.terminalId),
+                sessionIdentifier: tab.tmuxSessionName ?? tab.terminalId
             )
         }
 
@@ -535,6 +784,7 @@ class SessionStore: ObservableObject {
                     title: summary.title,
                     preview: summary.preview,
                     timestamp: summary.updatedAt,
+                    createdAt: summary.createdAt,
                     agent: agent,
                     codexSelection: codexSelectionDefaults,
                     codexApprovalSelection: codexApprovalDefaults,
@@ -560,6 +810,40 @@ class SessionStore: ObservableObject {
                 "error": String(describing: error),
             ])
             return false
+        }
+    }
+
+    private func loadPersistedTerminalTabs() {
+        guard let persistence else { return }
+
+        do {
+            let persisted = try persistence.loadTerminalTabs()
+            terminalTabs = persisted.map { tab in
+                TerminalTab(
+                    terminalId: tab.id,
+                    title: tab.title,
+                    preview: tab.preview,
+                    timestamp: tab.updatedAt,
+                    createdAt: tab.createdAt,
+                    workingDirectory: tab.workingDirectory,
+                    command: tab.command,
+                    backend: tab.backend,
+                    rootSurfaceId: tab.rootSurfaceId,
+                    tmuxSocketName: tab.tmuxSocketName,
+                    tmuxSessionName: tab.tmuxSessionName,
+                    isPinned: tab.isPinned
+                )
+            }
+
+            persistedTerminalWorkspaceSnapshots = [:]
+            for tab in persisted {
+                guard let snapshot = decodeTerminalWorkspaceSnapshot(tab.workspaceStateJSON) else { continue }
+                persistedTerminalWorkspaceSnapshots[tab.id] = snapshot
+            }
+        } catch {
+            AppLogger.state.warning("SessionStore failed to load persisted terminal tabs", metadata: [
+                "error": String(describing: error),
+            ])
         }
     }
 
@@ -755,6 +1039,117 @@ class SessionStore: ObservableObject {
         }
     }
 
+    private func attachTerminalWorkspaceChangeHandler(_ workspace: TerminalWorkspace) {
+        workspace.changeDelegate = self
+    }
+
+    func terminalWorkspaceDidChange(_ workspace: TerminalWorkspace) {
+        syncTerminalTabMetadata(from: workspace)
+    }
+
+    private func syncTerminalTabMetadata(from workspace: TerminalWorkspace) {
+        guard let idx = terminalTabs.firstIndex(where: { $0.terminalId == workspace.id }) else { return }
+
+        let firstTerminal = workspace.orderedSurfaces.first { $0.kind == .terminal }
+        terminalTabs[idx].title = workspace.title
+        terminalTabs[idx].preview = workspace.displayPreview
+        terminalTabs[idx].workingDirectory = firstTerminal?.terminalWorkingDirectory ?? terminalTabs[idx].workingDirectory
+        terminalTabs[idx].rootSurfaceId = firstTerminal?.id ?? terminalTabs[idx].rootSurfaceId
+        terminalTabs[idx].tmuxSocketName = firstTerminal?.tmuxSocketName ?? terminalTabs[idx].tmuxSocketName
+        terminalTabs[idx].tmuxSessionName = firstTerminal?.tmuxSessionName ?? terminalTabs[idx].tmuxSessionName
+        terminalTabs[idx].timestamp = Date()
+        persistedTerminalWorkspaceSnapshots[workspace.id] = workspace.snapshot
+        persistTerminalTab(workspace.id)
+    }
+
+    private func persistTerminalTab(_ terminalId: String) {
+        guard let persistence,
+              let tab = terminalTabs.first(where: { $0.terminalId == terminalId })
+        else {
+            return
+        }
+
+        let workspace = terminalWorkspaces[terminalId]
+        let snapshot = workspace?.snapshot ?? persistedTerminalWorkspaceSnapshots[terminalId]
+        let firstTerminal = snapshot?.surfaces.first { $0.kind == .terminal }
+        let workspaceStateJSON = encodeTerminalWorkspaceSnapshot(snapshot)
+
+        let persisted = PersistedTerminalTab(
+            id: tab.terminalId,
+            title: workspace?.title ?? tab.title,
+            preview: workspace?.displayPreview ?? tab.preview,
+            updatedAt: tab.timestamp,
+            createdAt: tab.timestamp,
+            workingDirectory: firstTerminal?.terminalWorkingDirectory ?? tab.workingDirectory,
+            command: firstTerminal?.terminalCommand ?? tab.command,
+            backend: firstTerminal?.terminalBackend ?? tab.backend,
+            rootSurfaceId: firstTerminal?.id ?? tab.rootSurfaceId,
+            tmuxSocketName: firstTerminal?.tmuxSocketName ?? tab.tmuxSocketName,
+            tmuxSessionName: firstTerminal?.tmuxSessionName ?? tab.tmuxSessionName,
+            workspaceStateJSON: workspaceStateJSON,
+            isPinned: tab.isPinned
+        )
+
+        do {
+            try persistence.upsertTerminalTab(persisted)
+        } catch {
+            AppLogger.state.warning("SessionStore failed to persist terminal tab", metadata: [
+                "terminal_id": String(terminalId.prefix(8)),
+                "error": String(describing: error),
+            ])
+        }
+    }
+
+    private func persistDeleteTerminalTab(_ terminalId: String) {
+        guard let persistence else { return }
+        do {
+            try persistence.deleteTerminalTab(id: terminalId)
+        } catch {
+            AppLogger.state.warning("SessionStore failed to delete terminal tab", metadata: [
+                "terminal_id": String(terminalId.prefix(8)),
+                "error": String(describing: error),
+            ])
+        }
+    }
+
+    private func encodeTerminalWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot?) -> String? {
+        guard let snapshot else { return nil }
+        do {
+            let data = try terminalWorkspaceEncoder.encode(snapshot)
+            return String(data: data, encoding: .utf8)
+        } catch {
+            AppLogger.state.warning("SessionStore failed to encode terminal workspace snapshot", metadata: [
+                "error": String(describing: error),
+            ])
+            return nil
+        }
+    }
+
+    private func decodeTerminalWorkspaceSnapshot(_ value: String?) -> TerminalWorkspaceSnapshot? {
+        guard let value,
+              let data = value.data(using: .utf8)
+        else {
+            return nil
+        }
+        do {
+            return try terminalWorkspaceDecoder.decode(TerminalWorkspaceSnapshot.self, from: data)
+        } catch {
+            AppLogger.state.warning("SessionStore failed to decode terminal workspace snapshot", metadata: [
+                "error": String(describing: error),
+            ])
+            return nil
+        }
+    }
+
+    private func terminateTmuxSessions(in snapshot: TerminalWorkspaceSnapshot) {
+        for surface in snapshot.surfaces where surface.kind == .terminal {
+            TmuxController.terminateSession(
+                socketName: surface.tmuxSocketName,
+                sessionName: surface.tmuxSessionName
+            )
+        }
+    }
+
     @discardableResult
     private func forkSession(_ id: String, workingDirectory: String?) -> String? {
         guard let source = sessions.first(where: { $0.id == id }) else { return nil }
@@ -770,11 +1165,13 @@ class SessionStore: ObservableObject {
         )
         agent.messages = Self.copiedMessagesForFork(source.agent.messages)
 
+        let now = Date()
         let session = Session(
             id: forkID,
             title: Self.forkedTitle(from: source.title),
             preview: source.preview,
-            timestamp: Date(),
+            timestamp: now,
+            createdAt: now,
             agent: agent,
             codexSelection: source.codexSelection,
             codexApprovalSelection: source.codexApprovalSelection
@@ -897,6 +1294,49 @@ class SessionStore: ObservableObject {
         return String(collapsed.prefix(32))
     }
 
+    nonisolated static func applyDefaultAgentFlags(
+        _ command: String,
+        unsafeFlagsEnabled: Bool? = nil,
+        userDefaults: UserDefaults = .standard
+    ) -> String {
+        let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCommand.isEmpty else { return command }
+
+        let shouldApplyUnsafeFlags = unsafeFlagsEnabled ?? userDefaults.bool(
+            forKey: AppPreferenceKeys.externalAgentUnsafeFlagsEnabled
+        )
+        guard shouldApplyUnsafeFlags else { return command }
+
+        let executable = commandExecutableName(from: trimmedCommand)
+        switch executable {
+        case "claude":
+            return appendFlagIfMissing("--dangerously-skip-permissions", to: trimmedCommand)
+        case "gemini":
+            return appendFlagIfMissing("--yolo", to: trimmedCommand)
+        case "codex":
+            var updated = trimmedCommand
+            if !updated.contains("model_reasoning_effort") {
+                updated += " -c model_reasoning_effort=\"high\""
+            }
+            return appendFlagIfMissing("--yolo", to: updated)
+        default:
+            return trimmedCommand
+        }
+    }
+
+    private nonisolated static func commandExecutableName(from command: String) -> String {
+        let firstToken = command.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? command
+        return firstToken.split(separator: "/").last.map(String.init) ?? firstToken
+    }
+
+    private nonisolated static func appendFlagIfMissing(_ flag: String, to command: String) -> String {
+        let tokens = Set(command.split(whereSeparator: \.isWhitespace).map(String.init))
+        if tokens.contains(flag) {
+            return command
+        }
+        return "\(command) \(flag)"
+    }
+
     private func normalizedOptionalText(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
@@ -912,7 +1352,14 @@ class SessionStore: ObservableObject {
     }
 
     private func isPlaceholderTitle(_ title: String) -> Bool {
-        title == Self.defaultChatTitle || title == "New Chat"
+        Self.isPlaceholderChatTitle(title)
+    }
+
+    nonisolated static func isPlaceholderChatTitle(_ title: String) -> Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ||
+            trimmed == Self.defaultChatTitle ||
+            trimmed == Self.legacyDefaultChatTitle
     }
 
     private func runTabTitle(runId: String, title: String?) -> String {
@@ -942,6 +1389,7 @@ class SessionStore: ObservableObject {
         title: String,
         preview: String,
         date: Date,
+        createdDate: Date,
         now: Date,
         isPinned: Bool = false,
         isArchived: Bool = false,
@@ -958,8 +1406,8 @@ class SessionStore: ObservableObject {
             title: title,
             preview: preview,
             timestamp: Self.relativeTime(from: date, to: now),
-            group: isPinned ? "Pinned" : Self.groupLabel(for: date),
-            sortDate: date,
+            group: isPinned ? "Pinned" : Self.groupLabel(for: createdDate),
+            sortDate: createdDate,
             isPinned: isPinned,
             isArchived: isArchived,
             isUnread: isUnread,

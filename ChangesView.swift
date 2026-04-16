@@ -109,9 +109,11 @@ struct ChangesView: View {
                     Task { await deleteBookmark(named: bookmarkName) }
                 }
             }
+            .accessibilityIdentifier("changes.confirmDeleteBookmark")
             Button("Cancel", role: .cancel) {
                 pendingBookmarkDeleteName = nil
             }
+            .accessibilityIdentifier("changes.cancelDeleteBookmark")
         } message: {
             if let pendingBookmarkDeleteName {
                 Text("Delete bookmark \"\(pendingBookmarkDeleteName)\"? This action cannot be undone.")
@@ -145,6 +147,7 @@ struct ChangesView: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 190)
+            .accessibilityIdentifier("changes.modePicker")
 
             if isLoading {
                 ProgressView()
@@ -158,6 +161,7 @@ struct ChangesView: View {
                     .foregroundColor(Theme.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("changes.refreshButton")
         }
         .padding(.horizontal, 20)
         .frame(height: 48)
@@ -189,6 +193,7 @@ struct ChangesView: View {
                             .foregroundColor(Theme.textTertiary)
                     }
                     .frame(maxWidth: .infinity, minHeight: 200)
+                    .accessibilityIdentifier("changes.emptyState")
                 } else {
                     ForEach(changes) { change in
                         Button(action: { selectChange(change) }) {
@@ -231,6 +236,7 @@ struct ChangesView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("changes.row.\(change.changeID)")
 
                         Divider().background(Theme.border)
                     }
@@ -255,6 +261,7 @@ struct ChangesView: View {
                                     .padding(.vertical, 9)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("changes.tab.\(tab.rawValue.lowercased())")
                             .overlay(alignment: .bottom) {
                                 if detailTab == tab {
                                     Rectangle()
@@ -285,6 +292,7 @@ struct ChangesView: View {
                         .foregroundColor(Theme.textTertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("changes.noSelection")
             }
         }
         .background(Theme.surface1)
@@ -346,6 +354,7 @@ struct ChangesView: View {
                                     RoundedRectangle(cornerRadius: 6)
                                         .stroke(Theme.border, lineWidth: 1)
                                 )
+                                .accessibilityIdentifier("changes.bookmarkName")
 
                             Button(action: { Task { await createBookmark() } }) {
                                 HStack(spacing: 4) {
@@ -362,6 +371,7 @@ struct ChangesView: View {
                                 .cornerRadius(6)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("changes.createBookmark")
                             .disabled(actionInFlight || bookmarkName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
 
@@ -374,6 +384,7 @@ struct ChangesView: View {
                                 }
                                 .pickerStyle(.menu)
                                 .frame(maxWidth: 220, alignment: .leading)
+                                .accessibilityIdentifier("changes.bookmarkDeletePicker")
 
                                 Button(action: requestDeleteBookmark) {
                                     HStack(spacing: 4) {
@@ -388,6 +399,7 @@ struct ChangesView: View {
                                     .cornerRadius(6)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityIdentifier("changes.deleteBookmark")
                                 .disabled(actionInFlight || bookmarkToDelete.isEmpty)
                             }
                         }
@@ -416,6 +428,7 @@ struct ChangesView: View {
                 }
             }
         }
+        .textSelection(.enabled)
         .background(Theme.base)
     }
 
@@ -704,6 +717,7 @@ struct ChangesView: View {
             Button("Retry") { Task { await retry() } }
                 .buttonStyle(.plain)
                 .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("changes.retryButton")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
