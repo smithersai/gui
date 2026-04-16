@@ -1029,7 +1029,45 @@ struct ContentView: View {
                 .frame(width: 1, height: 1)
                 .opacity(0.01)
             }
+
+            if UITestSupport.isEnabled {
+                ForEach(uiTestNavDestinations, id: \.label) { item in
+                    Button(item.label) {
+                        destination = item.destination
+                    }
+                    .accessibilityIdentifier("nav.\(item.label.replacingOccurrences(of: " ", with: ""))")
+                    .frame(width: 1, height: 1)
+                    .opacity(0.01)
+                }
+            }
         }
+    }
+
+    private var uiTestNavDestinations: [(label: String, destination: NavDestination)] {
+        [
+            ("Dashboard", .dashboard),
+            ("VCSDashboard", .vcsDashboard),
+            ("Agents", .agents),
+            ("Changes", .changes),
+            ("Runs", .runs),
+            ("Snapshots", .snapshots),
+            ("Workflows", .workflows),
+            ("Triggers", .triggers),
+            ("JJHub Workflows", .jjhubWorkflows),
+            ("Approvals", .approvals),
+            ("Prompts", .prompts),
+            ("Scores", .scores),
+            ("Memory", .memory),
+            ("Search", .search),
+            ("SQL Browser", .sql),
+            ("Landings", .landings),
+            ("Tickets", .tickets),
+            ("Issues", .issues),
+            ("Workspaces", .workspaces),
+            ("Logs", .logs),
+            ("Chat", .chat),
+            ("Terminal", .terminal()),
+        ]
     }
 
     private func installKeyboardShortcutMonitor() {
