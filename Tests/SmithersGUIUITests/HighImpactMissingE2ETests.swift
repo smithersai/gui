@@ -255,24 +255,15 @@ final class HighImpactMissingE2ETests: SmithersGUIUITestCase {
         XCTAssertTrue(element("view.runinspect").waitForExistence(timeout: 5))
     }
 
-    func testLiveRunChatShowsLatestAttemptTranscriptAndContextPane() {
+    func testLiveRunDevToolsShowsTreeInspectorAndTabs() {
         navigate(to: "Runs", expectedViewIdentifier: "view.runs")
 
         waitForElement("runs.chat.ui-run-active-001").click()
         XCTAssertTrue(element("view.liveRun").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Live Run Chat"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Second attempt is active with updated context."].waitForExistence(timeout: 5))
-
-        let contextButton = app.buttons["Context"]
-        XCTAssertTrue(contextButton.waitForExistence(timeout: 5))
-        contextButton.click()
-
-        XCTAssertTrue(app.staticTexts["Context"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Workflow"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Deploy Preview"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Status"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["running"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Blocks"].waitForExistence(timeout: 5))
+        XCTAssertTrue(element("view.liveRunTreeHarness").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("liveRunTree.container").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("view.node.inspector").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("inspector.tab.switcher").waitForExistence(timeout: 5))
     }
 
     private func openWorkflowLaunchTab() {

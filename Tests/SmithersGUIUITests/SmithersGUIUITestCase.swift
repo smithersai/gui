@@ -49,43 +49,10 @@ class SmithersGUIUITestCase: XCTestCase {
 
     func navigate(to label: String, expectedViewIdentifier: String, file: StaticString = #filePath, line: UInt = #line) {
         let navIdentifier = "nav.\(label.replacingOccurrences(of: " ", with: ""))"
-        var nav = app.buttons[navIdentifier]
-        if !nav.waitForExistence(timeout: 1.5) {
-            expandSidebarSectionIfNeeded(for: label)
-            nav = app.buttons[navIdentifier]
-            if !nav.waitForExistence(timeout: 1.5) {
-                // Section toggles can land in the opposite state under UI-test timing.
-                // Try one more toggle before failing.
-                expandSidebarSectionIfNeeded(for: label)
-                nav = app.buttons[navIdentifier]
-            }
-        }
+        let nav = app.buttons[navIdentifier]
         XCTAssertTrue(nav.waitForExistence(timeout: 8), "Missing nav row for \(label)", file: file, line: line)
         nav.click()
         XCTAssertTrue(element(expectedViewIdentifier).waitForExistence(timeout: 8), "Missing view after navigating to \(label): \(expectedViewIdentifier)", file: file, line: line)
-    }
-
-    func expandSidebarSectionIfNeeded(for label: String) {
-        let smithersLabels: Set<String> = [
-            "Dashboard", "Agents", "Runs", "Snapshots", "Workflows", "Triggers", "Approvals",
-            "Prompts", "Scores", "Memory", "Search", "SQL Browser", "Workspaces",
-            "Logs",
-        ]
-        let vcsLabels: Set<String> = [
-            "Changes", "JJHub Workflows", "Landings", "Tickets", "Issues",
-        ]
-
-        if smithersLabels.contains(label) {
-            let section = app.buttons["sidebar.section.SMITHERS"]
-            if section.waitForExistence(timeout: 2) {
-                section.click()
-            }
-        } else if vcsLabels.contains(label) {
-            let section = app.buttons["sidebar.section.VCS"]
-            if section.waitForExistence(timeout: 2) {
-                section.click()
-            }
-        }
     }
 
     func chooseSmithersChatTargetIfNeeded(file: StaticString = #filePath, line: UInt = #line) {

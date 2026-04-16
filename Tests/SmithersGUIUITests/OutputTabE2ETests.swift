@@ -3,7 +3,10 @@ import AppKit
 
 final class OutputTabE2ETests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
-        ["SMITHERS_GUI_UITEST_TREE": "1"]
+        [
+            "SMITHERS_GUI_UITEST_TREE": "1",
+            "SMITHERS_GUI_UITEST_OPEN_TREE_ON_LAUNCH": "1",
+        ]
     }
 
     func testFinishedTaskRendersOutput() {
@@ -50,22 +53,7 @@ final class OutputTabE2ETests: SmithersGUIUITestCase {
     }
 
     private func openLiveRunTreeHarness() {
-        for _ in 0..<4 {
-            guard safeClick("nav.Runs", timeout: 8) else { continue }
-            if element("view.runs").waitForExistence(timeout: 5) {
-                break
-            }
-        }
-        XCTAssertTrue(element("view.runs").waitForExistence(timeout: 5))
-
-        for _ in 0..<4 {
-            guard safeClick("runs.chat.ui-run-active-001", timeout: 8) else { continue }
-            if element("view.liveRun").waitForExistence(timeout: 5) {
-                break
-            }
-        }
-
-        XCTAssertTrue(element("view.liveRun").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("view.liveRun").waitForExistence(timeout: 8))
         XCTAssertTrue(element("view.liveRunTreeHarness").waitForExistence(timeout: 5))
         XCTAssertTrue(element("tree.row.1").waitForExistence(timeout: 5))
     }
