@@ -784,8 +784,8 @@ class SmithersClient: ObservableObject {
         try await execBinaryArgs(bin: smithersBin, args: args, displayName: "smithers")
     }
 
-    private func execBinaryArgs(bin: String, args: [String], displayName: String, timeoutSeconds: Double = 30) async throws -> Data {
-        let cwd = self.cwd
+    private func execBinaryArgs(bin: String, args: [String], displayName: String, timeoutSeconds: Double = 30, workingDirectoryOverride: String? = nil) async throws -> Data {
+        let cwd = workingDirectoryOverride ?? self.cwd
         let cancellationBox = ProcessCancellationBox()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -1631,127 +1631,347 @@ class SmithersClient: ObservableObject {
         _ = try await execArgs(args)
     }
 
-    // MARK: - DevTools Stream
+    // MARK: - DevTools Stream (CLI + sqlite3 — primary path)
 
+    /// Streams DevTools snapshots derived from `smithers events <runId> --watch --json`
+    /// plus snapshots synthesized from the `_smithers_frames` sqlite table. An initial
+    /// snapshot is emitted immediately; every frame-related event re-snapshots so the
+    /// gui tree stays in sync without requiring a running `smithers --serve` server.
     func streamDevTools(runId: String, fromSeq: Int? = nil) -> AsyncThrowingStream<DevToolsEvent, Error> {
-        let encodedRunId = Self.encodedURLPathComponent(runId)
-        var path = "/v1/runs/\(encodedRunId)/devtools/stream"
-        if let fromSeq {
-            path += "?fromSeq=\(fromSeq)"
+        do {
+            try DevToolsInputValidator.validate(runId: runId)
+        } catch {
+            return AsyncThrowingStream { $0.finish(throwing: error) }
         }
 
-        guard let url = resolvedHTTPTransportURL(path: path) else {
-            return AsyncThrowingStream { $0.finish() }
-        }
-
-        let decoder = self.decoder
-        let session = self.streamSession
+        let smithersBin = self.smithersBin
+        let cwd = self.cwd
+        let dbPath = resolvedSmithersDBPath()
 
         return AsyncThrowingStream { continuation in
-            let task = Task.detached {
-                var request = URLRequest(url: url)
-                request.timeoutInterval = .infinity
-                request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
-                request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            let cancellationBox = ProcessCancellationBox()
 
-                AppLogger.network.info("DevTools SSE connect", metadata: [
+            continuation.onTermination = { @Sendable _ in
+                cancellationBox.cancel()
+            }
+
+            let task = Task.detached { [runId, smithersBin, cwd, dbPath] in
+                AppLogger.network.info("DevTools CLI stream connect", metadata: [
                     "run_id": runId,
                     "from_seq": fromSeq.map(String.init) ?? "nil",
-                    "url": url.absoluteString,
                 ])
 
-                do {
-                    let (bytes, response) = try await session.bytes(for: request)
-                    guard let http = response as? HTTPURLResponse else {
-                        continuation.finish(throwing: DevToolsClientError.unknown("invalid response"))
-                        return
-                    }
-
-                    if http.statusCode != 200 {
-                        let errorCode = http.value(forHTTPHeaderField: "X-Error-Code")
-                        let errorMsg = http.value(forHTTPHeaderField: "X-Error-Message")
-                        if let errorCode {
-                            continuation.finish(throwing: DevToolsClientError.from(serverErrorCode: errorCode, message: errorMsg))
+                // 1. Emit initial snapshot.
+                if let dbPath {
+                    do {
+                        let snap = try await Self.loadDevToolsSnapshot(runId: runId, frameNo: nil, dbPath: dbPath)
+                        continuation.yield(.snapshot(snap))
+                    } catch let err as DevToolsClientError {
+                        // If the run doesn't exist yet, keep going — the event stream may still be valid.
+                        if case .runNotFound = err {
+                            // fall through
                         } else {
-                            continuation.finish(throwing: DevToolsClientError.unknown("HTTP \(http.statusCode)"))
+                            AppLogger.error.warning("DevTools initial snapshot failed", metadata: [
+                                "run_id": runId,
+                                "error": err.displayMessage,
+                            ])
                         }
+                    } catch {
+                        AppLogger.error.warning("DevTools initial snapshot failed", metadata: [
+                            "run_id": runId,
+                            "error": String(describing: error),
+                        ])
+                    }
+                }
+
+                // 2. Spawn `smithers events <runId> --watch --json` and track frame-related events.
+                let process = Process()
+                cancellationBox.setProcess(process)
+                defer { cancellationBox.clearProcess(process) }
+
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = [
+                    smithersBin,
+                    "events",
+                    runId,
+                    "--watch",
+                    "--json",
+                    "--interval", "1",
+                ]
+                process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+                var env = ProcessInfo.processInfo.environment
+                env["NO_COLOR"] = "1"
+                process.environment = env
+
+                let outPipe = Pipe()
+                let errPipe = Pipe()
+                process.standardOutput = outPipe
+                process.standardError = errPipe
+
+                do {
+                    try Task.checkCancellation()
+                    if cancellationBox.isCancelled {
+                        continuation.finish()
                         return
                     }
+                    try process.run()
+                } catch is CancellationError {
+                    continuation.finish()
+                    return
+                } catch {
+                    continuation.finish(throwing: DevToolsClientError.unknown("smithers events failed to start: \(error.localizedDescription)"))
+                    return
+                }
 
-                    for try await line in bytes.lines {
-                        guard !Task.isCancelled else { break }
-                        let trimmed = line.trimmingCharacters(in: .whitespaces)
-                        guard !trimmed.isEmpty else { continue }
+                // Line-buffered reader over stdout.
+                let readHandle = outPipe.fileHandleForReading
+                var buffer = Data()
+                let decoder = JSONDecoder()
+                var lastEmittedFrameNo = -1
 
-                        guard let data = trimmed.data(using: .utf8) else { continue }
+                while !Task.isCancelled, !cancellationBox.isCancelled {
+                    let chunk = readHandle.availableData
+                    if chunk.isEmpty {
+                        // Process exited or pipe closed.
+                        if !process.isRunning { break }
+                        // Give the process a short breath.
+                        try? await Task.sleep(nanoseconds: 100_000_000)
+                        continue
+                    }
+                    buffer.append(chunk)
 
-                        do {
-                            let event = try decoder.decode(DevToolsEvent.self, from: data)
-                            continuation.yield(event)
-                        } catch let decodingError as DecodingError {
-                            AppLogger.error.error("DevTools decode error", metadata: [
-                                "run_id": runId,
-                                "bytes": String(data.count),
-                            ])
-                            continuation.finish(throwing: DevToolsClientError.from(decodingError: decodingError))
+                    while let newlineRange = buffer.range(of: Data([0x0a])) {
+                        let lineData = buffer.subdata(in: buffer.startIndex..<newlineRange.lowerBound)
+                        buffer.removeSubrange(buffer.startIndex...newlineRange.lowerBound)
+
+                        guard !lineData.isEmpty else { continue }
+
+                        // Parse `{"type":..., "runId":..., "payload":..., "seq":...}`.
+                        struct MinimalEvent: Decodable {
+                            let runId: String?
+                            let type: String?
+                            let seq: Int?
+                            let payload: Payload?
+                            struct Payload: Decodable {
+                                let frameNo: Int?
+                                let nodeId: String?
+                            }
+                        }
+                        guard let evt = try? decoder.decode(MinimalEvent.self, from: lineData) else {
+                            continue
+                        }
+                        let type = evt.type ?? ""
+                        let isFrameEvent = type == "FrameCommitted"
+                            || type == "SnapshotCaptured"
+                            || type == "NodeStarted"
+                            || type == "NodePending"
+                            || type == "NodeFinished"
+                            || type == "NodeFailed"
+                            || type == "NodeRetrying"
+
+                        if isFrameEvent, let dbPath {
+                            do {
+                                let snap = try await Self.loadDevToolsSnapshot(runId: runId, frameNo: nil, dbPath: dbPath)
+                                if snap.frameNo != lastEmittedFrameNo {
+                                    lastEmittedFrameNo = snap.frameNo
+                                    continuation.yield(.snapshot(snap))
+                                }
+                            } catch {
+                                AppLogger.error.warning("DevTools re-snapshot failed", metadata: [
+                                    "run_id": runId,
+                                    "error": String(describing: error),
+                                ])
+                            }
+                        }
+
+                        if type == "RunFinished" {
+                            // Emit one last snapshot and terminate.
+                            if let dbPath, let snap = try? await Self.loadDevToolsSnapshot(runId: runId, frameNo: nil, dbPath: dbPath) {
+                                continuation.yield(.snapshot(snap))
+                            }
+                            if process.isRunning {
+                                process.terminate()
+                            }
+                            continuation.finish()
                             return
                         }
                     }
-
-                    continuation.finish()
-                } catch let urlError as URLError {
-                    continuation.finish(throwing: DevToolsClientError.from(urlError: urlError))
-                } catch {
-                    continuation.finish(throwing: error)
                 }
+
+                if process.isRunning {
+                    process.terminate()
+                }
+                continuation.finish()
             }
 
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
+            // Make sure the Task is released when the stream ends.
+            Task {
+                _ = await task.value
             }
         }
     }
 
+    /// Fetches a DevTools snapshot directly from `smithers.db`. The XML is assembled by
+    /// reading the most recent keyframe at or before `frameNo` (defaulting to the latest
+    /// frame) and applying any delta frames between the keyframe and the target frame.
     func getDevToolsSnapshot(runId: String, frameNo: Int? = nil) async throws -> DevToolsSnapshot {
-        let encodedRunId = Self.encodedURLPathComponent(runId)
-        var path = "/v1/runs/\(encodedRunId)/devtools/snapshot"
-        if let frameNo {
-            path += "?frameNo=\(frameNo)"
-        }
+        try DevToolsInputValidator.validate(runId: runId)
+        if let frameNo { try DevToolsInputValidator.validate(frameNo: frameNo) }
 
-        guard let url = resolvedHTTPTransportURL(path: path) else {
+        guard let dbPath = resolvedSmithersDBPath() else {
+            AppLogger.network.warning("DevTools snapshot: smithers.db not found", metadata: [
+                "run_id": runId,
+            ])
             throw DevToolsClientError.runNotFound(runId)
         }
 
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        AppLogger.network.info("DevTools snapshot request", metadata: [
+        AppLogger.network.debug("DevTools snapshot request (sqlite3)", metadata: [
             "run_id": runId,
             "frame_no": frameNo.map(String.init) ?? "latest",
+            "db_path": dbPath,
         ])
 
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw DevToolsClientError.unknown("invalid response")
-            }
+        return try await Self.loadDevToolsSnapshot(runId: runId, frameNo: frameNo, dbPath: dbPath)
+    }
 
-            if http.statusCode != 200 {
-                let errorCode = http.value(forHTTPHeaderField: "X-Error-Code")
-                let errorMsg = http.value(forHTTPHeaderField: "X-Error-Message")
-                if let errorCode {
-                    throw DevToolsClientError.from(serverErrorCode: errorCode, message: errorMsg)
-                }
-                throw DevToolsClientError.unknown("HTTP \(http.statusCode)")
-            }
+    /// Worker used by both `getDevToolsSnapshot` and the `streamDevTools` subprocess loop.
+    /// Detached from the main actor so the stream reader task can use it.
+    private nonisolated static func loadDevToolsSnapshot(
+        runId: String,
+        frameNo: Int?,
+        dbPath: String
+    ) async throws -> DevToolsSnapshot {
+        let quotedRunId = DevToolsSQL.quote(runId)
 
-            return try decoder.decode(DevToolsSnapshot.self, from: data)
-        } catch let urlError as URLError {
-            throw DevToolsClientError.from(urlError: urlError)
-        } catch let decodingError as DecodingError {
-            throw DevToolsClientError.from(decodingError: decodingError)
+        // Resolve target frameNo (default to latest).
+        let targetFrame: Int
+        if let frameNo {
+            targetFrame = frameNo
+        } else {
+            let query = "SELECT MAX(frame_no) AS m FROM _smithers_frames WHERE run_id=\(quotedRunId);"
+            let rows = try await execSQLite(dbPath: dbPath, query: query)
+            guard let firstRow = rows.first,
+                  let maxFrame = intValue(from: firstRow["m"]) else {
+                throw DevToolsClientError.runNotFound(runId)
+            }
+            targetFrame = Int(maxFrame)
         }
+
+        // Fetch the latest keyframe at or before target.
+        let keyframeQuery = """
+        SELECT frame_no, xml_json, task_index_json
+        FROM _smithers_frames
+        WHERE run_id=\(quotedRunId)
+          AND encoding='keyframe'
+          AND frame_no <= \(targetFrame)
+        ORDER BY frame_no DESC
+        LIMIT 1;
+        """
+        let keyframeRows = try await execSQLite(dbPath: dbPath, query: keyframeQuery)
+        guard let keyframeRow = keyframeRows.first,
+              let keyframeNo = intValue(from: keyframeRow["frame_no"]),
+              let xmlText = stringValue(from: keyframeRow["xml_json"]),
+              let xmlData = xmlText.data(using: .utf8) else {
+            // Either the run doesn't exist or we're asking for a frame before the first keyframe.
+            if targetFrame < 0 {
+                throw DevToolsClientError.frameOutOfRange(targetFrame)
+            }
+            throw DevToolsClientError.runNotFound(runId)
+        }
+        let taskIndexText = stringValue(from: keyframeRow["task_index_json"]) ?? "[]"
+
+        let decoder = JSONDecoder()
+        let rootXML: DevToolsFrameXMLNode
+        do {
+            rootXML = try decoder.decode(DevToolsFrameXMLNode.self, from: xmlData)
+        } catch {
+            throw DevToolsClientError.malformedEvent("Failed to decode keyframe xml_json: \(error)")
+        }
+
+        var taskIndex: [DevToolsTaskIndexEntry] = []
+        if let taskIndexData = taskIndexText.data(using: .utf8) {
+            taskIndex = (try? decoder.decode([DevToolsTaskIndexEntry].self, from: taskIndexData)) ?? []
+        }
+
+        // Fetch + apply any deltas between the keyframe and target.
+        var finalXML = rootXML
+        if targetFrame > Int(keyframeNo) {
+            let deltaQuery = """
+            SELECT frame_no, xml_json FROM _smithers_frames
+            WHERE run_id=\(quotedRunId)
+              AND encoding='delta'
+              AND frame_no > \(keyframeNo) AND frame_no <= \(targetFrame)
+            ORDER BY frame_no ASC;
+            """
+            let deltaRows = try await execSQLite(dbPath: dbPath, query: deltaQuery)
+            var decodedDeltas: [DevToolsFrameDelta] = []
+            decodedDeltas.reserveCapacity(deltaRows.count)
+            for row in deltaRows {
+                guard let text = stringValue(from: row["xml_json"]),
+                      let data = text.data(using: .utf8),
+                      let delta = try? decoder.decode(DevToolsFrameDelta.self, from: data) else {
+                    continue
+                }
+                decodedDeltas.append(delta)
+            }
+            if !decodedDeltas.isEmpty {
+                finalXML = (try? DevToolsFrameApplier.apply(deltas: decodedDeltas, toKeyframe: rootXML)) ?? rootXML
+            }
+        }
+
+        let tree = DevToolsTreeBuilder.build(xml: finalXML, taskIndex: taskIndex)
+        return DevToolsSnapshot(
+            runId: runId,
+            frameNo: targetFrame,
+            seq: targetFrame,
+            root: tree
+        )
+    }
+
+    private nonisolated static func execSQLite(
+        dbPath: String,
+        query: String
+    ) async throws -> [[String: Any]] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = ["-readonly", "-json", dbPath, query]
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+
+        try process.run()
+
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        if process.terminationStatus != 0 {
+            let stderr = String(data: errData, encoding: .utf8) ?? ""
+            throw DevToolsClientError.unknown("sqlite3 exited with status \(process.terminationStatus): \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+
+        let trimmed = (String(data: outData, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        guard let json = try? JSONSerialization.jsonObject(with: Data(trimmed.utf8)) as? [[String: Any]] else {
+            return []
+        }
+        return json
+    }
+
+    private nonisolated static func intValue(from any: Any?) -> Int64? {
+        if let v = any as? Int64 { return v }
+        if let v = any as? Int { return Int64(v) }
+        if let v = any as? NSNumber { return v.int64Value }
+        if let v = any as? String, let parsed = Int64(v) { return parsed }
+        return nil
+    }
+
+    private nonisolated static func stringValue(from any: Any?) -> String? {
+        if let v = any as? String { return v }
+        if let v = any as? NSNumber { return v.stringValue }
+        return nil
     }
 
     func getNodeOutput(runId: String, nodeId: String, iteration: Int? = nil) async throws -> NodeOutputResponse {
@@ -1762,63 +1982,117 @@ class SmithersClient: ObservableObject {
             return try fixtureNodeOutput(nodeId: nodeId, fetchCount: fetchCount)
         }
 
-        let encodedRunId = Self.encodedURLPathComponent(runId)
-        let encodedNodeId = Self.encodedURLPathComponent(nodeId)
-        var path = "/v1/runs/\(encodedRunId)/nodes/\(encodedNodeId)/output"
-        if let iteration {
-            path += "?iteration=\(iteration)"
-        }
-
-        guard let url = resolvedHTTPTransportURL(path: path) else {
-            throw DevToolsClientError.runNotFound(runId)
-        }
-
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        try DevToolsInputValidator.validate(runId: runId)
+        try DevToolsInputValidator.validate(nodeId: nodeId)
+        if let iteration { try DevToolsInputValidator.validate(iteration: iteration) }
 
         let startedAt = CFAbsoluteTimeGetCurrent()
-        AppLogger.network.debug("DevTools node output request", metadata: [
+        AppLogger.network.debug("DevTools node output request (CLI)", metadata: [
             "run_id": runId,
             "node_id": nodeId,
             "iteration": iteration.map(String.init) ?? "nil",
         ])
 
+        var args = ["node", nodeId, "--run-id", runId, "--format", "json"]
+        if let iteration { args += ["--iteration", String(iteration)] }
+
+        let data: Data
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw DevToolsClientError.unknown("invalid response")
-            }
-
-            if http.statusCode != 200 {
-                let errorCode = http.value(forHTTPHeaderField: "X-Error-Code")
-                let errorMsg = http.value(forHTTPHeaderField: "X-Error-Message")
-                if let errorCode {
-                    throw DevToolsClientError.from(serverErrorCode: errorCode, message: errorMsg)
-                }
-                throw DevToolsClientError.unknown("HTTP \(http.statusCode)")
-            }
-
-            let decoded = try decoder.decode(NodeOutputResponse.self, from: data)
-            let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
-            AppLogger.network.debug("DevTools node output response", metadata: [
-                "run_id": runId,
-                "node_id": nodeId,
-                "iteration": iteration.map(String.init) ?? "nil",
-                "status": decoded.status.rawValue,
-                "duration_ms": String(durationMs),
-                "bytes": String(data.count),
-            ])
-            return decoded
-        } catch let urlError as URLError {
-            throw DevToolsClientError.from(urlError: urlError)
-        } catch let decodingError as DecodingError {
-            AppLogger.error.error("DevTools node output decode failed", metadata: [
-                "run_id": runId,
-                "node_id": nodeId,
-                "iteration": iteration.map(String.init) ?? "nil",
-            ])
-            throw DevToolsClientError.from(decodingError: decodingError)
+            data = try await execArgs(args)
+        } catch let err as SmithersError {
+            // Try to infer a meaningful DevTools error from the CLI message.
+            throw Self.devToolsErrorFromCLI(err, defaultNodeId: nodeId)
+        } catch {
+            throw DevToolsClientError.unknown(String(describing: error))
         }
+
+        // Parse the `smithers node` JSON envelope into a NodeOutputResponse.
+        let parsed = try Self.parseNodeOutputFromCLI(data: data)
+        let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+        AppLogger.network.debug("DevTools node output response (CLI)", metadata: [
+            "run_id": runId,
+            "node_id": nodeId,
+            "iteration": iteration.map(String.init) ?? "nil",
+            "status": parsed.status.rawValue,
+            "duration_ms": String(durationMs),
+            "bytes": String(data.count),
+        ])
+        return parsed
+    }
+
+    private nonisolated static func parseNodeOutputFromCLI(data: Data) throws -> NodeOutputResponse {
+        for candidate in cliJSONPayloadCandidates(from: data) {
+            guard let obj = try? JSONSerialization.jsonObject(with: candidate, options: [.fragmentsAllowed]) as? [String: Any] else {
+                continue
+            }
+            // `smithers node` returns: { node: {...}, status: "finished"|"failed"|"pending", attempts: [...], ... }
+            let statusString = ((obj["status"] as? String) ?? (obj["node"] as? [String: Any])?["state"] as? String ?? "").lowercased()
+            let attempts = (obj["attempts"] as? [[String: Any]]) ?? []
+            let latest = attempts.last
+            let responseText = latest?["responseText"] as? String
+            let heartbeatRaw = latest?["heartbeatData"] ?? latest?["heartbeat_data_json"]
+
+            let status: NodeOutputStatus
+            switch statusString {
+            case "finished", "complete", "completed", "success", "succeeded":
+                status = .produced
+            case "failed", "error":
+                status = .failed
+            default:
+                status = .pending
+            }
+
+            // Row: parse responseText as JSON (produced path).
+            var row: [String: JSONValue]? = nil
+            if status == .produced, let responseText, !responseText.isEmpty,
+               let rowData = responseText.data(using: .utf8),
+               let rowJSON = try? JSONDecoder().decode(JSONValue.self, from: rowData),
+               case .object(let rowObj) = rowJSON {
+                row = rowObj
+            }
+
+            // Partial: extract from failure heartbeatData if present.
+            var partial: [String: JSONValue]? = nil
+            if status == .failed {
+                if let responseText, !responseText.isEmpty,
+                   let rowData = responseText.data(using: .utf8),
+                   let rowJSON = try? JSONDecoder().decode(JSONValue.self, from: rowData),
+                   case .object(let rowObj) = rowJSON {
+                    partial = rowObj
+                } else if let hb = heartbeatRaw {
+                    if let hbData = try? JSONSerialization.data(withJSONObject: hb),
+                       let hbJSON = try? JSONDecoder().decode(JSONValue.self, from: hbData),
+                       case .object(let hbObj) = hbJSON {
+                        partial = hbObj
+                    }
+                }
+            }
+
+            // Schema is not directly exposed by `smithers node`, keep nil for now.
+            return NodeOutputResponse(status: status, row: row, schema: nil, partial: partial)
+        }
+        throw DevToolsClientError.malformedEvent("Unable to parse smithers node output")
+    }
+
+    private nonisolated static func devToolsErrorFromCLI(_ err: SmithersError, defaultNodeId: String) -> DevToolsClientError {
+        let msg: String
+        switch err {
+        case .cli(let m), .api(let m), .notAvailable(let m):
+            msg = m
+        default:
+            msg = err.errorDescription ?? ""
+        }
+        let lower = msg.lowercased()
+        if lower.contains("not found") || lower.contains("no such") {
+            return .nodeNotFound(defaultNodeId)
+        }
+        if lower.contains("no output") {
+            return .nodeHasNoOutput
+        }
+        if lower.contains("still running") || lower.contains("pending") || lower.contains("not finished") {
+            return .attemptNotFinished
+        }
+        return .unknown(msg)
     }
 
     private func fixtureNodeOutput(nodeId: String, fetchCount: Int) throws -> NodeOutputResponse {
@@ -1942,94 +2216,170 @@ class SmithersClient: ObservableObject {
             return Self.makeUINodeDiffBundle(nodeId: nodeId, iteration: iteration)
         }
 
-        let encodedRunId = Self.encodedURLPathComponent(runId)
-        let encodedNodeId = Self.encodedURLPathComponent(nodeId)
-        let candidatePaths = [
-            "/v1/runs/\(encodedRunId)/nodes/\(encodedNodeId)/diff?iteration=\(iteration)",
-            "/v1/runs/\(encodedRunId)/devtools/nodes/\(encodedNodeId)/diff?iteration=\(iteration)",
-        ]
+        try DevToolsInputValidator.validate(runId: runId)
+        try DevToolsInputValidator.validate(nodeId: nodeId)
+        try DevToolsInputValidator.validate(iteration: iteration)
 
-        var transportFailure: DevToolsClientError?
-
-        for path in candidatePaths {
-            guard let url = resolvedHTTPTransportURL(path: path) else {
-                continue
-            }
-
-            var request = URLRequest(url: url)
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-            do {
-                let startedAt = CFAbsoluteTimeGetCurrent()
-                let (data, response) = try await session.data(for: request)
-                let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
-                let byteCount = data.count
-
-                guard let http = response as? HTTPURLResponse else {
-                    throw DevToolsClientError.unknown("invalid response")
-                }
-
-                if (200..<300).contains(http.statusCode) {
-                    let bundle = try decodeNodeDiffBundle(from: data)
-                    AppLogger.network.debug("Node diff request ok", metadata: [
-                        "run_id": runId,
-                        "node_id": nodeId,
-                        "iteration": String(iteration),
-                        "duration_ms": String(durationMs),
-                        "bytes": String(byteCount),
-                        "file_count": String(bundle.patches.count),
-                    ])
-                    return bundle
-                }
-
-                let headerCode = http.value(forHTTPHeaderField: "X-Error-Code")
-                let headerMessage = http.value(forHTTPHeaderField: "X-Error-Message")
-                let parsedError = decodeNodeDiffError(from: data)
-                let code = headerCode ?? parsedError.code
-                let message = headerMessage ?? parsedError.message ?? extractServerErrorMessage(data)
-
-                AppLogger.network.warning("Node diff request failed", metadata: [
-                    "run_id": runId,
-                    "node_id": nodeId,
-                    "iteration": String(iteration),
-                    "status": String(http.statusCode),
-                    "duration_ms": String(durationMs),
-                    "bytes": String(byteCount),
-                    "error_code": code ?? "",
-                ])
-
-                // Route-probing fallback: try the next candidate path on plain 404s.
-                if http.statusCode == 404 && code == nil {
-                    continue
-                }
-
-                if let code {
-                    throw DevToolsClientError.from(serverErrorCode: code, message: message)
-                }
-                throw DevToolsClientError.unknown(message ?? "HTTP \(http.statusCode)")
-            } catch let devError as DevToolsClientError {
-                throw devError
-            } catch let urlError as URLError {
-                transportFailure = .from(urlError: urlError)
-                break
-            } catch let decodingError as DecodingError {
-                throw DevToolsClientError.from(decodingError: decodingError)
-            }
+        // 1. Look up the VCS pointer for this attempt in sqlite.
+        guard let dbPath = resolvedSmithersDBPath() else {
+            throw DevToolsClientError.runNotFound(runId)
         }
 
+        let quotedRunId = DevToolsSQL.quote(runId)
+        let quotedNodeId = DevToolsSQL.quote(nodeId)
+        let query = """
+        SELECT jj_pointer AS p, jj_cwd AS cwd
+        FROM _smithers_attempts
+        WHERE run_id=\(quotedRunId)
+          AND node_id=\(quotedNodeId)
+          AND iteration=\(iteration)
+        ORDER BY attempt DESC
+        LIMIT 1;
+        """
+
+        let rows: [[String: Any]]
         do {
-            var args = ["diff", runId, nodeId, "--format", "json"]
-            args += ["--iteration", String(iteration)]
-            let data = try await execArgs(args)
-            return try decodeNodeDiffBundleFromCLI(data)
-        } catch let devError as DevToolsClientError {
-            throw devError
+            rows = try await Self.execSQLite(dbPath: dbPath, query: query)
         } catch {
-            if let transportFailure {
-                throw transportFailure
-            }
-            throw error
+            throw DevToolsClientError.vcsError("Failed to query _smithers_attempts: \(error)")
         }
+
+        guard let row = rows.first,
+              let pointer = Self.stringValue(from: row["p"]),
+              !pointer.isEmpty else {
+            throw DevToolsClientError.attemptNotFound("\(runId):\(nodeId):\(iteration)")
+        }
+        let vcsCwd = Self.stringValue(from: row["cwd"])?.nilIfEmpty ?? cwd
+
+        // 2. Produce unified diff. Prefer jj if this is a jj repo, else fall back to git.
+        let diffText: String
+        do {
+            diffText = try await generateVCSDiff(pointer: pointer, workingDirectory: vcsCwd)
+        } catch let err as DevToolsClientError {
+            throw err
+        } catch {
+            throw DevToolsClientError.vcsError(String(describing: error))
+        }
+
+        // 3. Parse unified diff → NodeDiffBundle.
+        let patches = Self.splitUnifiedDiff(diffText)
+        return NodeDiffBundle(seq: 0, baseRef: pointer, patches: patches)
+    }
+
+    /// Runs `jj diff -r <pointer>` or `git diff <pointer>^ <pointer>` in the given working
+    /// directory, returning the unified diff text.
+    private func generateVCSDiff(pointer: String, workingDirectory: String) async throws -> String {
+        let fm = FileManager.default
+        let jjMarker = (workingDirectory as NSString).appendingPathComponent(".jj")
+        let gitMarker = (workingDirectory as NSString).appendingPathComponent(".git")
+        let hasJJ = fm.fileExists(atPath: jjMarker)
+        let hasGit = fm.fileExists(atPath: gitMarker)
+
+        if hasJJ {
+            // jj diff produces a git-style patch with --git.
+            let args = ["diff", "-r", pointer, "--git"]
+            let data = try await execBinaryArgs(
+                bin: "jj",
+                args: args,
+                displayName: "jj",
+                workingDirectoryOverride: workingDirectory
+            )
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        if hasGit {
+            // Produce a diff of just the commit referenced by pointer.
+            let args = ["diff", "\(pointer)^", pointer]
+            let data = try await execBinaryArgs(
+                bin: "git",
+                args: args,
+                displayName: "git",
+                workingDirectoryOverride: workingDirectory
+            )
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        throw DevToolsClientError.vcsError("No VCS found at \(workingDirectory)")
+    }
+
+    /// Splits a full unified diff into per-file NodeDiffPatch entries.
+    private nonisolated static func splitUnifiedDiff(_ diff: String) -> [NodeDiffPatch] {
+        guard !diff.isEmpty else { return [] }
+        // Split on `diff --git ` boundaries — the canonical file-start marker.
+        let lines = diff.components(separatedBy: "\n")
+        var patches: [NodeDiffPatch] = []
+        var currentLines: [String] = []
+        var currentPath: String?
+        var currentOldPath: String?
+
+        func flush() {
+            guard let path = currentPath else {
+                currentLines.removeAll()
+                return
+            }
+            let body = currentLines.joined(separator: "\n")
+            let operation: NodeDiffPatch.Operation = deriveOperation(from: currentLines)
+            patches.append(NodeDiffPatch(
+                path: path,
+                oldPath: currentOldPath,
+                operation: operation,
+                diff: body,
+                binaryContent: nil
+            ))
+            currentLines.removeAll()
+            currentPath = nil
+            currentOldPath = nil
+        }
+
+        for line in lines {
+            if line.hasPrefix("diff --git ") {
+                flush()
+                currentLines.append(line)
+                // Parse `diff --git a/path b/path`
+                let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+                if parts.count >= 4 {
+                    var a = String(parts[2])
+                    var b = String(parts[3])
+                    if a.hasPrefix("a/") { a.removeFirst(2) }
+                    if b.hasPrefix("b/") { b.removeFirst(2) }
+                    currentOldPath = a
+                    currentPath = b
+                }
+            } else {
+                currentLines.append(line)
+                // Fallback path extraction via --- / +++ headers.
+                if currentPath == nil {
+                    if line.hasPrefix("+++ ") {
+                        var p = String(line.dropFirst(4))
+                        if p.hasPrefix("b/") { p.removeFirst(2) }
+                        currentPath = p
+                    } else if line.hasPrefix("--- "), currentOldPath == nil {
+                        var p = String(line.dropFirst(4))
+                        if p.hasPrefix("a/") { p.removeFirst(2) }
+                        if p != "/dev/null" {
+                            currentOldPath = p
+                        }
+                    }
+                }
+            }
+        }
+        flush()
+        return patches
+    }
+
+    private nonisolated static func deriveOperation(from lines: [String]) -> NodeDiffPatch.Operation {
+        var sawRenameFrom = false
+        var sawDeletedFileMode = false
+        var sawNewFileMode = false
+        for l in lines {
+            if l.hasPrefix("rename from ") { sawRenameFrom = true }
+            if l.hasPrefix("new file mode ") { sawNewFileMode = true }
+            if l.hasPrefix("deleted file mode ") { sawDeletedFileMode = true }
+        }
+        if sawRenameFrom { return .rename }
+        if sawNewFileMode { return .add }
+        if sawDeletedFileMode { return .delete }
+        return .modify
     }
 
     private func decodeNodeDiffBundle(from data: Data) throws -> NodeDiffBundle {
@@ -2132,53 +2482,106 @@ class SmithersClient: ObservableObject {
             )
         }
 
-        let encodedRunId = Self.encodedURLPathComponent(runId)
-        let path = "/v1/runs/\(encodedRunId)/devtools/jump"
+        try DevToolsInputValidator.validate(runId: runId)
+        try DevToolsInputValidator.validate(frameNo: frameNo)
+        guard confirm else { throw DevToolsClientError.confirmationRequired }
 
-        guard let url = resolvedHTTPTransportURL(path: path) else {
+        guard let dbPath = resolvedSmithersDBPath() else {
             throw DevToolsClientError.runNotFound(runId)
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        struct JumpPayload: Encodable {
-            let runId: String
-            let frameNo: Int
-            let confirm: Bool
+        // Resolve nodeId + workflow_path for this (runId, frameNo) pair by looking at events.
+        let quotedRunId = DevToolsSQL.quote(runId)
+        let runQuery = "SELECT workflow_path FROM _smithers_runs WHERE run_id=\(quotedRunId) LIMIT 1;"
+        let runRows: [[String: Any]]
+        do {
+            runRows = try await Self.execSQLite(dbPath: dbPath, query: runQuery)
+        } catch {
+            throw DevToolsClientError.rewindFailed("Unable to resolve run: \(error)")
         }
-        request.httpBody = try JSONEncoder().encode(
-            JumpPayload(runId: runId, frameNo: frameNo, confirm: confirm)
-        )
+        let workflowPath = Self.stringValue(from: runRows.first?["workflow_path"])?.nilIfEmpty
 
-        AppLogger.network.info("DevTools jumpToFrame request", metadata: [
+        // Find the NodeFinished event whose seq is immediately before the FrameCommitted event
+        // for frameNo — that is the node responsible for this frame and thus the revert target.
+        let eventQuery = """
+        SELECT json_extract(n.payload_json, '$.nodeId') AS node_id,
+               json_extract(n.payload_json, '$.iteration') AS iteration
+        FROM _smithers_events n
+        WHERE n.run_id=\(quotedRunId)
+          AND n.type IN ('NodeFinished','NodeFailed')
+          AND n.seq < (
+            SELECT MIN(seq) FROM _smithers_events
+            WHERE run_id=\(quotedRunId)
+              AND type='FrameCommitted'
+              AND json_extract(payload_json, '$.frameNo')=\(frameNo)
+          )
+        ORDER BY n.seq DESC
+        LIMIT 1;
+        """
+
+        let evtRows: [[String: Any]]
+        do {
+            evtRows = try await Self.execSQLite(dbPath: dbPath, query: eventQuery)
+        } catch {
+            throw DevToolsClientError.rewindFailed("Unable to resolve frame node: \(error)")
+        }
+
+        guard let targetNodeId = Self.stringValue(from: evtRows.first?["node_id"]), !targetNodeId.isEmpty else {
+            // If the requested frame has no associated NodeFinished event, we can't map it
+            // to a revert target. The server's `smithers revert` CLI requires a node id.
+            throw DevToolsClientError.rewindFailed("Frame \(frameNo) has no associated node to revert to. Use `smithers revert` from the command line for advanced time travel.")
+        }
+        let iteration = Self.intValue(from: evtRows.first?["iteration"]).map { Int($0) } ?? 0
+
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        AppLogger.network.info("DevTools jumpToFrame request (CLI)", metadata: [
             "run_id": runId,
             "frame_no": String(frameNo),
-            "confirm": String(confirm),
+            "target_node": targetNodeId,
+            "iteration": String(iteration),
+            "workflow_path": workflowPath ?? "",
         ])
 
+        var args = ["revert"]
+        if let workflowPath { args.append(workflowPath) }
+        args += ["--run-id", runId, "--node-id", targetNodeId]
+        if iteration > 0 { args += ["--iteration", String(iteration)] }
+        args += ["--format", "json"]
+
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw DevToolsClientError.unknown("invalid response")
+            _ = try await execArgs(args)
+        } catch let err as SmithersError {
+            // Translate common CLI failure signals into DevTools error cases.
+            let msg: String
+            switch err {
+            case .cli(let m), .api(let m), .notAvailable(let m): msg = m
+            default: msg = err.errorDescription ?? ""
             }
-
-            if http.statusCode != 200 {
-                let errorCode = http.value(forHTTPHeaderField: "X-Error-Code")
-                let errorMsg = http.value(forHTTPHeaderField: "X-Error-Message")
-                if let errorCode {
-                    throw DevToolsClientError.from(serverErrorCode: errorCode, message: errorMsg)
-                }
-                throw DevToolsClientError.unknown("HTTP \(http.statusCode)")
+            let lower = msg.lowercased()
+            if lower.contains("dirty") {
+                throw DevToolsClientError.workingTreeDirty(msg)
             }
-
-            return try decoder.decode(DevToolsJumpResult.self, from: data)
-        } catch let urlError as URLError {
-            throw DevToolsClientError.from(urlError: urlError)
-        } catch let decodingError as DecodingError {
-            throw DevToolsClientError.from(decodingError: decodingError)
+            if lower.contains("busy") {
+                throw DevToolsClientError.busy
+            }
+            if lower.contains("sandbox") {
+                throw DevToolsClientError.unsupportedSandbox(msg)
+            }
+            throw DevToolsClientError.rewindFailed(msg)
+        } catch {
+            throw DevToolsClientError.rewindFailed(String(describing: error))
         }
+
+        let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+        return DevToolsJumpResult(
+            ok: true,
+            newFrameNo: frameNo,
+            revertedSandboxes: 1,
+            deletedFrames: 0,
+            deletedAttempts: 0,
+            invalidatedDiffs: 0,
+            durationMs: durationMs
+        )
     }
 
     // MARK: - Run Streaming (HTTP — requires --serve)
