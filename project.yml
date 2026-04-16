@@ -23,6 +23,7 @@ targets:
       - AppLogger.swift
       - DevToolsModels.swift
       - DevToolsClientError.swift
+      - DevToolsCLITransport.swift
       - LiveRunDevToolsStore.swift
       - HeartbeatState.swift
       - HeartbeatIndicator.swift
