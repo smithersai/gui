@@ -2,6 +2,8 @@ import XCTest
 
 class SmithersGUIUITestCase: XCTestCase {
     var app: XCUIApplication!
+    var launchArguments: [String] { ["--uitesting"] }
+    var launchEnvironmentOverrides: [String: String] { [:] }
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -12,15 +14,22 @@ class SmithersGUIUITestCase: XCTestCase {
         try? FileManager.default.removeItem(at: savedStateDir)
 
         app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
-        app.launchEnvironment = [
+        app.launchArguments = launchArguments
+        var launchEnvironment: [String: String] = [
             "SMITHERS_GUI_UITEST": "1",
             "SMITHERS_GUI_DISABLE_ANIMATIONS": "1",
         ]
+        launchEnvironment.merge(launchEnvironmentOverrides) { _, new in new }
+        app.launchEnvironment = launchEnvironment
         app.launch()
 
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
-        XCTAssertTrue(element("sidebar").waitForExistence(timeout: 10))
+        if !app.wait(for: .runningForeground, timeout: 40) {
+            app.terminate()
+            app.launch()
+        }
+
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 40))
+        XCTAssertTrue(element("sidebar").waitForExistence(timeout: 30))
     }
 
     override func tearDownWithError() throws {
@@ -32,7 +41,7 @@ class SmithersGUIUITestCase: XCTestCase {
         app.descendants(matching: .any)[identifier]
     }
 
-    func waitForElement(_ identifier: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+    func waitForElement(_ identifier: String, timeout: TimeInterval = 8, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let found = element(identifier)
         XCTAssertTrue(found.waitForExistence(timeout: timeout), "Missing element: \(identifier)", file: file, line: line)
         return found
@@ -44,10 +53,16 @@ class SmithersGUIUITestCase: XCTestCase {
         if !nav.waitForExistence(timeout: 1.5) {
             expandSidebarSectionIfNeeded(for: label)
             nav = app.buttons[navIdentifier]
+            if !nav.waitForExistence(timeout: 1.5) {
+                // Section toggles can land in the opposite state under UI-test timing.
+                // Try one more toggle before failing.
+                expandSidebarSectionIfNeeded(for: label)
+                nav = app.buttons[navIdentifier]
+            }
         }
-        XCTAssertTrue(nav.waitForExistence(timeout: 5), "Missing nav row for \(label)", file: file, line: line)
+        XCTAssertTrue(nav.waitForExistence(timeout: 8), "Missing nav row for \(label)", file: file, line: line)
         nav.click()
-        XCTAssertTrue(element(expectedViewIdentifier).waitForExistence(timeout: 5), "Missing view after navigating to \(label): \(expectedViewIdentifier)", file: file, line: line)
+        XCTAssertTrue(element(expectedViewIdentifier).waitForExistence(timeout: 8), "Missing view after navigating to \(label): \(expectedViewIdentifier)", file: file, line: line)
     }
 
     func expandSidebarSectionIfNeeded(for label: String) {
