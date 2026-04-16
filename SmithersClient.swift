@@ -336,9 +336,7 @@ class SmithersClient: ObservableObject {
         codexHome: String? = nil
     ) {
         let trimmedCwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedCwd = (trimmedCwd?.isEmpty == false)
-            ? trimmedCwd
-            : FileManager.default.homeDirectoryForCurrentUser.path
+        let resolvedCwd = (trimmedCwd?.isEmpty == false) ? trimmedCwd : nil
         self.cwd = CWDResolver.resolve(resolvedCwd)
         // Don't spawn a process during init — just use "smithers" and rely on PATH
         self.smithersBin = smithersBin

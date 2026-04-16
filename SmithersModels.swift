@@ -1934,7 +1934,8 @@ struct WorkflowDAG: Codable {
                 return [decoded]
             }
             var edges: [WorkflowDAGEdge] = []
-            for (from, targetsValue) in entries {
+            for from in entries.keys.sorted() {
+                guard let targetsValue = entries[from] else { continue }
                 let source = from.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !source.isEmpty else { continue }
                 let targets = decodeEdgeTargets(from: targetsValue)
