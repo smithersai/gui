@@ -2382,93 +2382,6 @@ class SmithersClient: ObservableObject {
         return .modify
     }
 
-    private func decodeNodeDiffBundle(from data: Data) throws -> NodeDiffBundle {
-        if let direct = try? decoder.decode(NodeDiffBundle.self, from: data) {
-            return direct
-        }
-
-        if let envelope = try? decoder.decode(NodeDiffResponseEnvelope.self, from: data) {
-            if envelope.ok == false {
-                if let code = envelope.error?.code {
-                    throw DevToolsClientError.from(serverErrorCode: code, message: envelope.error?.message)
-                }
-                throw DevToolsClientError.unknown(envelope.error?.message ?? "Node diff request failed")
-            }
-            if let bundle = envelope.payload ?? envelope.data ?? envelope.bundle {
-                return bundle
-            }
-        }
-
-        if let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [String: Any] {
-            if let payload = object["payload"] ?? object["data"] ?? object["bundle"],
-               JSONSerialization.isValidJSONObject(payload),
-               let payloadData = try? JSONSerialization.data(withJSONObject: payload, options: []),
-               let bundle = try? decoder.decode(NodeDiffBundle.self, from: payloadData) {
-                return bundle
-            }
-        }
-
-        throw DevToolsClientError.unknown("Unable to decode node diff response")
-    }
-
-    private func decodeNodeDiffBundleFromCLI(_ data: Data) throws -> NodeDiffBundle {
-        var firstError: Error?
-        for candidate in cliJSONPayloadCandidates(from: data) {
-            do {
-                return try decodeNodeDiffBundle(from: candidate)
-            } catch {
-                if firstError == nil {
-                    firstError = error
-                }
-            }
-        }
-        if let firstError {
-            throw firstError
-        }
-        return try decodeNodeDiffBundle(from: data)
-    }
-
-    private func decodeNodeDiffError(from data: Data) -> (code: String?, message: String?) {
-        guard let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
-            return (nil, nil)
-        }
-
-        func asString(_ value: Any?) -> String? {
-            if let string = value as? String {
-                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? nil : trimmed
-            }
-            return nil
-        }
-
-        if let root = object as? [String: Any] {
-            if let errorObject = root["error"] as? [String: Any] {
-                let code = asString(errorObject["code"]) ?? asString(root["code"])
-                let message = asString(errorObject["message"])
-                    ?? asString(errorObject["error"])
-                    ?? asString(root["message"])
-                return (code, message)
-            }
-
-            if let errorString = asString(root["error"]) {
-                return (asString(root["code"]), errorString)
-            }
-
-            if let message = asString(root["message"]) {
-                return (asString(root["code"]), message)
-            }
-
-            if let nested = root["payload"] as? [String: Any],
-               let errorObject = nested["error"] as? [String: Any] {
-                let code = asString(errorObject["code"])
-                let message = asString(errorObject["message"])
-                return (code, message)
-            }
-        }
-
-        return (nil, nil)
-    }
-
     func jumpToFrame(runId: String, frameNo: Int, confirm: Bool = true) async throws -> DevToolsJumpResult {
         if UITestSupport.isEnabled {
             return DevToolsJumpResult(
@@ -8102,17 +8015,6 @@ private struct WorkspaceSnapshotsResponse: Decodable {
 private struct ChatBlocksResponse: Decodable { let blocks: [ChatBlock] }
 private struct HijackSessionResponse: Decodable { let session: HijackSession }
 private struct DataEnvelope<T: Decodable>: Decodable { let data: T }
-private struct NodeDiffErrorPayload: Decodable {
-    let code: String?
-    let message: String?
-}
-private struct NodeDiffResponseEnvelope: Decodable {
-    let ok: Bool?
-    let payload: NodeDiffBundle?
-    let data: NodeDiffBundle?
-    let bundle: NodeDiffBundle?
-    let error: NodeDiffErrorPayload?
-}
 
 // MARK: - Errors
 

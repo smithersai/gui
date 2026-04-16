@@ -287,12 +287,16 @@ enum DevToolsFrameApplier {
         into node: DevToolsFrameXMLNode,
         leaf: (DevToolsFrameXMLNode, [DevToolsFrameDelta.PathComponent]) -> DevToolsFrameXMLNode
     ) throws -> DevToolsFrameXMLNode {
-        // Walk "children" + index pairs; stop right before the final "leaf" edit-target.
         // path layout examples:
-        //   ["children", 0, "children", 1, "text"]         → leaf with path.last == "text"
-        //   ["children", 0, "children", 2]                  → leaf op on children[2]
-        //   ["children", 0, "children", 1, "props", "key"]  → leaf with props key at depth 2
-        if index >= path.count - 1 {
+        //   ["children", 0, "children", 1, "text"]         → leaf called on grandchild, path.last=="text"
+        //   ["children", 0, "children", 2]                   → leaf called on root.children[0], last=2
+        //   ["children", 0, "children", 1, "props", "key"]   → leaf called on grandchild, last=="key"
+        //
+        // We descend only when the next two components are ("children", Int) AND there are more
+        // components after them — otherwise the final ("children", idx) pair identifies the leaf
+        // to act on *within the current node* (e.g. insert/remove on children[idx]).
+        let remaining = path.count - index
+        if remaining <= 2 {
             return leaf(node, path)
         }
         guard case .key(let k) = path[index], k == "children",
