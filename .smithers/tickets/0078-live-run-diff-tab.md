@@ -1,65 +1,163 @@
 # Live Run Inspector — Diff Tab
 
+> Quality bar: spec §9.
+
 ## Context
 
 Spec: `.smithers/specs/live-run-devtools-ui.md` §2.2 "Diff".
 
-Renders the unified git/jj diff of files a task changed.
+Unified git/jj diff of files a task changed.
 
 ## Scope
 
-### 1. `DiffTab` view
+### `DiffTab`
 
 Input: selected node.
 
-On mount: call `smithers.getNodeDiff(runId, nodeId, iteration)`.
+On mount: `smithers.getNodeDiff(runId, nodeId, iteration)`.
 
-### 2. Diff renderer
+### Renderer
 
-- Top: file list with per-file add/mod/del badges + total line counts.
-  Clicking a file scrolls to its section.
+- File list at top: per-file add/mod/del badges + line counts. Click a
+  file → scroll to section.
 - Body: per-file collapsible sections (default: first 3 files expanded,
-  rest collapsed).
-- Hunks:
-  - Red background for `-` lines, green for `+` lines.
-  - Context lines muted.
-  - Line numbers shown on the left (old | new).
-- Binary files: icon + "Binary file, N bytes"; no preview.
-- Deleted files: show red "File deleted" header + the old content as
-  context (if `diff` contains it).
-- Added files: show green "New file" header + the content as `+` lines.
+  rest collapsed when total files > 3).
+- Hunks: red `-`, green `+`, muted context.
+- Line numbers on the left (old | new).
+- Binary files: icon + size; no preview.
+- Deleted files: red "File deleted" header + old content as context.
+- Added files: green "New file" header + content as `+`.
 
-### 3. Empty / loading / error
+### Large diff handling
+
+- Patches > 50 files OR total bytes > 1 MB → all files collapsed by
+  default + warning at top ("Large diff — expand files individually").
+- File with > 2000 lines → render first 1000 + "Expand remaining N
+  lines" button.
+- Total diff > 50 MB (server-side `DiffTooLarge`) → show error + hint.
+
+### Empty / loading / error
 
 - Loading spinner.
-- Empty: *"No file changes."*
-- RPC error: banner + retry.
-
-### 4. Large diffs
-
-If `patches.length > 50` or total diff size > 1MB, render the file list
-normally but collapse every file by default and show a warning at the top.
-Avoid rendering all hunks at once.
+- Empty patches → "No file changes."
+- `DevToolsClientError` → banner + retry.
 
 ## Files (expected)
 
 - `DiffTab.swift` (new)
 - `DiffFileView.swift` (new)
 - `DiffHunkView.swift` (new)
-- `UnifiedDiffParser.swift` (new — parse unified diff into hunks)
-- `SmithersClient.swift` — add `getNodeDiff` method.
-- `Tests/SmithersGUITests/UnifiedDiffParserTests.swift` (new)
-- `Tests/SmithersGUITests/DiffTabTests.swift` (new)
+- `UnifiedDiffParser.swift` (new)
+- `SmithersClient.swift` (add `getNodeDiff`)
+- `Tests/SmithersGUITests/UnifiedDiffParserTests.swift`
+- `Tests/SmithersGUITests/DiffFileViewTests.swift`
+- `Tests/SmithersGUITests/DiffTabTests.swift`
+- `Tests/SmithersGUIUITests/DiffTabE2ETests.swift`
+
+## Testing & Validation
+
+### Unit tests — UnifiedDiffParser
+
+Parametric over fixtures:
+
+- Empty diff string → zero hunks.
+- Single hunk with no context → parses correctly.
+- Multiple hunks in same file → correct line numbers.
+- File with only additions → all hunks `+`.
+- File with only deletions → all hunks `-`.
+- Rename header (`rename from / rename to`) → correct old/new paths.
+- Mode change header → recorded.
+- Hunk header with no end count (`@@ -12 +12 @@`) → count defaults to 1.
+- Hunk with "\ No newline at end of file" → handled, not treated as content.
+- Non-ASCII content in hunks → preserved.
+- Very long single line (8,000 chars) → not corrupted.
+- Patch with CRLF line endings → normalized to LF.
+- Malformed header → throws `DiffParseError` with line number.
+
+### Unit tests — DiffFileView
+
+- Added / modified / deleted / renamed badges correct.
+- Line counts calculated correctly.
+- Binary file → "Binary" badge, no hunks.
+- > 2000 line file → pagination toggle.
+- Collapse / expand toggle persists per-file.
+
+### Unit tests — DiffTab
+
+- Loading state → spinner.
+- Empty patches → empty message.
+- Normal diff → rendered.
+- Large diff (50+ files) → warning + all collapsed.
+- Error → retry button works.
+- Refresh on iteration change (inspector selects a new iteration).
+- In-flight RPC cancelled on tab switch.
+
+### Input-boundary tests
+
+| Case                                | Expected                          |
+|-------------------------------------|-----------------------------------|
+| Zero patches                         | "No file changes."               |
+| 1 file, 1 hunk, 1 line               | renders                          |
+| 100 files, each 10 hunks             | file list + collapsed by default |
+| File with 10,000 lines changed       | pagination at 1,000 lines        |
+| File with 1 line 8,000 chars wide    | horizontal scroll, no wrap       |
+| Binary file                          | icon + size                      |
+| Added-then-deleted (net empty)       | empty                            |
+| Non-UTF8 filename                    | rendered with unicode normalization; no crash |
+| CRLF line endings                    | rendered as LF                   |
+| Rename with small edit               | rename header + small hunk       |
+| `DiffTooLarge` from server           | error + hint                     |
+| `DiffTooLarge` with partial truncation marker | visible "truncated at N MB" marker |
+
+### Integration / UI tests
+
+- Task changes 3 files → diff renders correctly.
+- Click a file in list → smooth scroll to its section.
+- Collapse a file → hunks hidden.
+- Copy a hunk → pasteboard check.
+- 100-file fixture → list performant, collapsed, expanding one works.
+
+### Accessibility
+
+- File list is a landmark; each file has a role.
+- Keyboard nav through hunks (next hunk / previous hunk).
+- Line numbers announce ("line 42 added").
+- Contrast on `+` / `-` / context backgrounds passes WCAG AA in both
+  themes (including color-blind safe — test with deuteranopia-simulated
+  palette).
+
+### Performance
+
+- 10-file diff: render < 200ms.
+- 100-file diff (collapsed): render < 500ms.
+- Expanding a 2000-line file: < 500ms.
+- Scroll-to-file: smooth, no jank.
+
+## Observability
+
+- `debug` on RPC: duration, byte count, file count.
+- `warn` on `DiffTooLarge`.
+- `warn` on parser error with line number (no patch content).
+- Signposts around parse and render.
+
+## Error handling
+
+- Parse errors on specific hunks → skip that hunk, mark file as "partial
+  parse", log warn. Other files still render.
+- Every typed `DevToolsClientError` maps to a user-facing message + hint.
 
 ## Acceptance
 
-- Single-file modification renders correct hunks with line numbers.
-- Binary file renders as icon + size.
-- Added / deleted files render with correct headers.
-- Empty patches array shows the empty message.
-- 100-file diff: file list renders; files collapsed by default.
+- [ ] Every parser fixture passes.
+- [ ] Every boundary case handled.
+- [ ] UI tests pass.
+- [ ] Accessibility tests pass (VoiceOver, keyboard, contrast in both
+      themes and color-blind palettes).
+- [ ] Performance budgets met.
+- [ ] Manual verification against real task diffs.
+- [ ] Diff content never logged above `debug`.
 
 ## Blocked by
 
-- smithers/0011 (getNodeDiff RPC).
-- gui/0076 (inspector shell).
+- smithers/0011
+- gui/0076

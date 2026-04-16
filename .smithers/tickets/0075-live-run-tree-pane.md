@@ -1,107 +1,205 @@
 # Live Run Tree Pane (Virtualized XML Tree)
 
+> Quality bar: spec §9. UI ticket — accessibility, performance, and E2E
+> coverage are non-negotiable.
+
 ## Context
 
 Spec: `.smithers/specs/live-run-devtools-ui.md` §2.1.
 
-Left pane of the new live-run view. Renders the `DevToolsNode` tree as an
-indented, virtualized, React-DevTools-style XML tree with state colors,
-error bubble-up, search, keyboard navigation, and mount/unmount animations.
+Left pane: virtualized React-DevTools-style XML tree with state colors,
+error bubble-up, search, keyboard navigation, mount/unmount animations.
 
 ## Scope
 
-### 1. `LiveRunTreeView` (SwiftUI)
+### 1. `LiveRunTreeView`
 
-Input: `LiveRunDevToolsStore` (from ticket 0074).
+Input: `LiveRunDevToolsStore`.
 
-Layout:
-- Top: search input (filters by tag + nodeId + label in v1; no prop
-  content search).
-- Body: `ScrollView` with `LazyVStack` of `TreeRowView`, keyed by
-  `node.id` so SwiftUI can diff mount/unmount.
+Layout: search input at top + `LazyVStack` of `TreeRowView` rows, keyed
+by `node.id`. Stable keys are required for animation continuity.
 
-Each row:
-- Chevron (`▶`/`▼`) — only for nodes with children.
-- `<Tag>` in angle brackets, monospaced.
-- Key-props summary: one-line, e.g. `id="fetch" agent="claude-opus-4-7"`.
-- State badge (running/finished/failed/etc.).
+### 2. `TreeRowView`
+
+- Chevron (`▶`/`▼`) only for parents; hidden for leaves.
+- `<Tag>` with angle brackets, monospaced.
+- Key props summary — deterministic one-line string, truncated at
+  120 chars.
+- State badge (running/finished/failed/blocked/waitingApproval/
+  cancelled/pending).
 - Timing (elapsed for running, duration for finished).
-
-### 2. State colors (from spec §2.1)
-
-Map `TaskExecutionState` → color:
-- `pending` → muted foreground
-- `running` → accent blue, pulsing tag
-- `finished` → foreground + subtle ✓
-- `blocked` / `waitingApproval` → amber
-- `failed` → red tag + faint red row background
-- `cancelled` → strikethrough muted
+- Red dot on chevron if any descendant is `failed` (precomputed;
+  see §3).
 
 ### 3. Error bubble-up
 
-If any descendant has state `failed`, ancestor rows show a **red dot** on
-the chevron (visible whether expanded or collapsed). Precompute per snapshot
-in the store (or in a computed property) so render stays cheap.
+A descendant `failed` makes every ancestor row display a red dot on its
+chevron. Computed per snapshot (cached by `snapshotSeq` to avoid
+recomputing every SwiftUI body).
 
 ### 4. Collapse state
 
-- Default: collapsed for everything.
-- Auto-expand: path from root to currently-running task.
-- Persist user's explicit collapse choices per session (dict keyed by
-  `node.id`). Don't re-expand a node the user collapsed.
+- Default collapsed; auto-expand the path to the running task.
+- Per-session user collapse overrides (in-memory dict keyed by
+  `node.id`).
+- Explicit user-collapsed nodes are never auto-expanded.
 
 ### 5. Search
 
-- Input at pane top, Cmd+F focuses.
-- Matches: tag name, `task.nodeId`, `task.label`, `task.agent`.
-- Matching rows highlighted; non-matches dimmed (not removed — structure
-  stays intact).
+- Cmd+F focuses.
+- Matches on tag, `task.nodeId`, `task.label`, `task.agent` —
+  case-insensitive substring.
+- Matched rows highlighted; non-matches dimmed (not removed).
+- Empty query = no filtering.
 
 ### 6. Keyboard navigation
 
-Mirror React DevTools:
-- ↑/↓ move selection.
-- ←/→ collapse/expand (← on already-collapsed goes to parent; → on
-  already-expanded goes to first child).
-- Enter focuses the inspector pane.
+- ↑/↓ moves selection (roving focus).
+- ← collapses (or goes to parent if already collapsed / leaf).
+- → expands (or goes to first child if already expanded).
+- Enter focuses inspector.
 - Cmd+F focuses search.
+- Esc clears search or deselects.
+- Home / End to first / last visible row.
 
 ### 7. Animations
 
-- Mount: fade + slide-in from left (120ms ease-out).
-- Unmount: fade + slide-out (120ms), dim for ~1s before removing.
-- State transition: badge color crossfade (200ms).
-- Always animate; no throttling even on big re-renders.
+- Mount: fade + slide-in 120ms ease-out.
+- Unmount: fade + slide-out 120ms; dimmed for 1s then removed.
+- State transition: badge color crossfade 200ms.
+- Always animate. Respect `reduceMotion` — instant transitions when on.
 
 ### 8. Virtualization
 
-`LazyVStack` is sufficient for v1. Verify with a 500-node fixture. If
-frames drop, swap in a custom virtualized list (e.g. `List` with
-`buffer-based` rendering) — but default to LazyVStack.
+`LazyVStack` (SwiftUI). Verified with 1,000-node fixture.
 
 ## Files (expected)
 
 - `LiveRunTreeView.swift` (new)
 - `TreeRowView.swift` (new)
 - `TreeRowState.swift` (new — color + icon mapping)
-- `Tests/SmithersGUITests/LiveRunTreeViewTests.swift` (new)
-- `Tests/SmithersGUIUITests/LiveRunTreeE2ETests.swift` (new)
+- `TreeSearchIndex.swift` (new — precomputed search matches)
+- `AncestorErrorIndex.swift` (new — precomputed bubble-up)
+- `TreeKeyboardHandler.swift` (new — key routing)
+- `Tests/SmithersGUITests/TreeSearchIndexTests.swift`
+- `Tests/SmithersGUITests/AncestorErrorIndexTests.swift`
+- `Tests/SmithersGUITests/TreeKeyboardHandlerTests.swift`
+- `Tests/SmithersGUITests/TreeRowStateTests.swift`
+- `Tests/SmithersGUITests/LiveRunTreeViewTests.swift`
+- `Tests/SmithersGUIUITests/LiveRunTreeE2ETests.swift`
+- `Tests/SmithersGUIUITests/LiveRunTreeAccessibilityTests.swift`
+- `Tests/SmithersGUIUITests/LiveRunTreePerformanceTests.swift`
+
+## Testing & Validation
+
+### Unit tests — state / index helpers
+
+- `AncestorErrorIndex`: for every node in a sample tree, returns the
+  expected ancestor set with red dots. Cases:
+  - No failures → empty set.
+  - Single leaf failed → every ancestor in set.
+  - Two sibling failures → both ancestor chains merged.
+  - Nested failures → both marked.
+  - Failure at root → only root (no ancestors).
+- Rebuilt on snapshot change; cached by `seq`.
+
+- `TreeRowState`: every `TaskExecutionState` maps to the exact color
+  and icon defined by the spec. Enum exhaustiveness enforced by a
+  test that iterates all cases.
+
+- `TreeSearchIndex`:
+  - Empty query → all rows visible, none highlighted.
+  - Query matches tag, nodeId, label, agent independently.
+  - Case insensitive.
+  - Unicode normalization (precomposed vs decomposed) matches.
+  - Regex metacharacters in query treated literally.
+  - Query longer than any field → empty match set.
+  - 10,000-node tree indexed in < 100ms.
+
+- `TreeKeyboardHandler`: state-machine-style transitions.
+  - ↓ on row N → row N+1 (if exists).
+  - ↓ on last row → stays.
+  - ← on expanded → collapses.
+  - ← on collapsed → moves to parent.
+  - → on leaf → moves to first sibling at same depth? (spec decision)
+  - Full matrix enumerated in a parametric test.
+
+### Input-boundary tests
+
+| Case                                | Expected                          |
+|-------------------------------------|-----------------------------------|
+| Empty tree (root only)              | one row rendered                  |
+| 1,000-node tree                     | renders < 500ms first frame       |
+| Depth 50                            | indentation caps at visible width; no crash |
+| Long tag / label (500 chars)        | truncates with ellipsis at row width |
+| Unicode / emoji / RTL               | renders correctly; search matches |
+| All nodes failed                    | every ancestor + row shows red    |
+| All nodes pending                   | all muted, no red dots            |
+| Rapid updates (10 events/sec)       | animations do not stack; no jank  |
+| User collapses all, new running task auto-expanded | the user-collapsed ones stay collapsed |
+| Selected node unmounts               | selection cleared or moved to nearest sibling (decide + test both) |
+
+### Integration / UI tests (XCUITest)
+
+- Open live run → tree renders.
+- Click row → inspector selection updates.
+- Keyboard nav ↑↓←→ works without mouse.
+- Cmd+F focuses search; typing filters; Esc clears.
+- Collapse a node → children hidden; expand → restored.
+- Tree updates in real time as mock events stream in.
+
+### Accessibility tests
+
+- Every row announces: label, state, iteration, isSelected, hasChildren,
+  isExpanded.
+- Red-dot ancestor announces: "1 failed descendant" (or exact count).
+- Keyboard-only run-through completes without touching mouse.
+- ColorContrast: every state badge hits WCAG AA (asserted via
+  programmatic contrast check against both light and dark theme
+  backgrounds).
+- `reduceMotion` honored → animations replaced with instant transitions;
+  assert in UI test with simulated accessibility setting.
+
+### Performance tests (XCTest Metrics)
+
+- 1,000 nodes: first-paint < 500ms, scroll 60fps.
+- 10,000 nodes: first-paint < 2s, scroll degrades gracefully (no lock).
+- Sustained 100 events/sec for 30s: drop count < 5%, no main-thread
+  stalls > 100ms.
+
+## Observability
+
+- Log tree render events sparingly — only `debug`: `rowCount`,
+  `buildDurationMs`.
+- Log keyboard command rate at `debug`.
+- Use `os_signpost` around tree build, search index rebuild, and
+  row render for Instruments profiling.
+- Never log prop values or labels that may contain user content.
+
+## Error handling
+
+- Missing data (node without state) → renders as "unknown" badge, logs
+  `warn`, never crashes.
+- Empty tree during error state → inline placeholder "Tree unavailable.
+  Retry." with a button that calls `store.connect(runId:)`.
 
 ## Acceptance
 
-- Unit test: error bubble-up — a tree with one failed leaf shows red dots
-  on every ancestor.
-- Unit test: collapse persistence — user-collapsed node stays collapsed
-  across frame updates.
-- UI test: search narrows visible highlighting.
-- UI test: keyboard nav moves selection without mouse.
-- Manual: 500-node fixture renders at 60fps while receiving deltas.
+- [ ] Every unit test passes.
+- [ ] Every boundary case handled.
+- [ ] XCUITest suite passes on macOS 14+.
+- [ ] Accessibility tests pass (VoiceOver, keyboard-only, contrast).
+- [ ] Performance XCTMetrics within budget.
+- [ ] `reduceMotion` respected.
+- [ ] No main-thread stall > 100ms in sustained-event test.
+- [ ] Manual verification per standing instruction (run app, drive a real
+      live workflow, confirm real-time updates visually).
 
 ## Blocked by
 
-- gui/0074 (store).
+- gui/0074
 
 ## Blocks
 
-- gui/0081 (time-travel scrubber uses same tree).
-- gui/0082 (integration).
+- gui/0081 (scrubber renders same tree)
+- gui/0082 (integration)
