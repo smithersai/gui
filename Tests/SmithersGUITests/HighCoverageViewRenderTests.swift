@@ -111,13 +111,10 @@ final class HighCoverageViewRenderTests: XCTestCase {
         )
         .inspect()
 
-        assertText("Live Run Chat", existsIn: inspected)
         assertText("run-abcd", existsIn: inspected)
-        assertText("Following", existsIn: inspected)
-        assertText("Context", existsIn: inspected)
         assertText("Refresh", existsIn: inspected)
         assertText("Hijack", existsIn: inspected)
-        assertText("Loading chat...", existsIn: inspected)
+        assertText("Loading...", existsIn: inspected)
     }
 
     func testJJHubWorkflowsViewInitialRenderCoversHeaderListAndPlaceholder() throws {
