@@ -236,6 +236,7 @@ class SmithersClient: ObservableObject {
     private var uiIssues: [SmithersIssue] = SmithersClient.makeUIIssues()
     private var uiWorkspaces: [Workspace] = SmithersClient.makeUIWorkspaces()
     private var uiWorkspaceSnapshots: [WorkspaceSnapshot] = SmithersClient.makeUIWorkspaceSnapshots()
+    private var uiNodeOutputFetchCounts: [String: Int] = [:]
     private var runWorkflowPathCache: [String: String] = [:]
     private var snapshotWorkflowPathCache: [String: String] = [:]
 
@@ -310,7 +311,7 @@ class SmithersClient: ObservableObject {
     private static let noSQLTransportMessage =
         "no smithers transport available: SQL requires a running smithers server; start with: smithers up --serve"
     private nonisolated static let allRunsStreamRunId = "all-runs"
-    private nonisolated static let defaultHTTPTransportPort = 7331
+    nonisolated static let defaultHTTPTransportPort = 7331
     private static let costPerMInputTokens = 3.0
     private static let costPerMOutputTokens = 15.0
 
@@ -337,7 +338,7 @@ class SmithersClient: ObservableObject {
         let trimmedCwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedCwd = (trimmedCwd?.isEmpty == false)
             ? trimmedCwd
-            : FileManager.default.currentDirectoryPath
+            : FileManager.default.homeDirectoryForCurrentUser.path
         self.cwd = CWDResolver.resolve(resolvedCwd)
         // Don't spawn a process during init — just use "smithers" and rely on PATH
         self.smithersBin = smithersBin
@@ -449,6 +450,50 @@ class SmithersClient: ObservableObject {
                 errorJson: "{\"message\":\"Fixture failure\"}"
             ),
         ]
+    }
+
+    private static func makeUINodeDiffBundle(nodeId: String, iteration: Int) -> NodeDiffBundle {
+        let safeNodeId = nodeId.replacingOccurrences(of: ":", with: "-")
+        let pathPrefix = "fixtures/\(safeNodeId)-\(max(0, iteration))"
+        return NodeDiffBundle(
+            seq: max(1, iteration + 1),
+            baseRef: "ui-base-\(safeNodeId)",
+            patches: [
+                NodeDiffPatch(
+                    path: "\(pathPrefix).swift",
+                    oldPath: nil,
+                    operation: .modify,
+                    diff: """
+                    @@ -1,4 +1,6 @@
+                     struct Example {
+                    -    let status = "pending"
+                    +    let status = "running"
+                    +    let attempt = \(max(0, iteration))
+                     }
+                    """,
+                    binaryContent: nil
+                ),
+                NodeDiffPatch(
+                    path: "\(pathPrefix).md",
+                    oldPath: nil,
+                    operation: .add,
+                    diff: """
+                    @@ -0,0 +1,3 @@
+                    +# Diff Fixture
+                    +nodeId: \(nodeId)
+                    +iteration: \(max(0, iteration))
+                    """,
+                    binaryContent: nil
+                ),
+                NodeDiffPatch(
+                    path: "assets/\(safeNodeId)-image.png",
+                    oldPath: nil,
+                    operation: .modify,
+                    diff: "",
+                    binaryContent: "aGVsbG8="
+                ),
+            ]
+        )
     }
 
     private static func makeUIWorkflows() -> [Workflow] {
@@ -1586,6 +1631,556 @@ class SmithersClient: ObservableObject {
         )
         args += ["--format", "json"]
         _ = try await execArgs(args)
+    }
+
+    // MARK: - DevTools Stream
+
+    func streamDevTools(runId: String, fromSeq: Int? = nil) -> AsyncThrowingStream<DevToolsEvent, Error> {
+        let encodedRunId = Self.encodedURLPathComponent(runId)
+        var path = "/v1/runs/\(encodedRunId)/devtools/stream"
+        if let fromSeq {
+            path += "?fromSeq=\(fromSeq)"
+        }
+
+        guard let url = resolvedHTTPTransportURL(path: path) else {
+            return AsyncThrowingStream { $0.finish() }
+        }
+
+        let decoder = self.decoder
+        let session = self.streamSession
+
+        return AsyncThrowingStream { continuation in
+            let task = Task.detached {
+                var request = URLRequest(url: url)
+                request.timeoutInterval = .infinity
+                request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
+                request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+                AppLogger.network.info("DevTools SSE connect", metadata: [
+                    "run_id": runId,
+                    "from_seq": fromSeq.map(String.init) ?? "nil",
+                    "url": url.absoluteString,
+                ])
+
+                do {
+                    let (bytes, response) = try await session.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        continuation.finish(throwing: DevToolsClientError.unknown("invalid response"))
+                        return
+                    }
+
+                    if http.statusCode != 200 {
+                        let errorCode = http.value(forHTTPHeaderField: "X-Error-Code")
+                        let errorMsg = http.value(forHTTPHeaderField: "X-Error-Message")
+                        if let errorCode {
+                            continuation.finish(throwing: DevToolsClientError.from(serverErrorCode: errorCode, message: errorMsg))
+                        } else {
+                            continuation.finish(throwing: DevToolsClientError.unknown("HTTP \(http.statusCode)"))
+                        }
+                        return
+                    }
+
+                    for try await line in bytes.lines {
+                        guard !Task.isCancelled else { break }
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { continue }
+
+                        guard let data = trimmed.data(using: .utf8) else { continue }
+
+                        do {
+                            let event = try decoder.decode(DevToolsEvent.self, from: data)
+                            continuation.yield(event)
+                        } catch let decodingError as DecodingError {
+                            AppLogger.error.error("DevTools decode error", metadata: [
+                                "run_id": runId,
+                                "bytes": String(data.count),
+                            ])
+                            continuation.finish(throwing: DevToolsClientError.from(decodingError: decodingError))
+                            return
+                        }
+                    }
+
+                    continuation.finish()
+                } catch let urlError as URLError {
+                    continuation.finish(throwing: DevToolsClientError.from(urlError: urlError))
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
+    }
+
+    func getDevToolsSnapshot(runId: String, frameNo: Int? = nil) async throws -> DevToolsSnapshot {
+        let encodedRunId = Self.encodedURLPathComponent(runId)
+        var path = "/v1/runs/\(encodedRunId)/devtools/snapshot"
+        if let frameNo {
+            path += "?frameNo=\(frameNo)"
+        }
+
+        guard let url = resolvedHTTPTransportURL(path: path) else {
+            throw DevToolsClientError.runNotFound(runId)
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        AppLogger.network.info("DevTools snapshot request", metadata: [
+            "run_id": runId,
+            "frame_no": frameNo.map(String.init) ?? "latest",
+        ])
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw DevToolsClientError.unknown("invalid response")
+            }
+
+            if http.statusCode != 200 {
+                let errorCode = http.value(forHTTPHeaderField: "X-Error-Code")
+                let errorMsg = http.value(forHTTPHeaderField: "X-Error-Message")
+                if let errorCode {
+                    throw DevToolsClientError.from(serverErrorCode: errorCode, message: errorMsg)
+                }
+                throw DevToolsClientError.unknown("HTTP \(http.statusCode)")
+            }
+
+            return try decoder.decode(DevToolsSnapshot.self, from: data)
+        } catch let urlError as URLError {
+            throw DevToolsClientError.from(urlError: urlError)
+        } catch let decodingError as DecodingError {
+            throw DevToolsClientError.from(decodingError: decodingError)
+        }
+    }
+
+    func getNodeOutput(runId: String, nodeId: String, iteration: Int? = nil) async throws -> NodeOutputResponse {
+        if UITestSupport.isEnabled {
+            let key = "\(runId)|\(nodeId)|\(iteration ?? -1)"
+            let fetchCount = uiNodeOutputFetchCounts[key, default: 0]
+            uiNodeOutputFetchCounts[key] = fetchCount + 1
+            return try fixtureNodeOutput(nodeId: nodeId, fetchCount: fetchCount)
+        }
+
+        let encodedRunId = Self.encodedURLPathComponent(runId)
+        let encodedNodeId = Self.encodedURLPathComponent(nodeId)
+        var path = "/v1/runs/\(encodedRunId)/nodes/\(encodedNodeId)/output"
+        if let iteration {
+            path += "?iteration=\(iteration)"
+        }
+
+        guard let url = resolvedHTTPTransportURL(path: path) else {
+            throw DevToolsClientError.runNotFound(runId)
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        AppLogger.network.debug("DevTools node output request", metadata: [
+            "run_id": runId,
+            "node_id": nodeId,
+            "iteration": iteration.map(String.init) ?? "nil",
+        ])
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw DevToolsClientError.unknown("invalid response")
+            }
+
+            if http.statusCode != 200 {
+                let errorCode = http.value(forHTTPHeaderField: "X-Error-Code")
+                let errorMsg = http.value(forHTTPHeaderField: "X-Error-Message")
+                if let errorCode {
+                    throw DevToolsClientError.from(serverErrorCode: errorCode, message: errorMsg)
+                }
+                throw DevToolsClientError.unknown("HTTP \(http.statusCode)")
+            }
+
+            let decoded = try decoder.decode(NodeOutputResponse.self, from: data)
+            let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+            AppLogger.network.debug("DevTools node output response", metadata: [
+                "run_id": runId,
+                "node_id": nodeId,
+                "iteration": iteration.map(String.init) ?? "nil",
+                "status": decoded.status.rawValue,
+                "duration_ms": String(durationMs),
+                "bytes": String(data.count),
+            ])
+            return decoded
+        } catch let urlError as URLError {
+            throw DevToolsClientError.from(urlError: urlError)
+        } catch let decodingError as DecodingError {
+            AppLogger.error.error("DevTools node output decode failed", metadata: [
+                "run_id": runId,
+                "node_id": nodeId,
+                "iteration": iteration.map(String.init) ?? "nil",
+            ])
+            throw DevToolsClientError.from(decodingError: decodingError)
+        }
+    }
+
+    private func fixtureNodeOutput(nodeId: String, fetchCount: Int) throws -> NodeOutputResponse {
+        let reviewSchema = OutputSchemaDescriptor(fields: [
+            OutputSchemaFieldDescriptor(
+                name: "rating",
+                type: .string,
+                optional: false,
+                nullable: false,
+                description: "Overall review recommendation.",
+                enumValues: [.string("approve"), .string("changes_requested")]
+            ),
+            OutputSchemaFieldDescriptor(
+                name: "score",
+                type: .number,
+                optional: false,
+                nullable: false,
+                description: "Numerical quality score.",
+                enumValues: nil
+            ),
+            OutputSchemaFieldDescriptor(
+                name: "notes",
+                type: .object,
+                optional: true,
+                nullable: true,
+                description: "Structured reviewer notes.",
+                enumValues: nil
+            ),
+        ])
+
+        switch nodeId {
+        case "task:fetch":
+            return NodeOutputResponse(
+                status: .produced,
+                row: ["count": .number(3), "status": .string("ready")],
+                schema: OutputSchemaDescriptor(fields: [
+                    OutputSchemaFieldDescriptor(
+                        name: "status",
+                        type: .string,
+                        optional: false,
+                        nullable: false,
+                        description: "Fetch status.",
+                        enumValues: [.string("ready"), .string("stale")]
+                    ),
+                    OutputSchemaFieldDescriptor(
+                        name: "count",
+                        type: .number,
+                        optional: false,
+                        nullable: false,
+                        description: "Number of fetched artifacts.",
+                        enumValues: nil
+                    ),
+                ])
+            )
+
+        case "task:review:0":
+            if fetchCount == 0 {
+                return NodeOutputResponse(status: .pending, row: nil, schema: reviewSchema)
+            }
+            return NodeOutputResponse(
+                status: .produced,
+                row: [
+                    "rating": .string("approve"),
+                    "score": .number(9),
+                    "notes": .object([
+                        "summary": .string("Looks good overall."),
+                        "checks": .array([.string("lint"), .string("tests")]),
+                    ]),
+                ],
+                schema: reviewSchema
+            )
+
+        case "task:review:1":
+            return NodeOutputResponse(
+                status: .failed,
+                row: nil,
+                schema: reviewSchema,
+                partial: [
+                    "rating": .string("changes_requested"),
+                    "score": .number(4),
+                    "notes": .object([
+                        "summary": .string("Partial analysis before tool timeout."),
+                    ]),
+                ]
+            )
+
+        case "task:merge":
+            return NodeOutputResponse(
+                status: .produced,
+                row: [
+                    "merged": .bool(true),
+                    "files": .array([.string("Sources/App.swift"), .string("Tests/AppTests.swift")]),
+                ],
+                schema: OutputSchemaDescriptor(fields: [
+                    OutputSchemaFieldDescriptor(
+                        name: "merged",
+                        type: .boolean,
+                        optional: false,
+                        nullable: false,
+                        description: "Whether the merge succeeded.",
+                        enumValues: nil
+                    ),
+                    OutputSchemaFieldDescriptor(
+                        name: "files",
+                        type: .array,
+                        optional: false,
+                        nullable: false,
+                        description: "Changed files.",
+                        enumValues: nil
+                    ),
+                ])
+            )
+
+        default:
+            throw DevToolsClientError.nodeHasNoOutput
+        }
+    }
+
+    func getNodeDiff(runId: String, nodeId: String, iteration: Int) async throws -> NodeDiffBundle {
+        if UITestSupport.isEnabled {
+            return Self.makeUINodeDiffBundle(nodeId: nodeId, iteration: iteration)
+        }
+
+        let encodedRunId = Self.encodedURLPathComponent(runId)
+        let encodedNodeId = Self.encodedURLPathComponent(nodeId)
+        let candidatePaths = [
+            "/v1/runs/\(encodedRunId)/nodes/\(encodedNodeId)/diff?iteration=\(iteration)",
+            "/v1/runs/\(encodedRunId)/devtools/nodes/\(encodedNodeId)/diff?iteration=\(iteration)",
+        ]
+
+        var transportFailure: DevToolsClientError?
+
+        for path in candidatePaths {
+            guard let url = resolvedHTTPTransportURL(path: path) else {
+                continue
+            }
+
+            var request = URLRequest(url: url)
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+            do {
+                let startedAt = CFAbsoluteTimeGetCurrent()
+                let (data, response) = try await session.data(for: request)
+                let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+                let byteCount = data.count
+
+                guard let http = response as? HTTPURLResponse else {
+                    throw DevToolsClientError.unknown("invalid response")
+                }
+
+                if (200..<300).contains(http.statusCode) {
+                    let bundle = try decodeNodeDiffBundle(from: data)
+                    AppLogger.network.debug("Node diff request ok", metadata: [
+                        "run_id": runId,
+                        "node_id": nodeId,
+                        "iteration": String(iteration),
+                        "duration_ms": String(durationMs),
+                        "bytes": String(byteCount),
+                        "file_count": String(bundle.patches.count),
+                    ])
+                    return bundle
+                }
+
+                let headerCode = http.value(forHTTPHeaderField: "X-Error-Code")
+                let headerMessage = http.value(forHTTPHeaderField: "X-Error-Message")
+                let parsedError = decodeNodeDiffError(from: data)
+                let code = headerCode ?? parsedError.code
+                let message = headerMessage ?? parsedError.message ?? extractServerErrorMessage(data)
+
+                AppLogger.network.warning("Node diff request failed", metadata: [
+                    "run_id": runId,
+                    "node_id": nodeId,
+                    "iteration": String(iteration),
+                    "status": String(http.statusCode),
+                    "duration_ms": String(durationMs),
+                    "bytes": String(byteCount),
+                    "error_code": code ?? "",
+                ])
+
+                // Route-probing fallback: try the next candidate path on plain 404s.
+                if http.statusCode == 404 && code == nil {
+                    continue
+                }
+
+                if let code {
+                    throw DevToolsClientError.from(serverErrorCode: code, message: message)
+                }
+                throw DevToolsClientError.unknown(message ?? "HTTP \(http.statusCode)")
+            } catch let devError as DevToolsClientError {
+                throw devError
+            } catch let urlError as URLError {
+                transportFailure = .from(urlError: urlError)
+                break
+            } catch let decodingError as DecodingError {
+                throw DevToolsClientError.from(decodingError: decodingError)
+            }
+        }
+
+        do {
+            var args = ["diff", runId, nodeId, "--format", "json"]
+            args += ["--iteration", String(iteration)]
+            let data = try await execArgs(args)
+            return try decodeNodeDiffBundleFromCLI(data)
+        } catch let devError as DevToolsClientError {
+            throw devError
+        } catch {
+            if let transportFailure {
+                throw transportFailure
+            }
+            throw error
+        }
+    }
+
+    private func decodeNodeDiffBundle(from data: Data) throws -> NodeDiffBundle {
+        if let direct = try? decoder.decode(NodeDiffBundle.self, from: data) {
+            return direct
+        }
+
+        if let envelope = try? decoder.decode(NodeDiffResponseEnvelope.self, from: data) {
+            if envelope.ok == false {
+                if let code = envelope.error?.code {
+                    throw DevToolsClientError.from(serverErrorCode: code, message: envelope.error?.message)
+                }
+                throw DevToolsClientError.unknown(envelope.error?.message ?? "Node diff request failed")
+            }
+            if let bundle = envelope.payload ?? envelope.data ?? envelope.bundle {
+                return bundle
+            }
+        }
+
+        if let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [String: Any] {
+            if let payload = object["payload"] ?? object["data"] ?? object["bundle"],
+               JSONSerialization.isValidJSONObject(payload),
+               let payloadData = try? JSONSerialization.data(withJSONObject: payload, options: []),
+               let bundle = try? decoder.decode(NodeDiffBundle.self, from: payloadData) {
+                return bundle
+            }
+        }
+
+        throw DevToolsClientError.unknown("Unable to decode node diff response")
+    }
+
+    private func decodeNodeDiffBundleFromCLI(_ data: Data) throws -> NodeDiffBundle {
+        var firstError: Error?
+        for candidate in cliJSONPayloadCandidates(from: data) {
+            do {
+                return try decodeNodeDiffBundle(from: candidate)
+            } catch {
+                if firstError == nil {
+                    firstError = error
+                }
+            }
+        }
+        if let firstError {
+            throw firstError
+        }
+        return try decodeNodeDiffBundle(from: data)
+    }
+
+    private func decodeNodeDiffError(from data: Data) -> (code: String?, message: String?) {
+        guard let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
+            return (nil, nil)
+        }
+
+        func asString(_ value: Any?) -> String? {
+            if let string = value as? String {
+                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            return nil
+        }
+
+        if let root = object as? [String: Any] {
+            if let errorObject = root["error"] as? [String: Any] {
+                let code = asString(errorObject["code"]) ?? asString(root["code"])
+                let message = asString(errorObject["message"])
+                    ?? asString(errorObject["error"])
+                    ?? asString(root["message"])
+                return (code, message)
+            }
+
+            if let errorString = asString(root["error"]) {
+                return (asString(root["code"]), errorString)
+            }
+
+            if let message = asString(root["message"]) {
+                return (asString(root["code"]), message)
+            }
+
+            if let nested = root["payload"] as? [String: Any],
+               let errorObject = nested["error"] as? [String: Any] {
+                let code = asString(errorObject["code"])
+                let message = asString(errorObject["message"])
+                return (code, message)
+            }
+        }
+
+        return (nil, nil)
+    }
+
+    func jumpToFrame(runId: String, frameNo: Int, confirm: Bool = true) async throws -> DevToolsJumpResult {
+        if UITestSupport.isEnabled {
+            return DevToolsJumpResult(
+                ok: true,
+                newFrameNo: frameNo,
+                revertedSandboxes: 1,
+                deletedFrames: 0,
+                deletedAttempts: 0,
+                invalidatedDiffs: 0,
+                durationMs: 10
+            )
+        }
+
+        let encodedRunId = Self.encodedURLPathComponent(runId)
+        let path = "/v1/runs/\(encodedRunId)/devtools/jump"
+
+        guard let url = resolvedHTTPTransportURL(path: path) else {
+            throw DevToolsClientError.runNotFound(runId)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        struct JumpPayload: Encodable {
+            let runId: String
+            let frameNo: Int
+            let confirm: Bool
+        }
+        request.httpBody = try JSONEncoder().encode(
+            JumpPayload(runId: runId, frameNo: frameNo, confirm: confirm)
+        )
+
+        AppLogger.network.info("DevTools jumpToFrame request", metadata: [
+            "run_id": runId,
+            "frame_no": String(frameNo),
+            "confirm": String(confirm),
+        ])
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw DevToolsClientError.unknown("invalid response")
+            }
+
+            if http.statusCode != 200 {
+                let errorCode = http.value(forHTTPHeaderField: "X-Error-Code")
+                let errorMsg = http.value(forHTTPHeaderField: "X-Error-Message")
+                if let errorCode {
+                    throw DevToolsClientError.from(serverErrorCode: errorCode, message: errorMsg)
+                }
+                throw DevToolsClientError.unknown("HTTP \(http.statusCode)")
+            }
+
+            return try decoder.decode(DevToolsJumpResult.self, from: data)
+        } catch let urlError as URLError {
+            throw DevToolsClientError.from(urlError: urlError)
+        } catch let decodingError as DecodingError {
+            throw DevToolsClientError.from(decodingError: decodingError)
+        }
     }
 
     // MARK: - Run Streaming (HTTP — requires --serve)
@@ -7106,6 +7701,17 @@ private struct WorkspaceSnapshotsResponse: Decodable {
 private struct ChatBlocksResponse: Decodable { let blocks: [ChatBlock] }
 private struct HijackSessionResponse: Decodable { let session: HijackSession }
 private struct DataEnvelope<T: Decodable>: Decodable { let data: T }
+private struct NodeDiffErrorPayload: Decodable {
+    let code: String?
+    let message: String?
+}
+private struct NodeDiffResponseEnvelope: Decodable {
+    let ok: Bool?
+    let payload: NodeDiffBundle?
+    let data: NodeDiffBundle?
+    let bundle: NodeDiffBundle?
+    let error: NodeDiffErrorPayload?
+}
 
 // MARK: - Errors
 
@@ -7130,3 +7736,7 @@ enum SmithersError: LocalizedError {
         }
     }
 }
+
+// MARK: - SmithersClient + DevTools providers
+
+extension SmithersClient: @preconcurrency DevToolsStreamProvider, NodeOutputProvider {}

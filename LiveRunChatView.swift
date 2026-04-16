@@ -124,29 +124,39 @@ struct LiveRunChatView: View {
             .sorted { $0.0 < $1.0 }
     }
 
+    private var useLiveRunTreeHarness: Bool {
+        UITestSupport.isEnabled && ProcessInfo.processInfo.environment["SMITHERS_GUI_UITEST_TREE"] == "1"
+    }
+
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
-            runHeader
-            hijackBanner
-
-            if let expandedNode = selectedNodeId {
-                expandedTaskView(nodeId: expandedNode)
+        Group {
+            if useLiveRunTreeHarness {
+                LiveRunTreeUITestHarnessView(runId: runId, onClose: onClose)
             } else {
-                taskDashboard
+                VStack(spacing: 0) {
+                    runHeader
+                    hijackBanner
+
+                    if let expandedNode = selectedNodeId {
+                        expandedTaskView(nodeId: expandedNode)
+                    } else {
+                        taskDashboard
+                    }
+                }
+                .task {
+                    await loadAll()
+                    startPollingRunState()
+                }
+                .onDisappear {
+                    stopStreaming()
+                    pollTask?.cancel()
+                    pollTask = nil
+                }
             }
         }
         .background(Theme.surface1)
-        .task {
-            await loadAll()
-            startPollingRunState()
-        }
-        .onDisappear {
-            stopStreaming()
-            pollTask?.cancel()
-            pollTask = nil
-        }
     }
 
     // MARK: - Run Header

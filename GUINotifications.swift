@@ -93,7 +93,7 @@ protocol NativeNotificationSending: AnyObject {
 final class MacNativeNotificationSender: NativeNotificationSending {
     #if os(macOS)
     private lazy var center: UNUserNotificationCenter? = {
-        guard !UITestSupport.isRunningUnitTests else { return nil }
+        guard !UITestSupport.isRunningUnitTests, !UITestSupport.isEnabled else { return nil }
         return UNUserNotificationCenter.current()
     }()
     private var requestedAuthorization = false

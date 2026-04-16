@@ -780,8 +780,16 @@ struct ContentView: View {
                     "connected": String(smithers.isConnected),
                     "cliAvailable": String(smithers.cliAvailable)
                 ])
-                AppNotifications.shared.beginRunEventMonitoring(smithers: smithers)
+                if !UITestSupport.isEnabled {
+                    AppNotifications.shared.beginRunEventMonitoring(smithers: smithers)
+                }
                 isLoading = false
+
+                let environment = ProcessInfo.processInfo.environment
+                if UITestSupport.isEnabled,
+                   environment["SMITHERS_GUI_UITEST_OPEN_TREE_ON_LAUNCH"] == "1" {
+                    destination = .liveRun(runId: "ui-run-active-001", nodeId: nil)
+                }
             }
         } else {
             HStack(spacing: 0) {

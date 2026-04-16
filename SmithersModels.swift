@@ -4376,7 +4376,9 @@ func deduplicatedChatBlocks(_ blocks: [ChatBlock]) -> [ChatBlock] {
 
         if let lastIndex = result.indices.last {
             let existing = result[lastIndex]
-            if existing.canMergeAssistantStream(with: block),
+            let canCorrelateStream = (existing.lifecycleId?.isEmpty == false) || (block.lifecycleId?.isEmpty == false)
+            if canCorrelateStream,
+               existing.canMergeAssistantStream(with: block),
                existing.hasStreamingContentOverlap(with: block) {
                 result[lastIndex] = existing.mergingAssistantStream(with: block)
                 if let existingLifecycleId = existing.lifecycleId, !existingLifecycleId.isEmpty {
