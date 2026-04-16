@@ -34,6 +34,9 @@ let package = Package(
                 "smithers.db",
                 "smithers.db-shm",
                 "smithers.db-wal",
+                ".worktrees",
+                ".smithers",
+                "vendor",
             ],
             linkerSettings: [
                 .unsafeFlags([
@@ -56,6 +59,7 @@ let package = Package(
                 .linkedFramework("CoreText"),
                 .linkedFramework("IOKit"),
                 .linkedFramework("AppKit"),
+                .linkedFramework("WebKit"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("Foundation"),
             ]

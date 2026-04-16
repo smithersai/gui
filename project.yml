@@ -9,6 +9,10 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"
+packages:
+  ViewInspector:
+    url: https://github.com/nalexn/ViewInspector.git
+    from: "0.10.0"
 targets:
   SmithersGUI:
     type: application
@@ -17,17 +21,37 @@ targets:
       - AgentProtocol.swift
       - AgentService.swift
       - AppLogger.swift
+      - DevToolsModels.swift
+      - DevToolsClientError.swift
+      - LiveRunDevToolsStore.swift
+      - HeartbeatState.swift
+      - HeartbeatIndicator.swift
+      - ElapsedTimeView.swift
+      - RunStatusPill.swift
+      - LiveRunHeaderView.swift
+      - FrameScrubberView.swift
+      - RewindConfirmationDialog.swift
+      - LiveRunTreeView.swift
+      - TreeRowView.swift
+      - TreeRowState.swift
+      - TreeSearchIndex.swift
+      - AncestorErrorIndex.swift
+      - TreeKeyboardHandler.swift
+      - BrowserSurfaceView.swift
       - CWDResolver.swift
       - DateFormatters.swift
       - CodexMCPStatus.swift
       - CodexModelSelection.swift
       - DeveloperDebugView.swift
+      - GUIControlSidebar.swift
       - GUINotifications.swift
       - SessionPersistenceStore.swift
       - AgentsView.swift
       - ApprovalsView.swift
       - ChangesView.swift
       - ChatView.swift
+      - CommandPaletteModel.swift
+      - CommandPaletteView.swift
       - ContentView.swift
       - DashboardView.swift
       - IssuesView.swift
@@ -36,9 +60,31 @@ targets:
       - LandingsView.swift
       - LiveRunChatView.swift
       - LogViewerView.swift
+      - MarkdownEditorView.swift
       - MemoryView.swift
       - Models.swift
       - NodeInspectView.swift
+      - NodeInspectorView.swift
+      - NodeInspectorHeader.swift
+      - OutputTab.swift
+      - OutputRenderer.swift
+      - OutputPendingView.swift
+      - OutputFailedView.swift
+      - LogsTab.swift
+      - DiffTab.swift
+      - DiffFileView.swift
+      - DiffHunkView.swift
+      - UnifiedDiffParser.swift
+      - ChatBlockRenderer.swift
+      - ChatBlockMerger.swift
+      - ChatBlockFilter.swift
+      - PropsTableView.swift
+      - PropValueView.swift
+      - GhostBanner.swift
+      - HistoricalOverlay.swift
+      - NodeErrorBanner.swift
+      - InspectorTabSwitcher.swift
+      - DefaultTabPicker.swift
       - PromptsView.swift
       - RunInspectView.swift
       - RunsView.swift
@@ -50,13 +96,18 @@ targets:
       - SlashCommands.swift
       - SmithersClient.swift
       - SmithersModels.swift
+      - SurfaceNotificationStore.swift
       - TerminalView.swift
+      - KeyboardShortcutController.swift
       - TicketsView.swift
       - Theme.swift
       - TriggersView.swift
       - UITestSupport.swift
       - UnifiedDiffView.swift
+      - VCSDashboardView.swift
       - ViewLifecycleLogger.swift
+      - WorkspaceContentView.swift
+      - WorkspaceSurfaceModels.swift
       - WorkflowsView.swift
       - WorkspacesView.swift
     settings:
@@ -79,8 +130,30 @@ targets:
       - sdk: CoreText.framework
       - sdk: IOKit.framework
       - sdk: AppKit.framework
+      - sdk: WebKit.framework
       - sdk: Carbon.framework
       - sdk: Foundation.framework
+  SmithersGUITests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/SmithersGUITests
+        excludes:
+          - "**/*ViewTests.swift"
+          - "**/*View*Tests.swift"
+          - "HighCoverageViewRenderTests.swift"
+    dependencies:
+      - target: SmithersGUI
+      - package: ViewInspector
+        product: ViewInspector
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: SmithersGUI
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CCodexFFI $(SRCROOT)/CGhosttyKit"
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/CCodexFFI"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/codex/codex-rs/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64"
   SmithersGUIUITests:
     type: bundle.ui-testing
     platform: macOS
@@ -98,8 +171,10 @@ schemes:
     build:
       targets:
         SmithersGUI: all
+        SmithersGUITests: [test]
         SmithersGUIUITests: [test]
     test:
       targets:
+        - SmithersGUITests
         - SmithersGUIUITests
       gatherCoverageData: false

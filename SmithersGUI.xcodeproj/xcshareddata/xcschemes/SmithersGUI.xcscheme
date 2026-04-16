@@ -29,6 +29,20 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "CE151C93825240BDBABE0232"
+               BuildableName = "SmithersGUITests.xctest"
+               BlueprintName = "SmithersGUITests"
+               ReferencedContainer = "container:SmithersGUI.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "2C255C31DA24DEEB42C16B2D"
                BuildableName = "SmithersGUIUITests.xctest"
                BlueprintName = "SmithersGUIUITests"
@@ -53,6 +67,16 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "CE151C93825240BDBABE0232"
+               BuildableName = "SmithersGUITests.xctest"
+               BlueprintName = "SmithersGUITests"
+               ReferencedContainer = "container:SmithersGUI.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
          <TestableReference
             skipped = "NO">
             <BuildableReference
