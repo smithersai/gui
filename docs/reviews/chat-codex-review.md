@@ -1,6 +1,6 @@
 # Chat And Codex Review
 
-Review scope: `CHAT_AND_CODEX` feature group, focused on `ChatView.swift`, `LiveRunChatView.swift`, `AgentService.swift`, `Tests/SmithersGUITests/ChatViewTests.swift`, and `Tests/SmithersGUITests/LiveRunChatViewTests.swift`.
+Review scope: `CHAT_AND_CODEX` feature group, focused on `ChatView.swift`, `LiveRunView.swift`, `AgentService.swift`, `Tests/SmithersGUITests/ChatViewTests.swift`, and `Tests/SmithersGUITests/LiveRunViewTests.swift`.
 
 Requested features reviewed: `CHAT_MESSAGE_INPUT`, `CHAT_MESSAGE_DISPLAY`, `CHAT_MESSAGE_TYPES`, `CHAT_MULTI_LINE_INPUT`, `CHAT_AUTO_SCROLL`, `CHAT_THINKING_INDICATOR`, `CHAT_WELCOME_EMPTY_STATE`, `CHAT_SEND_STOP_TOGGLE`, `CHAT_BUBBLE_RENDERING`, `CHAT_COMPOSER_TOOLBAR`, `CHAT_PAPERCLIP_ATTACHMENT`, `CHAT_FILE_MENTION`, `CHAT_SLASH_TRIGGER`, `CHAT_KEYBOARD_SHORTCUTS`, `CHAT_COMMAND_OUTPUT`, `CHAT_STREAMING`, `CHAT_GIT_DIFF`, `CHAT_CODEX_COMMANDS`, `CHAT_SLASH_INTEGRATIONS`, and `CHAT_STUB_STATUS_MESSAGES`.
 
@@ -29,7 +29,7 @@ Recommendation: either persist pasted images into a temporary attachment directo
 
 ### High: Live run streaming can drop events during initial load
 
-`LiveRunChatView.loadBlocks()` starts streaming before loading the initial snapshot at `LiveRunChatView.swift:587` through `LiveRunChatView.swift:591`. If SSE events arrive before `getChatOutput` returns, `appendStreamBlock` adds them to `allBlocks`; then `rebuildAttempts(with:)` replaces `allBlocks` with the snapshot at `LiveRunChatView.swift:674` through `LiveRunChatView.swift:675`.
+`LiveRunView.loadBlocks()` starts streaming before loading the initial snapshot at `LiveRunView.swift:587` through `LiveRunView.swift:591`. If SSE events arrive before `getChatOutput` returns, `appendStreamBlock` adds them to `allBlocks`; then `rebuildAttempts(with:)` replaces `allBlocks` with the snapshot at `LiveRunView.swift:674` through `LiveRunView.swift:675`.
 
 Any streamed block not yet present in the snapshot is lost. This directly affects `CHAT_STREAMING`, `CHAT_COMMAND_OUTPUT`, and live run reliability.
 
@@ -99,8 +99,8 @@ Specific gaps:
 - `CHAT_PAPERCLIP_ATTACHMENT` and `CHAT_FILE_MENTION`: `ChatViewTests.swift:1189` through `ChatViewTests.swift:1221` use source-string checks for wiring. They do not validate prompt composition, duplicate attachment handling, file size rejection, directory rejection, relative paths, pasted large text, pasted images, MIME detection, model capability filtering, or mention candidate ranking.
 - `CHAT_SLASH_TRIGGER`, `CHAT_CODEX_COMMANDS`, and `CHAT_SLASH_INTEGRATIONS`: registry parsing is covered, but ChatView execution is not. There are no behavior tests for `/new`, `/init`, `/review`, `/compact`, `/diff`, `/status`, `/model`, `/approvals`, `/mcp`, `/logout`, workflow commands, prompt commands, or auth-gated command sending.
 - `CHAT_MESSAGE_TYPES`: the tests cover user, assistant, status, command, and manually constructed diff messages. They do not cover `ToolMessagePayload` rendering, assistant thinking metadata, assistant error metadata, details expansion, copied text, or compact tool messages.
-- `CHAT_STREAMING`: `LiveRunChatViewTests.swift:74` through `LiveRunChatViewTests.swift:292` duplicate the view logic in `LiveRunChatLogic` instead of exercising production methods. `LiveRunChatViewTests.swift:717` through `LiveRunChatViewTests.swift:734` also duplicates `decodeStreamEvent`. These tests can pass while production logic drifts.
-- `LiveRunChatView` UI behavior is largely untested: no fake `SmithersClient` drives `loadAll`, stream events, stream cancellation, refresh errors, attempt buttons, follow toggling, context pane, hijack banners, or row rendering through the actual view.
+- `CHAT_STREAMING`: `LiveRunViewTests.swift:74` through `LiveRunViewTests.swift:292` duplicate the view logic in `LiveRunChatLogic` instead of exercising production methods. `LiveRunViewTests.swift:717` through `LiveRunViewTests.swift:734` also duplicates `decodeStreamEvent`. These tests can pass while production logic drifts.
+- `LiveRunView` UI behavior is largely untested: no fake `SmithersClient` drives `loadAll`, stream events, stream cancellation, refresh errors, attempt buttons, follow toggling, context pane, hijack banners, or row rendering through the actual view.
 - `CHAT_STUB_STATUS_MESSAGES`: stubs such as `/feedback` and auth/target status messages are not covered as user-visible product decisions. Tests should lock down which stub messages are temporary and which are intended UX.
 
 ## Code Quality And Visibility
@@ -109,14 +109,14 @@ Specific gaps:
 - Good extraction candidates are a `ChatComposerModel` or `ChatPromptComposer`, a `FileMentionIndex`, a `LocalGitDiffProvider`, and a `ChatTranscriptView`. Those would allow real unit tests without widening all SwiftUI internals.
 - Internal visibility is broader than necessary for production. `SlashCommandPalette`, `MessageRow`, `CommandBlock`, `RoundedCorner`, `RectCorner`, `ChatTargetKind`, `ChatTargetOption`, `buildChatTargets`, and `chatTargetStatusLabel` are all module-internal. Some of this is useful for `@testable` tests, but the current shape exposes implementation details because tests need them. Prefer extracting pure internal helpers that are intentionally testable and making rendering-only helpers `private` where practical.
 - `AgentService` should likely be `final`. It is `@MainActor` and owns bridge lifecycle state; subclassing would make those invariants harder to reason about.
-- `LiveRunChatViewTests` are a sign that important production logic wants to be a real model. Move attempt indexing, stream merging, and event decoding into an internal `LiveRunChatModel` or reducer and have the view bind to it.
+- `LiveRunViewTests` are a sign that important production logic wants to be a real model. Move attempt indexing, stream merging, and event decoding into an internal `LiveRunChatModel` or reducer and have the view bind to it.
 - Source-string tests in `ChatViewTests.swift:560` through `ChatViewTests.swift:580` and `ChatViewTests.swift:1189` through `ChatViewTests.swift:1221` are brittle. They are useful as temporary guardrails, but they should not be the primary coverage for user-facing behavior.
 
 ## Feature Coverage Summary
 
 - Implemented visibly: message input, message display, basic message types, multi-line text field, thinking indicator, welcome empty state, send/stop icon toggle, bubble rendering, composer toolbar, slash palette, command output blocks, live-run transcript streaming, model/approval/MCP command surfaces, and basic status messages.
 - Partially implemented or risky: auto-scroll for in-place streaming updates, generated image attachments, file mention directory behavior, `/diff` structured rendering, slash command execution tests, auth-gated send behavior, external target picker progress state, and live-run initial stream/snapshot merging.
-- Under-tested: keyboard shortcuts, attachment prompt semantics, mention completion, actual ChatView send callback path, actual LiveRunChatView async load/stream lifecycle, tool/thinking/error rendering, and Codex bridge lifecycle edge cases.
+- Under-tested: keyboard shortcuts, attachment prompt semantics, mention completion, actual ChatView send callback path, actual LiveRunView async load/stream lifecycle, tool/thinking/error rendering, and Codex bridge lifecycle edge cases.
 
 ## Verification
 

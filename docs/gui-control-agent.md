@@ -123,7 +123,7 @@ Typed actions should be implemented with app state and existing services first. 
   - `BrowserSurfaceRegistry` owns `WKWebView` instances by surface id.
   - `TerminalWorkspace` tracks browser surface URL/title.
 - Smithers run chat:
-  - `LiveRunChatView` streams run chat and supports hijack.
+  - `LiveRunView` streams run chat and supports hijack.
   - `SmithersClient.hijackRun(...)` decodes resumable launch details.
 - Navigation:
   - `NavDestination` already models app routes and terminal command launches.

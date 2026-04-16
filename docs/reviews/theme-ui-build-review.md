@@ -38,7 +38,7 @@ Recommendation: define derivative tokens from the base semantic tokens, for exam
 
 ### Medium: Date formatting is scattered and not covered by `ThemeTests`
 
-The reviewed theme files contain no date-formatting implementation, and `ThemeTests.swift` does not cover the `DATE_FORMATTING` feature group. A static repo scan shows the patterns are implemented ad hoc elsewhere: `ApprovalsView.swift:362` creates a `.short`/`.medium` `DateFormatter` per call, `ScoresView.swift:583` caches `.short`/`.short`, and fixed `dateFormat` strings appear in files such as `AgentService.swift:1106`, `LiveRunChatView.swift:916`, and `MemoryView.swift:459`.
+The reviewed theme files contain no date-formatting implementation, and `ThemeTests.swift` does not cover the `DATE_FORMATTING` feature group. A static repo scan shows the patterns are implemented ad hoc elsewhere: `ApprovalsView.swift:362` creates a `.short`/`.medium` `DateFormatter` per call, `ScoresView.swift:583` caches `.short`/`.short`, and fixed `dateFormat` strings appear in files such as `AgentService.swift:1106`, `LiveRunView.swift:916`, and `MemoryView.swift:459`.
 
 Fixed-format `DateFormatter` usage generally needs an explicit stable locale such as `en_US_POSIX`; most fixed patterns here do not set one. The feature inventory also lists `FORMAT_DATE_MM_DD_HH_MM`, but the production scan did not find that exact pattern outside tests.
 
