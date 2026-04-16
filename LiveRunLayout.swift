@@ -47,28 +47,53 @@ struct LiveRunLayout<TreePane: View, InspectorPane: View>: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let resolvedMode = LiveRunLayoutMode.forWidth(geometry.size.width, breakpoint: modeBreakpoint)
+            let resolvedMode = forcedMode ?? LiveRunLayoutMode.forWidth(geometry.size.width, breakpoint: modeBreakpoint)
 
             Group {
                 if resolvedMode == .wide {
                     wideLayout(totalWidth: geometry.size.width)
+                        .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("liveRun.layout.wide")
                 } else {
                     narrowLayout
+                        .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("liveRun.layout.narrow")
                 }
+            }
+            .overlay(alignment: .topLeading) {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityIdentifier(
+                        resolvedMode == .wide ? "liveRun.layout.wide" : "liveRun.layout.narrow"
+                    )
             }
             .onAppear {
                 updateMode(resolvedMode)
             }
             .onChange(of: geometry.size.width) { _, width in
-                updateMode(.forWidth(width, breakpoint: modeBreakpoint))
+                updateMode(forcedMode ?? .forWidth(width, breakpoint: modeBreakpoint))
             }
             .onChange(of: hasSelection) { _, _ in
                 syncInspectorSheetPresentation()
             }
         }
         .accessibilityIdentifier("liveRun.layout.container")
+    }
+
+    private var forcedMode: LiveRunLayoutMode? {
+        guard UITestSupport.isEnabled else { return nil }
+        guard let raw = ProcessInfo.processInfo.environment["SMITHERS_GUI_UITEST_FORCE_LIVERUN_LAYOUT"]?.lowercased() else {
+            return nil
+        }
+
+        switch raw {
+        case "wide":
+            return .wide
+        case "narrow":
+            return .narrow
+        default:
+            return nil
+        }
     }
 
     private func wideLayout(totalWidth: CGFloat) -> some View {
@@ -150,10 +175,10 @@ struct LiveRunLayout<TreePane: View, InspectorPane: View>: View {
     }
 
     private func updateMode(_ newMode: LiveRunLayoutMode) {
+        defer { syncInspectorSheetPresentation() }
         guard mode != newMode else { return }
         mode = newMode
         onModeChange?(newMode)
-        syncInspectorSheetPresentation()
     }
 
     private func syncInspectorSheetPresentation() {

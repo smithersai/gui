@@ -111,8 +111,6 @@ struct SidebarView: View {
     @Binding var destination: NavDestination
     @Binding private var developerDebugPanelVisible: Bool
     @State private var searchText: String = ""
-    @State private var smithersCollapsed = false
-    @State private var vcsCollapsed = true
     @State private var renameSessionID: String?
     @State private var renameSessionTitle: String = ""
     @State private var renameTerminalID: String?
@@ -127,25 +125,21 @@ struct SidebarView: View {
         store: SessionStore,
         destination: Binding<NavDestination>,
         developerDebugPanelVisible: Binding<Bool> = .constant(false),
-        developerDebugAvailable: Bool = DeveloperDebugMode.isEnabled,
-        smithersCollapsed: Bool = false,
-        vcsCollapsed: Bool = true
+        developerDebugAvailable: Bool = DeveloperDebugMode.isEnabled
     ) {
         self.store = store
         self._destination = destination
         self._developerDebugPanelVisible = developerDebugPanelVisible
         self.developerDebugAvailable = developerDebugAvailable
-        self._smithersCollapsed = State(initialValue: smithersCollapsed)
-        self._vcsCollapsed = State(initialValue: vcsCollapsed)
     }
 
-    private let smithersNav: [NavDestination] = [
+    private static let smithersNav: Set<NavDestination> = [
         .dashboard, .agents, .runs, .snapshots, .workflows, .triggers, .approvals,
         .prompts, .scores, .memory, .search, .sql, .workspaces, .logs
     ]
 
-    private let vcsNav: [NavDestination] = [
-        .changes, .jjhubWorkflows, .landings, .tickets, .issues
+    private static let vcsNav: Set<NavDestination> = [
+        .vcsDashboard, .changes, .jjhubWorkflows, .landings, .tickets, .issues
     ]
 
     var body: some View {
@@ -167,7 +161,7 @@ struct SidebarView: View {
                         NavRow(
                             icon: "square.grid.2x2",
                             label: "Smithers",
-                            isSelected: destination == .dashboard || smithersNav.contains(destination)
+                            isSelected: SidebarView.smithersNav.contains(destination)
                         ) {
                             destination = .dashboard
                         }
@@ -175,25 +169,13 @@ struct SidebarView: View {
                         NavRow(
                             icon: "point.3.connected.trianglepath.dotted",
                             label: "VCS",
-                            isSelected: destination == .vcsDashboard || vcsNav.contains(destination)
+                            isSelected: SidebarView.vcsNav.contains(destination)
                         ) {
                             destination = .vcsDashboard
                         }
                     }
                     .padding(.top, 14)
                     .padding(.bottom, 8)
-
-                    CollapsibleSidebarSection(title: "SMITHERS", isCollapsed: $smithersCollapsed) {
-                        ForEach(smithersNav, id: \.self) { nav in
-                            navRow(for: nav)
-                        }
-                    }
-
-                    CollapsibleSidebarSection(title: "VCS", isCollapsed: $vcsCollapsed) {
-                        ForEach(vcsNav, id: \.self) { nav in
-                            navRow(for: nav)
-                        }
-                    }
 
                     SidebarSection(title: "TABS") {
                         NewChatMenuRow(
@@ -467,24 +449,6 @@ struct SidebarView: View {
         }
     }
 
-    @ViewBuilder
-    private func navRow(for nav: NavDestination) -> some View {
-        NavRow(
-            icon: nav.icon,
-            label: nav.label,
-            isSelected: isSelected(nav)
-        ) {
-            destination = nav
-        }
-    }
-
-    private func isSelected(_ nav: NavDestination) -> Bool {
-        if case .runInspect = destination, nav == .runs {
-            return true
-        }
-        return destination == nav
-    }
-
     private func isSelected(_ tab: SidebarTab) -> Bool {
         switch tab.kind {
         case .chat:
@@ -630,45 +594,6 @@ struct SidebarSection<Content: View>: View {
 
             content
         }
-    }
-}
-
-struct CollapsibleSidebarSection<Content: View>: View {
-    let title: String
-    @Binding var isCollapsed: Bool
-    @ViewBuilder let content: Content
-
-    private var accessibilityKey: String {
-        title.replacingOccurrences(of: " ", with: "")
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isCollapsed.toggle() } }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
-                        .frame(width: 10)
-                        .rotationEffect(.degrees(isCollapsed ? 0 : 90))
-                    Text(title)
-                        .font(.system(size: 11, weight: .semibold))
-                    Spacer()
-                }
-                .foregroundColor(Theme.textTertiary)
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar.section.\(accessibilityKey)")
-
-            if !isCollapsed {
-                content
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .clipped()
     }
 }
 

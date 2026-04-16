@@ -37,6 +37,7 @@ struct DashboardView: View {
     var onNavigate: ((NavDestination) -> Void)? = nil
     var onNewChat: (() -> Void)? = nil
     var onAutoPopulateActiveRuns: (([RunSummary]) -> Void)? = nil
+    var onOpenLiveChat: ((RunSummary, String?) -> Void)? = nil
 
     @State private var tab: DashboardTab = .overview
     @State private var runs: [RunSummary] = []
@@ -291,7 +292,7 @@ struct DashboardView: View {
                 if !sortedRuns.isEmpty {
                     SectionCard(title: "Recent Runs") {
                         ForEach(sortedRuns.prefix(5)) { run in
-                            RunRow(run: run)
+                            RunRow(run: run, onOpen: onOpenLiveChat)
                             if run.id != sortedRuns.prefix(5).last?.id {
                                 Divider().background(Theme.border)
                             }
@@ -359,7 +360,7 @@ struct DashboardView: View {
                     emptySection("No runs found", icon: "play.circle")
                 } else {
                     ForEach(sortedRuns) { run in
-                        RunRow(run: run)
+                        RunRow(run: run, onOpen: onOpenLiveChat)
                         if run.id != sortedRuns.last?.id {
                             Divider().background(Theme.border)
                         }
@@ -1090,40 +1091,45 @@ struct DashboardSessionRow: View {
 
 struct RunRow: View {
     let run: RunSummary
+    var onOpen: ((RunSummary, String?) -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 12) {
-            StatusPill(status: run.status)
+        Button(action: { onOpen?(run, nil) }) {
+            HStack(spacing: 12) {
+                StatusPill(status: run.status)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(run.workflowName ?? run.runId)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                HStack(spacing: 8) {
-                    Text(String(run.runId.prefix(8)))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(Theme.textTertiary)
-                    if run.totalNodes > 0 {
-                        Text(nodeProgressText)
-                            .font(.system(size: 10))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(run.workflowName ?? run.runId)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Theme.textPrimary)
+                        .lineLimit(1)
+                    HStack(spacing: 8) {
+                        Text(String(run.runId.prefix(8)))
+                            .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(Theme.textTertiary)
+                        if run.totalNodes > 0 {
+                            Text(nodeProgressText)
+                                .font(.system(size: 10))
+                                .foregroundColor(Theme.textTertiary)
+                        }
                     }
                 }
+
+                Spacer()
+
+                if run.totalNodes > 0 && (run.status == .running || run.status == .waitingApproval) {
+                    ProgressBar(progress: run.progress, failedProgress: run.failedProgress)
+                        .frame(width: 60)
+                }
+
+                RunElapsedText(run: run)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
             }
-
-            Spacer()
-
-            if run.totalNodes > 0 && (run.status == .running || run.status == .waitingApproval) {
-                ProgressBar(progress: run.progress, failedProgress: run.failedProgress)
-                    .frame(width: 60)
-            }
-
-            RunElapsedText(run: run)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(Theme.textTertiary)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 8)
+        .buttonStyle(.plain)
         .themedRowHover()
         .accessibilityIdentifier("dashboard.run.\(run.id)")
     }

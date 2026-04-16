@@ -608,14 +608,15 @@ struct ContentView: View {
                 .id("\(binary)-\(workingDirectory)")
                 .accessibilityIdentifier("view.terminalCommand.\(name)")
         case .liveRun(let runId, let nodeId):
-            LiveRunChatView(
+            LiveRunView(
                 smithers: smithers,
                 runId: runId,
                 nodeId: nodeId,
+                onOpenTerminalCommand: openTerminalCommandTab,
                 onClose: { destination = .runs }
             )
             .id("live-run-\(runId)-\(nodeId ?? "all")")
-            .logLifecycle("LiveRunChatView")
+            .logLifecycle("LiveRunView")
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("view.liveRun")
         case .runInspect(let runId, let workflowName):
@@ -643,6 +644,9 @@ struct ContentView: View {
                 },
                 onAutoPopulateActiveRuns: { runs in
                     store.autoPopulateActiveRunTabs(runs)
+                },
+                onOpenLiveChat: { run, nodeId in
+                    openRunTab(run: run, nodeId: nodeId)
                 }
             )
                 .logLifecycle("DashboardView")

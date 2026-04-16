@@ -25,6 +25,7 @@ struct LiveRunTreeView: View {
             treeContent
         }
         .background(Theme.surface1)
+        .accessibilityElement(children: .contain)
         .onChange(of: store.seq) { newSeq in
             rebuildIndices(seq: newSeq)
         }
@@ -88,6 +89,7 @@ struct LiveRunTreeView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Theme.surface2)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("tree.search.container")
     }
 
@@ -375,6 +377,8 @@ struct LiveRunTreeUITestHarnessView: View {
     @State private var pendingRewindFrameNo: Int?
     @State private var rewindWarning: String?
     @State private var startedAt = Date()
+    @State private var inspectorSheetPresented = false
+    @State private var layoutMode: LiveRunLayoutMode = .wide
 
     private var logsStreamProvider: ChatStreamProviding {
         UITestSupport.isEnabled ? fixtureLogsStreamProvider : smithers
@@ -449,19 +453,26 @@ struct LiveRunTreeUITestHarnessView: View {
                 .accessibilityIdentifier("scrubber.warning")
             }
 
-            HSplitView {
+            LiveRunLayout(
+                hasSelection: store.selectedNodeId != nil,
+                inspectorSheetPresented: $inspectorSheetPresented,
+                onModeChange: { layoutMode = $0 }
+            ) {
                 LiveRunTreeView(store: store) { id in
                     store.selectNode(id)
+                    if layoutMode == .narrow {
+                        inspectorSheetPresented = true
+                    }
                 }
                 .frame(minWidth: 340)
-
+            } inspectorPane: {
                 NodeInspectorView(
                     store: store,
                     selectedTab: $selectedTab,
                     outputProvider: smithers,
                     logsStreamProvider: logsStreamProvider
                 )
-                    .frame(minWidth: 360)
+                .frame(minWidth: 360)
             }
             .historicalOverlay(active: store.mode.isHistorical)
             .overlay(alignment: .topLeading) {
@@ -473,7 +484,13 @@ struct LiveRunTreeUITestHarnessView: View {
             }
         }
         .background(Theme.surface1)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("view.liveRunTreeHarness")
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityIdentifier("view.liveRunTreeHarness")
+        }
         .onAppear {
             startedAt = Date()
             store.connect(runId: runId)
