@@ -229,6 +229,30 @@ final class RunRowTests: XCTestCase {
         let row = RunRow(run: run)
         XCTAssertThrowsError(try row.inspect().find(ProgressBar.self))
     }
+
+    /// Clicking a RunRow should invoke the onOpen callback with the row's run
+    /// and a nil nodeId (root-of-run open). This enables Dashboard "Recent Runs"
+    /// rows to open the Live Run view — see DashboardView.onOpenLiveChat wiring.
+    func testRunRowTapInvokesOnOpenCallback() throws {
+        var opened: [(String, String?)] = []
+        let run = makeRun(id: "run-tap-123", workflowName: "Tap Target")
+        let row = RunRow(run: run, onOpen: { tappedRun, nodeId in
+            opened.append((tappedRun.runId, nodeId))
+        })
+
+        try row.inspect().find(ViewType.Button.self).tap()
+
+        XCTAssertEqual(opened.count, 1)
+        XCTAssertEqual(opened.first?.0, "run-tap-123")
+        XCTAssertNil(opened.first?.1)
+    }
+
+    /// A RunRow without a callback should not crash when tapped.
+    func testRunRowTapWithoutCallbackDoesNotCrash() throws {
+        let run = makeRun()
+        let row = RunRow(run: run)
+        XCTAssertNoThrow(try row.inspect().find(ViewType.Button.self).tap())
+    }
 }
 
 // MARK: - WorkflowRow Tests

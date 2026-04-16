@@ -102,13 +102,13 @@ final class ContentViewRoutingSourceTests: XCTestCase {
         XCTAssertEqual(liveRunCaseCount, 1, "Expected exactly one `.liveRun` case in detailContent switch")
     }
 
-    func testLiveRunCaseRoutesToLiveRunChatView() throws {
+    func testLiveRunCaseRoutesToLiveRunView() throws {
         let detailContent = try detailContentSource()
-        let casePattern = #"case \.liveRun\(let runId, let nodeId\):[\s\S]*?LiveRunChatView\("#
+        let casePattern = #"case \.liveRun\(let runId, let nodeId\):[\s\S]*?LiveRunView\("#
 
         XCTAssertNotNil(
             detailContent.range(of: casePattern, options: .regularExpression),
-            "Expected `.liveRun` case to route to LiveRunChatView"
+            "Expected `.liveRun` case to route to LiveRunView"
         )
         XCTAssertTrue(
             detailContent.contains(".accessibilityIdentifier(\"view.liveRun\")"),

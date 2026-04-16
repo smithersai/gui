@@ -2,6 +2,8 @@ import XCTest
 import ViewInspector
 @testable import SmithersGUI
 
+extension LiveRunView: @retroactive Inspectable {}
+
 @MainActor
 final class HighCoverageViewRenderTests: XCTestCase {
     private func client() -> SmithersClient {
@@ -103,18 +105,18 @@ final class HighCoverageViewRenderTests: XCTestCase {
         XCTAssertNil(openedChat?.nodeId)
     }
 
-    func testLiveRunChatViewInitialRenderCoversControlsAndLoadingTranscript() throws {
-        let inspected = try LiveRunChatView(
+    func testLiveRunViewInitialRenderCoversHeaderScrubberAndTreePlaceholder() throws {
+        let inspected = try LiveRunView(
             smithers: client(),
             runId: "run-abcdef123456",
             nodeId: "node-1"
         )
         .inspect()
 
-        assertText("run-abcd", existsIn: inspected)
-        assertText("Refresh", existsIn: inspected)
-        assertText("Hijack", existsIn: inspected)
-        assertText("Loading...", existsIn: inspected)
+        assertText("Live Run", existsIn: inspected)
+        assertText("run-abcdef123456", existsIn: inspected)
+        assertText("frame 0 / 0", existsIn: inspected)
+        assertText("Waiting for tree data…", existsIn: inspected)
     }
 
     func testJJHubWorkflowsViewInitialRenderCoversHeaderListAndPlaceholder() throws {
