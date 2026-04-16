@@ -31,6 +31,8 @@ targets:
       - LiveRunHeaderView.swift
       - FrameScrubberView.swift
       - RewindConfirmationDialog.swift
+      - LiveRunLayout.swift
+      - LiveRunView.swift
       - LiveRunTreeView.swift
       - TreeRowView.swift
       - TreeRowState.swift
@@ -58,7 +60,6 @@ targets:
       - FeedbackReporter.swift
       - JJHubWorkflowsView.swift
       - LandingsView.swift
-      - LiveRunChatView.swift
       - LogViewerView.swift
       - MarkdownEditorView.swift
       - MemoryView.swift
