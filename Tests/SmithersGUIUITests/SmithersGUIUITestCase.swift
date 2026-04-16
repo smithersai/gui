@@ -5,6 +5,12 @@ class SmithersGUIUITestCase: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+
+        // Clear saved application state to prevent crash-recovery dialogs
+        let savedStateDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Saved Application State/com.smithers.SmithersGUI.savedState")
+        try? FileManager.default.removeItem(at: savedStateDir)
+
         app = XCUIApplication()
         app.launchArguments = ["--uitesting"]
         app.launchEnvironment = [
@@ -46,7 +52,7 @@ class SmithersGUIUITestCase: XCTestCase {
 
     func expandSidebarSectionIfNeeded(for label: String) {
         let smithersLabels: Set<String> = [
-            "Dashboard", "Agents", "Runs", "Workflows", "Triggers", "Approvals",
+            "Dashboard", "Agents", "Runs", "Snapshots", "Workflows", "Triggers", "Approvals",
             "Prompts", "Scores", "Memory", "Search", "SQL Browser", "Workspaces",
             "Logs",
         ]

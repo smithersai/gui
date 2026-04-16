@@ -5,7 +5,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     // MARK: - Palette Behavior
 
     func testSlashPaletteAppearsOnSlash() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "/")
@@ -13,7 +15,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     }
 
     func testSlashPaletteFiltersAsYouType() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "/dash")
@@ -23,7 +27,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     }
 
     func testSlashPaletteDismissesOnBackspace() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         let input = waitForElement("chat.input")
@@ -39,7 +45,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     // MARK: - Navigation Commands
 
     func testSlashDashboardNavigates() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "/dashboard", submit: true)
@@ -47,7 +55,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     }
 
     func testSlashRunsNavigates() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "/runs", submit: true)
@@ -55,7 +65,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     }
 
     func testSlashMemoryNavigates() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "/memory", submit: true)
@@ -63,7 +75,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     }
 
     func testSlashSearchNavigates() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "/search", submit: true)
@@ -71,7 +85,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     }
 
     func testSlashScoresNavigates() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "/scores", submit: true)
@@ -81,7 +97,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     // MARK: - Action Commands
 
     func testSlashHelpShowsCommands() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "/help", submit: true)
@@ -94,7 +112,9 @@ final class SlashCommandE2ETests: SmithersGUIUITestCase {
     }
 
     func testSlashClearClearsChat() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         // Send a message first

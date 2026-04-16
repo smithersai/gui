@@ -24,13 +24,13 @@ final class SidebarTabKindTests: XCTestCase {
 final class RunTabTests: XCTestCase {
 
     func testIdIsRunId() {
-        let tab = RunTab(runId: "r123", title: "Test", preview: "Preview", timestamp: Date())
+        let tab = RunTab(runId: "r123", title: "Test", preview: "Preview", timestamp: Date(), createdAt: Date())
         XCTAssertEqual(tab.id, "r123")
     }
 
     func testHashable() {
-        let a = RunTab(runId: "r1", title: "A", preview: "Pa", timestamp: Date())
-        let b = RunTab(runId: "r2", title: "B", preview: "Pb", timestamp: Date())
+        let a = RunTab(runId: "r1", title: "A", preview: "Pa", timestamp: Date(), createdAt: Date())
+        let b = RunTab(runId: "r2", title: "B", preview: "Pb", timestamp: Date(), createdAt: Date())
         let set: Set = [a, b, a]
         XCTAssertEqual(set.count, 2)
     }

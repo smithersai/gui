@@ -208,6 +208,17 @@ final class SSEParserTests: XCTestCase {
         XCTAssertEqual(event?.data, json)
     }
 
+    func testFilteredEventDropsMissingRunIdWhenRunAttributionIsRequired() {
+        let json = "{\"type\":\"heartbeat\"}"
+        let event = SSEEvent.filtered(
+            event: "message",
+            data: json,
+            expectedRunId: "target-run",
+            requireAttributedRunId: true
+        )
+        XCTAssertNil(event)
+    }
+
     func testFilteredEventDropsMismatchedSSEFieldRunId() {
         let json = "{\"type\":\"RunStarted\"}"
         let event = SSEEvent.filtered(
@@ -489,6 +500,56 @@ final class SmithersClientCLICommandTests: XCTestCase {
         XCTAssertEqual(args.count, 2)
         XCTAssertEqual(args[0], "cancel")
         XCTAssertEqual(args[1], runId)
+    }
+
+    // CLI_HIJACK — boolean flag must use --launch=false, not split --launch false.
+    func testHijackCommandShapeUsesEqualsBoolean() {
+        let args = SmithersClient.hijackRunCLIArgs(runId: "run-1")
+        XCTAssertEqual(args, ["hijack", "run-1", "--launch=false", "--format", "json"])
+        XCTAssertFalse(args.contains("--launch"))
+    }
+
+    func testHijackRunUsesNonLaunchingCLIQuery() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SmithersClientHijackTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let calls = root.appendingPathComponent("calls.log")
+        let bin = root.appendingPathComponent("smithers")
+        let script = """
+        #!/bin/sh
+        CALLS='\(calls.path)'
+        printf '%s\\n' "$*" >> "$CALLS"
+
+        if [ "$1" = "hijack" ] && [ "$2" = "run-1" ] && [ "$3" = "--launch=false" ] && [ "$4" = "--format" ] && [ "$5" = "json" ]; then
+          cat <<'JSON'
+        {"runId":"run-1","engine":"codex","mode":"native-cli","resume":"session-123","cwd":"\(root.path)","launch":{"command":"codex","args":["resume","session-123","-C","\(root.path)"],"cwd":"\(root.path)"}}
+        JSON
+          exit 0
+        fi
+
+        if [ "$1" = "hijack" ] && [ "$2" = "run-1" ] && [ "$3" = "--launch" ]; then
+          echo "stdout is not a terminal" >&2
+          exit 7
+        fi
+
+        echo "unexpected command: $*" >&2
+        exit 2
+        """
+        try script.write(to: bin, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+
+        let client = SmithersClient(cwd: root.path, smithersBin: bin.path)
+        let session = try await client.hijackRun("run-1", port: 1)
+
+        XCTAssertEqual(session.runId, "run-1")
+        XCTAssertEqual(session.agentEngine, "codex")
+        XCTAssertEqual(session.launchInvocation(defaultWorkingDirectory: "/fallback")?.arguments, [
+            "resume", "session-123", "-C", root.path,
+        ])
+        let recordedCalls = try String(contentsOf: calls, encoding: .utf8)
+        XCTAssertTrue(recordedCalls.contains("hijack run-1 --launch=false --format json"))
     }
 
     // CLI_APPROVE — "approve <runId> --node <nodeId>"
@@ -934,6 +995,55 @@ final class SmithersClientCLICommandTests: XCTestCase {
         XCTAssertFalse(fieldsByKey["extra"]?.required == true)
     }
 
+    func testGetWorkflowDAGMergesFieldEntriesWithInputSchema() async throws {
+        let cli = try makeWorkflowCLI(
+            graphPayload: """
+            {
+              "workflowId":".smithers/workflows/deploy.yaml",
+              "fields":[
+                {"key":"dry_run"},
+                {"key":"replicas","name":"Replica Count Override"}
+              ],
+              "inputSchema":{
+                "type":"object",
+                "required":["dry_run","replicas"],
+                "properties":{
+                  "dry_run":{"type":"boolean","default":false,"title":"Dry Run"},
+                  "replicas":{"type":"integer","default":3},
+                  "features":{"type":"array","items":{"type":"string"}}
+                }
+              }
+            }
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let workflow = Workflow(
+            id: "deploy",
+            workspaceId: nil,
+            name: "Deploy",
+            relativePath: ".smithers/workflows/deploy.yaml",
+            status: nil,
+            updatedAt: nil
+        )
+
+        let dag = try await client.getWorkflowDAG(workflow)
+        let fieldsByKey = Dictionary(uniqueKeysWithValues: dag.launchFields.map { ($0.key, $0) })
+
+        XCTAssertEqual(fieldsByKey["dry_run"]?.name, "Dry Run")
+        XCTAssertEqual(fieldsByKey["dry_run"]?.type, "boolean")
+        XCTAssertEqual(fieldsByKey["dry_run"]?.defaultValue, "false")
+        XCTAssertTrue(fieldsByKey["dry_run"]?.required == true)
+
+        XCTAssertEqual(fieldsByKey["replicas"]?.name, "Replica Count Override")
+        XCTAssertEqual(fieldsByKey["replicas"]?.type, "number")
+        XCTAssertEqual(fieldsByKey["replicas"]?.defaultValue, "3")
+        XCTAssertTrue(fieldsByKey["replicas"]?.required == true)
+
+        XCTAssertEqual(fieldsByKey["features"]?.type, "array")
+    }
+
     func testGetWorkflowDAGPrefersWorkflowGraphCommandWhenAvailable() async throws {
         let cli = try makeWorkflowGraphFirstCLI()
         defer { try? FileManager.default.removeItem(at: cli.root) }
@@ -1353,6 +1463,28 @@ final class SmithersClientApprovalTransportTests: XCTestCase {
         XCTAssertEqual(runs.count, 2)
         XCTAssertNotNil(runs.first(where: { $0.runId == "run-old" })?.startedAtMs)
         XCTAssertNotNil(runs.first(where: { $0.runId == "run-new" })?.startedAtMs)
+
+        let sorted = runs.sortedByStartedAtDescending()
+        XCTAssertEqual(sorted.map(\.runId), ["run-new", "run-old"])
+    }
+
+    func testListRunsParsesStartedAtAliasesFromCLI() async throws {
+        let cli = try makeTemporarySmithersCLI(body: """
+        if [ "$1" = "ps" ] && [ "$2" = "--format" ] && [ "$3" = "json" ]; then
+          cat <<'JSON'
+        {"runs":[{"id":"run-old","workflow":"old","status":"running","started_at":"2026-04-16T10:00:00Z"},{"id":"run-new","workflow":"new","status":"running","startedAt":"2026-04-16T12:00:00Z"}]}
+        JSON
+          exit 0
+        fi
+        """)
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let runs = try await client.listRuns()
+
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertEqual(runs.first(where: { $0.runId == "run-old" })?.startedAtMs, 1_776_333_600_000)
+        XCTAssertEqual(runs.first(where: { $0.runId == "run-new" })?.startedAtMs, 1_776_340_800_000)
 
         let sorted = runs.sortedByStartedAtDescending()
         XCTAssertEqual(sorted.map(\.runId), ["run-new", "run-old"])
@@ -2596,7 +2728,7 @@ final class SmithersClientPromptTests: XCTestCase {
 
         XCTAssertEqual(prompt.id, "review")
         XCTAssertEqual(prompt.source, source)
-        XCTAssertEqual(prompt.inputs?.map(\.name), ["reviewer", "prompt", "schema"])
+        XCTAssertEqual(prompt.inputs?.map(\.name), ["reviewer", "prompt", "space", "schema"])
         XCTAssertTrue(prompt.inputs?.allSatisfy { $0.type == "string" } ?? false)
     }
 
@@ -2678,6 +2810,28 @@ final class SmithersClientPromptTests: XCTestCase {
         XCTAssertTrue(try readCalls(cli.calls).contains("prompt get plan --format json"))
     }
 
+    func testDiscoverPromptPropsMergesPromptGetInputsWithMDXSourceDiscovery() async throws {
+        let cli = try makePromptCLI(scriptBody: """
+        if [ "$1" = "prompt" ] && [ "$2" = "get" ] && [ "$3" = "review" ] && [ "$4" = "--format" ] && [ "$5" = "json" ]; then
+          cat <<'JSON'
+        {"id":"review","entryFile":".smithers/prompts/review.mdx","source":"---\\nprops:\\n  context: repo-summary\\n---\\nReviewer: {props.reviewer}\\n<PromptFrame prompt={prompt} context={context} />","inputs":[{"name":"reviewer","type":"string"}]}
+        JSON
+          exit 0
+        fi
+        """)
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let props = try await client.discoverPromptProps("review")
+        let byName = Dictionary(props.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+
+        XCTAssertEqual(props.map(\.name), ["context", "reviewer", "prompt"])
+        XCTAssertEqual(byName["context"]?.defaultValue, "repo-summary")
+        XCTAssertEqual(byName["reviewer"]?.type, "string")
+        XCTAssertEqual(byName["prompt"]?.type, "string")
+        XCTAssertTrue(try readCalls(cli.calls).contains("prompt get review --format json"))
+    }
+
     func testUpdatePromptFallsBackToCLIWhenPromptFileMissing() async throws {
         let cli = try makePromptCLI(scriptBody: """
         if [ "$1" = "prompt" ] && [ "$2" = "update" ] && [ "$3" = "plan" ] && [ "$4" = "--source" ]; then
@@ -2707,7 +2861,7 @@ final class SmithersClientPromptTests: XCTestCase {
         XCTAssertEqual(rendered, """
         A=alpha
         B={props.b}
-        Space={ props.a }
+        Space=alpha
         Hyphen={props.summary-data}
         """)
     }
@@ -3052,6 +3206,39 @@ final class SmithersClientCronTransportTests: XCTestCase {
         XCTAssertEqual(crons[0].id, "c1")
         XCTAssertEqual(crons[0].pattern, "*/15 * * * *")
         XCTAssertEqual(crons[0].workflowPath, ".smithers/workflows/debug.tsx")
+        XCTAssertTrue(crons[0].enabled)
+    }
+
+    func testListCronsDecodesNestedEnvelopeAndCronAliases() async throws {
+        let cli = try makeCronListCLI(output: """
+        {"ok":true,"data":{"data":{"cron_schedules":{"nightly":{"schedule_id":"c9","cron_expression":"*/5 * * * *","workflow_file":".smithers/workflows/every-five.tsx","is_enabled":0,"created_at":1776218840798}}}}}
+        """)
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let crons = try await client.listCrons()
+
+        XCTAssertEqual(crons.count, 1)
+        XCTAssertEqual(crons[0].id, "c9")
+        XCTAssertEqual(crons[0].pattern, "*/5 * * * *")
+        XCTAssertEqual(crons[0].workflowPath, ".smithers/workflows/every-five.tsx")
+        XCTAssertFalse(crons[0].enabled)
+        XCTAssertEqual(crons[0].createdAtMs, 1_776_218_840_798)
+    }
+
+    func testListCronsDecodesSingleCronObjectPayload() async throws {
+        let cli = try makeCronListCLI(output: """
+        {"cronId":"c10","pattern":"0 * * * *","workflowPath":"hourly.tsx","enabled":true}
+        """)
+        defer { try? FileManager.default.removeItem(at: cli.root) }
+
+        let client = SmithersClient(cwd: cli.root.path, smithersBin: cli.bin)
+        let crons = try await client.listCrons()
+
+        XCTAssertEqual(crons.count, 1)
+        XCTAssertEqual(crons[0].id, "c10")
+        XCTAssertEqual(crons[0].pattern, "0 * * * *")
+        XCTAssertEqual(crons[0].workflowPath, "hourly.tsx")
         XCTAssertTrue(crons[0].enabled)
     }
 }

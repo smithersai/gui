@@ -41,6 +41,14 @@ final class ApprovalTests: XCTestCase {
         XCTAssertTrue(makeApproval(status: "PENDING").isPending)
     }
 
+    func testIsPendingForWaitingAliases() {
+        XCTAssertTrue(makeApproval(status: "waiting").isPending)
+        XCTAssertTrue(makeApproval(status: "waiting-approval").isPending)
+        XCTAssertTrue(makeApproval(status: "blocked").isPending)
+        XCTAssertTrue(makeApproval(status: "paused").isPending)
+        XCTAssertTrue(makeApproval(status: "").isPending)
+    }
+
     func testRequestedDate() {
         let a = makeApproval(requestedAt: 1700000000000)
         XCTAssertEqual(a.requestedDate.timeIntervalSince1970, 1700000000.0, accuracy: 0.001)
@@ -613,6 +621,22 @@ final class RunSummarySortingTests: XCTestCase {
         let sorted = runs.sortedByStartedAtDescending()
         XCTAssertEqual(sorted[0].id, "first")
         XCTAssertEqual(sorted[1].id, "second")
+    }
+
+    func testDecodesStartedAtFromCamelCaseTimestamp() throws {
+        let json = """
+        {"runId":"camel","status":"running","startedAt":"2026-04-16T12:00:00Z"}
+        """.data(using: .utf8)!
+        let run = try JSONDecoder().decode(RunSummary.self, from: json)
+        XCTAssertEqual(run.startedAtMs, 1_776_340_800_000)
+    }
+
+    func testDecodesStartedAtFromSnakeCaseTimestamp() throws {
+        let json = """
+        {"runId":"snake","status":"running","started_at":"2026-04-16T11:00:00Z"}
+        """.data(using: .utf8)!
+        let run = try JSONDecoder().decode(RunSummary.self, from: json)
+        XCTAssertEqual(run.startedAtMs, 1_776_337_200_000)
     }
 }
 

@@ -20,7 +20,10 @@ final class SidebarE2ETests: SmithersGUIUITestCase {
     }
 
     func testSidebarSessionTabsVisibleAfterChat() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        // Click "New Chat" button to create a chat tab
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "Sidebar test")

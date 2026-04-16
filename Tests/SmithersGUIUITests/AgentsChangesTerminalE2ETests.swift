@@ -177,14 +177,14 @@ final class TerminalE2ETests: SmithersGUIUITestCase {
     }
 
     func testTerminalViewLoads() {
-        navigate(to: "Terminal", expectedViewIdentifier: "view.terminal")
+        openNewTerminalFromMenu()
 
         // In UI test mode, TerminalView shows a placeholder
         XCTAssertTrue(element("terminal.root").waitForExistence(timeout: 5))
     }
 
     func testTerminalPlaceholderShowsInUITestMode() {
-        navigate(to: "Terminal", expectedViewIdentifier: "view.terminal")
+        openNewTerminalFromMenu()
 
         // The UI test placeholder should display
         XCTAssertTrue(element("terminal.placeholder").waitForExistence(timeout: 5))
@@ -192,22 +192,23 @@ final class TerminalE2ETests: SmithersGUIUITestCase {
     }
 
     func testTerminalViewPersistsAcrossNavigationSwitches() {
-        navigate(to: "Terminal", expectedViewIdentifier: "view.terminal")
+        openNewTerminalFromMenu()
         XCTAssertTrue(element("terminal.root").waitForExistence(timeout: 5))
 
         // Navigate away
         navigate(to: "Dashboard", expectedViewIdentifier: "view.dashboard")
 
-        // Navigate back
-        navigate(to: "Terminal", expectedViewIdentifier: "view.terminal")
+        // Navigate back by clicking the terminal tab in the sidebar
+        let terminalTab = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tab.terminal:")).firstMatch
+        XCTAssertTrue(terminalTab.waitForExistence(timeout: 5))
+        terminalTab.click()
+        XCTAssertTrue(element("view.terminal").waitForExistence(timeout: 5))
         XCTAssertTrue(element("terminal.root").waitForExistence(timeout: 5))
         XCTAssertTrue(element("terminal.placeholder").waitForExistence(timeout: 5))
     }
 
-    func testTerminalAccessibleFromSidebar() {
-        let terminalNav = app.buttons["nav.Terminal"]
-        XCTAssertTrue(terminalNav.waitForExistence(timeout: 5))
-        terminalNav.click()
+    func testTerminalAccessibleFromNewMenu() {
+        openNewTerminalFromMenu()
         XCTAssertTrue(element("view.terminal").waitForExistence(timeout: 5))
     }
 

@@ -97,4 +97,80 @@ final class TicketClientFilesystemTests: XCTestCase {
             XCTAssertEqual(message, "query must not be empty")
         }
     }
+
+    func testLocalTicketFilePathReturnsValidatedMarkdownPath() async throws {
+        let temp = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let client = SmithersClient(cwd: temp.path)
+        _ = try await client.createTicket(id: "feat-nvim", content: "# Nvim")
+
+        let path = try client.localTicketFilePath(for: "feat-nvim")
+        XCTAssertEqual(
+            path,
+            temp.appendingPathComponent(".smithers/tickets/feat-nvim.md").path
+        )
+
+        XCTAssertThrowsError(try client.localTicketFilePath(for: "../escape", requireExisting: false))
+    }
+
+    func testNeovimDetectorFindsExecutableOnInjectedPath() throws {
+        let temp = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let bin = temp.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let nvim = bin.appendingPathComponent("nvim")
+        try "#!/bin/sh\n".write(to: nvim, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: nvim.path)
+
+        XCTAssertEqual(
+            NeovimDetector.executablePath(environment: ["PATH": bin.path]),
+            nvim.path
+        )
+        XCTAssertTrue(NeovimDetector.isAvailable(environment: ["PATH": bin.path]))
+    }
+}
+
+final class TicketLRUCacheTests: XCTestCase {
+    func testTicketContentCacheReturnsMostRecentlyOpenedTickets() {
+        var cache = TicketContentLRUCache(capacity: 2)
+        cache.store(Ticket(id: "one", content: "# One", status: nil, createdAtMs: nil, updatedAtMs: nil))
+        cache.store(Ticket(id: "two", content: "# Two", status: nil, createdAtMs: nil, updatedAtMs: nil))
+
+        XCTAssertEqual(cache.idsMostRecentFirst, ["two", "one"])
+        XCTAssertEqual(cache.ticket(for: "one")?.content, "# One")
+        XCTAssertEqual(cache.idsMostRecentFirst, ["one", "two"])
+
+        cache.store(Ticket(id: "three", content: "# Three", status: nil, createdAtMs: nil, updatedAtMs: nil))
+        XCTAssertNil(cache.peek("two"))
+        XCTAssertEqual(cache.idsMostRecentFirst, ["three", "one"])
+    }
+
+    func testNeovimSessionCacheEvictsLeastRecentlyUsedSession() {
+        var cache = TicketNeovimSessionLRUCache(capacity: 2)
+        let first = cache.upsert(ticketId: "one", command: "nvim one.md", workingDirectory: "/tmp/tickets")
+        let second = cache.upsert(ticketId: "two", command: "nvim two.md", workingDirectory: "/tmp/tickets")
+
+        XCTAssertTrue(first.evicted.isEmpty)
+        XCTAssertTrue(second.evicted.isEmpty)
+        XCTAssertEqual(cache.ticketIdsMostRecentFirst, ["two", "one"])
+        XCTAssertNotNil(cache.session(for: "one"))
+        XCTAssertEqual(cache.ticketIdsMostRecentFirst, ["one", "two"])
+
+        let third = cache.upsert(ticketId: "three", command: "nvim three.md", workingDirectory: "/tmp/tickets")
+        XCTAssertEqual(third.evicted.map(\.ticketId), ["two"])
+        XCTAssertNil(cache.peek("two"))
+        XCTAssertEqual(cache.ticketIdsMostRecentFirst, ["three", "one"])
+    }
+
+    func testNeovimSessionCacheEvictsReplacedCommandForSameTicket() {
+        var cache = TicketNeovimSessionLRUCache(capacity: 2)
+        let first = cache.upsert(ticketId: "one", command: "nvim one.md", workingDirectory: "/tmp/tickets")
+        let replacement = cache.upsert(ticketId: "one", command: "/opt/homebrew/bin/nvim one.md", workingDirectory: "/tmp/tickets")
+
+        XCTAssertEqual(replacement.evicted.map(\.sessionId), [first.session.sessionId])
+        XCTAssertEqual(cache.peek("one")?.sessionId, replacement.session.sessionId)
+        XCTAssertEqual(cache.ticketIdsMostRecentFirst, ["one"])
+    }
 }

@@ -28,7 +28,7 @@ final class DashboardWorkflowsE2ETests: SmithersGUIUITestCase {
 
         navigate(to: "Dashboard", expectedViewIdentifier: "view.dashboard")
         waitForElement("dashboard.action.browseSessions").click()
-        XCTAssertTrue(element("dashboard.route.chat").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("dashboard.tab.Sessions").waitForExistence(timeout: 5))
     }
 
     func testWorkflowsSplitSelectionAndLaunchForm() {

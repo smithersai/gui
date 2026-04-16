@@ -483,6 +483,14 @@ final class TerminalViewTests: XCTestCase {
         XCTAssertEqual(equivalent, "_")
     }
 
+    func test_TERMINAL_KEY_FORWARDING_POLICY_controlShiftSlashMapsToControlUnderscore() {
+        let equivalent = TerminalKeyForwardingPolicy.controlEquivalentCharacters(
+            charactersIgnoringModifiers: "/",
+            modifierFlags: [.control, .shift]
+        )
+        XCTAssertEqual(equivalent, "_")
+    }
+
     func test_TERMINAL_KEY_FORWARDING_POLICY_controlReturnPreservesReturn() {
         let equivalent = TerminalKeyForwardingPolicy.controlEquivalentCharacters(
             charactersIgnoringModifiers: "\r",

@@ -164,6 +164,7 @@ final class MemoryE2ETests: SmithersGUIUITestCase {
 
         // Top-K control should be available in recall mode.
         XCTAssertTrue(app.textFields["memory.recall.topK"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.sliders["memory.recall.topK.slider"].waitForExistence(timeout: 5))
 
         // Search button should exist
         let searchButton = app.buttons.matching(NSPredicate(format: "label == %@", "Search")).firstMatch

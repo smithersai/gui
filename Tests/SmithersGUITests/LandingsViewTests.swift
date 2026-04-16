@@ -168,9 +168,14 @@ final class LandingsFilterTests: XCTestCase {
         let tree = try view.inspect()
         let menu = try tree.find(ViewType.Menu.self)
         let buttons = menu.findAll(ViewType.Button.self)
-        // Should have 4 buttons: All, Draft, Ready, Landed
-        XCTAssertEqual(buttons.count, 4,
-            "Filter menu should contain exactly 4 options: All, Draft, Ready, Landed")
+        XCTAssertEqual(buttons.count, 6,
+            "Filter menu should contain exactly 6 options: All, Open, Draft, Merged, Closed, Other")
+        XCTAssertNoThrow(try tree.find(text: "All"))
+        XCTAssertNoThrow(try tree.find(text: "Open"))
+        XCTAssertNoThrow(try tree.find(text: "Draft"))
+        XCTAssertNoThrow(try tree.find(text: "Merged"))
+        XCTAssertNoThrow(try tree.find(text: "Closed"))
+        XCTAssertNoThrow(try tree.find(text: "Other"))
     }
 
     /// LANDINGS_FILTER_BY_STATE: The filter passes stateFilter to loadLandings API call.

@@ -89,6 +89,7 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(run.progress, 0.4, accuracy: 0.001)
         XCTAssertEqual(run.finishedProgress, 0.3, accuracy: 0.001)
         XCTAssertEqual(run.failedProgress, 0.1, accuracy: 0.001)
+        XCTAssertEqual(run.progressIndicatorText, "3 succeeded, 1 failed / 10 nodes")
     }
 
     func testParseRelativeAgoTimestampMsSupportsCompositeUnits() {
@@ -112,6 +113,7 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(run.succeededProgress, 0.6, accuracy: 0.001)
         XCTAssertEqual(run.finishedProgress, 0.6, accuracy: 0.001)
         XCTAssertEqual(run.failedProgress, 0.2, accuracy: 0.001)
+        XCTAssertEqual(run.progressIndicatorText, "6 succeeded, 2 failed / 10 nodes")
     }
 
     func testRunSummaryProgressZeroWhenNoSummary() {
@@ -121,6 +123,7 @@ final class SmithersModelsTests: XCTestCase {
         let run = try! JSONDecoder().decode(RunSummary.self, from: json)
         XCTAssertEqual(run.totalNodes, 0)
         XCTAssertEqual(run.progress, 0)
+        XCTAssertEqual(run.progressIndicatorText, "0/0 nodes")
     }
 
     func testRunSummaryProgressZeroWhenTotalZero() {
@@ -129,6 +132,7 @@ final class SmithersModelsTests: XCTestCase {
         """.data(using: .utf8)!
         let run = try! JSONDecoder().decode(RunSummary.self, from: json)
         XCTAssertEqual(run.progress, 0)
+        XCTAssertEqual(run.progressIndicatorText, "0/0 nodes")
     }
 
     func testRunSummaryElapsedStringSeconds() {
@@ -550,6 +554,21 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertNil(score.runId)
     }
 
+    func testScoreRowDecodesSnakeCaseScorerFields() throws {
+        let json = """
+        {"id":"s3","run_id":"r1","node_id":"n1","scorer_id":"lint","scorer_name":"Lint","score":"0.72","latency_ms":"120","scored_at_ms":"1700000000000"}
+        """.data(using: .utf8)!
+        let score = try JSONDecoder().decode(ScoreRow.self, from: json)
+
+        XCTAssertEqual(score.runId, "r1")
+        XCTAssertEqual(score.nodeId, "n1")
+        XCTAssertEqual(score.scorerId, "lint")
+        XCTAssertEqual(score.scorerName, "Lint")
+        XCTAssertEqual(score.score, 0.72, accuracy: 0.0001)
+        XCTAssertEqual(score.latencyMs, 120)
+        XCTAssertEqual(score.scoredAtMs, 1_700_000_000_000)
+    }
+
     func testScoreRowScorerDisplayNameTrimsAndFallsBack() throws {
         let named = ScoreRow(id: "s1", runId: nil, nodeId: nil, iteration: nil, attempt: nil, scorerId: "sid", scorerName: " accuracy ", source: nil, score: 0.9, reason: nil, metaJson: nil, latencyMs: nil, scoredAtMs: 0)
         let idFallback = ScoreRow(id: "s2", runId: nil, nodeId: nil, iteration: nil, attempt: nil, scorerId: " scorer-id ", scorerName: " ", source: nil, score: 0.9, reason: nil, metaJson: nil, latencyMs: nil, scoredAtMs: 0)
@@ -624,6 +643,21 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(accuracy.min, 0.7, accuracy: 0.0001)
         XCTAssertEqual(accuracy.max, 0.9, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(accuracy.p50), 0.8, accuracy: 0.0001)
+    }
+
+    func testAggregateScoreGroupsSnakeCaseDecodedRowsPerScorer() throws {
+        let json = """
+        [
+          {"id":"s1","scorer_name":"Quality","score":0.9,"scored_at_ms":1700000000000},
+          {"id":"s2","scorer_name":"Quality","score":0.7,"scored_at_ms":1700000001000},
+          {"id":"s3","scorer_name":"Lint","score":0.5,"scored_at_ms":1700000002000}
+        ]
+        """.data(using: .utf8)!
+        let scores = try JSONDecoder().decode([ScoreRow].self, from: json)
+        let aggregates = AggregateScore.aggregate(scores)
+
+        XCTAssertEqual(aggregates.count, 2)
+        XCTAssertEqual(aggregates.map(\.scorerName), ["Lint", "Quality"])
     }
 
     // MARK: - Metrics
@@ -1285,6 +1319,27 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(deduped[0].content, "Hello world!")
     }
 
+    func testDeduplicatedChatBlocksMergesAssistantOverlapAcrossChangingEventIds() {
+        let blocks = [
+            ChatBlock(id: "stream-1", role: "assistant", content: "Hello wor"),
+            ChatBlock(id: "stream-2", role: "assistant", content: "world"),
+        ]
+
+        let deduped = deduplicatedChatBlocks(blocks)
+        XCTAssertEqual(deduped.count, 1)
+        XCTAssertEqual(deduped[0].content, "Hello world")
+    }
+
+    func testDeduplicatedChatBlocksDoesNotMergeChangingIdsWithoutOverlap() {
+        let blocks = [
+            ChatBlock(id: "stream-1", role: "assistant", content: "First message"),
+            ChatBlock(id: "stream-2", role: "assistant", content: "Second message"),
+        ]
+
+        let deduped = deduplicatedChatBlocks(blocks)
+        XCTAssertEqual(deduped.count, 2)
+    }
+
     func testDeduplicatedChatBlocksReplacesNonAssistantLifecycleBlocks() {
         let blocks = [
             ChatBlock(id: "tool-1", role: "tool", content: "running"),
@@ -1373,6 +1428,19 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertNotEqual(cron1.id, cron2.id)
     }
 
+    func testCronScheduleGeneratesFallbackIdWhenWorkflowPathMissing() throws {
+        let json = """
+        {"id":"","cronId":"","pattern":"*/5 * * * *","workflowPath":" ","enabled":true}
+        """.data(using: .utf8)!
+
+        let cron1 = try JSONDecoder().decode(CronSchedule.self, from: json)
+        let cron2 = try JSONDecoder().decode(CronSchedule.self, from: json)
+
+        XCTAssertFalse(cron1.id.isEmpty)
+        XCTAssertTrue(cron1.id.hasPrefix("cron-"))
+        XCTAssertEqual(cron1.id, cron2.id)
+    }
+
     func testCronScheduleThrowsWhenResolvedIdIsEmpty() throws {
         let json = """
         {"id":"","cronId":"","pattern":" ","workflowPath":"","enabled":true}
@@ -1428,6 +1496,22 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertTrue(cron.id.hasPrefix("cron-"))
     }
 
+    func testCronScheduleDecodesCronTransportAliasesAndNumericFlags() throws {
+        let json = """
+        {"schedule_id":"c6","cron":"*/30 * * * *","workflow_file":".smithers/workflows/nightly.tsx","is_enabled":0,"created_at":1776218840798,"last_run_at":"1776219000000","next_run_at":"1776219440798","error":{"message":"boom"}}
+        """.data(using: .utf8)!
+
+        let cron = try JSONDecoder().decode(CronSchedule.self, from: json)
+        XCTAssertEqual(cron.id, "c6")
+        XCTAssertEqual(cron.pattern, "*/30 * * * *")
+        XCTAssertEqual(cron.workflowPath, ".smithers/workflows/nightly.tsx")
+        XCTAssertFalse(cron.enabled)
+        XCTAssertEqual(cron.createdAtMs, 1_776_218_840_798)
+        XCTAssertEqual(cron.lastRunAtMs, 1_776_219_000_000)
+        XCTAssertEqual(cron.nextRunAtMs, 1_776_219_440_798)
+        XCTAssertEqual(cron.errorJson, "{\"message\":\"boom\"}")
+    }
+
     func testCronResponseDecodesNestedDataCrons() throws {
         let json = """
         {"data":{"crons":[{"cronId":"c5","pattern":"0 * * * *","workflowPath":"hourly.ts","enabled":true}]}}
@@ -1438,6 +1522,17 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(response.crons[0].id, "c5")
         XCTAssertEqual(response.crons[0].workflowPath, "hourly.ts")
         XCTAssertTrue(response.crons[0].enabled)
+    }
+
+    func testCronResponseDecodesNestedEntriesDictionary() throws {
+        let json = """
+        {"data":{"entries":{"nightly":{"cronId":"c7","pattern":"0 0 * * *","workflowPath":"nightly.tsx","enabled":true},"hourly":{"cronId":"c8","pattern":"0 * * * *","workflowPath":"hourly.tsx","enabled":false}}}}
+        """.data(using: .utf8)!
+
+        let response = try JSONDecoder().decode(CronResponse.self, from: json)
+        XCTAssertEqual(response.crons.count, 2)
+        XCTAssertEqual(Set(response.crons.map(\.id)), Set(["c7", "c8"]))
+        XCTAssertEqual(Set(response.crons.map(\.workflowPath)), Set(["nightly.tsx", "hourly.tsx"]))
     }
 
     // MARK: - SQLResult
@@ -1582,6 +1677,48 @@ final class SmithersModelsTests: XCTestCase {
         XCTAssertEqual(fieldsByKey["config"]?.defaultValue, #"{"tier":"canary"}"#)
     }
 
+    func testWorkflowDAGMergesLaunchFieldsWithInputSchemaMetadata() throws {
+        let json = """
+        {
+          "workflowId":"wf",
+          "fields":[
+            {"key":"dry_run"},
+            {"key":"replicas","name":"Replica Count Override"},
+            {"key":"notes","type":"string","default":"ship now"}
+          ],
+          "inputSchema":{
+            "type":"object",
+            "required":["dry_run","replicas"],
+            "properties":{
+              "dry_run":{"type":"boolean","default":false,"title":"Dry Run"},
+              "replicas":{"type":"integer","default":3,"title":"Replica Count"},
+              "labels":{"type":"array","items":{"type":"string"}},
+              "notes":{"type":"string","default":"from schema"}
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let dag = try JSONDecoder().decode(WorkflowDAG.self, from: json)
+        let fieldsByKey = Dictionary(uniqueKeysWithValues: dag.launchFields.map { ($0.key, $0) })
+
+        XCTAssertEqual(fieldsByKey["dry_run"]?.name, "Dry Run")
+        XCTAssertEqual(fieldsByKey["dry_run"]?.type, "boolean")
+        XCTAssertEqual(fieldsByKey["dry_run"]?.defaultValue, "false")
+        XCTAssertTrue(fieldsByKey["dry_run"]?.required == true)
+
+        XCTAssertEqual(fieldsByKey["replicas"]?.name, "Replica Count Override")
+        XCTAssertEqual(fieldsByKey["replicas"]?.type, "number")
+        XCTAssertEqual(fieldsByKey["replicas"]?.defaultValue, "3")
+        XCTAssertTrue(fieldsByKey["replicas"]?.required == true)
+
+        XCTAssertEqual(fieldsByKey["labels"]?.type, "array")
+        XCTAssertFalse(fieldsByKey["labels"]?.required == true)
+
+        XCTAssertEqual(fieldsByKey["notes"]?.type, "string")
+        XCTAssertEqual(fieldsByKey["notes"]?.defaultValue, "ship now")
+    }
+
     func testWorkflowDAGDecodesSmithersGraphJSON() throws {
         let json = """
         {
@@ -1715,5 +1852,82 @@ final class SmithersModelsTests: XCTestCase {
 
         XCTAssertEqual(dag.nodes.map(\.nodeId), ["a", "b", "c"])
         XCTAssertEqual(dag.edges, [WorkflowDAGEdge(from: "a", to: "c")])
+    }
+
+    func testWorkflowDAGDecodesNestedGraphObjectAndAdjacencyEdges() throws {
+        let json = """
+        {
+          "workflowId": ".smithers/workflows/deploy.tsx",
+          "graph": {
+            "entry_task": "build",
+            "nodes": {
+              "build": { "ordinal": 0, "needs_approval": false },
+              "test": { "ordinal": "1", "needs_approval": "true" },
+              "deploy": { "ordinal": 2 }
+            },
+            "edges": {
+              "build": ["test", "deploy"],
+              "test": { "to": "deploy" }
+            },
+            "input_schema": {
+              "type": "object",
+              "required": ["env"],
+              "properties": {
+                "env": { "type": "string", "default": "staging" }
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let dag = try JSONDecoder().decode(WorkflowDAG.self, from: json)
+
+        XCTAssertEqual(dag.workflowID, ".smithers/workflows/deploy.tsx")
+        XCTAssertEqual(dag.entryTask, "build")
+        XCTAssertEqual(dag.nodes.map(\.nodeId), ["build", "test", "deploy"])
+        XCTAssertEqual(
+            dag.edges,
+            [
+                WorkflowDAGEdge(from: "build", to: "test"),
+                WorkflowDAGEdge(from: "build", to: "deploy"),
+                WorkflowDAGEdge(from: "test", to: "deploy"),
+            ]
+        )
+        XCTAssertEqual(dag.launchFields.count, 1)
+        XCTAssertEqual(dag.launchFields.first?.key, "env")
+        XCTAssertEqual(dag.launchFields.first?.defaultValue, "staging")
+        XCTAssertEqual(dag.launchFields.first?.required, true)
+    }
+
+    func testWorkflowDAGDecodesIndexedEdgesAndOutputTableObject() throws {
+        let json = """
+        {
+          "runId": "graph",
+          "nodes": [
+            { "id": "build", "ordinal": 10, "outputTable": { "name": "build" } },
+            { "id": "test", "ordinal": 20, "outputTable": { "name": "test" } },
+            { "id": "deploy", "ordinal": 30 }
+          ],
+          "edges": [
+            { "source": 0, "target": 1 },
+            { "fromNodeId": 1, "toNodeId": 2 },
+            { "fromTaskId": "build", "toTaskId": "deploy" }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let dag = try JSONDecoder().decode(WorkflowDAG.self, from: json)
+
+        XCTAssertEqual(dag.nodes.map(\.nodeId), ["build", "test", "deploy"])
+        XCTAssertEqual(dag.nodes.first?.outputTableName, "build")
+        XCTAssertEqual(dag.nodes.dropFirst().first?.outputTableName, "test")
+        XCTAssertEqual(
+            dag.edges,
+            [
+                WorkflowDAGEdge(from: "build", to: "test"),
+                WorkflowDAGEdge(from: "test", to: "deploy"),
+                WorkflowDAGEdge(from: "build", to: "deploy"),
+            ]
+        )
     }
 }

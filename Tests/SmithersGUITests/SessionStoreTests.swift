@@ -3,8 +3,20 @@ import XCTest
 
 @MainActor
 final class SessionStoreTests: XCTestCase {
-
     // MARK: - Helpers
+
+    private func makeIsolatedUserDefaults() -> UserDefaults {
+        let suiteName = "SessionStoreTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            fatalError("Could not create isolated UserDefaults suite: \(suiteName)")
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(false, forKey: AppPreferenceKeys.externalAgentUnsafeFlagsEnabled)
+        addTeardownBlock {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        return defaults
+    }
 
     private func requireSQLite3() throws {
         let process = Process()
@@ -48,6 +60,7 @@ final class SessionStoreTests: XCTestCase {
             title: title,
             preview: preview,
             timestamp: timestamp,
+            createdAt: timestamp,
             agent: AgentService(),
             codexSelection: .fallback
         )
@@ -68,6 +81,8 @@ final class SessionStoreTests: XCTestCase {
     func testNewSessionDefaultTitle() {
         let store = SessionStore()
         XCTAssertEqual(store.sessions.first?.title, SessionStore.defaultChatTitle)
+        XCTAssertEqual(SessionStore.defaultChatTitle, "New Chat")
+        XCTAssertTrue(SessionStore.isPlaceholderChatTitle("Claude Code"))
     }
 
     func testNewSessionEmptyPreview() {
@@ -135,7 +150,8 @@ final class SessionStoreTests: XCTestCase {
                 id: UUID().uuidString,
                 title: "Restored",
                 preview: "",
-                updatedAt: Date()
+                updatedAt: Date(),
+                createdAt: Date()
             ),
         ])
         let store = SessionStore(workingDirectory: project.path, persistence: persistence)
@@ -440,6 +456,117 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(store.terminalTabs.map(\.title), ["Terminal 2", "Terminal 1"])
     }
 
+    func testLaunchExternalAgentTabReplacesEmptyChatPlaceholder() {
+        let store = SessionStore(
+            workingDirectory: "/tmp/smithers-codex-test",
+            persistence: nil,
+            userDefaults: makeIsolatedUserDefaults()
+        )
+        let chatId = store.activeSessionId!
+
+        let terminalId = store.launchExternalAgentTab(name: "Codex", command: "codex")
+
+        XCTAssertFalse(store.sessions.contains { $0.id == chatId })
+        XCTAssertNil(store.activeSessionId)
+        XCTAssertEqual(store.terminalTabs.first?.terminalId, terminalId)
+        XCTAssertEqual(store.terminalTabs.first?.title, "Codex")
+        XCTAssertEqual(store.terminalTabs.first?.command, "codex")
+        XCTAssertEqual(store.sidebarTabs().map(\.title), ["Codex"])
+    }
+
+    func testLaunchExternalAgentTabKeepsNonEmptyChat() {
+        let store = SessionStore(userDefaults: makeIsolatedUserDefaults())
+        let chatId = store.activeSessionId!
+        store.sendMessage("Keep this chat")
+
+        let terminalId = store.launchExternalAgentTab(name: "Codex", command: "codex")
+
+        XCTAssertTrue(store.sessions.contains { $0.id == chatId })
+        XCTAssertEqual(store.activeSessionId, chatId)
+        XCTAssertEqual(store.terminalTabs.first?.terminalId, terminalId)
+        XCTAssertEqual(store.terminalTabs.first?.title, "Codex")
+    }
+
+    func testApplyDefaultAgentFlagsDisabledByDefault() {
+        XCTAssertEqual(SessionStore.applyDefaultAgentFlags("claude", unsafeFlagsEnabled: false), "claude")
+        XCTAssertEqual(SessionStore.applyDefaultAgentFlags("gemini", unsafeFlagsEnabled: false), "gemini")
+        XCTAssertEqual(SessionStore.applyDefaultAgentFlags("codex", unsafeFlagsEnabled: false), "codex")
+    }
+
+    func testApplyDefaultAgentFlagsAppliesUnsafeFlagsWhenEnabled() {
+        XCTAssertEqual(
+            SessionStore.applyDefaultAgentFlags("claude", unsafeFlagsEnabled: true),
+            "claude --dangerously-skip-permissions"
+        )
+        XCTAssertEqual(
+            SessionStore.applyDefaultAgentFlags("gemini", unsafeFlagsEnabled: true),
+            "gemini --yolo"
+        )
+        XCTAssertEqual(
+            SessionStore.applyDefaultAgentFlags("codex", unsafeFlagsEnabled: true),
+            "codex -c model_reasoning_effort=\"high\" --yolo"
+        )
+    }
+
+    func testApplyDefaultAgentFlagsRespectsInjectedUserDefaultsPreference() {
+        let suite = "SessionStoreTests.applyFlags.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            XCTFail("Expected isolated user defaults")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+        }
+
+        defaults.set(false, forKey: AppPreferenceKeys.externalAgentUnsafeFlagsEnabled)
+        XCTAssertEqual(SessionStore.applyDefaultAgentFlags("claude", userDefaults: defaults), "claude")
+
+        defaults.set(true, forKey: AppPreferenceKeys.externalAgentUnsafeFlagsEnabled)
+        XCTAssertEqual(
+            SessionStore.applyDefaultAgentFlags("claude", userDefaults: defaults),
+            "claude --dangerously-skip-permissions"
+        )
+    }
+
+    func testTerminalTabsCanBeRenamedAndPinned() {
+        let store = SessionStore()
+        let terminalId = store.addTerminalTab()
+
+        store.renameTerminalTab(terminalId, to: "Build logs")
+        store.toggleTerminalPinned(terminalId)
+
+        XCTAssertEqual(store.terminalTabs.first?.title, "Build logs")
+        XCTAssertEqual(store.terminalTabs.first?.isPinned, true)
+        XCTAssertEqual(store.sidebarTabs().first?.group, "Pinned")
+    }
+
+    func testTerminalTabsExposeTmuxMetadata() {
+        let store = SessionStore(workingDirectory: "/tmp/smithers-terminal-test")
+        let terminalId = store.addTerminalTab()
+        let tab = store.terminalTabs.first
+
+        XCTAssertEqual(tab?.backend, .tmux)
+        XCTAssertEqual(tab?.rootSurfaceId, TmuxController.rootSurfaceId(for: terminalId))
+        XCTAssertEqual(tab?.tmuxSessionName, TmuxController.sessionName(for: TmuxController.rootSurfaceId(for: terminalId)))
+        XCTAssertEqual(tab?.tmuxSocketName, store.terminalWorkingDirectory(terminalId).map(TmuxController.socketName(for:)))
+    }
+
+    func testRemoveTerminalTabCleansBrowserSurfaceRegistryAndNotifications() {
+        let store = SessionStore()
+        let terminalId = store.addTerminalTab()
+        let workspace = store.ensureTerminalWorkspace(terminalId)
+        let browserSurfaceId = workspace.addBrowser(urlString: "example.com")
+
+        _ = BrowserSurfaceRegistry.shared.webView(for: browserSurfaceId)
+        XCTAssertTrue(BrowserSurfaceRegistry.shared.contains(surfaceId: browserSurfaceId))
+        XCTAssertEqual(SurfaceNotificationStore.shared.surfaceWorkspaceIds[browserSurfaceId], terminalId)
+
+        store.removeTerminalTab(terminalId)
+
+        XCTAssertFalse(BrowserSurfaceRegistry.shared.contains(surfaceId: browserSurfaceId))
+        XCTAssertNil(SurfaceNotificationStore.shared.surfaceWorkspaceIds[browserSurfaceId])
+    }
+
     // MARK: - Edge cases
 
     func testSendMessageToNonExistentSessionIsNoOp() {
@@ -534,6 +661,7 @@ final class SessionStoreTests: XCTestCase {
         let sessionID = store1.activeSessionId!
         store1.renameSession(sessionID, to: "Persistent Session")
         store1.sendMessage("Persist this message")
+        store1.activeAgent?.cancel()
         flushMainActorWrites()
 
         let store2 = makePersistentStore(tempDirectory: tempDirectory.path)
@@ -555,9 +683,11 @@ final class SessionStoreTests: XCTestCase {
         let store1 = makePersistentStore(tempDirectory: tempDirectory.path)
         let firstSessionID = store1.activeSessionId!
         store1.sendMessage("First persisted prompt")
+        store1.activeAgent?.cancel()
         flushMainActorWrites()
         store1.newSession()
         store1.sendMessage("Second persisted prompt")
+        store1.activeAgent?.cancel()
         flushMainActorWrites()
 
         let store2 = makePersistentStore(tempDirectory: tempDirectory.path)
@@ -587,18 +717,42 @@ final class SessionStoreTests: XCTestCase {
         let store2 = makePersistentStore(tempDirectory: tempDirectory.path)
         XCTAssertFalse(store2.sessions.contains(where: { $0.id == sessionID }))
     }
+
+    func testPersistentTerminalTabsSurviveRestart() throws {
+        try requireSQLite3()
+
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("session-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let store1 = makePersistentStore(tempDirectory: tempDirectory.path)
+        let terminalId = store1.addTerminalTab(title: "Server", workingDirectory: tempDirectory.path)
+        store1.toggleTerminalPinned(terminalId)
+
+        let store2 = makePersistentStore(tempDirectory: tempDirectory.path)
+        let restored = try XCTUnwrap(store2.terminalTabs.first(where: { $0.terminalId == terminalId }))
+
+        XCTAssertEqual(restored.title, "Server")
+        XCTAssertTrue(restored.isPinned)
+        XCTAssertEqual(restored.backend, .tmux)
+        XCTAssertEqual(restored.rootSurfaceId, TmuxController.rootSurfaceId(for: terminalId))
+    }
 }
 
 private final class StubSessionPersistence: SessionPersisting {
     var sessions: [PersistedSessionSummary]
     var messagesBySessionID: [String: [PersistedSessionMessage]]
+    var terminalTabs: [PersistedTerminalTab]
 
     init(
         sessions: [PersistedSessionSummary] = [],
-        messagesBySessionID: [String: [PersistedSessionMessage]] = [:]
+        messagesBySessionID: [String: [PersistedSessionMessage]] = [:],
+        terminalTabs: [PersistedTerminalTab] = []
     ) {
         self.sessions = sessions
         self.messagesBySessionID = messagesBySessionID
+        self.terminalTabs = terminalTabs
     }
 
     func loadSessions() throws -> [PersistedSessionSummary] {
@@ -607,6 +761,10 @@ private final class StubSessionPersistence: SessionPersisting {
 
     func loadMessages(sessionID: String) throws -> [PersistedSessionMessage] {
         messagesBySessionID[sessionID] ?? []
+    }
+
+    func loadTerminalTabs() throws -> [PersistedTerminalTab] {
+        terminalTabs
     }
 
     func createSession(id _: String, title _: String) throws {}
@@ -621,6 +779,7 @@ private final class StubSessionPersistence: SessionPersisting {
             title: current.title,
             preview: current.preview,
             updatedAt: current.updatedAt,
+            createdAt: current.createdAt,
             isPinned: isPinned,
             isArchived: isArchived,
             isUnread: isUnread
@@ -650,5 +809,17 @@ private final class StubSessionPersistence: SessionPersisting {
             )
             return
         }
+    }
+
+    func upsertTerminalTab(_ tab: PersistedTerminalTab) throws {
+        if let idx = terminalTabs.firstIndex(where: { $0.id == tab.id }) {
+            terminalTabs[idx] = tab
+        } else {
+            terminalTabs.insert(tab, at: 0)
+        }
+    }
+
+    func deleteTerminalTab(id: String) throws {
+        terminalTabs.removeAll { $0.id == id }
     }
 }

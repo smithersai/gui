@@ -19,7 +19,9 @@ final class WorkspacesSessionKeyboardE2ETests: SmithersGUIUITestCase {
     }
 
     func testNewChatCreatesSessionAndSessionSearchFindsIt() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "Session Search Needle")
@@ -35,7 +37,9 @@ final class WorkspacesSessionKeyboardE2ETests: SmithersGUIUITestCase {
     }
 
     func testCommandNCreatesNewChat() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
 
         let before = sessionButtonCount()
         app.typeKey("n", modifierFlags: .command)

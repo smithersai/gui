@@ -121,6 +121,28 @@ final class CodexJSONLLineBufferTests: XCTestCase {
         XCTAssertEqual(events[1].type, "b")
     }
 
+    func testAppendCRDelimitedLines() {
+        let buffer = CodexJSONLLineBuffer()
+        let input = #"{"type":"a"}"# + "\r" + #"{"type":"b"}"# + "\r"
+        let events = buffer.append(input)
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events[0].type, "a")
+        XCTAssertEqual(events[1].type, "b")
+    }
+
+    func testAppendSplitCRLFBoundaryAcrossChunks() {
+        let buffer = CodexJSONLLineBuffer()
+
+        let first = buffer.append(#"{"type":"a"}"# + "\r")
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(first[0].type, "a")
+
+        let second = buffer.append("\n" + #"{"type":"b"}"# + "\n")
+        XCTAssertEqual(second.count, 1)
+        XCTAssertEqual(second[0].type, "b")
+        XCTAssertTrue(buffer.finish().isEmpty)
+    }
+
     func testAppendEmptyString() {
         let buffer = CodexJSONLLineBuffer()
         let events = buffer.append("")

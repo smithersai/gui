@@ -209,7 +209,8 @@ private struct LiveRunChatLogic {
             if replaceExistingStreamBlock(block, lifecycleId: lifecycleId) {
                 return
             }
-        } else if replaceLastAnonymousAssistantStreamBlock(block) {
+        }
+        if replaceLastAssistantOverlapStreamBlock(block) {
             return
         }
 
@@ -268,17 +269,24 @@ private struct LiveRunChatLogic {
         return true
     }
 
-    mutating func replaceLastAnonymousAssistantStreamBlock(_ block: ChatBlock) -> Bool {
-        guard block.lifecycleId == nil else { return false }
+    mutating func replaceLastAssistantOverlapStreamBlock(_ block: ChatBlock) -> Bool {
         guard let index = allBlocks.indices.last else { return false }
         let existing = allBlocks[index]
-        guard existing.lifecycleId == nil,
-              existing.canMergeAssistantStream(with: block),
+        guard existing.canMergeAssistantStream(with: block),
               existing.hasStreamingContentOverlap(with: block) else {
             return false
         }
 
         allBlocks[index] = existing.mergingAssistantStream(with: block)
+        if let existingLifecycleId = existing.lifecycleId, !existingLifecycleId.isEmpty {
+            inFlightBlockIndexByLifecycleId[existingLifecycleId] = index
+        }
+        if let incomingLifecycleId = block.lifecycleId, !incomingLifecycleId.isEmpty {
+            inFlightBlockIndexByLifecycleId[incomingLifecycleId] = index
+        }
+        if let mergedLifecycleId = allBlocks[index].lifecycleId, !mergedLifecycleId.isEmpty {
+            inFlightBlockIndexByLifecycleId[mergedLifecycleId] = index
+        }
         rebuildAttemptIndexPreservingSelection()
         return true
     }
@@ -977,6 +985,27 @@ final class LiveRunChatAppendStreamBlockTests: XCTestCase {
         logic.appendStreamBlock(block2)
         XCTAssertEqual(logic.allBlocks.count, 1)
         XCTAssertEqual(logic.allBlocks[0].content, "Hello world")
+    }
+
+    func testAppendStreamBlockMergesAssistantOverlapAcrossChangingIds() {
+        var logic = LiveRunChatLogic(runId: "r1", nodeId: nil)
+        let block1 = makeBlock(id: "stream-1", content: "Hello wor")
+        let block2 = makeBlock(id: "stream-2", content: "world")
+        logic.appendStreamBlock(block1)
+        logic.appendStreamBlock(block2)
+        XCTAssertEqual(logic.allBlocks.count, 1)
+        XCTAssertEqual(logic.allBlocks[0].content, "Hello world")
+        XCTAssertEqual(logic.inFlightBlockIndexByLifecycleId["stream-1"], 0)
+        XCTAssertEqual(logic.inFlightBlockIndexByLifecycleId["stream-2"], 0)
+    }
+
+    func testAppendStreamBlockDoesNotMergeChangingIdsWithoutOverlap() {
+        var logic = LiveRunChatLogic(runId: "r1", nodeId: nil)
+        let block1 = makeBlock(id: "stream-1", content: "First message")
+        let block2 = makeBlock(id: "stream-2", content: "Second message")
+        logic.appendStreamBlock(block1)
+        logic.appendStreamBlock(block2)
+        XCTAssertEqual(logic.allBlocks.count, 2)
     }
 
     func testAppendStreamBlockDoesNotMergeAnonymousAssistantAcrossInterveningBlock() {

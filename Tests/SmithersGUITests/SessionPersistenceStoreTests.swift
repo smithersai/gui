@@ -102,6 +102,43 @@ final class SQLiteSessionPersistenceDirectTests: XCTestCase {
         XCTAssertTrue(summary.isUnread)
     }
 
+    func testTerminalTabsArePersisted() throws {
+        try requireSQLite3()
+        let tempDirectory = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        let persistence = SQLiteSessionPersistence(workingDirectory: tempDirectory.path)
+
+        let tab = PersistedTerminalTab(
+            id: "terminal-1",
+            title: "Build logs",
+            preview: "1 terminal",
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            workingDirectory: "/tmp/project",
+            command: "npm test",
+            backend: .tmux,
+            rootSurfaceId: "surface-1",
+            tmuxSocketName: "smithers-test",
+            tmuxSessionName: "smt-surface-1",
+            workspaceStateJSON: #"{"title":"Build logs"}"#,
+            isPinned: true
+        )
+
+        try persistence.upsertTerminalTab(tab)
+
+        let loaded = try XCTUnwrap(persistence.loadTerminalTabs().first)
+        XCTAssertEqual(loaded.id, "terminal-1")
+        XCTAssertEqual(loaded.title, "Build logs")
+        XCTAssertEqual(loaded.workingDirectory, "/tmp/project")
+        XCTAssertEqual(loaded.command, "npm test")
+        XCTAssertEqual(loaded.backend, .tmux)
+        XCTAssertEqual(loaded.rootSurfaceId, "surface-1")
+        XCTAssertEqual(loaded.tmuxSocketName, "smithers-test")
+        XCTAssertEqual(loaded.tmuxSessionName, "smt-surface-1")
+        XCTAssertEqual(loaded.workspaceStateJSON, #"{"title":"Build logs"}"#)
+        XCTAssertTrue(loaded.isPinned)
+    }
+
     func testDeleteSessionRemovesSessionAndMessages() throws {
         try requireSQLite3()
         let tempDirectory = try makeTempDirectory()

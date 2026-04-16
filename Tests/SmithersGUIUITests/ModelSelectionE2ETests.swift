@@ -3,7 +3,9 @@ import XCTest
 final class ModelSelectionE2ETests: SmithersGUIUITestCase {
 
     func testSlashModelOpensModelPicker() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         // Type /model to trigger model selection

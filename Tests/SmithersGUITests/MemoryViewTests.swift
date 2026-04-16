@@ -215,6 +215,39 @@ final class MemoryNamespaceFilterTests: XCTestCase {
         )
     }
 
+    func testRefreshedStateResetsStaleNamespaceFilter() {
+        let facts = [
+            makeFact(namespace: "project", key: "a"),
+            makeFact(namespace: "workflow", key: "b"),
+        ]
+
+        let refreshedState = MemoryNamespaceFilterState.refreshedState(
+            from: facts,
+            currentNamespaceFilter: "deleted"
+        )
+
+        XCTAssertEqual(refreshedState.namespaces, ["project", "workflow"])
+        XCTAssertNil(refreshedState.namespaceFilter)
+        XCTAssertEqual(refreshedState.visibleFacts.map(\.key).sorted(), ["a", "b"])
+    }
+
+    func testRefreshedStateKeepsValidNamespaceFilter() {
+        let facts = [
+            makeFact(namespace: "project", key: "a"),
+            makeFact(namespace: "workflow", key: "b"),
+            makeFact(namespace: "project", key: "c"),
+        ]
+
+        let refreshedState = MemoryNamespaceFilterState.refreshedState(
+            from: facts,
+            currentNamespaceFilter: "project"
+        )
+
+        XCTAssertEqual(refreshedState.namespaces, ["project", "workflow"])
+        XCTAssertEqual(refreshedState.namespaceFilter, "project")
+        XCTAssertEqual(refreshedState.visibleFacts.map(\.key), ["a", "c"])
+    }
+
     func testFilteredFactsRespectsValidNamespaceSelection() {
         let facts = [
             makeFact(namespace: "project", key: "a"),

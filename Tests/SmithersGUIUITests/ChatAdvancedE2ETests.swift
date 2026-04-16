@@ -3,7 +3,9 @@ import XCTest
 final class ChatAdvancedE2ETests: SmithersGUIUITestCase {
 
     func testMultipleMessagesAppearInOrder() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         typeInto("chat.input", "First message")
@@ -19,7 +21,9 @@ final class ChatAdvancedE2ETests: SmithersGUIUITestCase {
     }
 
     func testNewChatSessionCreated() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         let initialCount = sessionButtonCount()
@@ -35,7 +39,9 @@ final class ChatAdvancedE2ETests: SmithersGUIUITestCase {
     }
 
     func testCodexTargetAvailable() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
 
         let picker = element("chat.targetPicker")
         if picker.waitForExistence(timeout: 3) {
@@ -44,7 +50,9 @@ final class ChatAdvancedE2ETests: SmithersGUIUITestCase {
     }
 
     func testEmptyStateShowsOnFreshChat() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         XCTAssertTrue(

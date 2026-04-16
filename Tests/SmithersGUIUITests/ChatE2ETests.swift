@@ -2,7 +2,9 @@ import XCTest
 
 final class ChatE2ETests: SmithersGUIUITestCase {
     func testChatTargetPickerShowsSmithersAndExternalAgentOptions() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
 
         XCTAssertTrue(element("chat.targetPicker").waitForExistence(timeout: 5))
         XCTAssertTrue(element("chat.target.smithers").exists)
@@ -12,7 +14,9 @@ final class ChatE2ETests: SmithersGUIUITestCase {
     }
 
     func testWelcomeStateMessageSendSlashPaletteAndSendStopToggle() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
+        let newChat = waitForElement("sidebar.newChat")
+        newChat.click()
+        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
         chooseSmithersChatTargetIfNeeded()
 
         XCTAssertTrue(element("chat.emptyState").waitForExistence(timeout: 5))
