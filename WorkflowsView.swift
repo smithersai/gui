@@ -4,6 +4,8 @@ struct WorkflowsView: View {
     @ObservedObject var smithers: SmithersClient
     var onNavigate: ((NavDestination) -> Void)?
     var onRunStarted: ((String, String?) -> Void)? = nil
+    var initialWorkflowID: String? = nil
+    @State private var didApplyInitialSelection = false
     @State private var workflows: [Workflow] = []
     @State private var isLoading = true
     @State private var error: String?
@@ -1355,7 +1357,12 @@ struct WorkflowsView: View {
             workflows = loaded
             await refreshLastRunStatus(loaded)
 
-            if let selectedID = selectedWorkflow?.id,
+            if !didApplyInitialSelection,
+               let requestedID = initialWorkflowID,
+               let requested = loaded.first(where: { $0.id == requestedID }) {
+                didApplyInitialSelection = true
+                applySelection(requested)
+            } else if let selectedID = selectedWorkflow?.id,
                let updatedSelection = loaded.first(where: { $0.id == selectedID }) {
                 selectedWorkflow = updatedSelection
             } else if selectedWorkflow != nil {

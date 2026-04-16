@@ -34,10 +34,9 @@ private enum DashboardDataSource: CaseIterable, Hashable {
 struct DashboardView: View {
     @ObservedObject var smithers: SmithersClient
     var sessionSnapshots: [ChatSession] = []
-    var onNavigate: ((NavDestination) -> Void)? = nil
-    var onNewChat: (() -> Void)? = nil
     var onAutoPopulateActiveRuns: (([RunSummary]) -> Void)? = nil
     var onOpenLiveChat: ((RunSummary, String?) -> Void)? = nil
+    var onOpenWorkflow: ((Workflow) -> Void)? = nil
 
     @State private var tab: DashboardTab = .overview
     @State private var runs: [RunSummary] = []
@@ -50,9 +49,7 @@ struct DashboardView: View {
     @State private var hasJJHubTransport = UITestSupport.isEnabled
     @State private var hasSmithersProject = true
     @State private var isLoading = true
-    @State private var isInitializingSmithers = false
     @State private var error: String?
-    @State private var initializationError: String?
     @State private var sourceErrors: [DashboardDataSource: String] = [:]
     @State private var loadGeneration = 0
 
@@ -204,7 +201,7 @@ struct DashboardView: View {
                 }
             }
 
-            if isLoading || isInitializingSmithers {
+            if isLoading {
                 ProgressView()
                     .scaleEffect(0.5)
                     .frame(width: 16, height: 16)
@@ -228,14 +225,9 @@ struct DashboardView: View {
     private var overviewContent: some View {
         ScrollView {
             VStack(spacing: 16) {
-                if let initializationError {
-                    actionErrorBanner(initializationError)
-                }
                 if !sourceErrors.isEmpty {
                     partialLoadErrorBanner
                 }
-
-                quickActionsSection
 
                 // Smithers stats
                 HStack(spacing: 12) {
@@ -289,64 +281,85 @@ struct DashboardView: View {
                     }
                 }
 
-                if !sortedRuns.isEmpty {
-                    SectionCard(title: "Recent Runs") {
-                        ForEach(sortedRuns.prefix(5)) { run in
-                            RunRow(run: run, onOpen: onOpenLiveChat)
-                            if run.id != sortedRuns.prefix(5).last?.id {
-                                Divider().background(Theme.border)
-                            }
-                        }
+                ViewThatFits {
+                    HStack(alignment: .top, spacing: 16) {
+                        overviewLeftColumn
+                            .frame(minWidth: 340, maxWidth: .infinity)
+                        overviewRightColumn
+                            .frame(minWidth: 340, maxWidth: .infinity)
                     }
-                }
-
-                if !pendingApprovals.isEmpty {
-                    SectionCard(title: "Pending Approvals") {
-                        ForEach(pendingApprovals.prefix(5)) { approval in
-                            ApprovalRow(approval: approval)
-                            if approval.id != pendingApprovals.prefix(5).last?.id {
-                                Divider().background(Theme.border)
-                            }
-                        }
-                    }
-                }
-
-                if !workflows.isEmpty {
-                    SectionCard(title: "Workflows") {
-                        ForEach(workflows.prefix(5)) { workflow in
-                            WorkflowRow(workflow: workflow)
-                            if workflow.id != workflows.prefix(5).last?.id {
-                                Divider().background(Theme.border)
-                            }
-                        }
-                    }
-                }
-
-                if hasJJHubTransport {
-                    SectionCard(title: "Codeplane At A Glance") {
-                        DashboardMetricRow(
-                            icon: "arrow.down.to.line",
-                            title: "Landings",
-                            detail: sourceDetail(.landings, "\(landings.count) total · \(openLandingsCount) open")
-                        )
-                        Divider().background(Theme.border)
-                        DashboardMetricRow(
-                            icon: "exclamationmark.circle",
-                            title: "Issues",
-                            detail: sourceDetail(.issues, "\(issues.count) total · \(openIssuesCount) open")
-                        )
-                        Divider().background(Theme.border)
-                        DashboardMetricRow(
-                            icon: "desktopcomputer",
-                            title: "Workspaces",
-                            detail: sourceDetail(.workspaces, "\(workspaces.count) total · \(activeWorkspacesCount) active")
-                        )
+                    VStack(spacing: 16) {
+                        overviewLeftColumn
+                        overviewRightColumn
                     }
                 }
             }
             .padding(20)
         }
         .refreshable { await loadAll() }
+    }
+
+    private var overviewLeftColumn: some View {
+        VStack(spacing: 16) {
+            if !sortedRuns.isEmpty {
+                SectionCard(title: "Recent Runs") {
+                    ForEach(sortedRuns.prefix(5)) { run in
+                        RunRow(run: run, onOpen: onOpenLiveChat)
+                        if run.id != sortedRuns.prefix(5).last?.id {
+                            Divider().background(Theme.border)
+                        }
+                    }
+                }
+            }
+
+            if !pendingApprovals.isEmpty {
+                SectionCard(title: "Pending Approvals") {
+                    ForEach(pendingApprovals.prefix(5)) { approval in
+                        ApprovalRow(approval: approval)
+                        if approval.id != pendingApprovals.prefix(5).last?.id {
+                            Divider().background(Theme.border)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var overviewRightColumn: some View {
+        VStack(spacing: 16) {
+            if !workflows.isEmpty {
+                SectionCard(title: "Workflows") {
+                    ForEach(workflows.prefix(5)) { workflow in
+                        WorkflowRow(workflow: workflow, onOpen: onOpenWorkflow.map { handler in { handler(workflow) } })
+                        if workflow.id != workflows.prefix(5).last?.id {
+                            Divider().background(Theme.border)
+                        }
+                    }
+                }
+            }
+
+            if hasJJHubTransport {
+                SectionCard(title: "Codeplane At A Glance") {
+                    DashboardMetricRow(
+                        icon: "arrow.down.to.line",
+                        title: "Landings",
+                        detail: sourceDetail(.landings, "\(landings.count) total · \(openLandingsCount) open")
+                    )
+                    Divider().background(Theme.border)
+                    DashboardMetricRow(
+                        icon: "exclamationmark.circle",
+                        title: "Issues",
+                        detail: sourceDetail(.issues, "\(issues.count) total · \(openIssuesCount) open")
+                    )
+                    Divider().background(Theme.border)
+                    DashboardMetricRow(
+                        icon: "desktopcomputer",
+                        title: "Workspaces",
+                        detail: sourceDetail(.workspaces, "\(workspaces.count) total · \(activeWorkspacesCount) active")
+                    )
+                }
+            }
+        }
     }
 
     // MARK: - Runs Tab
@@ -383,7 +396,7 @@ struct DashboardView: View {
                     emptySection("No workflows found", icon: "arrow.triangle.branch")
                 } else {
                     ForEach(workflows) { workflow in
-                        WorkflowRow(workflow: workflow)
+                        WorkflowRow(workflow: workflow, onOpen: onOpenWorkflow.map { handler in { handler(workflow) } })
                         if workflow.id != workflows.last?.id {
                             Divider().background(Theme.border)
                         }
@@ -577,55 +590,6 @@ struct DashboardView: View {
 
     // MARK: - Helpers
 
-    private var quickActionsSection: some View {
-        SectionCard(title: "Quick Actions") {
-            VStack(spacing: 8) {
-                if !hasSmithersProject {
-                    dashboardActionButton(
-                        icon: "sparkles",
-                        title: "Initialize Smithers",
-                        subtitle: "Create project scaffolding in .smithers/",
-                        accessibilityID: "dashboard.action.initializeSmithers",
-                        enabled: !isInitializingSmithers
-                    ) {
-                        Task { await initializeSmithersFromDashboard() }
-                    }
-                }
-
-                dashboardActionButton(
-                    icon: "bolt.fill",
-                    title: "Run Workflow",
-                    subtitle: "Jump to workflows and launch one",
-                    accessibilityID: "dashboard.action.runWorkflow"
-                ) {
-                    onNavigate?(.workflows)
-                }
-
-                dashboardActionButton(
-                    icon: "message.fill",
-                    title: "New Chat",
-                    subtitle: "Start a fresh AI session",
-                    accessibilityID: "dashboard.action.newChat"
-                ) {
-                    if let onNewChat {
-                        onNewChat()
-                    } else {
-                        onNavigate?(.chat)
-                    }
-                }
-
-                dashboardActionButton(
-                    icon: "folder.fill",
-                    title: "Browse Sessions",
-                    subtitle: "Open chat history and run tabs",
-                    accessibilityID: "dashboard.action.browseSessions"
-                ) {
-                    tab = .sessions
-                }
-            }
-        }
-    }
-
     private var partialLoadErrorBanner: some View {
         let failedSources = DashboardDataSource.allCases
             .filter { sourceErrors[$0] != nil }
@@ -649,24 +613,6 @@ struct DashboardView: View {
 
     private func sourceDetail(_ source: DashboardDataSource, _ detail: String) -> String {
         sourceErrors[source] == nil ? detail : "Unavailable"
-    }
-
-    private func dashboardActionButton(
-        icon: String,
-        title: String,
-        subtitle: String,
-        accessibilityID: String,
-        enabled: Bool = true,
-        action: @escaping () -> Void
-    ) -> some View {
-        DashboardActionRow(
-            icon: icon,
-            title: title,
-            subtitle: subtitle,
-            enabled: enabled,
-            action: action
-        )
-        .accessibilityIdentifier(accessibilityID)
     }
 
     private func actionErrorBanner(_ message: String) -> some View {
@@ -763,18 +709,6 @@ struct DashboardView: View {
         }
     }
 
-    private func initializeSmithersFromDashboard() async {
-        isInitializingSmithers = true
-        initializationError = nil
-        do {
-            try await smithers.initializeSmithers()
-            await loadAll()
-        } catch {
-            initializationError = error.localizedDescription
-        }
-        isInitializingSmithers = false
-    }
-
     private func emptySection(_ message: String, icon: String) -> some View {
         VStack(spacing: 8) {
             Image(systemName: icon)
@@ -829,55 +763,6 @@ struct HeaderIndicator: View {
             .padding(.vertical, 4)
             .background(color.opacity(0.12))
             .cornerRadius(999)
-    }
-}
-
-struct DashboardActionRow: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    let enabled: Bool
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                    .foregroundColor(enabled ? Theme.accent : Theme.textTertiary)
-                    .frame(width: 16)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(enabled ? Theme.textPrimary : Theme.textTertiary)
-                    Text(subtitle)
-                        .font(.system(size: 10))
-                        .foregroundColor(Theme.textTertiary)
-                        .lineLimit(1)
-                }
-                Spacer()
-
-                if isHovered && enabled {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9))
-                        .foregroundColor(Theme.textTertiary)
-                        .transition(.opacity.combined(with: .move(edge: .trailing)))
-                }
-            }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovered && enabled ? Theme.sidebarHover : .clear)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .animation(.easeOut(duration: 0.15), value: isHovered)
-        .onHover { isHovered = $0 }
     }
 }
 
@@ -1144,8 +1029,21 @@ struct RunRow: View {
 
 struct WorkflowRow: View {
     let workflow: Workflow
+    var onOpen: (() -> Void)? = nil
 
     var body: some View {
+        Group {
+            if let onOpen {
+                Button(action: onOpen) { rowContent }
+                    .buttonStyle(.plain)
+            } else {
+                rowContent
+            }
+        }
+        .accessibilityIdentifier("dashboard.workflow.\(workflow.id)")
+    }
+
+    private var rowContent: some View {
         HStack(spacing: 12) {
             Image(systemName: "arrow.triangle.branch")
                 .font(.system(size: 12))
@@ -1177,9 +1075,9 @@ struct WorkflowRow: View {
                     .cornerRadius(4)
             }
         }
+        .contentShape(Rectangle())
         .padding(.vertical, 8)
         .themedRowHover()
-        .accessibilityIdentifier("dashboard.workflow.\(workflow.id)")
     }
 
     private func workflowStatusColor(_ status: WorkflowStatus) -> Color {

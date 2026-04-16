@@ -16,21 +16,6 @@ final class DashboardWorkflowsE2ETests: SmithersGUIUITestCase {
         }
     }
 
-    func testDashboardQuickActionsRouteToExpectedViews() {
-        navigate(to: "Dashboard", expectedViewIdentifier: "view.dashboard")
-
-        waitForElement("dashboard.action.runWorkflow").click()
-        XCTAssertTrue(element("view.workflows").waitForExistence(timeout: 5))
-
-        navigate(to: "Dashboard", expectedViewIdentifier: "view.dashboard")
-        waitForElement("dashboard.action.newChat").click()
-        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
-
-        navigate(to: "Dashboard", expectedViewIdentifier: "view.dashboard")
-        waitForElement("dashboard.action.browseSessions").click()
-        XCTAssertTrue(element("dashboard.tab.Sessions").waitForExistence(timeout: 5))
-    }
-
     func testWorkflowsSplitSelectionAndLaunchForm() {
         navigate(to: "Workflows", expectedViewIdentifier: "view.workflows")
 

@@ -522,6 +522,7 @@ struct ContentView: View {
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
     @State private var destination: NavDestination = .dashboard
     @State private var runSnapshotsSelection: RunSnapshotsSelection?
+    @State private var workflowsInitialID: String?
     @State private var isLoading = true
     @State private var developerDebugPanelVisible = false
     @State private var guiControlSidebarExpanded = false
@@ -637,16 +638,15 @@ struct ContentView: View {
             DashboardView(
                 smithers: smithers,
                 sessionSnapshots: store.chatSessions(),
-                onNavigate: { destination = $0 },
-                onNewChat: {
-                    store.newSession(reusingEmptyPlaceholder: true)
-                    destination = .chat
-                },
                 onAutoPopulateActiveRuns: { runs in
                     store.autoPopulateActiveRunTabs(runs)
                 },
                 onOpenLiveChat: { run, nodeId in
                     openRunTab(run: run, nodeId: nodeId)
+                },
+                onOpenWorkflow: { workflow in
+                    workflowsInitialID = workflow.id
+                    destination = .workflows
                 }
             )
                 .logLifecycle("DashboardView")
@@ -697,8 +697,10 @@ struct ContentView: View {
                 onNavigate: { destination = $0 },
                 onRunStarted: { runId, title in
                     openRunTab(runId: runId, title: title, preview: "Workflow run")
-                }
+                },
+                initialWorkflowID: workflowsInitialID
             )
+            .id(workflowsInitialID ?? "workflows-default")
             .logLifecycle("WorkflowsView")
             .accessibilityIdentifier("view.workflows")
         case .triggers:
