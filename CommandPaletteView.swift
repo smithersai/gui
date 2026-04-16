@@ -8,7 +8,11 @@ struct CommandPaletteView: View {
 
     @State private var query: String
     @State private var selectedIndex = 0
+    @State private var items: [CommandPaletteItem] = []
+    @State private var debounceTask: Task<Void, Never>? = nil
     @FocusState private var isInputFocused: Bool
+
+    private static let debounceNanoseconds: UInt64 = 80_000_000
 
     init(
         initialQuery: String,
@@ -25,14 +29,6 @@ struct CommandPaletteView: View {
 
     private var parsedQuery: ParsedCommandPaletteQuery {
         CommandPaletteQueryParser.parse(query)
-    }
-
-    private var items: [CommandPaletteItem] {
-        itemsProvider(query)
-    }
-
-    private var itemIDs: [String] {
-        items.map(\.id)
     }
 
     private var selectedItem: CommandPaletteItem? {
@@ -59,19 +55,18 @@ struct CommandPaletteView: View {
         }
         .onAppear {
             selectedIndex = 0
+            items = itemsProvider(query)
             DispatchQueue.main.async {
                 isInputFocused = true
             }
         }
-        .onChange(of: query) { _, _ in
-            selectedIndex = 0
+        .onDisappear {
+            debounceTask?.cancel()
+            debounceTask = nil
         }
-        .onChange(of: itemIDs) { _, ids in
-            if ids.isEmpty {
-                selectedIndex = 0
-            } else if selectedIndex >= ids.count {
-                selectedIndex = max(0, ids.count - 1)
-            }
+        .onChange(of: query) { _, newQuery in
+            selectedIndex = 0
+            scheduleItemsRefresh(for: newQuery)
         }
         .onKeyPress(.escape) {
             onDismiss()
@@ -256,6 +251,22 @@ struct CommandPaletteView: View {
         guard items.indices.contains(index) else { return false }
         if index == 0 { return true }
         return items[index].section != items[index - 1].section
+    }
+
+    private func scheduleItemsRefresh(for newQuery: String) {
+        debounceTask?.cancel()
+        debounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.debounceNanoseconds)
+            if Task.isCancelled { return }
+            let refreshed = itemsProvider(newQuery)
+            if Task.isCancelled { return }
+            items = refreshed
+            if refreshed.isEmpty {
+                selectedIndex = 0
+            } else if selectedIndex >= refreshed.count {
+                selectedIndex = max(0, refreshed.count - 1)
+            }
+        }
     }
 
     private func executeSelectedItem() {
