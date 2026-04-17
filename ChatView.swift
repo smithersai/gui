@@ -143,7 +143,7 @@ struct ChatView: View {
     @State private var promptCommands: [SlashCommandItem] = []
     @State private var selectedSlashIndex = 0
     @State private var chatTargets: [ChatTargetOption] = buildChatTargets(from: [])
-    @State private var showTargetPicker = true
+    @State private var showTargetPicker = false
     @State private var loadingTargets = false
     @State private var hasLoadedTargets = false
     @State private var launchingTargetID: String? = nil
@@ -881,6 +881,48 @@ struct ChatView: View {
                     .accessibilityIdentifier("chat.target.\(smithersTarget.id)")
                 }
 
+                // Terminal launch card
+                Button(action: launchTerminalTab) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Theme.sidebarHover)
+                                .frame(width: 36, height: 36)
+                            Image(systemName: "terminal.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(Theme.textSecondary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Terminal")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(Theme.textPrimary)
+                            Text("Open a new shell in this workspace")
+                                .font(.system(size: 11))
+                                .foregroundColor(Theme.textTertiary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 0)
+
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.surface2.opacity(0.5))
+                    .cornerRadius(10)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Theme.border, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .themedCardHover(cornerRadius: 10)
+                .disabled(launchingTargetID != nil)
+                .accessibilityIdentifier("chat.target.terminal")
+
                 // External agents section
                 let externalTargets = chatTargets.filter { $0.kind == .externalAgent }
 
@@ -1026,6 +1068,17 @@ struct ChatView: View {
             parts.append(target.binary)
         }
         return parts.joined(separator: " • ")
+    }
+
+    private func launchTerminalTab() {
+        targetPickerError = nil
+        targetLaunchStatus = nil
+        showTargetPicker = false
+        onNavigate?(.terminalCommand(
+            binary: "",
+            workingDirectory: agent.workingDirectory,
+            name: "Terminal"
+        ))
     }
 
     private func selectTarget(_ target: ChatTargetOption) {

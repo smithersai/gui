@@ -12,9 +12,11 @@ struct ChangesView: View {
     }
 
     @ObservedObject var smithers: SmithersClient
+    var initialChangeID: String?
 
     @State private var mode: Mode
     @State private var detailTab: DetailTab = .info
+    @State private var didApplyInitialSelection = false
 
     @State private var repo: JJHubRepo?
     @State private var changes: [JJHubChange] = []
@@ -44,8 +46,9 @@ struct ChangesView: View {
     @State private var pendingBookmarkDeleteName: String?
     @State private var actionInFlight = false
 
-    init(smithers: SmithersClient, initialMode: Mode = .changes) {
+    init(smithers: SmithersClient, initialMode: Mode = .changes, initialChangeID: String? = nil) {
         self.smithers = smithers
+        self.initialChangeID = initialChangeID
         _mode = State(initialValue: initialMode)
     }
 
@@ -524,6 +527,11 @@ struct ChangesView: View {
 
             if loaded.isEmpty {
                 selectedChangeID = nil
+            } else if !didApplyInitialSelection,
+                      let requested = initialChangeID,
+                      loaded.contains(where: { $0.changeID == requested }) {
+                didApplyInitialSelection = true
+                selectedChangeID = requested
             } else if let previousSelection,
                       loaded.contains(where: { $0.changeID == previousSelection }) {
                 selectedChangeID = previousSelection

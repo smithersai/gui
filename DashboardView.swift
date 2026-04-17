@@ -303,23 +303,33 @@ struct DashboardView: View {
         VStack(spacing: 16) {
             if !sortedRuns.isEmpty {
                 SectionCard(title: "Recent Runs") {
-                    ForEach(sortedRuns.prefix(5)) { run in
-                        RunRow(run: run, onOpen: onOpenLiveChat)
-                        if run.id != sortedRuns.prefix(5).last?.id {
-                            Divider().background(Theme.border)
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(sortedRuns) { run in
+                                RunRow(run: run, onOpen: onOpenLiveChat)
+                                if run.id != sortedRuns.last?.id {
+                                    Divider().background(Theme.border)
+                                }
+                            }
                         }
                     }
+                    .frame(maxHeight: 400)
                 }
             }
 
             if !pendingApprovals.isEmpty {
                 SectionCard(title: "Pending Approvals") {
-                    ForEach(pendingApprovals.prefix(5)) { approval in
-                        ApprovalRow(approval: approval)
-                        if approval.id != pendingApprovals.prefix(5).last?.id {
-                            Divider().background(Theme.border)
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(pendingApprovals) { approval in
+                                ApprovalRow(approval: approval)
+                                if approval.id != pendingApprovals.last?.id {
+                                    Divider().background(Theme.border)
+                                }
+                            }
                         }
                     }
+                    .frame(maxHeight: 400)
                 }
             }
         }
@@ -329,12 +339,17 @@ struct DashboardView: View {
         VStack(spacing: 16) {
             if !workflows.isEmpty {
                 SectionCard(title: "Workflows") {
-                    ForEach(workflows.prefix(5)) { workflow in
-                        WorkflowRow(workflow: workflow, onOpen: onOpenWorkflow.map { handler in { handler(workflow) } })
-                        if workflow.id != workflows.prefix(5).last?.id {
-                            Divider().background(Theme.border)
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(workflows) { workflow in
+                                WorkflowRow(workflow: workflow, onOpen: onOpenWorkflow.map { handler in { handler(workflow) } })
+                                if workflow.id != workflows.last?.id {
+                                    Divider().background(Theme.border)
+                                }
+                            }
                         }
                     }
+                    .frame(maxHeight: 400)
                 }
             }
 

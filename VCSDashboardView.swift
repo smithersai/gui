@@ -21,6 +21,7 @@ private enum VCSDataSource: CaseIterable, Hashable {
 struct VCSDashboardView: View {
     @ObservedObject var smithers: SmithersClient
     var onNavigate: ((NavDestination) -> Void)? = nil
+    var onOpenChange: ((JJHubChange) -> Void)? = nil
 
     @State private var tab: VCSDashboardTab = .overview
     @State private var changes: [JJHubChange] = []
@@ -212,7 +213,7 @@ struct VCSDashboardView: View {
                 if !committedChanges.isEmpty {
                     SectionCard(title: "Recent Changes") {
                         ForEach(committedChanges.prefix(5)) { change in
-                            VCSChangeRow(change: change)
+                            VCSChangeRow(change: change, onTap: { onOpenChange?(change) })
                             if change.id != committedChanges.prefix(5).last?.id {
                                 Divider().background(Theme.border)
                             }
@@ -287,7 +288,7 @@ struct VCSDashboardView: View {
                     emptySection("No changes found", icon: "point.3.connected.trianglepath.dotted")
                 } else {
                     ForEach(changes) { change in
-                        VCSChangeRow(change: change)
+                        VCSChangeRow(change: change, onTap: { onOpenChange?(change) })
                         if change.id != changes.last?.id {
                             Divider().background(Theme.border)
                         }
@@ -574,8 +575,22 @@ struct VCSDashboardView: View {
 
 struct VCSChangeRow: View {
     let change: JJHubChange
+    var onTap: (() -> Void)? = nil
 
     var body: some View {
+        if let onTap {
+            Button(action: onTap) {
+                rowContent
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("vcsDashboard.change.\(change.id)")
+        } else {
+            rowContent
+                .accessibilityIdentifier("vcsDashboard.change.\(change.id)")
+        }
+    }
+
+    private var rowContent: some View {
         HStack(spacing: 12) {
             Image(systemName: change.isWorkingCopy == true ? "pencil.circle.fill" : "circle.fill")
                 .font(.system(size: 10))
@@ -617,8 +632,8 @@ struct VCSChangeRow: View {
             }
         }
         .padding(.vertical, 8)
+        .contentShape(Rectangle())
         .themedRowHover()
-        .accessibilityIdentifier("vcsDashboard.change.\(change.id)")
     }
 }
 

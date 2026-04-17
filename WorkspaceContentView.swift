@@ -42,8 +42,6 @@ struct TerminalWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-
             WorkspaceSplitNodeView(
                 workspace: workspace,
                 node: workspace.layout,
@@ -58,67 +56,6 @@ struct TerminalWorkspaceView: View {
             }
         }
         .accessibilityIdentifier("terminalWorkspace.root")
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(workspace.title)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                Text(workspace.displayPreview)
-                    .font(.system(size: 10))
-                    .foregroundColor(Theme.textTertiary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            WorkspaceToolbarButton(title: "Terminal", systemName: "terminal.fill") {
-                workspace.splitFocused(axis: .horizontal, kind: .terminal)
-            }
-            .keyboardShortcut("d", modifiers: [.command])
-            .accessibilityIdentifier("terminalWorkspace.toolbar.terminal")
-
-            WorkspaceToolbarButton(title: "Split Down", systemName: "rectangle.split.2x1") {
-                workspace.splitFocused(axis: .vertical, kind: .terminal)
-            }
-            .keyboardShortcut("d", modifiers: [.command, .shift])
-            .accessibilityIdentifier("terminalWorkspace.toolbar.splitDown")
-
-            WorkspaceToolbarButton(title: "Browser", systemName: "safari") {
-                workspace.splitFocused(axis: .horizontal, kind: .browser)
-            }
-            .keyboardShortcut("l", modifiers: [.command, .shift])
-            .accessibilityIdentifier("terminalWorkspace.toolbar.browser")
-
-            WorkspaceToolbarButton(title: "Unread", systemName: "bell.badge") {
-                jumpToLatestUnread()
-            }
-            .disabled(notifications.latestUnreadSurface(in: workspace.id) == nil)
-            .keyboardShortcut("u", modifiers: [.command, .shift])
-            .accessibilityIdentifier("terminalWorkspace.toolbar.unread")
-
-            WorkspaceToolbarButton(title: "Close", systemName: "xmark") {
-                if workspace.orderedSurfaces.count <= 1 {
-                    onCloseWorkspace()
-                } else {
-                    workspace.closeFocusedSurface()
-                }
-            }
-            .accessibilityIdentifier("terminalWorkspace.toolbar.close")
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 48)
-        .background(Theme.surface1)
-        .border(Theme.border, edges: [.bottom])
-        .accessibilityIdentifier("terminalWorkspace.toolbar")
-    }
-
-    private func jumpToLatestUnread() {
-        guard let surfaceId = notifications.latestUnreadSurface(in: workspace.id) else { return }
-        workspace.focusSurface(surfaceId)
     }
 }
 
@@ -233,29 +170,55 @@ private struct WorkspaceSurfaceContainer: View {
                     .accessibilityIdentifier("workspace.surface.unread.\(surface.id)")
             }
 
-            Button {
+            WorkspaceToolbarButton(title: "Split Right", systemName: "rectangle.split.1x2") {
+                workspace.focusSurface(surface.id)
+                workspace.splitFocused(axis: .horizontal, kind: .terminal)
+            }
+            .keyboardShortcut("d", modifiers: [.command])
+            .accessibilityIdentifier("workspace.surface.splitRight.\(surface.id)")
+
+            WorkspaceToolbarButton(title: "Split Down", systemName: "rectangle.split.2x1") {
+                workspace.focusSurface(surface.id)
+                workspace.splitFocused(axis: .vertical, kind: .terminal)
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .accessibilityIdentifier("workspace.surface.splitDown.\(surface.id)")
+
+            WorkspaceToolbarButton(title: "Browser", systemName: "safari") {
+                workspace.focusSurface(surface.id)
+                workspace.splitFocused(axis: .horizontal, kind: .browser)
+            }
+            .keyboardShortcut("l", modifiers: [.command, .shift])
+            .accessibilityIdentifier("workspace.surface.browser.\(surface.id)")
+
+            WorkspaceToolbarButton(title: "Unread", systemName: "bell.badge") {
+                jumpToLatestUnread()
+            }
+            .disabled(notifications.latestUnreadSurface(in: workspace.id) == nil)
+            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .accessibilityIdentifier("workspace.surface.unreadBtn.\(surface.id)")
+
+            WorkspaceToolbarButton(title: "Close", systemName: "xmark") {
                 if workspace.orderedSurfaces.count <= 1 {
                     onCloseWorkspace()
                 } else {
                     workspace.closeSurface(surface.id)
                 }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(Theme.textTertiary)
-                    .frame(width: 18, height: 18)
             }
-            .buttonStyle(.plain)
-            .help("Close")
             .accessibilityIdentifier("workspace.surface.close.\(surface.id)")
         }
         .padding(.horizontal, 8)
-        .frame(height: 34)
-        .background(isFocused ? Theme.inputBg : Theme.surface1)
+        .frame(height: 38)
+        .background(isFocused ? Theme.surface1 : Theme.base)
         .border(Theme.border, edges: [.bottom])
         .onTapGesture {
             workspace.focusSurface(surface.id)
         }
+    }
+
+    private func jumpToLatestUnread() {
+        guard let surfaceId = notifications.latestUnreadSurface(in: workspace.id) else { return }
+        workspace.focusSurface(surfaceId)
     }
 
     @ViewBuilder
