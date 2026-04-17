@@ -130,7 +130,12 @@ struct BrowserWebViewRepresentable: NSViewRepresentable {
     private func loadRequestedURL(in webView: WKWebView) {
         guard let urlString, let url = BrowserURLResolver.url(from: urlString) else { return }
         guard webView.url?.absoluteString != url.absoluteString else { return }
-        webView.load(URLRequest(url: url))
+        
+        if url.host == "smithers.sh" || url.host == "www.smithers.sh" {
+            webView.loadHTMLString(SmithersHomepageWeb.html, baseURL: url)
+        } else {
+            webView.load(URLRequest(url: url))
+        }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
@@ -256,7 +261,13 @@ struct BrowserSurfaceView: View {
         let urlString = url.absoluteString
         addressText = urlString
         workspace.updateBrowser(surfaceId: surface.id, urlString: urlString, title: nil)
-        BrowserSurfaceRegistry.shared.webView(for: surface.id).load(URLRequest(url: url))
+        
+        if url.host == "smithers.sh" || url.host == "www.smithers.sh" {
+            BrowserSurfaceRegistry.shared.webView(for: surface.id).loadHTMLString(SmithersHomepageWeb.html, baseURL: url)
+        } else {
+            BrowserSurfaceRegistry.shared.webView(for: surface.id).load(URLRequest(url: url))
+        }
+        
         onFocus()
     }
 }
