@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deploy": "bun ./alchemy.run.ts",
-    "destroy": "bun ./alchemy.run.ts --destroy",
-    "publish": "bun ./publish.ts"
+    "release": "bun ./alchemy.run.ts",
+    "release:upload-only": "bun ./alchemy.run.ts --skip-build",
+    "destroy": "bun ./alchemy.run.ts --destroy"
   },
   "dependencies": {
     "alchemy": "latest"
