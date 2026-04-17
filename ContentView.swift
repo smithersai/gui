@@ -296,6 +296,9 @@ private struct SnapshotsRouteView: View {
 struct SettingsView: View {
     @AppStorage(AppPreferenceKeys.vimModeEnabled) private var vimModeEnabled = false
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
+    @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
+    @AppStorage(AppPreferenceKeys.smithersFeatureEnabled) private var smithersFeatureEnabled = false
+    @AppStorage(AppPreferenceKeys.vcsFeatureEnabled) private var vcsFeatureEnabled = false
     @AppStorage(AppPreferenceKeys.externalAgentUnsafeFlagsEnabled) private var externalAgentUnsafeFlagsEnabled = false
     @AppStorage(AppPreferenceKeys.browserSearchEngine) private var browserSearchEngine = BrowserSearchEngine.duckDuckGo.rawValue
     @State private var neovimPath: String? = NeovimDetector.executablePath()
@@ -320,6 +323,9 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     developerToolsSection
+                    operatorFeatureSection
+                    smithersFeatureSection
+                    vcsFeatureSection
                     externalAgentSafetySection
                     browserSearchSection
                     neovimSection
@@ -376,6 +382,102 @@ struct SettingsView: View {
         .cornerRadius(8)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
         .accessibilityIdentifier("settings.developerTools.section")
+    }
+
+    private var operatorFeatureSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 18))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Smithers operator")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Show the Smithers Operator feature in the right sidebar.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $guiControlSidebarEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .accessibilityIdentifier("settings.guiControlSidebar.toggle")
+            }
+        }
+        .padding(16)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+        .accessibilityIdentifier("settings.guiControlSidebar.section")
+    }
+
+    private var smithersFeatureSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 18))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Smithers")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Show the Smithers navigation section in the left sidebar.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $smithersFeatureEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .accessibilityIdentifier("settings.smithersFeature.toggle")
+            }
+        }
+        .padding(16)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+        .accessibilityIdentifier("settings.smithersFeature.section")
+    }
+
+    private var vcsFeatureSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 18))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("VCS")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Show the VCS navigation section in the left sidebar.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $vcsFeatureEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .accessibilityIdentifier("settings.vcsFeature.toggle")
+            }
+        }
+        .padding(16)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+        .accessibilityIdentifier("settings.vcsFeature.section")
     }
 
     private var neovimSection: some View {
@@ -520,9 +622,15 @@ struct ContentView: View {
     @StateObject private var smithers = SmithersClient()
     @StateObject private var fileSearchIndex = WorkspaceFileSearchIndex(rootPath: CWDResolver.resolve(nil))
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
-    @State private var destination: NavDestination = .dashboard
+    @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
+    @AppStorage(AppPreferenceKeys.smithersFeatureEnabled) private var smithersFeatureEnabled = false
+    @State private var destination: NavDestination = UserDefaults.standard.bool(forKey: AppPreferenceKeys.smithersFeatureEnabled) ? .dashboard : .chat
+    @State private var navHistory: [NavDestination] = [UserDefaults.standard.bool(forKey: AppPreferenceKeys.smithersFeatureEnabled) ? .dashboard : .chat]
+    @State private var navHistoryIndex: Int = 0
+    @State private var isNavigatingThroughHistory = false
     @State private var runSnapshotsSelection: RunSnapshotsSelection?
     @State private var workflowsInitialID: String?
+    @State private var changesInitialID: String?
     @State private var isLoading = true
     @State private var developerDebugPanelVisible = false
     @State private var guiControlSidebarExpanded = false
@@ -530,6 +638,7 @@ struct ContentView: View {
     @State private var pendingTerminalCloseTitle: String = ""
     @State private var commandPaletteVisible = false
     @State private var commandPaletteSeedQuery = ""
+    @State private var newTabPickerVisible = false
     @State private var detailRefreshNonce = 0
     @State private var keyboardShortcutController = KeyboardShortcutController()
     @State private var paletteWorkflows: [Workflow] = []
@@ -539,6 +648,10 @@ struct ContentView: View {
     @State private var paletteLandings: [Landing] = []
     @State private var paletteDataLastRefreshAt: Date = .distantPast
     @State private var paletteDataRefreshTask: Task<Void, Never>?
+
+    private var defaultDestination: NavDestination {
+        smithersFeatureEnabled ? .dashboard : .chat
+    }
 
     private var paletteSlashCommands: [SlashCommandItem] {
         let dynamic = SlashCommandRegistry.dynamicCommands(
@@ -605,7 +718,7 @@ struct ContentView: View {
                 .logLifecycle("TerminalWorkspaceView")
                 .accessibilityIdentifier("view.terminal")
         case .terminalCommand(let binary, let workingDirectory, let name):
-            TerminalView(command: binary, workingDirectory: workingDirectory, onClose: { destination = .dashboard })
+            TerminalView(command: binary, workingDirectory: workingDirectory, onClose: { destination = defaultDestination })
                 .id("\(binary)-\(workingDirectory)")
                 .accessibilityIdentifier("view.terminalCommand.\(name)")
         case .liveRun(let runId, let nodeId):
@@ -614,6 +727,11 @@ struct ContentView: View {
                 runId: runId,
                 nodeId: nodeId,
                 onOpenTerminalCommand: openTerminalCommandTab,
+                onOpenWorkflow: { workflowName in
+                    workflowsInitialID = workflowName
+                    destination = .workflows
+                },
+                onOpenPrompt: { destination = .prompts },
                 onClose: { destination = .runs }
             )
             .id("live-run-\(runId)-\(nodeId ?? "all")")
@@ -654,7 +772,11 @@ struct ContentView: View {
         case .vcsDashboard:
             VCSDashboardView(
                 smithers: smithers,
-                onNavigate: { destination = $0 }
+                onNavigate: { destination = $0 },
+                onOpenChange: { change in
+                    changesInitialID = change.changeID
+                    destination = .changes
+                }
             )
                 .logLifecycle("VCSDashboardView")
                 .accessibilityIdentifier("view.vcsDashboard")
@@ -663,7 +785,8 @@ struct ContentView: View {
                 .logLifecycle("AgentsView")
                 .accessibilityIdentifier("view.agents")
         case .changes:
-            ChangesView(smithers: smithers)
+            ChangesView(smithers: smithers, initialChangeID: changesInitialID)
+                .id(changesInitialID ?? "changes-default")
                 .logLifecycle("ChangesView")
                 .accessibilityIdentifier("view.changes")
         case .runs:
@@ -804,15 +927,32 @@ struct ContentView: View {
                         store: store,
                         destination: $destination,
                         developerDebugPanelVisible: $developerDebugPanelVisible,
-                        developerDebugAvailable: developerToolsEnabled
+                        developerDebugAvailable: developerToolsEnabled,
+                        onOpenNewTabPicker: { newTabPickerVisible = true },
+                        versionProvider: { await smithers.getOrchestratorVersion() }
                     )
                     .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
                 } detail: {
-                    Group {
-                        detailContent
-                            .id("\(String(describing: destination)):\(detailRefreshNonce)")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
+                    detailContent
+                        .id("\(String(describing: destination)):\(detailRefreshNonce)")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .toolbar {
+                            ToolbarItemGroup(placement: .navigation) {
+                                Button(action: goBack) {
+                                    Image(systemName: "chevron.left")
+                                }
+                                .disabled(!canGoBack)
+                                .help("Back (⌘[)")
+                                .accessibilityIdentifier("nav.back")
+
+                                Button(action: goForward) {
+                                    Image(systemName: "chevron.right")
+                                }
+                                .disabled(!canGoForward)
+                                .help("Forward (⌘])")
+                                .accessibilityIdentifier("nav.forward")
+                            }
+                        }
                 }
                 .navigationSplitViewStyle(.balanced)
                 .sheet(item: $runSnapshotsSelection) { selection in
@@ -832,15 +972,17 @@ struct ContentView: View {
                 .accessibilityIdentifier("app.root")
                 .onChange(of: destination) { _, newValue in
                     AppLogger.ui.debug("Navigate to \(newValue.label)")
+                    recordHistory(newValue)
                 }
-
-                GUIControlSidebar(
-                    isExpanded: $guiControlSidebarExpanded,
-                    store: store,
-                    smithers: smithers,
-                    destination: destination,
-                    onNavigate: handleNavigation
-                )
+                if guiControlSidebarEnabled {
+                    GUIControlSidebar(
+                        isExpanded: $guiControlSidebarExpanded,
+                        store: store,
+                        smithers: smithers,
+                        destination: destination,
+                        onNavigate: handleNavigation
+                    )
+                }
 
                 if developerDebugPanelVisible && developerToolsEnabled {
                     DeveloperDebugPanel(
@@ -869,6 +1011,19 @@ struct ContentView: View {
                         onDismiss: {
                             commandPaletteVisible = false
                         }
+                    )
+                    .transition(.opacity)
+                }
+            }
+            .overlay {
+                if newTabPickerVisible {
+                    NewTabPicker(
+                        smithers: smithers,
+                        onSelect: { selection in
+                            newTabPickerVisible = false
+                            handleNewTabSelection(selection)
+                        },
+                        onDismiss: { newTabPickerVisible = false }
                     )
                     .transition(.opacity)
                 }
@@ -953,6 +1108,24 @@ struct ContentView: View {
             }
             .keyboardShortcut("t", modifiers: [.command, .shift])
             .accessibilityIdentifier("shortcut.reopenTab")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Navigate Back") {
+                goBack()
+            }
+            .keyboardShortcut("[", modifiers: [.command])
+            .disabled(!canGoBack)
+            .accessibilityIdentifier("shortcut.navBack")
+            .frame(width: 1, height: 1)
+            .opacity(0.01)
+
+            Button("Navigate Forward") {
+                goForward()
+            }
+            .keyboardShortcut("]", modifiers: [.command])
+            .disabled(!canGoForward)
+            .accessibilityIdentifier("shortcut.navForward")
             .frame(width: 1, height: 1)
             .opacity(0.01)
 
@@ -1231,6 +1404,23 @@ struct ContentView: View {
     private func createNewTerminalTab() {
         let terminalId = store.addTerminalTab()
         destination = .terminal(id: terminalId)
+    }
+
+    private func handleNewTabSelection(_ selection: NewTabSelection) {
+        switch selection {
+        case .smithersChat:
+            store.newSession(reusingEmptyPlaceholder: false)
+            destination = .chat
+        case .terminal:
+            let terminalId = store.addTerminalTab()
+            destination = .terminal(id: terminalId)
+        case .externalAgent(let target):
+            let terminalId = store.launchExternalAgentTab(
+                name: target.name,
+                command: target.binary
+            )
+            destination = .terminal(id: terminalId)
+        }
     }
 
     private func handleFindShortcut() {
@@ -1533,7 +1723,7 @@ struct ContentView: View {
         guard let terminalId = pendingTerminalCloseId else { return }
         store.removeTerminalTab(terminalId)
         if case .terminal(let activeId) = destination, activeId == terminalId {
-            destination = .dashboard
+            destination = defaultDestination
         }
         clearPendingTerminalClose()
     }
@@ -1550,6 +1740,49 @@ struct ContentView: View {
         default:
             destination = next
         }
+    }
+
+    private var canGoBack: Bool { navHistoryIndex > 0 }
+    private var canGoForward: Bool { navHistoryIndex < navHistory.count - 1 }
+
+    private func recordHistory(_ next: NavDestination) {
+        if isNavigatingThroughHistory {
+            isNavigatingThroughHistory = false
+            return
+        }
+        if navHistory.indices.contains(navHistoryIndex),
+           navHistory[navHistoryIndex] == next {
+            return
+        }
+        if navHistoryIndex < navHistory.count - 1 {
+            navHistory.removeSubrange((navHistoryIndex + 1)...)
+        }
+        navHistory.append(next)
+        navHistoryIndex = navHistory.count - 1
+        trimHistoryIfNeeded()
+    }
+
+    private func trimHistoryIfNeeded() {
+        let cap = 50
+        if navHistory.count > cap {
+            let overflow = navHistory.count - cap
+            navHistory.removeFirst(overflow)
+            navHistoryIndex -= overflow
+        }
+    }
+
+    private func goBack() {
+        guard canGoBack else { return }
+        navHistoryIndex -= 1
+        isNavigatingThroughHistory = true
+        destination = navHistory[navHistoryIndex]
+    }
+
+    private func goForward() {
+        guard canGoForward else { return }
+        navHistoryIndex += 1
+        isNavigatingThroughHistory = true
+        destination = navHistory[navHistoryIndex]
     }
 
     private func openTerminalCommandTab(command: String, workingDirectory: String, name: String) {
