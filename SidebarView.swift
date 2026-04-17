@@ -111,6 +111,9 @@ struct SidebarView: View {
     @Binding var destination: NavDestination
     @Binding private var developerDebugPanelVisible: Bool
     @State private var searchText: String = ""
+    @State private var smithersVersion: String?
+    @AppStorage(AppPreferenceKeys.smithersFeatureEnabled) private var smithersFeatureEnabled = false
+    @AppStorage(AppPreferenceKeys.vcsFeatureEnabled) private var vcsFeatureEnabled = false
     @State private var renameSessionID: String?
     @State private var renameSessionTitle: String = ""
     @State private var renameTerminalID: String?
@@ -120,17 +123,23 @@ struct SidebarView: View {
     @State private var terminateTerminalID: String?
     @State private var terminateTerminalTitle: String = ""
     private let developerDebugAvailable: Bool
+    private let onOpenNewTabPicker: () -> Void
+    private let versionProvider: (() async -> String?)?
 
     init(
         store: SessionStore,
         destination: Binding<NavDestination>,
         developerDebugPanelVisible: Binding<Bool> = .constant(false),
-        developerDebugAvailable: Bool = DeveloperDebugMode.isEnabled
+        developerDebugAvailable: Bool = DeveloperDebugMode.isEnabled,
+        onOpenNewTabPicker: @escaping () -> Void = {},
+        versionProvider: (() async -> String?)? = nil
     ) {
         self.store = store
         self._destination = destination
         self._developerDebugPanelVisible = developerDebugPanelVisible
         self.developerDebugAvailable = developerDebugAvailable
+        self.onOpenNewTabPicker = onOpenNewTabPicker
+        self.versionProvider = versionProvider
     }
 
     private static let smithersNav: Set<NavDestination> = [
@@ -157,32 +166,46 @@ struct SidebarView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        NavRow(
-                            icon: "square.grid.2x2",
-                            label: "Smithers",
-                            isSelected: SidebarView.smithersNav.contains(destination)
-                        ) {
-                            destination = .dashboard
-                        }
+                    if smithersFeatureEnabled || vcsFeatureEnabled {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if smithersFeatureEnabled {
+                                NavRow(
+                                    icon: "square.grid.2x2",
+                                    label: "Smithers",
+                                    isSelected: SidebarView.smithersNav.contains(destination)
+                                ) {
+                                    destination = .dashboard
+                                }
+                            }
 
-                        NavRow(
-                            icon: "point.3.connected.trianglepath.dotted",
-                            label: "VCS",
-                            isSelected: SidebarView.vcsNav.contains(destination)
-                        ) {
-                            destination = .vcsDashboard
+                            if vcsFeatureEnabled {
+                                NavRow(
+                                    icon: "point.3.connected.trianglepath.dotted",
+                                    label: "VCS",
+                                    isSelected: SidebarView.vcsNav.contains(destination)
+                                ) {
+                                    destination = .vcsDashboard
+                                }
+                            }
                         }
+                        .padding(.top, 14)
+                        .padding(.bottom, 8)
                     }
-                    .padding(.top, 14)
-                    .padding(.bottom, 8)
 
-                    SidebarSection(title: "TABS") {
-                        NewChatMenuRow(
-                            newChatAction: startNewChat,
-                            terminalAction: startNewTerminal
-                        )
-                        .padding(.bottom, 6)
+                    SidebarSection(
+                        title: "TABS",
+                        trailingAccessory: {
+                            Button(action: onOpenNewTabPicker) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(Theme.textTertiary)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("sidebar.newTabPlus")
+                            .help("New Tab (⌘T)")
+                        }
+                    ) {
 
                         tabList
                     }
@@ -215,6 +238,20 @@ struct SidebarView: View {
                     destination = .settings
                 }
                 .padding(.vertical, 8)
+
+                if let smithersVersion {
+                    Text("Smithers \(smithersVersion)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(Theme.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.bottom, 6)
+                        .accessibilityIdentifier("sidebar.smithersVersion")
+                }
+            }
+        }
+        .task {
+            if smithersVersion == nil, let versionProvider {
+                smithersVersion = await versionProvider()
             }
         }
         .alert("Rename thread", isPresented: renameAlertBinding) {
@@ -282,16 +319,6 @@ struct SidebarView: View {
         }
         .background(Theme.sidebarBg)
         .accessibilityIdentifier("sidebar")
-    }
-
-    private func startNewChat() {
-        store.newSession(reusingEmptyPlaceholder: false)
-        destination = .chat
-    }
-
-    private func startNewTerminal() {
-        let terminalId = store.addTerminalTab()
-        destination = .terminal(id: terminalId)
     }
 
     private func openCurrentChat() {
@@ -579,21 +606,47 @@ private func copyTextToClipboard(_ text: String) {
 
 // MARK: - Sidebar Components
 
-struct SidebarSection<Content: View>: View {
+struct SidebarSection<Content: View, TrailingAccessory: View>: View {
     let title: String
+    let trailingAccessory: TrailingAccessory
     @ViewBuilder let content: Content
+
+    init(
+        title: String,
+        @ViewBuilder trailingAccessory: () -> TrailingAccessory,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.trailingAccessory = trailingAccessory()
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Theme.textTertiary)
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 6)
+            HStack {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Theme.textTertiary)
+                Spacer()
+                trailingAccessory
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 6)
 
             content
         }
+    }
+}
+
+extension SidebarSection where TrailingAccessory == EmptyView {
+    init(
+        title: String,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.trailingAccessory = EmptyView()
+        self.content = content()
     }
 }
 
@@ -622,48 +675,6 @@ struct NavRow: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
         .accessibilityIdentifier("nav.\(label.replacingOccurrences(of: " ", with: ""))")
-    }
-}
-
-struct NewChatMenuRow: View {
-    let newChatAction: () -> Void
-    let terminalAction: () -> Void
-
-    var body: some View {
-        Menu {
-            Button(action: terminalAction) {
-                Label("Terminal", systemImage: NavDestination.terminal().icon)
-            }
-            .accessibilityIdentifier("sidebar.newTerminal")
-
-            Button(action: newChatAction) {
-                Label("New Chat", systemImage: NavDestination.chat.icon)
-            }
-            .accessibilityIdentifier("sidebar.newChatMenuItem")
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                    .font(.system(size: 11))
-                    .frame(width: 16)
-                Text("New")
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                Spacer()
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 10))
-                    .foregroundColor(Theme.textTertiary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .foregroundColor(Theme.textSecondary)
-            .themedSidebarRowBackground(isSelected: false, cornerRadius: 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .accessibilityIdentifier("sidebar.newChat")
     }
 }
 

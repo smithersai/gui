@@ -4,8 +4,11 @@ import SwiftUI
 enum AppPreferenceKeys {
     static let vimModeEnabled = "settings.vimModeEnabled"
     static let developerToolsEnabled = "settings.developerToolsEnabled"
+    static let guiControlSidebarEnabled = "settings.guiControlSidebarEnabled"
     static let externalAgentUnsafeFlagsEnabled = "settings.externalAgentUnsafeFlagsEnabled"
     static let browserSearchEngine = "settings.browserSearchEngine"
+    static let smithersFeatureEnabled = "settings.smithersFeatureEnabled"
+    static let vcsFeatureEnabled = "settings.vcsFeatureEnabled"
 }
 
 enum NeovimDetector {

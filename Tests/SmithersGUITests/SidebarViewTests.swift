@@ -108,13 +108,6 @@ final class SidebarViewTests: XCTestCase {
         XCTAssertTrue(labels.contains("Developer Debug"))
     }
 
-    func testNewChatMenuIncludesChatAndTerminalActions() throws {
-        let row = NewChatMenuRow(newChatAction: {}, terminalAction: {})
-        let labels = try textStrings(in: row)
-
-        XCTAssertTrue(labels.contains("New Chat"))
-        XCTAssertTrue(labels.contains("Terminal"))
-    }
 
     func testSessionRowHidesEmptyPreview() throws {
         let session = ChatSession(
