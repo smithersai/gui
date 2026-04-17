@@ -9,6 +9,8 @@ enum RunStatus: String, Codable, CaseIterable {
     case finished
     case failed
     case cancelled
+    case stale
+    case orphaned
     case unknown
 
     var label: String {
@@ -18,6 +20,8 @@ enum RunStatus: String, Codable, CaseIterable {
         case .finished: return "FINISHED"
         case .failed: return "FAILED"
         case .cancelled: return "CANCELLED"
+        case .stale: return "STALE"
+        case .orphaned: return "ORPHANED"
         case .unknown: return "UNKNOWN"
         }
     }
@@ -140,8 +144,12 @@ extension RunStatus {
             return .failed
         case "cancelled", "canceled":
             return .cancelled
-        case "running", "in-progress", "inprogress", "started":
+        case "running", "in-progress", "inprogress", "started", "recovering":
             return .running
+        case "stale":
+            return .stale
+        case "orphaned":
+            return .orphaned
         default:
             return .unknown
         }

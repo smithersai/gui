@@ -213,9 +213,18 @@ class SmithersClient: ObservableObject {
 
     @Published var isConnected: Bool = false
     @Published var cliAvailable: Bool = false
+    @Published private(set) var orchestratorVersion: String?
+    /// `nil` until probed; `true` once a version >= `minimumOrchestratorVersion`
+    /// is observed; `false` when the installed CLI is too old.
+    @Published private(set) var orchestratorVersionMeetsMinimum: Bool?
     private var cachedOrchestratorVersion: String?
     @Published private(set) var connectionTransport: ConnectionTransport = .none
     @Published private(set) var serverReachable: Bool = false
+
+    /// Minimum supported `smithers-orchestrator` version. Older releases
+    /// silently mislabel orphaned heartbeats as "continued"/"succeeded" and
+    /// lack the `state`/`unhealthy` fields the dashboard now expects.
+    static let minimumOrchestratorVersion = "0.16.0"
 
     private let cwd: String
     private let smithersBin: String
@@ -5181,8 +5190,44 @@ class SmithersClient: ObservableObject {
         let resolved = await runOrchestratorVersionProbe()
         if let resolved {
             cachedOrchestratorVersion = resolved
+            orchestratorVersion = resolved
+            orchestratorVersionMeetsMinimum = Self.versionAtLeast(
+                resolved,
+                minimum: Self.minimumOrchestratorVersion
+            )
         }
         return resolved
+    }
+
+    /// Returns `true` if `version` is greater than or equal to `minimum` under
+    /// semver. Pre-release suffixes (e.g. `1.2.3-beta.1`) are stripped before
+    /// comparison — a `0.16.0-rc.1` build is treated as `0.16.0` for gating.
+    /// Returns `false` only when both inputs parse and `version` < `minimum`.
+    /// Returns `true` if either input is unparseable, so we never block a user
+    /// on a version string we don't understand.
+    nonisolated static func versionAtLeast(_ version: String, minimum: String) -> Bool {
+        guard let lhs = parseSemver(version), let rhs = parseSemver(minimum) else {
+            return true
+        }
+        for (l, r) in zip(lhs, rhs) {
+            if l != r { return l > r }
+        }
+        return true
+    }
+
+    nonisolated static func parseSemver(_ raw: String) -> [Int]? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutPrefix = trimmed.hasPrefix("v") ? String(trimmed.dropFirst()) : trimmed
+        let core = withoutPrefix.split(whereSeparator: { $0 == "-" || $0 == "+" }).first.map(String.init) ?? withoutPrefix
+        let parts = core.split(separator: ".").map(String.init)
+        guard !parts.isEmpty, parts.count <= 3 else { return nil }
+        var ints: [Int] = []
+        for part in parts {
+            guard let n = Int(part), n >= 0 else { return nil }
+            ints.append(n)
+        }
+        while ints.count < 3 { ints.append(0) }
+        return ints
     }
 
     private func runOrchestratorVersionProbe() async -> String? {
@@ -5277,6 +5322,9 @@ class SmithersClient: ObservableObject {
         }
 
         cliAvailable = await probeCLIAvailability()
+        if cliAvailable {
+            _ = await getOrchestratorVersion()
+        }
 
         let configuredServerURL = serverURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = configuredServerURL, !url.isEmpty else {

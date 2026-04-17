@@ -342,6 +342,14 @@ final class AppNotifications: ObservableObject {
                 level: .runUpdate,
                 nativeWhenInactive: true
             )
+        case .stale, .orphaned:
+            tracker.forgetRun(runEvent.runId)
+            post(
+                title: "Run heartbeat lost",
+                message: "\(shortID) is \(status == .orphaned ? "orphaned" : "stale") — owning process gone",
+                level: .error,
+                nativeWhenInactive: true
+            )
         }
     }
 

@@ -264,6 +264,8 @@ private struct SnapshotsRouteView: View {
             return Theme.success
         case .failed, .cancelled:
             return Theme.danger
+        case .stale, .orphaned:
+            return Theme.warning
         case .unknown:
             return Theme.textTertiary
         }
@@ -933,7 +935,14 @@ struct ContentView: View {
                     )
                     .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
                 } detail: {
-                    detailContent
+                    VStack(spacing: 0) {
+                        if smithersFeatureEnabled,
+                           let installed = smithers.orchestratorVersion,
+                           smithers.orchestratorVersionMeetsMinimum == false {
+                            SmithersVersionWarningBanner(installed: installed)
+                        }
+                        detailContent
+                    }
                         .id("\(String(describing: destination)):\(detailRefreshNonce)")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .toolbar {

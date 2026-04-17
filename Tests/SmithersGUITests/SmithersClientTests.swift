@@ -3354,3 +3354,46 @@ final class RunActionHookTests: XCTestCase {
         }
     }
 }
+
+final class SmithersOrchestratorVersionTests: XCTestCase {
+    func test_minimumVersionConstantIsTracked() {
+        XCTAssertEqual(SmithersClient.minimumOrchestratorVersion, "0.16.0")
+    }
+
+    func test_versionAtLeast_belowMinimum_returnsFalse() {
+        XCTAssertFalse(SmithersClient.versionAtLeast("0.14.1", minimum: "0.16.0"))
+        XCTAssertFalse(SmithersClient.versionAtLeast("0.15.99", minimum: "0.16.0"))
+        XCTAssertFalse(SmithersClient.versionAtLeast("0.0.1", minimum: "0.16.0"))
+    }
+
+    func test_versionAtLeast_atOrAboveMinimum_returnsTrue() {
+        XCTAssertTrue(SmithersClient.versionAtLeast("0.16.0", minimum: "0.16.0"))
+        XCTAssertTrue(SmithersClient.versionAtLeast("0.16.1", minimum: "0.16.0"))
+        XCTAssertTrue(SmithersClient.versionAtLeast("0.17.0", minimum: "0.16.0"))
+        XCTAssertTrue(SmithersClient.versionAtLeast("1.0.0", minimum: "0.16.0"))
+    }
+
+    func test_versionAtLeast_stripsPrereleaseAndBuildMetadata() {
+        XCTAssertTrue(SmithersClient.versionAtLeast("0.16.0-rc.1", minimum: "0.16.0"))
+        XCTAssertTrue(SmithersClient.versionAtLeast("0.16.0+build.42", minimum: "0.16.0"))
+        XCTAssertFalse(SmithersClient.versionAtLeast("0.15.0-rc.99", minimum: "0.16.0"))
+    }
+
+    func test_versionAtLeast_acceptsLeadingV() {
+        XCTAssertTrue(SmithersClient.versionAtLeast("v0.16.0", minimum: "0.16.0"))
+        XCTAssertFalse(SmithersClient.versionAtLeast("v0.15.5", minimum: "0.16.0"))
+    }
+
+    func test_versionAtLeast_paddingMissingComponents() {
+        XCTAssertTrue(SmithersClient.versionAtLeast("1", minimum: "0.16.0"))
+        XCTAssertFalse(SmithersClient.versionAtLeast("0.16", minimum: "0.16.1"))
+        XCTAssertTrue(SmithersClient.versionAtLeast("0.16", minimum: "0.16.0"))
+    }
+
+    func test_versionAtLeast_returnsTrueWhenInputUnparseable() {
+        // We never want to gate the user on a version string we can't read.
+        XCTAssertTrue(SmithersClient.versionAtLeast("not-a-version", minimum: "0.16.0"))
+        XCTAssertTrue(SmithersClient.versionAtLeast("0.16.0", minimum: "garbage"))
+        XCTAssertTrue(SmithersClient.versionAtLeast("", minimum: "0.16.0"))
+    }
+}

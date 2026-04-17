@@ -1237,6 +1237,7 @@ struct StatusPill: View {
         case .waitingApproval: return Theme.warning
         case .finished: return Theme.success
         case .failed: return Theme.danger
+        case .stale, .orphaned: return Theme.warning
         case .cancelled, .unknown: return Theme.textTertiary
         }
     }

@@ -675,7 +675,7 @@ private extension RunStatus {
         switch self {
         case .finished, .failed, .cancelled:
             return true
-        case .running, .waitingApproval, .unknown:
+        case .running, .waitingApproval, .stale, .orphaned, .unknown:
             return false
         }
     }

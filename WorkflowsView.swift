@@ -1713,6 +1713,7 @@ struct WorkflowsView: View {
         case .waitingApproval: return Theme.warning
         case .finished: return Theme.success
         case .failed: return Theme.danger
+        case .stale, .orphaned: return Theme.warning
         case .cancelled, .unknown: return Theme.textTertiary
         }
     }
@@ -1723,6 +1724,7 @@ struct WorkflowsView: View {
         case .waitingApproval: return "checkmark.shield.fill"
         case .finished: return "checkmark.circle.fill"
         case .failed: return "xmark.circle.fill"
+        case .stale, .orphaned: return "exclamationmark.triangle.fill"
         case .cancelled: return "slash.circle.fill"
         case .unknown: return "questionmark.circle.fill"
         }

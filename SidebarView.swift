@@ -240,12 +240,24 @@ struct SidebarView: View {
                 .padding(.vertical, 8)
 
                 if let smithersVersion {
-                    Text("Smithers \(smithersVersion)")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(Theme.textTertiary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.bottom, 6)
-                        .accessibilityIdentifier("sidebar.smithersVersion")
+                    let meetsMin = SmithersClient.versionAtLeast(
+                        smithersVersion,
+                        minimum: SmithersClient.minimumOrchestratorVersion
+                    )
+                    VStack(spacing: 2) {
+                        Text("Smithers \(smithersVersion)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(meetsMin ? Theme.textTertiary : Theme.danger)
+                            .accessibilityIdentifier("sidebar.smithersVersion")
+                        if !meetsMin {
+                            Text("Update required (≥ \(SmithersClient.minimumOrchestratorVersion))")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(Theme.danger)
+                                .accessibilityIdentifier("sidebar.smithersVersionWarning")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 6)
                 }
             }
         }
@@ -813,5 +825,31 @@ struct EdgeBorder: Shape {
             path.addRect(CGRect(x: x, y: y, width: w, height: h))
         }
         return path
+    }
+}
+
+struct SmithersVersionWarningBanner: View {
+    let installed: String
+    private let required = SmithersClient.minimumOrchestratorVersion
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.white)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Smithers \(installed) is too old — update to ≥ \(required)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                Text("Run lifecycle and heartbeat status will be inaccurate until you upgrade smithers-orchestrator.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.85))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.danger)
+        .accessibilityIdentifier("smithersVersion.banner")
     }
 }
