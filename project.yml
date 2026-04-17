@@ -41,6 +41,7 @@ targets:
       - AncestorErrorIndex.swift
       - TreeKeyboardHandler.swift
       - BrowserSurfaceView.swift
+      - SmithersHomepageWeb.swift
       - CWDResolver.swift
       - DateFormatters.swift
       - CodexMCPStatus.swift
@@ -65,6 +66,7 @@ targets:
       - MarkdownEditorView.swift
       - MemoryView.swift
       - Models.swift
+      - NewTabPicker.swift
       - NodeInspectView.swift
       - NodeInspectorView.swift
       - NodeInspectorHeader.swift
