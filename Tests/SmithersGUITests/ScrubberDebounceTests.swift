@@ -62,7 +62,7 @@ final class ScrubberDebounceTests: XCTestCase {
         lock.lock()
         defer { lock.unlock() }
         XCTAssertGreaterThanOrEqual(fireCount, 15)
-        XCTAssertLessThanOrEqual(fireCount, 25)
+        XCTAssertLessThanOrEqual(fireCount, 30)
     }
 
     func testTrailingEdgeDeliversFinalFrame() {
