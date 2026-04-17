@@ -78,6 +78,16 @@ final class LiveRunDevToolsStore: ObservableObject {
     @Published private(set) var rewindError: DevToolsClientError?
     @Published private(set) var rewindInFlight: Bool = false
 
+    /// Count of nodes currently in `running` state in the displayed tree. Recomputed
+    /// whenever `tree` changes. In historical mode this reflects what was in-flight
+    /// at the scrubbed frame; in live mode it reflects what's in-flight right now.
+    @Published private(set) var runningNodeCount: Int = 0
+
+    /// `nodeId` strings (the ones stored on `DevToolsTaskInfo.nodeId`) of task
+    /// nodes currently in `running` state. Used by the tree view to auto-expand
+    /// the ancestor path when the scrubber moves to a new frame.
+    @Published private(set) var runningNodeIds: Set<String> = []
+
     @Published private(set) var eventsApplied: Int = 0
     @Published private(set) var reconnectCount: Int = 0
     @Published private(set) var decodeErrorCount: Int = 0
@@ -175,6 +185,8 @@ final class LiveRunDevToolsStore: ObservableObject {
         latestFrameNo = 0
         liveLatestFrameNo = 0
         runStatus = .unknown
+        runningNodeCount = 0
+        runningNodeIds = []
 
         AppLogger.network.info("DevTools connect", metadata: [
             "run_id": runId,
@@ -277,6 +289,7 @@ final class LiveRunDevToolsStore: ObservableObject {
             seq = snapshot.seq
             mode = .historical(frameNo: snapshot.frameNo)
             scrubError = nil
+            refreshRunningState()
             updateGhostState()
 
             AppLogger.ui.info("DevTools scrub", metadata: [
@@ -599,6 +612,42 @@ final class LiveRunDevToolsStore: ObservableObject {
         tree = liveTree
         seq = liveSeq
         latestFrameNo = liveLatestFrameNo
+        refreshRunningState()
+    }
+
+    /// Recompute `runningNodeCount` / `runningNodeIds` from the currently-displayed
+    /// tree. Called whenever `tree` changes. Cheap — linear scan of node props.
+    private func refreshRunningState() {
+        guard let root = tree else {
+            runningNodeCount = 0
+            runningNodeIds = []
+            return
+        }
+        var count = 0
+        var ids: Set<String> = []
+        collectRunningTaskNodes(root, count: &count, ids: &ids)
+        runningNodeCount = count
+        runningNodeIds = ids
+    }
+
+    private func collectRunningTaskNodes(
+        _ node: DevToolsNode,
+        count: inout Int,
+        ids: inout Set<String>
+    ) {
+        // Only count leaf task nodes. Structural parents may show "running" via rollup
+        // but the user-facing count should reflect discrete work units in flight.
+        if node.type == .task, node.children.isEmpty {
+            if case .string(let s) = node.props["state"], s == "running" {
+                count += 1
+                if let nodeId = node.task?.nodeId, !nodeId.isEmpty {
+                    ids.insert(nodeId)
+                }
+            }
+        }
+        for child in node.children {
+            collectRunningTaskNodes(child, count: &count, ids: &ids)
+        }
     }
 
     private func statusForRoot(_ root: DevToolsNode?) -> RunStatus {

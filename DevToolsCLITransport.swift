@@ -439,11 +439,11 @@ enum DevToolsTreeBuilder {
     ///   task nodes get their `props["state"]` populated (normalized) and structural nodes
     ///   roll up their descendants' states. Pass `[:]` or omit for the legacy behaviour.
     ///
-    /// NOTE: the state map reflects the *final* known state from `_smithers_nodes`, not a
-    /// per-frame snapshot — so when the scrubber is rewound to a historical frame, rollups
-    /// will reflect the current DB state rather than the state at that frame. This is a
-    /// documented v1 simplification and is still a strict upgrade over the previous
-    /// "Unknown" fallback.
+    /// NOTE (live mode): the state map reflects the *final* known state from
+    /// `_smithers_nodes`. For historical mode, callers should reconstruct a
+    /// per-frame map via `devToolsNodeStatesAtTimestamp(attempts:frameTimestampMs:)`
+    /// and pass it here — the builder treats both paths identically. (This lifts the
+    /// v1 simplification that used to stamp final state onto historical frames.)
     static func build(
         xml: DevToolsFrameXMLNode,
         taskIndex: [DevToolsTaskIndexEntry],
@@ -654,4 +654,155 @@ enum DevToolsNodeStateQuery {
         }
         return result
     }
+}
+
+// MARK: - Per-frame attempt state (historical scrubbing)
+
+/// A single row from `_smithers_attempts` with enough data to decide what state a
+/// node was in at a given wall-clock timestamp.
+///
+/// DB schema (confirmed against `/Users/williamcory/gui/smithers.db`):
+///   `_smithers_attempts(run_id, node_id, iteration, attempt, state, started_at_ms,
+///    finished_at_ms, heartbeat_at_ms, heartbeat_data_json, error_json, ...)`.
+///
+/// `finished_at_ms` is nullable; a null value means the attempt was still in flight
+/// (or crashed without writing the end timestamp). `state` is the terminal state
+/// once `finished_at_ms` is set — values seen in the wild include `finished`,
+/// `failed`, `cancelled`, `skipped`.
+struct DevToolsAttemptEntry: Equatable, Sendable {
+    let nodeId: String
+    let iteration: Int
+    let attempt: Int
+    /// Terminal / persisted state from the attempt row.
+    let state: String
+    let startedAtMs: Int64
+    let finishedAtMs: Int64?
+}
+
+/// SQL + row-decoding helpers for the attempts table, used when the scrubber is
+/// rewound to a historical frame and we need to reconstruct per-node state *at
+/// that frame's timestamp* rather than the current terminal state.
+enum DevToolsAttemptQuery {
+    /// Returns all attempts for the run, sorted by start time ascending. Callers
+    /// can filter down to a point-in-time view by comparing timestamps in Swift;
+    /// doing the filter client-side keeps the SQL simple and means a single query
+    /// serves every historical frame without re-hitting sqlite.
+    static func query(runId: String) -> String {
+        let quoted = DevToolsSQL.quote(runId)
+        return """
+        SELECT node_id, iteration, attempt, state, started_at_ms, finished_at_ms
+        FROM _smithers_attempts
+        WHERE run_id=\(quoted)
+        ORDER BY started_at_ms ASC;
+        """
+    }
+
+    /// Parses raw sqlite3 -json rows into `DevToolsAttemptEntry` values. Rows missing
+    /// a node_id or start time are skipped rather than blowing up the query.
+    static func makeEntries(fromRows rows: [[String: Any]]) -> [DevToolsAttemptEntry] {
+        var entries: [DevToolsAttemptEntry] = []
+        entries.reserveCapacity(rows.count)
+        for row in rows {
+            guard let nodeId = row["node_id"] as? String else { continue }
+            let iteration = intFrom(row["iteration"]) ?? 0
+            let attempt = intFrom(row["attempt"]) ?? 0
+            let state = (row["state"] as? String) ?? ""
+            guard let started = int64From(row["started_at_ms"]) else { continue }
+            let finished = int64From(row["finished_at_ms"])
+            entries.append(DevToolsAttemptEntry(
+                nodeId: nodeId,
+                iteration: iteration,
+                attempt: attempt,
+                state: state,
+                startedAtMs: started,
+                finishedAtMs: finished
+            ))
+        }
+        return entries
+    }
+
+    private static func intFrom(_ any: Any?) -> Int? {
+        if let n = any as? NSNumber { return n.intValue }
+        if let i = any as? Int { return i }
+        if let s = any as? String, let parsed = Int(s) { return parsed }
+        return nil
+    }
+
+    private static func int64From(_ any: Any?) -> Int64? {
+        if let n = any as? NSNumber { return n.int64Value }
+        if let i = any as? Int64 { return i }
+        if let i = any as? Int { return Int64(i) }
+        if let s = any as? String, let parsed = Int64(s) { return parsed }
+        return nil
+    }
+}
+
+/// Derives a per-node state map from attempt rows, evaluated *at a specific
+/// timestamp*. This is the core of the historical-scrubber UX fix.
+///
+/// Contract:
+/// - Nodes whose earliest attempt started *after* `frameTimestampMs` are absent
+///   from the result (the caller treats "absent" as `pending`).
+/// - Nodes with at least one in-flight attempt at the timestamp → `running`.
+/// - Otherwise use the latest finished attempt's state (`finished` / `failed` /
+///   `cancelled` / `skipped`).
+///
+/// When multiple attempts exist for the same (node_id, iteration), the *latest*
+/// attempt whose start is ≤ the target timestamp wins, matching the behaviour of
+/// `_smithers_nodes` which always reflects the most recent attempt.
+func devToolsNodeStatesAtTimestamp(
+    attempts: [DevToolsAttemptEntry],
+    frameTimestampMs: Int64
+) -> [String: DevToolsNodeStateEntry] {
+    // (node_id, iteration) → chosen attempt. Later attempts beat earlier ones per
+    // the contract above.
+    struct Key: Hashable {
+        let nodeId: String
+        let iteration: Int
+    }
+    var chosen: [Key: DevToolsAttemptEntry] = [:]
+
+    for attempt in attempts where attempt.startedAtMs <= frameTimestampMs {
+        let key = Key(nodeId: attempt.nodeId, iteration: attempt.iteration)
+        if let existing = chosen[key] {
+            if attempt.attempt > existing.attempt ||
+                (attempt.attempt == existing.attempt && attempt.startedAtMs > existing.startedAtMs)
+            {
+                chosen[key] = attempt
+            }
+        } else {
+            chosen[key] = attempt
+        }
+    }
+
+    // For each node_id, prefer the highest iteration (re-runs replace older).
+    var perNode: [String: DevToolsAttemptEntry] = [:]
+    for (key, entry) in chosen {
+        if let existing = perNode[key.nodeId] {
+            let existingKey = Key(nodeId: existing.nodeId, iteration: existing.iteration)
+            if key.iteration > existingKey.iteration { perNode[key.nodeId] = entry }
+        } else {
+            perNode[key.nodeId] = entry
+        }
+    }
+
+    var result: [String: DevToolsNodeStateEntry] = [:]
+    for (nodeId, entry) in perNode {
+        let stateAtFrame: String
+        if let finished = entry.finishedAtMs, finished <= frameTimestampMs {
+            // Attempt completed before or at the frame timestamp — use terminal state.
+            stateAtFrame = entry.state
+        } else {
+            // Either finished_at_ms is null (still in-flight) or the finish came after
+            // the frame we're viewing. Either way, at `frameTimestampMs` it was running.
+            stateAtFrame = "running"
+        }
+        result[nodeId] = DevToolsNodeStateEntry(
+            nodeId: nodeId,
+            state: stateAtFrame,
+            iteration: entry.iteration,
+            lastAttempt: entry.attempt
+        )
+    }
+    return result
 }

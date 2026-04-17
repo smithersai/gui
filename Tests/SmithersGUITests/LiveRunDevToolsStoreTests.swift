@@ -388,4 +388,127 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         let store = LiveRunDevToolsStore()
         XCTAssertNil(store.selectedNode)
     }
+
+    // MARK: - Running-node tracking (historical scrubber cursor)
+
+    func testRunningNodeCountReflectsRunningLeafTasks() {
+        let store = LiveRunDevToolsStore()
+        store.runId = "run_test"
+
+        let runningTask = makeNode(
+            id: 2, type: .task, name: "Task",
+            props: ["state": .string("running")],
+            task: DevToolsTaskInfo(
+                nodeId: "alpha", kind: "agent",
+                agent: nil, label: nil, outputTableName: nil, iteration: nil
+            )
+        )
+        let finishedTask = makeNode(
+            id: 3, type: .task, name: "Task",
+            props: ["state": .string("finished")],
+            task: DevToolsTaskInfo(
+                nodeId: "beta", kind: "agent",
+                agent: nil, label: nil, outputTableName: nil, iteration: nil
+            )
+        )
+        let pendingTask = makeNode(
+            id: 4, type: .task, name: "Task",
+            props: ["state": .string("pending")],
+            task: DevToolsTaskInfo(
+                nodeId: "gamma", kind: "agent",
+                agent: nil, label: nil, outputTableName: nil, iteration: nil
+            )
+        )
+        let root = makeNode(
+            id: 1, type: .workflow, name: "wf",
+            props: ["state": .string("running")],
+            children: [runningTask, finishedTask, pendingTask]
+        )
+        store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
+
+        XCTAssertEqual(store.runningNodeCount, 1, "only the running leaf task counts")
+        XCTAssertEqual(store.runningNodeIds, ["alpha"])
+    }
+
+    func testRunningNodeCountIgnoresStructuralParents() {
+        // A sequence node with state="running" (from rollup) but no task payload
+        // should NOT contribute to the count — only leaf tasks do.
+        let store = LiveRunDevToolsStore()
+        store.runId = "run_test"
+
+        let task = makeNode(
+            id: 3, type: .task, name: "Task",
+            props: ["state": .string("finished")],
+            task: DevToolsTaskInfo(
+                nodeId: "only", kind: "agent",
+                agent: nil, label: nil, outputTableName: nil, iteration: nil
+            )
+        )
+        let sequence = makeNode(
+            id: 2, type: .sequence, name: "Sequence",
+            props: ["state": .string("running")],  // rollup value; NOT a leaf task
+            children: [task]
+        )
+        let root = makeNode(
+            id: 1, type: .workflow, name: "wf",
+            props: ["state": .string("running")],
+            children: [sequence]
+        )
+        store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
+
+        XCTAssertEqual(store.runningNodeCount, 0,
+            "sequence/workflow rollup state must not inflate the running-task count"
+        )
+        XCTAssertEqual(store.runningNodeIds, [])
+    }
+
+    func testRunningNodeCountUpdatesOnHistoricalScrub() async {
+        // Frame 1: task in running state. Frame 2: task finished. The store should
+        // expose runningNodeCount=1 for frame 1 and 0 for frame 2.
+        let runningRoot = makeNode(
+            id: 1, type: .workflow, name: "wf",
+            props: ["state": .string("running")],
+            children: [makeNode(
+                id: 2, type: .task, name: "Task",
+                props: ["state": .string("running")],
+                task: DevToolsTaskInfo(
+                    nodeId: "alpha", kind: "agent",
+                    agent: nil, label: nil, outputTableName: nil, iteration: nil
+                )
+            )]
+        )
+        let finishedRoot = makeNode(
+            id: 1, type: .workflow, name: "wf",
+            props: ["state": .string("finished")],
+            children: [makeNode(
+                id: 2, type: .task, name: "Task",
+                props: ["state": .string("finished")],
+                task: DevToolsTaskInfo(
+                    nodeId: "alpha", kind: "agent",
+                    agent: nil, label: nil, outputTableName: nil, iteration: nil
+                )
+            )]
+        )
+
+        let provider = MockDevToolsStreamProvider()
+        let store = LiveRunDevToolsStore(streamProvider: provider)
+        store.runId = "run_test"
+
+        // Live state = frame 2 (finished). Simulate a live snapshot arriving so the
+        // store knows latestFrameNo=2.
+        store.applyEvent(.snapshot(DevToolsSnapshot(
+            runId: "run_test", frameNo: 2, seq: 2, root: finishedRoot
+        )))
+        XCTAssertEqual(store.runningNodeCount, 0, "live: task finished")
+
+        // Now scrub to frame 1 (running). The provider returns a running snapshot.
+        provider.snapshotToReturn = DevToolsSnapshot(
+            runId: "run_test", frameNo: 1, seq: 1, root: runningRoot
+        )
+        await store.scrubTo(frameNo: 1)
+
+        XCTAssertTrue(store.mode.isHistorical, "should be in historical mode after scrub")
+        XCTAssertEqual(store.runningNodeCount, 1, "historical frame 1: task running")
+        XCTAssertEqual(store.runningNodeIds, ["alpha"])
+    }
 }

@@ -213,6 +213,7 @@ class SmithersClient: ObservableObject {
 
     @Published var isConnected: Bool = false
     @Published var cliAvailable: Bool = false
+    private var cachedOrchestratorVersion: String?
     @Published private(set) var connectionTransport: ConnectionTransport = .none
     @Published private(set) var serverReachable: Bool = false
 
@@ -1831,6 +1832,11 @@ class SmithersClient: ObservableObject {
 
     /// Worker used by both `getDevToolsSnapshot` and the `streamDevTools` subprocess loop.
     /// Detached from the main actor so the stream reader task can use it.
+    ///
+    /// When `frameNo` is `nil`, the snapshot reflects the *current* per-node state
+    /// from `_smithers_nodes` (live mode). When `frameNo` is provided, the snapshot
+    /// reconstructs per-node state as it was *at that frame's wall-clock timestamp*
+    /// by querying `_smithers_attempts` — see the historical-scrubber UX fix.
     private nonisolated static func loadDevToolsSnapshot(
         runId: String,
         frameNo: Int?,
@@ -1852,9 +1858,10 @@ class SmithersClient: ObservableObject {
             targetFrame = Int(maxFrame)
         }
 
-        // Fetch the latest keyframe at or before target.
+        // Fetch the latest keyframe at or before target (and its created_at_ms so we
+        // can reconstruct per-frame state for historical mode).
         let keyframeQuery = """
-        SELECT frame_no, xml_json, task_index_json
+        SELECT frame_no, xml_json, task_index_json, created_at_ms
         FROM _smithers_frames
         WHERE run_id=\(quotedRunId)
           AND encoding='keyframe'
@@ -1914,22 +1921,52 @@ class SmithersClient: ObservableObject {
             }
         }
 
-        // Also load per-node execution state from `_smithers_nodes` so tree rows
-        // render real state badges instead of "Unknown". Absent rows leave nodes
-        // in the default "pending" state the builder applies.
+        // Resolve the wall-clock timestamp for the target frame. We fetched `created_at_ms`
+        // from the keyframe already; if the target is a delta frame, re-query for its ts.
+        var frameTimestampMs: Int64? = nil
+        if frameNo != nil {
+            if Int(keyframeNo) == targetFrame {
+                frameTimestampMs = intValue(from: keyframeRow["created_at_ms"])
+            } else {
+                let tsQuery = """
+                SELECT created_at_ms FROM _smithers_frames
+                WHERE run_id=\(quotedRunId) AND frame_no=\(targetFrame) LIMIT 1;
+                """
+                if let tsRow = (try? await execSQLite(dbPath: dbPath, query: tsQuery))?.first {
+                    frameTimestampMs = intValue(from: tsRow["created_at_ms"])
+                }
+            }
+        }
+
+        // Load per-node execution state. In live mode (frameNo == nil) we pull from
+        // `_smithers_nodes` (the authoritative terminal/current state). In historical
+        // mode we reconstruct state at `frameTimestampMs` from `_smithers_attempts`.
         var nodeStates: [String: DevToolsNodeStateEntry] = [:]
         do {
-            let stateRows = try await execSQLite(
-                dbPath: dbPath,
-                query: DevToolsNodeStateQuery.query(runId: runId)
-            )
-            nodeStates = DevToolsNodeStateQuery.makeDict(fromRows: stateRows)
+            if let ts = frameTimestampMs {
+                let attemptRows = try await execSQLite(
+                    dbPath: dbPath,
+                    query: DevToolsAttemptQuery.query(runId: runId)
+                )
+                let attempts = DevToolsAttemptQuery.makeEntries(fromRows: attemptRows)
+                nodeStates = devToolsNodeStatesAtTimestamp(
+                    attempts: attempts,
+                    frameTimestampMs: ts
+                )
+            } else {
+                let stateRows = try await execSQLite(
+                    dbPath: dbPath,
+                    query: DevToolsNodeStateQuery.query(runId: runId)
+                )
+                nodeStates = DevToolsNodeStateQuery.makeDict(fromRows: stateRows)
+            }
         } catch {
             // Non-fatal: we still return a structural tree. The per-node badges will
             // fall back to "pending" and we log the error so operators see it.
             AppLogger.network.warning("DevTools node state load failed", metadata: [
                 "run_id": runId,
                 "error": String(describing: error),
+                "historical": frameTimestampMs != nil ? "1" : "0",
             ])
         }
 
@@ -2285,39 +2322,56 @@ class SmithersClient: ObservableObject {
     }
 
     /// Runs `jj diff -r <pointer>` or `git diff <pointer>^ <pointer>` in the given working
-    /// directory, returning the unified diff text.
+    /// directory, returning the unified diff text. Walks up from `workingDirectory` to find
+    /// the nearest `.jj` or `.git` marker, since the stored `jj_cwd` is typically a
+    /// subdirectory (e.g. the workflow rootDir) that isn't itself a VCS root.
     private func generateVCSDiff(pointer: String, workingDirectory: String) async throws -> String {
-        let fm = FileManager.default
-        let jjMarker = (workingDirectory as NSString).appendingPathComponent(".jj")
-        let gitMarker = (workingDirectory as NSString).appendingPathComponent(".git")
-        let hasJJ = fm.fileExists(atPath: jjMarker)
-        let hasGit = fm.fileExists(atPath: gitMarker)
+        guard let (vcsRoot, kind) = Self.findVCSRoot(startingAt: workingDirectory) else {
+            throw DevToolsClientError.vcsError("No VCS found at \(workingDirectory) or any parent directory")
+        }
 
-        if hasJJ {
+        switch kind {
+        case .jj:
             // jj diff produces a git-style patch with --git.
             let args = ["diff", "-r", pointer, "--git"]
             let data = try await execBinaryArgs(
                 bin: "jj",
                 args: args,
                 displayName: "jj",
-                workingDirectoryOverride: workingDirectory
+                workingDirectoryOverride: vcsRoot
             )
             return String(decoding: data, as: UTF8.self)
-        }
-
-        if hasGit {
+        case .git:
             // Produce a diff of just the commit referenced by pointer.
             let args = ["diff", "\(pointer)^", pointer]
             let data = try await execBinaryArgs(
                 bin: "git",
                 args: args,
                 displayName: "git",
-                workingDirectoryOverride: workingDirectory
+                workingDirectoryOverride: vcsRoot
             )
             return String(decoding: data, as: UTF8.self)
         }
+    }
 
-        throw DevToolsClientError.vcsError("No VCS found at \(workingDirectory)")
+    private enum VCSKind { case jj, git }
+
+    /// Walks up from `startingAt` looking for a `.jj` or `.git` directory. Returns the first
+    /// directory containing one. `.jj` wins if both are present in the same directory (jj
+    /// repos often have a co-located `.git` backing store).
+    private static func findVCSRoot(startingAt startPath: String) -> (root: String, kind: VCSKind)? {
+        let fm = FileManager.default
+        var current = (startPath as NSString).standardizingPath
+        while !current.isEmpty, current != "/" {
+            let jjMarker = (current as NSString).appendingPathComponent(".jj")
+            let gitMarker = (current as NSString).appendingPathComponent(".git")
+            if fm.fileExists(atPath: jjMarker) { return (current, .jj) }
+            if fm.fileExists(atPath: gitMarker) { return (current, .git) }
+            let parent = (current as NSString).deletingLastPathComponent
+            if parent == current { break }
+            current = parent
+        }
+        return nil
     }
 
     /// Splits a full unified diff into per-file NodeDiffPatch entries.
@@ -5112,6 +5166,81 @@ class SmithersClient: ObservableObject {
 
         connectionTransport = .none
         isConnected = false
+    }
+
+    /// Returns the smithers-orchestrator version string (e.g. "1.2.3"). Runs
+     /// `bunx smithers-orchestrator --version` out-of-band of the standard CLI
+     /// transport so we can surface the underlying engine version even when
+     /// the `smithers` binary is a thin wrapper. Caches the result for the
+     /// lifetime of the client.
+    func getOrchestratorVersion() async -> String? {
+        if let cached = cachedOrchestratorVersion {
+            return cached
+        }
+
+        let resolved = await runOrchestratorVersionProbe()
+        if let resolved {
+            cachedOrchestratorVersion = resolved
+        }
+        return resolved
+    }
+
+    private func runOrchestratorVersionProbe() async -> String? {
+        let probes: [(executable: String, args: [String])] = [
+            ("/usr/bin/env", ["bunx", "smithers-orchestrator", "--version"]),
+            ("/usr/bin/env", ["smithers-orchestrator", "--version"]),
+        ]
+
+        for probe in probes {
+            if let output = try? await runShellCapture(executable: probe.executable, args: probe.args, timeoutSeconds: 15),
+               let version = Self.extractVersion(from: output) {
+                return version
+            }
+        }
+        return nil
+    }
+
+    private nonisolated func runShellCapture(
+        executable: String,
+        args: [String],
+        timeoutSeconds: Double
+    ) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = args
+
+            let stdout = Pipe()
+            let stderr = Pipe()
+            process.standardOutput = stdout
+            process.standardError = stderr
+
+            try process.run()
+
+            let deadline = Date().addingTimeInterval(timeoutSeconds)
+            while process.isRunning, Date() < deadline {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            if process.isRunning {
+                process.terminate()
+                throw SmithersError.cli("version probe timed out")
+            }
+
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8) ?? ""
+        }.value
+    }
+
+    nonisolated static func extractVersion(from output: String) -> String? {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        // Grab the last whitespace-delimited token on the last non-empty line.
+        let lines = trimmed.split(whereSeparator: \.isNewline).map(String.init)
+        guard let last = lines.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
+            return nil
+        }
+        let tokens = last.split(whereSeparator: \.isWhitespace).map(String.init)
+        return tokens.last ?? last
     }
 
     private func probeCLIAvailability() async -> Bool {

@@ -277,6 +277,208 @@ final class DevToolsTreeBuilderTests: XCTestCase {
     }
 }
 
+// MARK: - Per-frame historical state reconstruction
+
+/// Tests for the historical-scrubber fix. Uses `devToolsNodeStatesAtTimestamp` —
+/// the same function the transport uses to compute per-node state at a specific
+/// wall-clock timestamp from `_smithers_attempts` rows.
+///
+/// The canonical scenario is a sequence of three tasks that run in series:
+/// - `a` runs t=100→200
+/// - `b` runs t=200→400 (in flight at t=300)
+/// - `c` runs t=400→500
+///
+/// Expected per-frame behaviour:
+/// - t < 100   → nothing started, all nodes "pending" (absent from dict)
+/// - t = 300   → a finished, b running, c pending
+/// - t > 500   → all finished (equivalent to the old "final state" behaviour)
+final class DevToolsPerFrameStateTests: XCTestCase {
+    private func makeAttempts() -> [DevToolsAttemptEntry] {
+        [
+            DevToolsAttemptEntry(
+                nodeId: "a", iteration: 0, attempt: 1,
+                state: "finished",
+                startedAtMs: 100, finishedAtMs: 200
+            ),
+            DevToolsAttemptEntry(
+                nodeId: "b", iteration: 0, attempt: 1,
+                state: "finished",
+                startedAtMs: 200, finishedAtMs: 400
+            ),
+            DevToolsAttemptEntry(
+                nodeId: "c", iteration: 0, attempt: 1,
+                state: "finished",
+                startedAtMs: 400, finishedAtMs: 500
+            ),
+        ]
+    }
+
+    func testFrameBeforeAnyNodeStartsYieldsEmptyDict() {
+        let attempts = makeAttempts()
+        // Use a timestamp earlier than the earliest attempt's started_at_ms.
+        let result = devToolsNodeStatesAtTimestamp(attempts: attempts, frameTimestampMs: 50)
+        XCTAssertTrue(
+            result.isEmpty,
+            "No attempts started before the frame → caller treats all nodes as pending"
+        )
+    }
+
+    func testFrameBeforeAnyNodeStartsTreeMarksAllPending() throws {
+        // End-to-end: wire the empty state dict through DevToolsTreeBuilder and
+        // assert the task row renders as `.pending`, matching the UX contract.
+        let attempts = makeAttempts()
+        let states = devToolsNodeStatesAtTimestamp(attempts: attempts, frameTimestampMs: 50)
+
+        let xml = try JSONDecoder().decode(
+            DevToolsFrameXMLNode.self,
+            from: Data("""
+            {"kind":"element","tag":"smithers:workflow","props":{},"children":[
+              {"kind":"element","tag":"smithers:sequence","props":{},"children":[
+                {"kind":"element","tag":"smithers:task","props":{"id":"a"},"children":[]},
+                {"kind":"element","tag":"smithers:task","props":{"id":"b"},"children":[]},
+                {"kind":"element","tag":"smithers:task","props":{"id":"c"},"children":[]}
+              ]}
+            ]}
+            """.utf8)
+        )
+        let tree = DevToolsTreeBuilder.build(xml: xml, taskIndex: [], nodeStates: states)
+        let seq = tree.children[0]
+        XCTAssertEqual(extractState(from: seq.children[0]), .pending)
+        XCTAssertEqual(extractState(from: seq.children[1]), .pending)
+        XCTAssertEqual(extractState(from: seq.children[2]), .pending)
+        XCTAssertEqual(extractState(from: seq), .pending, "parent rolls up to pending")
+    }
+
+    func testFrameDuringExecutionMarksMiddleNodeRunning() {
+        // t=300: a finished (200 < 300), b running (200 < 300 < 400), c pending.
+        let attempts = makeAttempts()
+        let states = devToolsNodeStatesAtTimestamp(attempts: attempts, frameTimestampMs: 300)
+
+        XCTAssertEqual(states["a"]?.state, "finished", "a completed by t=200 which is ≤ t=300")
+        XCTAssertEqual(
+            states["b"]?.state, "running",
+            "b started at t=200 and hadn't finished by t=300 → running"
+        )
+        XCTAssertNil(states["c"], "c hadn't started by t=300 → absent (caller treats as pending)")
+    }
+
+    func testFrameDuringExecutionTreeMarksMiddleNodeRunning() throws {
+        // Same scenario end-to-end through the tree builder.
+        let attempts = makeAttempts()
+        let states = devToolsNodeStatesAtTimestamp(attempts: attempts, frameTimestampMs: 300)
+        let xml = try JSONDecoder().decode(
+            DevToolsFrameXMLNode.self,
+            from: Data("""
+            {"kind":"element","tag":"smithers:workflow","props":{},"children":[
+              {"kind":"element","tag":"smithers:sequence","props":{},"children":[
+                {"kind":"element","tag":"smithers:task","props":{"id":"a"},"children":[]},
+                {"kind":"element","tag":"smithers:task","props":{"id":"b"},"children":[]},
+                {"kind":"element","tag":"smithers:task","props":{"id":"c"},"children":[]}
+              ]}
+            ]}
+            """.utf8)
+        )
+        let tree = DevToolsTreeBuilder.build(xml: xml, taskIndex: [], nodeStates: states)
+        let seq = tree.children[0]
+        XCTAssertEqual(extractState(from: seq.children[0]), .finished)
+        XCTAssertEqual(extractState(from: seq.children[1]), .running)
+        XCTAssertEqual(extractState(from: seq.children[2]), .pending)
+        // Running beats pending / finished in the rollup precedence.
+        XCTAssertEqual(extractState(from: seq), .running)
+    }
+
+    func testFrameAfterAllCompletedMatchesFinalState() {
+        // After t=500, every attempt has finished and finished ≤ frame. This is the
+        // "equivalent to current behaviour" case — the scrubber at the last frame
+        // should reflect the terminal state.
+        let attempts = makeAttempts()
+        let states = devToolsNodeStatesAtTimestamp(attempts: attempts, frameTimestampMs: 1_000)
+
+        XCTAssertEqual(states["a"]?.state, "finished")
+        XCTAssertEqual(states["b"]?.state, "finished")
+        XCTAssertEqual(states["c"]?.state, "finished")
+    }
+
+    func testInFlightAttemptWithNullFinishedIsRunning() {
+        // Simulate a crash: an attempt started but never wrote finished_at_ms.
+        // At any timestamp ≥ startedAt the node should be running until another
+        // later attempt supersedes it.
+        let attempts = [
+            DevToolsAttemptEntry(
+                nodeId: "x", iteration: 0, attempt: 1,
+                state: "running",
+                startedAtMs: 100, finishedAtMs: nil
+            )
+        ]
+        let states = devToolsNodeStatesAtTimestamp(attempts: attempts, frameTimestampMs: 500)
+        XCTAssertEqual(states["x"]?.state, "running")
+    }
+
+    func testLaterAttemptSupersedesEarlier() {
+        // Retry: first attempt failed, second finished. At a frame after both we
+        // want the latest attempt's terminal state, mirroring `_smithers_nodes`.
+        let attempts = [
+            DevToolsAttemptEntry(
+                nodeId: "r", iteration: 0, attempt: 1,
+                state: "failed",
+                startedAtMs: 100, finishedAtMs: 200
+            ),
+            DevToolsAttemptEntry(
+                nodeId: "r", iteration: 0, attempt: 2,
+                state: "finished",
+                startedAtMs: 300, finishedAtMs: 400
+            ),
+        ]
+        let states = devToolsNodeStatesAtTimestamp(attempts: attempts, frameTimestampMs: 500)
+        XCTAssertEqual(states["r"]?.state, "finished")
+        XCTAssertEqual(states["r"]?.lastAttempt, 2)
+
+        // But at t=250 (between attempts) the latest started attempt is #1, which
+        // had already failed by then.
+        let midStates = devToolsNodeStatesAtTimestamp(attempts: attempts, frameTimestampMs: 250)
+        XCTAssertEqual(midStates["r"]?.state, "failed")
+        XCTAssertEqual(midStates["r"]?.lastAttempt, 1)
+    }
+
+    func testAttemptQueryShapeIncludesRequiredColumns() {
+        let sql = DevToolsAttemptQuery.query(runId: "run-1776372721752")
+        XCTAssertTrue(sql.contains("_smithers_attempts"), "query must target _smithers_attempts")
+        XCTAssertTrue(sql.contains("'run-1776372721752'"), "query must include quoted run id")
+        XCTAssertTrue(sql.contains("node_id"))
+        XCTAssertTrue(sql.contains("started_at_ms"))
+        XCTAssertTrue(sql.contains("finished_at_ms"))
+        XCTAssertTrue(sql.contains("state"))
+    }
+
+    func testAttemptQueryMakeEntriesParsesRows() {
+        let rows: [[String: Any]] = [
+            [
+                "node_id": "a",
+                "iteration": NSNumber(value: 0),
+                "attempt": NSNumber(value: 1),
+                "state": "finished",
+                "started_at_ms": NSNumber(value: 100),
+                "finished_at_ms": NSNumber(value: 200),
+            ],
+            [
+                "node_id": "b",
+                "iteration": NSNumber(value: 0),
+                "attempt": NSNumber(value: 1),
+                "state": "running",
+                "started_at_ms": NSNumber(value: 200),
+                "finished_at_ms": NSNull(),
+            ],
+        ]
+        let entries = DevToolsAttemptQuery.makeEntries(fromRows: rows)
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(entries[0].nodeId, "a")
+        XCTAssertEqual(entries[0].startedAtMs, 100)
+        XCTAssertEqual(entries[0].finishedAtMs, 200)
+        XCTAssertEqual(entries[1].nodeId, "b")
+        XCTAssertNil(entries[1].finishedAtMs, "NSNull should decode to nil finished_at_ms")
+    }
+}
+
 final class DevToolsFrameApplierTests: XCTestCase {
     private func decodeXML(_ json: String) throws -> DevToolsFrameXMLNode {
         try JSONDecoder().decode(DevToolsFrameXMLNode.self, from: Data(json.utf8))
@@ -443,6 +645,7 @@ final class DevToolsSnapshotWithNodeStatesTests: XCTestCase {
           encoding TEXT NOT NULL,
           xml_json TEXT NOT NULL,
           task_index_json TEXT,
+          created_at_ms INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (run_id, frame_no)
         );
         CREATE TABLE _smithers_nodes (
@@ -456,8 +659,8 @@ final class DevToolsSnapshotWithNodeStatesTests: XCTestCase {
           label TEXT,
           PRIMARY KEY (run_id, node_id, iteration)
         );
-        INSERT INTO _smithers_frames(run_id, frame_no, encoding, xml_json, task_index_json) VALUES
-          ('\(runId)', 1, 'keyframe', '\(escapedXML)', '\(taskIndexJson)');
+        INSERT INTO _smithers_frames(run_id, frame_no, encoding, xml_json, task_index_json, created_at_ms) VALUES
+          ('\(runId)', 1, 'keyframe', '\(escapedXML)', '\(taskIndexJson)', \(nowMs));
         INSERT INTO _smithers_nodes(run_id, node_id, iteration, state, last_attempt, updated_at_ms, output_table) VALUES
           ('\(runId)', 'g74:implement', 0, 'finished', 1, \(nowMs), 'implement'),
           ('\(runId)', 'g74:review:0', 0, 'in-progress', 1, \(nowMs), 'review');
@@ -524,5 +727,177 @@ final class DevToolsSnapshotWithNodeStatesTests: XCTestCase {
         // Sequence should roll up to `running` (failed > running > … > finished).
         XCTAssertEqual(extractState(from: seq), .running)
         XCTAssertEqual(extractState(from: snap.root), .running)
+    }
+}
+
+/// End-to-end integration for the historical-scrubber fix. Builds a temp DB with
+/// multiple frames and multiple `_smithers_attempts` rows spanning different
+/// wall-clock timestamps, then asks `getDevToolsSnapshot` for specific historical
+/// frames and asserts the per-node state reflects what was in flight *at that
+/// frame's timestamp* rather than the terminal state.
+@MainActor
+final class DevToolsHistoricalScrubberIntegrationTests: XCTestCase {
+    private func sqlite3Exists() -> Bool {
+        FileManager.default.isExecutableFile(atPath: "/usr/bin/sqlite3")
+    }
+
+    /// Frames:
+    ///   frame 1 at t=100 (keyframe, both tasks pending — before any attempt started)
+    ///   frame 2 at t=250 (mid-execution: attempt-a finished, attempt-b running)
+    ///   frame 3 at t=500 (both done)
+    ///
+    /// Attempts:
+    ///   a:  started_at=150, finished_at=200 (finished)
+    ///   b:  started_at=220, finished_at=450 (finished)
+    private func makeHistoricalTempDB(runId: String) throws -> String {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("smithers-historical-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dbPath = dir.appendingPathComponent("smithers.db").path
+
+        let keyframeXML = """
+        {"kind":"element","tag":"smithers:workflow","props":{"name":"main"},"children":[\
+        {"kind":"element","tag":"smithers:sequence","props":{},"children":[\
+        {"kind":"element","tag":"smithers:task","props":{"id":"a"},"children":[]},\
+        {"kind":"element","tag":"smithers:task","props":{"id":"b"},"children":[]}\
+        ]}]}
+        """
+        let escapedXML = keyframeXML.replacingOccurrences(of: "'", with: "''")
+
+        let setup = """
+        CREATE TABLE _smithers_frames (
+          run_id TEXT NOT NULL,
+          frame_no INTEGER NOT NULL,
+          encoding TEXT NOT NULL,
+          xml_json TEXT NOT NULL,
+          task_index_json TEXT,
+          created_at_ms INTEGER NOT NULL,
+          PRIMARY KEY (run_id, frame_no)
+        );
+        CREATE TABLE _smithers_attempts (
+          run_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          iteration INTEGER NOT NULL DEFAULT 0,
+          attempt INTEGER NOT NULL,
+          state TEXT NOT NULL,
+          started_at_ms INTEGER NOT NULL,
+          finished_at_ms INTEGER,
+          PRIMARY KEY (run_id, node_id, iteration, attempt)
+        );
+        CREATE TABLE _smithers_nodes (
+          run_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          iteration INTEGER NOT NULL DEFAULT 0,
+          state TEXT NOT NULL,
+          last_attempt INTEGER,
+          updated_at_ms INTEGER NOT NULL,
+          output_table TEXT NOT NULL,
+          label TEXT,
+          PRIMARY KEY (run_id, node_id, iteration)
+        );
+        INSERT INTO _smithers_frames(run_id, frame_no, encoding, xml_json, task_index_json, created_at_ms) VALUES
+          ('\(runId)', 1, 'keyframe', '\(escapedXML)', '[]', 100),
+          ('\(runId)', 2, 'keyframe', '\(escapedXML)', '[]', 250),
+          ('\(runId)', 3, 'keyframe', '\(escapedXML)', '[]', 500);
+        INSERT INTO _smithers_attempts(run_id, node_id, iteration, attempt, state, started_at_ms, finished_at_ms) VALUES
+          ('\(runId)', 'a', 0, 1, 'finished', 150, 200),
+          ('\(runId)', 'b', 0, 1, 'finished', 220, 450);
+        INSERT INTO _smithers_nodes(run_id, node_id, iteration, state, last_attempt, updated_at_ms, output_table) VALUES
+          ('\(runId)', 'a', 0, 'finished', 1, 500, 'implement'),
+          ('\(runId)', 'b', 0, 'finished', 1, 500, 'review');
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [dbPath]
+        let inPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardInput = inPipe
+        process.standardError = errPipe
+        try process.run()
+        inPipe.fileHandleForWriting.write(Data(setup.utf8))
+        try inPipe.fileHandleForWriting.close()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0,
+            "temp DB setup failed: \(String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")"
+        )
+        return dbPath
+    }
+
+    func testSnapshotAtFrameBeforeAnyAttemptShowsPending() async throws {
+        guard sqlite3Exists() else { throw XCTSkip("/usr/bin/sqlite3 not available") }
+        let runId = "run-historical-before-test"
+        let dbPath = try makeHistoricalTempDB(runId: runId)
+        defer { try? FileManager.default.removeItem(atPath: (dbPath as NSString).deletingLastPathComponent) }
+
+        setenv("SMITHERS_DB_PATH", dbPath, 1)
+        defer { unsetenv("SMITHERS_DB_PATH") }
+
+        let client = SmithersClient(cwd: (dbPath as NSString).deletingLastPathComponent)
+        // Frame 1 at t=100 — before either attempt started (a started at t=150).
+        let snap = try await client.getDevToolsSnapshot(runId: runId, frameNo: 1)
+        let seq = snap.root.children[0]
+        XCTAssertEqual(extractState(from: seq.children[0]), .pending, "a hadn't started yet")
+        XCTAssertEqual(extractState(from: seq.children[1]), .pending, "b hadn't started yet")
+    }
+
+    func testSnapshotAtMidExecutionFrameShowsMixedState() async throws {
+        guard sqlite3Exists() else { throw XCTSkip("/usr/bin/sqlite3 not available") }
+        let runId = "run-historical-mid-test"
+        let dbPath = try makeHistoricalTempDB(runId: runId)
+        defer { try? FileManager.default.removeItem(atPath: (dbPath as NSString).deletingLastPathComponent) }
+
+        setenv("SMITHERS_DB_PATH", dbPath, 1)
+        defer { unsetenv("SMITHERS_DB_PATH") }
+
+        let client = SmithersClient(cwd: (dbPath as NSString).deletingLastPathComponent)
+        // Frame 2 at t=250. a finished at 200, b is running (started 220, finishes 450).
+        let snap = try await client.getDevToolsSnapshot(runId: runId, frameNo: 2)
+        let seq = snap.root.children[0]
+        XCTAssertEqual(
+            extractState(from: seq.children[0]), .finished,
+            "a completed at t=200 which is ≤ frame ts=250"
+        )
+        XCTAssertEqual(
+            extractState(from: seq.children[1]), .running,
+            "b started at t=220 and hadn't finished by t=250 → running"
+        )
+        // Sequence should roll up to `running` (running beats finished).
+        XCTAssertEqual(extractState(from: seq), .running)
+    }
+
+    func testSnapshotAtFinalFrameShowsAllFinished() async throws {
+        guard sqlite3Exists() else { throw XCTSkip("/usr/bin/sqlite3 not available") }
+        let runId = "run-historical-final-test"
+        let dbPath = try makeHistoricalTempDB(runId: runId)
+        defer { try? FileManager.default.removeItem(atPath: (dbPath as NSString).deletingLastPathComponent) }
+
+        setenv("SMITHERS_DB_PATH", dbPath, 1)
+        defer { unsetenv("SMITHERS_DB_PATH") }
+
+        let client = SmithersClient(cwd: (dbPath as NSString).deletingLastPathComponent)
+        // Frame 3 at t=500, well after both finish times.
+        let snap = try await client.getDevToolsSnapshot(runId: runId, frameNo: 3)
+        let seq = snap.root.children[0]
+        XCTAssertEqual(extractState(from: seq.children[0]), .finished)
+        XCTAssertEqual(extractState(from: seq.children[1]), .finished)
+        XCTAssertEqual(extractState(from: seq), .finished)
+    }
+
+    func testSnapshotInLiveModeUsesNodesTable() async throws {
+        guard sqlite3Exists() else { throw XCTSkip("/usr/bin/sqlite3 not available") }
+        let runId = "run-historical-live-test"
+        let dbPath = try makeHistoricalTempDB(runId: runId)
+        defer { try? FileManager.default.removeItem(atPath: (dbPath as NSString).deletingLastPathComponent) }
+
+        setenv("SMITHERS_DB_PATH", dbPath, 1)
+        defer { unsetenv("SMITHERS_DB_PATH") }
+
+        let client = SmithersClient(cwd: (dbPath as NSString).deletingLastPathComponent)
+        // frameNo=nil → live mode — pull from _smithers_nodes (terminal state).
+        let snap = try await client.getDevToolsSnapshot(runId: runId, frameNo: nil)
+        let seq = snap.root.children[0]
+        XCTAssertEqual(extractState(from: seq.children[0]), .finished)
+        XCTAssertEqual(extractState(from: seq.children[1]), .finished)
     }
 }
