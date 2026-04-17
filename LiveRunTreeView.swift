@@ -6,6 +6,7 @@ import AppKit
 
 struct LiveRunTreeView: View {
     @ObservedObject var store: LiveRunDevToolsStore
+    @ObservedObject var lastLogStore: LastLogPerNodeStore
     var onInspectNode: ((Int) -> Void)?
 
     @State private var expandedIds: Set<Int> = []
@@ -120,6 +121,7 @@ struct LiveRunTreeView: View {
                                 isDimmed: searchIndex.isDimmed(nodeId),
                                 isHighlighted: !searchQuery.isEmpty && searchIndex.isMatch(nodeId),
                                 depth: node.depth,
+                                lastLogLine: lastLogLine(for: node),
                                 onSelect: {
                                     store.selectNode(nodeId)
                                     onInspectNode?(nodeId)
@@ -262,6 +264,15 @@ struct LiveRunTreeView: View {
         1 + node.children.reduce(0) { $0 + countNodes($1) }
     }
 
+    /// Preview line to surface on running leaf nodes. Returns nil for any node
+    /// we don't want to decorate (non-leaf, non-running, or no recent block).
+    private func lastLogLine(for node: DevToolsNode) -> String? {
+        guard node.children.isEmpty else { return nil }
+        guard extractState(from: node) == .running else { return nil }
+        guard let taskNodeId = node.task?.nodeId, !taskNodeId.isEmpty else { return nil }
+        return lastLogStore.lastLog(forTaskNodeId: taskNodeId)
+    }
+
     private func logUnknownStates(root: DevToolsNode) {
         var unknownCount = 0
         countUnknownStates(node: root, total: &unknownCount)
@@ -384,6 +395,7 @@ struct LiveRunTreeUITestHarnessView: View {
     @StateObject private var store: LiveRunDevToolsStore
     @StateObject private var smithers: SmithersClient
     @StateObject private var fixtureLogsStreamProvider: UITestFixtureChatStreamProvider
+    @StateObject private var lastLogStore: LastLogPerNodeStore
 
     @State private var selectedTab: InspectorTab = .logs
     @State private var showRewindConfirmation = false
@@ -419,7 +431,9 @@ struct LiveRunTreeUITestHarnessView: View {
         )
         _store = StateObject(wrappedValue: LiveRunDevToolsStore(streamProvider: provider))
         _smithers = StateObject(wrappedValue: SmithersClient())
-        _fixtureLogsStreamProvider = StateObject(wrappedValue: UITestFixtureChatStreamProvider())
+        let fixtureStream = UITestFixtureChatStreamProvider()
+        _fixtureLogsStreamProvider = StateObject(wrappedValue: fixtureStream)
+        _lastLogStore = StateObject(wrappedValue: LastLogPerNodeStore(streamProvider: fixtureStream))
     }
 
     var body: some View {
@@ -471,7 +485,7 @@ struct LiveRunTreeUITestHarnessView: View {
                 inspectorSheetPresented: $inspectorSheetPresented,
                 onModeChange: { layoutMode = $0 }
             ) {
-                LiveRunTreeView(store: store) { id in
+                LiveRunTreeView(store: store, lastLogStore: lastLogStore) { id in
                     store.selectNode(id)
                     if layoutMode == .narrow {
                         inspectorSheetPresented = true
@@ -507,6 +521,7 @@ struct LiveRunTreeUITestHarnessView: View {
         .onAppear {
             startedAt = Date()
             store.connect(runId: runId)
+            lastLogStore.connect(runId: runId)
             ensureDefaultSelection()
         }
         .onChange(of: store.seq) { _, _ in
@@ -514,6 +529,7 @@ struct LiveRunTreeUITestHarnessView: View {
         }
         .onDisappear {
             store.disconnect()
+            lastLogStore.disconnect()
         }
         .onChange(of: store.isRewindEligible) { _, eligible in
             if !eligible, showRewindConfirmation {

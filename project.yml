@@ -36,6 +36,7 @@ targets:
       - LiveRunView.swift
       - LiveRunTreeView.swift
       - TreeRowView.swift
+      - LastLogPerNodeStore.swift
       - TreeRowState.swift
       - TreeSearchIndex.swift
       - AncestorErrorIndex.swift

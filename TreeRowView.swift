@@ -10,8 +10,37 @@ struct TreeRowView: View {
     let isDimmed: Bool
     let isHighlighted: Bool
     let depth: Int
+    let lastLogLine: String?
     let onSelect: () -> Void
     let onToggleExpand: () -> Void
+
+    init(
+        node: DevToolsNode,
+        isSelected: Bool,
+        isExpanded: Bool,
+        hasChildren: Bool,
+        hasFailedDescendant: Bool,
+        failedDescendantCount: Int,
+        isDimmed: Bool,
+        isHighlighted: Bool,
+        depth: Int,
+        lastLogLine: String? = nil,
+        onSelect: @escaping () -> Void,
+        onToggleExpand: @escaping () -> Void
+    ) {
+        self.node = node
+        self.isSelected = isSelected
+        self.isExpanded = isExpanded
+        self.hasChildren = hasChildren
+        self.hasFailedDescendant = hasFailedDescendant
+        self.failedDescendantCount = failedDescendantCount
+        self.isDimmed = isDimmed
+        self.isHighlighted = isHighlighted
+        self.depth = depth
+        self.lastLogLine = lastLogLine
+        self.onSelect = onSelect
+        self.onToggleExpand = onToggleExpand
+    }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -27,12 +56,30 @@ struct TreeRowView: View {
         state == .running && node.children.isEmpty
     }
 
+    private var showsLastLog: Bool {
+        guard state == .running, node.children.isEmpty else { return false }
+        guard let line = lastLogLine?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        return !line.isEmpty
+    }
+
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(alignment: .top, spacing: 4) {
             runningCursor
             chevron
-            tagLabel
-            propsText
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    tagLabel
+                    propsText
+                }
+                if showsLastLog, let line = lastLogLine {
+                    Text(line)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .accessibilityIdentifier("tree.row.\(node.id).lastLog")
+                }
+            }
             Spacer(minLength: 4)
             stateBadge
             timingLabel
@@ -182,6 +229,9 @@ struct TreeRowView: View {
         parts.append(state.label)
         if showsRunningCursor {
             parts.append("currently running at this frame")
+        }
+        if showsLastLog, let line = lastLogLine {
+            parts.append("last log: \(line)")
         }
         if let iteration = node.task?.iteration {
             parts.append("iteration \(iteration)")

@@ -15,6 +15,7 @@ struct LiveRunView: View {
     var onClose: () -> Void = {}
 
     @StateObject private var store: LiveRunDevToolsStore
+    @StateObject private var lastLogStore: LastLogPerNodeStore
 
     @State private var selectedTab: InspectorTab = .logs
     @State private var runSummary: RunSummary?
@@ -93,6 +94,9 @@ struct LiveRunView: View {
         self.onOpenPrompt = onOpenPrompt
         self.onClose = onClose
         _store = StateObject(wrappedValue: LiveRunDevToolsStore(streamProvider: smithers))
+        _lastLogStore = StateObject(
+            wrappedValue: LastLogPerNodeStore(streamProvider: smithers, historyProvider: smithers)
+        )
     }
 
     var body: some View {
@@ -223,7 +227,7 @@ struct LiveRunView: View {
                 inspectorSheetPresented: $inspectorSheetPresented,
                 onModeChange: handleLayoutModeChange
             ) {
-                LiveRunTreeView(store: store) { selectedID in
+                LiveRunTreeView(store: store, lastLogStore: lastLogStore) { selectedID in
                     store.selectNode(selectedID)
                     if layoutMode == .narrow {
                         inspectorSheetPresented = true
@@ -399,6 +403,7 @@ struct LiveRunView: View {
         ])
 
         store.connect(runId: runId)
+        lastLogStore.connect(runId: runId)
         await refreshRunSummary()
         startPollingRunSummary()
         applyDeepLinkSelectionIfNeeded()
@@ -414,6 +419,7 @@ struct LiveRunView: View {
         pollTask = nil
 
         store.disconnect()
+        lastLogStore.disconnect()
         if store.connectionState != .disconnected || store.runId != nil {
             AppLogger.ui.warning("LiveRunView teardown anomaly", metadata: [
                 "run_id": runId,
