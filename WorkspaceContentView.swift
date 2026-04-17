@@ -174,28 +174,28 @@ private struct WorkspaceSurfaceContainer: View {
                 workspace.focusSurface(surface.id)
                 workspace.splitFocused(axis: .horizontal, kind: .terminal)
             }
-            .keyboardShortcut("d", modifiers: [.command])
+            .appKeyboardShortcut(.splitRight)
             .accessibilityIdentifier("workspace.surface.splitRight.\(surface.id)")
 
             WorkspaceToolbarButton(title: "Split Down", systemName: "rectangle.split.2x1") {
                 workspace.focusSurface(surface.id)
                 workspace.splitFocused(axis: .vertical, kind: .terminal)
             }
-            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .appKeyboardShortcut(.splitDown)
             .accessibilityIdentifier("workspace.surface.splitDown.\(surface.id)")
 
             WorkspaceToolbarButton(title: "Browser", systemName: "safari") {
                 workspace.focusSurface(surface.id)
                 workspace.splitFocused(axis: .horizontal, kind: .browser)
             }
-            .keyboardShortcut("l", modifiers: [.command, .shift])
+            .appKeyboardShortcut(.openBrowser)
             .accessibilityIdentifier("workspace.surface.browser.\(surface.id)")
 
             WorkspaceToolbarButton(title: "Unread", systemName: "bell.badge") {
                 jumpToLatestUnread()
             }
             .disabled(notifications.latestUnreadSurface(in: workspace.id) == nil)
-            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .appKeyboardShortcut(.jumpToUnread)
             .accessibilityIdentifier("workspace.surface.unreadBtn.\(surface.id)")
 
             WorkspaceToolbarButton(title: "Close", systemName: "xmark") {

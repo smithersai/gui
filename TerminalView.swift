@@ -1363,33 +1363,28 @@ class TerminalSurfaceView: NSView {
 
     private func handleWorkspaceShortcut(_ event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard flags.contains(.command),
-              !flags.contains(.control),
-              !flags.contains(.option) else {
-            return false
+
+        if KeyboardShortcutSettings.current(for: .splitDown).matches(event: event) {
+            onSplitDown?()
+            return true
         }
 
-        let key = event.charactersIgnoringModifiers?.lowercased()
-        let shifted = flags.contains(.shift)
-
-        switch key {
-        case "d":
-            if shifted {
-                onSplitDown?()
-            } else {
-                onSplitRight?()
-            }
+        if KeyboardShortcutSettings.current(for: .splitRight).matches(event: event) {
+            onSplitRight?()
             return true
-        case "l" where shifted:
+        }
+
+        if KeyboardShortcutSettings.current(for: .openBrowser).matches(event: event) {
             onOpenBrowser?()
             return true
-        case "u" where shifted:
+        }
+
+        if KeyboardShortcutSettings.current(for: .jumpToUnread).matches(event: event) {
             onJumpToUnread?()
             return true
-        default:
-            return false
         }
+
+        return false
     }
 
     private func clipboardShortcut(for event: NSEvent) -> ClipboardShortcut? {

@@ -33,6 +33,18 @@ enum KeyboardChordOutcome: Equatable {
     case action(CommandPaletteAction)
 }
 
+enum KeyboardShortcutCommand: Equatable {
+    case shortcut(ShortcutAction)
+    case numbered(ShortcutAction, Int)
+    case palette(CommandPaletteAction)
+}
+
+enum KeyboardShortcutDispatchOutcome: Equatable {
+    case ignored
+    case consumed
+    case command(KeyboardShortcutCommand)
+}
+
 struct KeyboardChordParser {
     private enum PendingPrefix {
         case linearG
@@ -49,7 +61,8 @@ struct KeyboardChordParser {
         modifiers: KeyboardChordModifiers,
         now: Date = Date(),
         isTextInputFocused: Bool,
-        isTerminalFocused: Bool
+        isTerminalFocused: Bool,
+        shortcutProvider: (ShortcutAction) -> StoredShortcut = KeyboardShortcutSettings.current(for:)
     ) -> KeyboardChordOutcome {
         resetIfExpired(now: now)
 
@@ -104,13 +117,23 @@ struct KeyboardChordParser {
 
         guard !isTextInputFocused else { return .ignored }
 
-        if !isTerminalFocused, modifiers.isEmpty, key == "g" {
+        let stroke = ShortcutStroke(
+            key: key,
+            command: modifiers.contains(.command),
+            shift: modifiers.contains(.shift),
+            option: modifiers.contains(.option),
+            control: modifiers.contains(.control)
+        )
+
+        if !isTerminalFocused,
+           shortcutProvider(.linearNavigationPrefix).firstStroke == stroke {
             pendingPrefix = .linearG
             pendingSince = now
             return .consumed
         }
 
-        if !isTerminalFocused, modifiers == [.control], key == "b" {
+        if !isTerminalFocused,
+           shortcutProvider(.tmuxPrefix).firstStroke == stroke {
             pendingPrefix = .tmuxControlB
             pendingSince = now
             return .consumed
@@ -133,6 +156,122 @@ struct KeyboardChordParser {
 }
 
 #if os(macOS)
+struct KeyboardShortcutDispatcher {
+    var shortcutProvider: (ShortcutAction) -> StoredShortcut = KeyboardShortcutSettings.current(for:)
+    private var parser = KeyboardChordParser()
+
+    init(shortcutProvider: @escaping (ShortcutAction) -> StoredShortcut = KeyboardShortcutSettings.current(for:)) {
+        self.shortcutProvider = shortcutProvider
+    }
+
+    mutating func dispatch(
+        event: NSEvent,
+        focusState: KeyboardShortcutFocusState
+    ) -> KeyboardShortcutDispatchOutcome {
+        if focusState.paletteVisible {
+            return .ignored
+        }
+
+        if focusState.textInputFocused || focusState.terminalFocused {
+            return .ignored
+        }
+
+        if let direct = directCommand(for: event) {
+            return .command(direct)
+        }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let shiftedKey = event.characters?.lowercased() ?? key
+        let outcome = parser.handle(
+            key: key,
+            shiftedKey: shiftedKey,
+            modifiers: KeyboardChordModifiers(flags),
+            isTextInputFocused: focusState.textInputFocused,
+            isTerminalFocused: focusState.terminalFocused,
+            shortcutProvider: shortcutProvider
+        )
+
+        switch outcome {
+        case .ignored:
+            return .ignored
+        case .consumed:
+            return .consumed
+        case .action(let action):
+            return .command(.palette(action))
+        }
+    }
+
+    private func directCommand(for event: NSEvent) -> KeyboardShortcutCommand? {
+        for action in ShortcutAction.dispatchOrder where !action.isPrefixOnly {
+            let shortcut = shortcutProvider(action)
+            if action.isNumbered {
+                if let digit = numberedShortcutDigit(event: event, shortcut: shortcut) {
+                    return .numbered(action, digit)
+                }
+                continue
+            }
+            if shortcut.matches(event: event) {
+                return .shortcut(action)
+            }
+        }
+        return nil
+    }
+
+    private func numberedShortcutDigit(event: NSEvent, shortcut: StoredShortcut) -> Int? {
+        guard !shortcut.hasChord else { return nil }
+        let stroke = shortcut.firstStroke
+        let flags = ShortcutStroke.normalizedModifierFlags(from: event.modifierFlags)
+        guard flags == stroke.modifierFlags else { return nil }
+
+        if let digit = digit(from: event.charactersIgnoringModifiers, keyCode: event.keyCode) {
+            return digit
+        }
+        if flags.contains(.shift),
+           let digit = digit(from: event.characters, keyCode: event.keyCode) {
+            return digit
+        }
+        return digitForNumberKeyCode(event.keyCode)
+    }
+
+    private func digit(from characters: String?, keyCode: UInt16) -> Int? {
+        guard let characters, !characters.isEmpty else { return nil }
+        let normalized = normalizedDigitCharacter(String(characters.prefix(1)).lowercased(), keyCode: keyCode)
+        guard let digit = Int(normalized), (1...9).contains(digit) else { return nil }
+        return digit
+    }
+
+    private func normalizedDigitCharacter(_ value: String, keyCode: UInt16) -> String {
+        switch value {
+        case "!": return keyCode == 18 ? "1" : value
+        case "@": return keyCode == 19 ? "2" : value
+        case "#": return keyCode == 20 ? "3" : value
+        case "$": return keyCode == 21 ? "4" : value
+        case "%": return keyCode == 23 ? "5" : value
+        case "^": return keyCode == 22 ? "6" : value
+        case "&": return keyCode == 26 ? "7" : value
+        case "*": return keyCode == 28 ? "8" : value
+        case "(": return keyCode == 25 ? "9" : value
+        default: return value
+        }
+    }
+
+    private func digitForNumberKeyCode(_ keyCode: UInt16) -> Int? {
+        switch keyCode {
+        case 18: return 1
+        case 19: return 2
+        case 20: return 3
+        case 21: return 4
+        case 23: return 5
+        case 22: return 6
+        case 26: return 7
+        case 28: return 8
+        case 25: return 9
+        default: return nil
+        }
+    }
+}
+
 struct KeyboardShortcutFocusState {
     var textInputFocused: Bool
     var terminalFocused: Bool
@@ -142,12 +281,11 @@ struct KeyboardShortcutFocusState {
 @MainActor
 final class KeyboardShortcutController {
     private var monitor: Any?
-    private var parser = KeyboardChordParser()
+    private var dispatcher = KeyboardShortcutDispatcher()
 
     func install(
-        onAction: @escaping (CommandPaletteAction) -> Void,
-        focusState: @escaping () -> KeyboardShortcutFocusState,
-        shouldHandleCommandW: @escaping () -> Bool
+        onCommand: @escaping (KeyboardShortcutCommand) -> Void,
+        focusState: @escaping () -> KeyboardShortcutFocusState
     ) {
         guard monitor == nil else { return }
 
@@ -157,34 +295,18 @@ final class KeyboardShortcutController {
             if state.paletteVisible {
                 return event
             }
-
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-            let shiftedKey = event.characters?.lowercased() ?? key
-
-            if Self.isCommandW(key: key, flags: flags) {
-                if state.terminalFocused || !shouldHandleCommandW() {
-                    return event
-                }
-                onAction(.closeCurrentTab)
-                return nil
+            if KeyboardShortcutRecorderActivity.isAnyRecorderActive {
+                return event
             }
 
-            let outcome = parser.handle(
-                key: key,
-                shiftedKey: shiftedKey,
-                modifiers: KeyboardChordModifiers(flags),
-                isTextInputFocused: state.textInputFocused,
-                isTerminalFocused: state.terminalFocused
-            )
-
+            let outcome = dispatcher.dispatch(event: event, focusState: state)
             switch outcome {
             case .ignored:
                 return event
             case .consumed:
                 return nil
-            case .action(let action):
-                onAction(action)
+            case .command(let command):
+                onCommand(command)
                 return nil
             }
         }
@@ -217,12 +339,5 @@ final class KeyboardShortcutController {
         return responder is TerminalSurfaceView
     }
 
-    private static func isCommandW(key: String, flags: NSEvent.ModifierFlags) -> Bool {
-        flags.contains(.command) &&
-            !flags.contains(.shift) &&
-            !flags.contains(.control) &&
-            !flags.contains(.option) &&
-            key == "w"
-    }
 }
 #endif

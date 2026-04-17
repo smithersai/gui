@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 #if os(macOS)
 import AppKit
 #endif
@@ -303,6 +304,7 @@ struct SettingsView: View {
     @AppStorage(AppPreferenceKeys.vcsFeatureEnabled) private var vcsFeatureEnabled = false
     @AppStorage(AppPreferenceKeys.externalAgentUnsafeFlagsEnabled) private var externalAgentUnsafeFlagsEnabled = false
     @AppStorage(AppPreferenceKeys.browserSearchEngine) private var browserSearchEngine = BrowserSearchEngine.duckDuckGo.rawValue
+    @StateObject private var shortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
     @State private var neovimPath: String? = NeovimDetector.executablePath()
 
     private var neovimAvailable: Bool {
@@ -331,6 +333,7 @@ struct SettingsView: View {
                     externalAgentSafetySection
                     browserSearchSection
                     neovimSection
+                    shortcutsSection
                 }
                 .padding(20)
                 .frame(maxWidth: 720, alignment: .leading)
@@ -610,6 +613,53 @@ struct SettingsView: View {
         .accessibilityIdentifier("settings.browserSearchEngine.section")
     }
 
+    private var shortcutsSection: some View {
+        let _ = shortcutSettingsObserver.revision
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "keyboard")
+                    .font(.system(size: 18))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Keyboard shortcuts")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Rebind app shortcuts or manage them in settings.json.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer()
+
+                Button("Open settings.json") {
+                    openShortcutSettingsFile()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("settings.shortcuts.openSettingsFile")
+            }
+
+            Divider().background(Theme.border)
+
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(ShortcutAction.allCases) { action in
+                    ShortcutSettingsRow(action: action)
+                    if action != ShortcutAction.allCases.last {
+                        Divider().background(Theme.border.opacity(0.6))
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+        .accessibilityIdentifier("settings.shortcuts.section")
+    }
+
     private func refreshNeovimPath() {
         let detectedPath = NeovimDetector.executablePath()
         neovimPath = detectedPath
@@ -617,7 +667,81 @@ struct SettingsView: View {
             vimModeEnabled = false
         }
     }
+
+    private func openShortcutSettingsFile() {
+        let fileURL = KeyboardShortcutSettings.settingsFileURLForEditing()
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            let template = """
+            {
+              "shortcuts": {
+              }
+            }
+            """
+            try? template.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
+        NSWorkspace.shared.open(fileURL)
+    }
 }
+
+#if os(macOS)
+private struct ShortcutSettingsRow: View {
+    let action: ShortcutAction
+    @State private var shortcut: StoredShortcut
+
+    init(action: ShortcutAction) {
+        self.action = action
+        _shortcut = State(initialValue: KeyboardShortcutSettings.current(for: action))
+    }
+
+    private var managedByFile: Bool {
+        KeyboardShortcutSettings.isManagedBySettingsFile(action)
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(action.label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Theme.textPrimary)
+                if let subtitle = KeyboardShortcutSettings.settingsFileManagedSubtitle(for: action) {
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                }
+            }
+
+            Spacer(minLength: 16)
+
+            KeyboardShortcutRecorder(
+                shortcut: $shortcut,
+                displayString: { action.displayedShortcutString(for: $0) },
+                allowsModifierlessShortcut: action.isPrefixOnly,
+                isDisabled: managedByFile
+            )
+            .frame(width: 150, height: 24)
+
+            Button("Reset") {
+                KeyboardShortcutSettings.resetShortcut(for: action)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(managedByFile ? Theme.textTertiary : Theme.accent)
+            .disabled(managedByFile)
+        }
+        .padding(.vertical, 9)
+        .onChange(of: shortcut) { _, newValue in
+            KeyboardShortcutSettings.setShortcut(newValue, for: action)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: KeyboardShortcutSettings.didChangeNotification)) { _ in
+            let latest = KeyboardShortcutSettings.current(for: action)
+            if latest != shortcut {
+                shortcut = latest
+            }
+        }
+        .accessibilityIdentifier("settings.shortcuts.\(action.rawValue)")
+    }
+}
+#endif
 
 struct ContentView: View {
     @StateObject private var store = SessionStore()
@@ -630,6 +754,7 @@ struct ContentView: View {
     @State private var navHistory: [NavDestination] = [UserDefaults.standard.bool(forKey: AppPreferenceKeys.smithersFeatureEnabled) ? .dashboard : .chat]
     @State private var navHistoryIndex: Int = 0
     @State private var isNavigatingThroughHistory = false
+    @State private var navigationSplitVisibility: NavigationSplitViewVisibility = .all
     @State private var runSnapshotsSelection: RunSnapshotsSelection?
     @State private var workflowsInitialID: String?
     @State private var changesInitialID: String?
@@ -643,6 +768,7 @@ struct ContentView: View {
     @State private var newTabPickerVisible = false
     @State private var detailRefreshNonce = 0
     @State private var keyboardShortcutController = KeyboardShortcutController()
+    @StateObject private var shortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
     @State private var paletteWorkflows: [Workflow] = []
     @State private var palettePrompts: [SmithersPrompt] = []
     @State private var paletteIssues: [SmithersIssue] = []
@@ -924,7 +1050,7 @@ struct ContentView: View {
             }
         } else {
             HStack(spacing: 0) {
-                NavigationSplitView {
+                NavigationSplitView(columnVisibility: $navigationSplitVisibility) {
                     SidebarView(
                         store: store,
                         destination: $destination,
@@ -1071,7 +1197,7 @@ struct ContentView: View {
             Button("Open Launcher") {
                 openCommandPalette(prefill: "")
             }
-            .keyboardShortcut("p", modifiers: [.command])
+            .appKeyboardShortcut(.commandPalette)
             .accessibilityIdentifier("shortcut.openLauncher")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1079,7 +1205,7 @@ struct ContentView: View {
             Button("Open Command Palette") {
                 openCommandPalette(prefill: ">")
             }
-            .keyboardShortcut("p", modifiers: [.command, .shift])
+            .appKeyboardShortcut(.commandPaletteCommandMode)
             .accessibilityIdentifier("shortcut.commandPalette")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1087,7 +1213,7 @@ struct ContentView: View {
             Button("Open Ask AI Launcher") {
                 openCommandPalette(prefill: "?")
             }
-            .keyboardShortcut("k", modifiers: [.command])
+            .appKeyboardShortcut(.commandPaletteAskAI)
             .accessibilityIdentifier("shortcut.askAI")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1095,7 +1221,7 @@ struct ContentView: View {
             Button("New Chat") {
                 startNewChat()
             }
-            .keyboardShortcut("n", modifiers: [.command])
+            .appKeyboardShortcut(.newChat)
             .accessibilityIdentifier("shortcut.newChat")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1103,7 +1229,7 @@ struct ContentView: View {
             Button("New Terminal Tab") {
                 createNewTerminalTab()
             }
-            .keyboardShortcut("t", modifiers: [.command])
+            .appKeyboardShortcut(.newTerminal)
             .accessibilityIdentifier("shortcut.newTerminal")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1115,7 +1241,7 @@ struct ContentView: View {
                     level: .info
                 )
             }
-            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .appKeyboardShortcut(.reopenClosedTab)
             .accessibilityIdentifier("shortcut.reopenTab")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1141,7 +1267,7 @@ struct ContentView: View {
             Button("Previous Visible Tab") {
                 moveVisibleTab(offset: -1)
             }
-            .keyboardShortcut("[", modifiers: [.command, .shift])
+            .appKeyboardShortcut(.prevSidebarTab)
             .accessibilityIdentifier("shortcut.previousTab")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1149,7 +1275,7 @@ struct ContentView: View {
             Button("Next Visible Tab") {
                 moveVisibleTab(offset: 1)
             }
-            .keyboardShortcut("]", modifiers: [.command, .shift])
+            .appKeyboardShortcut(.nextSidebarTab)
             .accessibilityIdentifier("shortcut.nextTab")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1157,7 +1283,7 @@ struct ContentView: View {
             Button("Find in Context") {
                 handleFindShortcut()
             }
-            .keyboardShortcut("f", modifiers: [.command])
+            .appKeyboardShortcut(.find)
             .accessibilityIdentifier("shortcut.find")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1165,7 +1291,7 @@ struct ContentView: View {
             Button("Global Search") {
                 destination = .search
             }
-            .keyboardShortcut("f", modifiers: [.command, .shift])
+            .appKeyboardShortcut(.globalSearch)
             .accessibilityIdentifier("shortcut.globalSearch")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1173,7 +1299,7 @@ struct ContentView: View {
             Button("Refresh Current View") {
                 refreshCurrentView()
             }
-            .keyboardShortcut("r", modifiers: [.command])
+            .appKeyboardShortcut(.refreshCurrentView)
             .accessibilityIdentifier("shortcut.refresh")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1181,7 +1307,7 @@ struct ContentView: View {
             Button("Cancel Current Operation") {
                 cancelCurrentOperation()
             }
-            .keyboardShortcut(".", modifiers: [.command])
+            .appKeyboardShortcut(.cancelCurrentOperation)
             .accessibilityIdentifier("shortcut.cancel")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1189,7 +1315,7 @@ struct ContentView: View {
             Button("Shortcut Cheat Sheet") {
                 openCommandPalette(prefill: ">shortcut")
             }
-            .keyboardShortcut("/", modifiers: [.command])
+            .appKeyboardShortcut(.showShortcutCheatSheet)
             .accessibilityIdentifier("shortcut.cheatSheet")
             .frame(width: 1, height: 1)
             .opacity(0.01)
@@ -1198,7 +1324,7 @@ struct ContentView: View {
                 Button("Switch to Tab \(index)") {
                     switchVisibleTab(at: index - 1)
                 }
-                .keyboardShortcut(KeyEquivalent(Character(String(index))), modifiers: [.command])
+                .appNumberedKeyboardShortcut(.selectWorkspaceByNumber, digit: index)
                 .accessibilityIdentifier("shortcut.switchTab.\(index)")
                 .frame(width: 1, height: 1)
                 .opacity(0.01)
@@ -1208,7 +1334,7 @@ struct ContentView: View {
                 Button("Toggle Developer Debug") {
                     toggleDeveloperDebugPanel()
                 }
-                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .appKeyboardShortcut(.toggleDeveloperDebug)
                 .accessibilityIdentifier("shortcut.toggleDeveloperDebug")
                 .frame(width: 1, height: 1)
                 .opacity(0.01)
@@ -1225,6 +1351,7 @@ struct ContentView: View {
                 }
             }
         }
+        .id(shortcutSettingsObserver.revision)
     }
 
     private var uiTestNavDestinations: [(label: String, destination: NavDestination)] {
@@ -1256,8 +1383,8 @@ struct ContentView: View {
 
     private func installKeyboardShortcutMonitor() {
         keyboardShortcutController.install(
-            onAction: { action in
-                executePaletteAction(action, rawQuery: "")
+            onCommand: { command in
+                handleKeyboardShortcutCommand(command)
             },
             focusState: {
                 let window = NSApp.keyWindow
@@ -1266,11 +1393,125 @@ struct ContentView: View {
                     terminalFocused: KeyboardShortcutController.isTerminalFocused(window: window),
                     paletteVisible: commandPaletteVisible
                 )
-            },
-            shouldHandleCommandW: {
-                true
             }
         )
+    }
+
+    private func handleKeyboardShortcutCommand(_ command: KeyboardShortcutCommand) {
+        switch command {
+        case .shortcut(let action):
+            handleShortcutAction(action)
+        case .numbered(let action, let digit):
+            handleNumberedShortcut(action, digit: digit)
+        case .palette(let action):
+            executePaletteAction(action, rawQuery: "")
+        }
+    }
+
+    private func handleNumberedShortcut(_ action: ShortcutAction, digit: Int) {
+        switch action {
+        case .selectWorkspaceByNumber:
+            switchVisibleTab(at: digit - 1)
+        case .selectSurfaceByNumber:
+            currentTerminalWorkspace()?.focusSurface(at: digit - 1)
+        default:
+            break
+        }
+    }
+
+    private func handleShortcutAction(_ action: ShortcutAction) {
+        switch action {
+        case .commandPalette:
+            openCommandPalette(prefill: "")
+        case .commandPaletteCommandMode:
+            openCommandPalette(prefill: ">")
+        case .commandPaletteAskAI:
+            openCommandPalette(prefill: "?")
+        case .newChat:
+            startNewChat()
+        case .newTerminal:
+            createNewTerminalTab()
+        case .reopenClosedTab:
+            AppNotifications.shared.post(title: "Tabs", message: "Reopen closed tab is not available yet.", level: .info)
+        case .closeCurrentTab:
+            closeCurrentTab()
+        case .nextSidebarTab:
+            moveVisibleTab(offset: 1)
+        case .prevSidebarTab:
+            moveVisibleTab(offset: -1)
+        case .selectWorkspaceByNumber:
+            break
+        case .toggleDeveloperDebug:
+            toggleDeveloperDebugPanel()
+        case .toggleSidebar:
+            toggleSidebar()
+        case .splitRight:
+            if !splitFocused(axis: .horizontal, kind: .terminal) {
+                createNewTerminalTab()
+            }
+        case .splitDown:
+            if !splitFocused(axis: .vertical, kind: .terminal), developerToolsEnabled {
+                toggleDeveloperDebugPanel()
+            }
+        case .focusLeft, .focusUp:
+            currentTerminalWorkspace()?.focusAdjacentSurface(offset: -1)
+        case .focusRight, .focusDown:
+            currentTerminalWorkspace()?.focusAdjacentSurface(offset: 1)
+        case .toggleSplitZoom:
+            AppNotifications.shared.post(title: "Workspace", message: "Split zoom is not available yet.", level: .info)
+        case .nextSurface:
+            currentTerminalWorkspace()?.focusAdjacentSurface(offset: 1)
+        case .prevSurface:
+            currentTerminalWorkspace()?.focusAdjacentSurface(offset: -1)
+        case .selectSurfaceByNumber:
+            break
+        case .renameWorkspace:
+            AppNotifications.shared.post(title: "Workspace", message: "Rename from keyboard is not available yet.", level: .info)
+        case .renameSurface:
+            AppNotifications.shared.post(title: "Workspace", message: "Rename surface from keyboard is not available yet.", level: .info)
+        case .jumpToUnread:
+            jumpToLatestUnreadSurface()
+        case .triggerFlash:
+            SurfaceNotificationStore.shared.flashFocusedSurface()
+        case .showNotifications:
+            showNotificationSummary()
+        case .toggleFullScreen:
+            NSApp.keyWindow?.toggleFullScreen(nil)
+        case .focusBrowserAddressBar:
+            focusBrowserAddressBar()
+        case .browserBack:
+            performFocusedBrowserAction { $0.goBack() }
+        case .browserForward:
+            performFocusedBrowserAction { $0.goForward() }
+        case .browserReload:
+            if !performFocusedBrowserAction({ $0.reload() }) {
+                refreshCurrentView()
+            }
+        case .find:
+            handleFindShortcut()
+        case .findNext:
+            AppNotifications.shared.post(title: "Find", message: "Find next is not available in this view.", level: .info)
+        case .findPrevious:
+            AppNotifications.shared.post(title: "Find", message: "Find previous is not available in this view.", level: .info)
+        case .hideFind:
+            destination = .search
+        case .useSelectionForFind:
+            AppNotifications.shared.post(title: "Find", message: "Use selection for find is not available in this view.", level: .info)
+        case .openBrowser:
+            if !splitFocused(axis: .horizontal, kind: .browser) {
+                AppNotifications.shared.post(title: "Browser", message: "Open a terminal workspace before adding a browser surface.", level: .info)
+            }
+        case .globalSearch:
+            destination = .search
+        case .refreshCurrentView:
+            refreshCurrentView()
+        case .cancelCurrentOperation:
+            cancelCurrentOperation()
+        case .showShortcutCheatSheet:
+            openCommandPalette(prefill: ">shortcut")
+        case .linearNavigationPrefix, .tmuxPrefix:
+            break
+        }
     }
 
     private func openCommandPalette(prefill: String) {
@@ -1403,6 +1644,81 @@ struct ContentView: View {
         default:
             handleNavigation(next)
         }
+    }
+
+    private func currentTerminalWorkspace() -> TerminalWorkspace? {
+        guard case .terminal(let terminalId) = destination else { return nil }
+        return store.terminalWorkspaceIfAvailable(terminalId) ?? store.ensureTerminalWorkspace(terminalId)
+    }
+
+    @discardableResult
+    private func splitFocused(axis: WorkspaceSplitAxis, kind: WorkspaceSurfaceKind) -> Bool {
+        guard let workspace = currentTerminalWorkspace() else { return false }
+        workspace.splitFocused(axis: axis, kind: kind)
+        return true
+    }
+
+    private func toggleSidebar() {
+        navigationSplitVisibility = navigationSplitVisibility == .detailOnly ? .all : .detailOnly
+    }
+
+    private func jumpToLatestUnreadSurface() {
+        let notifications = SurfaceNotificationStore.shared
+        if let workspace = currentTerminalWorkspace(),
+           let surfaceId = notifications.latestUnreadSurface(in: workspace.id) {
+            workspace.focusSurface(surfaceId)
+            return
+        }
+
+        guard let surfaceId = notifications.latestUnreadSurface(),
+              let workspaceId = notifications.surfaceWorkspaceIds[surfaceId]
+        else {
+            AppNotifications.shared.post(title: "Notifications", message: "No unread surfaces.", level: .info)
+            return
+        }
+
+        destination = .terminal(id: workspaceId)
+        let workspace = store.terminalWorkspaceIfAvailable(workspaceId) ?? store.ensureTerminalWorkspace(workspaceId)
+        workspace.focusSurface(surfaceId)
+    }
+
+    private func showNotificationSummary() {
+        let notifications = AppNotifications.shared.toasts
+        if notifications.isEmpty {
+            AppNotifications.shared.post(title: "Notifications", message: "No notifications.", level: .info)
+        } else {
+            AppNotifications.shared.post(
+                title: "Notifications",
+                message: "\(notifications.count) notification\(notifications.count == 1 ? "" : "s") visible.",
+                level: .info
+            )
+        }
+    }
+
+    private func focusedBrowserSurfaceId() -> String? {
+        guard let workspace = currentTerminalWorkspace(),
+              let surfaceId = workspace.focusedSurfaceId,
+              workspace.surfaces[surfaceId]?.kind == .browser
+        else {
+            return nil
+        }
+        return surfaceId
+    }
+
+    @discardableResult
+    private func performFocusedBrowserAction(_ action: (WKWebView) -> Void) -> Bool {
+        guard let surfaceId = focusedBrowserSurfaceId() else { return false }
+        action(BrowserSurfaceRegistry.shared.webView(for: surfaceId))
+        return true
+    }
+
+    private func focusBrowserAddressBar() {
+        guard let surfaceId = focusedBrowserSurfaceId() else { return }
+        NotificationCenter.default.post(
+            name: BrowserSurfaceView.focusAddressBarNotification,
+            object: nil,
+            userInfo: [BrowserSurfaceView.surfaceIdUserInfoKey: surfaceId]
+        )
     }
 
     private func startNewChat() {

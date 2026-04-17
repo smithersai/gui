@@ -179,6 +179,9 @@ struct BrowserWebViewRepresentable: NSViewRepresentable {
 }
 
 struct BrowserSurfaceView: View {
+    static let focusAddressBarNotification = Notification.Name("smithers.browserSurfaceFocusAddressBar")
+    static let surfaceIdUserInfoKey = "surfaceId"
+
     let surface: WorkspaceSurface
     @ObservedObject var workspace: TerminalWorkspace
     var onFocus: () -> Void
@@ -213,6 +216,11 @@ struct BrowserSurfaceView: View {
             if let newValue, newValue != addressText {
                 addressText = newValue
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Self.focusAddressBarNotification)) { notification in
+            guard notification.userInfo?[Self.surfaceIdUserInfoKey] as? String == surface.id else { return }
+            onFocus()
+            addressFocused = true
         }
         .background(Theme.base)
     }

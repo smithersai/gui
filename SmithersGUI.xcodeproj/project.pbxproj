@@ -20,6 +20,7 @@
 		1253E7CCEA548113E8F4954C /* HistoricalOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC756AF73B2904A1839C9790 /* HistoricalOverlay.swift */; };
 		12A869073EE66656BBB8C480 /* DefaultTabPickerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E079D7F51CD15A2DE919F5AE /* DefaultTabPickerTests.swift */; };
 		12AE954A3FC9EC43A317317C /* JJHubWorkflowsE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C27A0465FC046B380C687BE /* JJHubWorkflowsE2ETests.swift */; };
+		13F7BBFCCCD57BFC7A31E19F /* StoredShortcut.swift in Sources */ = {isa = PBXBuildFile; fileRef = B16541C51EFF64EEE26CBBC7 /* StoredShortcut.swift */; };
 		1559C9B631785985D49412B2 /* RunStatusPillTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE727B17BCB9141EC35866B2 /* RunStatusPillTests.swift */; };
 		17FB38CE28BA917017F5F393 /* SmithersModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39A701BE26A2D3529816FB38 /* SmithersModels.swift */; };
 		1A1D065B3580AB6806D3003B /* DevToolsCLITransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D84A1071DE5F8EFD8224259E /* DevToolsCLITransportTests.swift */; };
@@ -70,6 +71,7 @@
 		493C5C8395C847909605CF3B /* PropsTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B50CE9DFF801FD2489E85A8 /* PropsTableView.swift */; };
 		4AEA6AD76AE7B195F1BC1D56 /* DevToolsCLITransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3BC408009108B2E00FA2153 /* DevToolsCLITransport.swift */; };
 		4B0E762863D273E68FC783E8 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34FBCE6095A7B7A659B2B257 /* Theme.swift */; };
+		4BCA21BC7DEFA1B840584151 /* KeyboardShortcutSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F222F01D57F89DA5DD33D5C9 /* KeyboardShortcutSettingsTests.swift */; };
 		4BF92AA13FCEC6668ECF6EC5 /* DiffTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = D885BAC6E72964E2D2A081FE /* DiffTab.swift */; };
 		4CA73C87D34C8418F444267A /* StoreSoakTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5251EE3D835C95BD4997C3AB /* StoreSoakTests.swift */; };
 		4FB813BE6E42240C2EC29322 /* WorkflowsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D32A03BC85254A825EFA32FE /* WorkflowsView.swift */; };
@@ -96,6 +98,7 @@
 		6B888193BCA0F46DBB4FE5B0 /* HeartbeatState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C510990CEC17A134239635DE /* HeartbeatState.swift */; };
 		6C307B474E060D36325BF527 /* ChatBlockMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE20447684F1F0E9DE2AAD7D /* ChatBlockMerger.swift */; };
 		6C38E9CD71E31F1E74A06413 /* ChatBlockFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC3D379B8BFBB2BFAFB1E6E4 /* ChatBlockFilterTests.swift */; };
+		6D11923653ACA24E24708811 /* KeyboardShortcutSettingsFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E03CD76EB5C97A41BFB26A4 /* KeyboardShortcutSettingsFileStore.swift */; };
 		6F4407A16F01D63DB80500F1 /* DiffTabE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38F004EBDF146316C0E71859 /* DiffTabE2ETests.swift */; };
 		71DC853E87004BB35DDD5B61 /* RewindConfirmationDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D83ED392DEC8DC60CBDE92B8 /* RewindConfirmationDialog.swift */; };
 		73415317175C4F6EB5EF18EB /* DeveloperDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F882EA0BF755DA40ACF0A4E /* DeveloperDebugView.swift */; };
@@ -122,12 +125,14 @@
 		8DEEF92EF5A2446551D0881E /* GhostBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DC1E3F85E3D2ED4A7CE953 /* GhostBanner.swift */; };
 		8F13DDA6E6BA4408ADB65AE5 /* AgentProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF6F646C6ACA4E656B7513A6 /* AgentProtocol.swift */; };
 		90F9AF08A60D8FE062A9AB71 /* ApprovalsE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DC87D91597FAC181A269856 /* ApprovalsE2ETests.swift */; };
+		928CBF72E70508EAECC6D1F0 /* KeyboardShortcutRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83D764BB1F72080C3B23ED20 /* KeyboardShortcutRecorder.swift */; };
 		92B7F132368E69B092E832C6 /* RunsScoresMemoryE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 903BABEE4FCDFCEB64EABEA2 /* RunsScoresMemoryE2ETests.swift */; };
 		92BDA2B86665F9C195BD22E7 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4629F0B9B43F8AF7731E4919 /* TerminalView.swift */; };
 		936E7199903C80AD8A33AE95 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3DD6440C9F6629BE503E05FA /* Metal.framework */; };
 		964313B6989536FCBAE46BBF /* SQLBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74495EDF1269E4DFA99893AC /* SQLBrowserView.swift */; };
 		98275475B2164EB359BC5552 /* BrowserSurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A651903DF667C49FCEC8257B /* BrowserSurfaceView.swift */; };
 		99A52677F814AECD151C7484 /* ReconnectBackoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49AD2E149427C1EF714CA9AC /* ReconnectBackoffTests.swift */; };
+		9A1037F559DB6C1BAA59404A /* ShortcutAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 921F53ED403B4D761F7E7DE9 /* ShortcutAction.swift */; };
 		9AB2E3471D972D6BE4B6523B /* SQLBrowserClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BAC377111C55EE24C571222 /* SQLBrowserClientTests.swift */; };
 		9E493791E532DA0DB2FB5F95 /* GUIControlSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BC1C3EAEB701A17835900E0 /* GUIControlSidebar.swift */; };
 		A0D5AA87D4D9E33CC8FEF3C8 /* CWDResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5A5E6DE9D7765FAF018C85 /* CWDResolver.swift */; };
@@ -166,6 +171,7 @@
 		C88809DDBC8E02B23566F1A6 /* CommandPaletteKeyboardE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C8CA1A4C5DB368B70B3673 /* CommandPaletteKeyboardE2ETests.swift */; };
 		C9106AB1F60E0639613BC28E /* InspectorTabSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30B2E8B940774D3D179A6448 /* InspectorTabSwitcher.swift */; };
 		C97BE4C69F3DAB35487CB0D2 /* SessionPersistenceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE7F41BA364C6EB87EAF36E /* SessionPersistenceStoreTests.swift */; };
+		CAC75633BBEFE99E37D8467E /* KeyboardShortcutSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A52A32703E953352D2D0AFC /* KeyboardShortcutSettings.swift */; };
 		D0263877A4BF2B1734DF689C /* DiffFileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BA1D666A3911E4BB6FF59A /* DiffFileView.swift */; };
 		D178BD6B6BAD241C69E99C0F /* LiveRunDevToolsResponsiveLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C15CA6C06444E4FA8D5BCB3E /* LiveRunDevToolsResponsiveLayoutTests.swift */; };
 		D2E2F93A2E75772CD38EE449 /* DashboardWorkflowsE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C178C4818C0F7FF44ED51830 /* DashboardWorkflowsE2ETests.swift */; };
@@ -303,6 +309,7 @@
 		68F446A36C51967DB8A3E6A9 /* SmithersGUIUITestCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersGUIUITestCase.swift; sourceTree = "<group>"; };
 		6954FC9AAE2BE71753DB61C0 /* LogViewerE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogViewerE2ETests.swift; sourceTree = "<group>"; };
 		69C3EFB899DA4AE67DF9B6B5 /* AgentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentsView.swift; sourceTree = "<group>"; };
+		6A52A32703E953352D2D0AFC /* KeyboardShortcutSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutSettings.swift; sourceTree = "<group>"; };
 		6B3DBA39F594CFDE2F564899 /* LiveRunDevToolsE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunDevToolsE2ETests.swift; sourceTree = "<group>"; };
 		6B50CE9DFF801FD2489E85A8 /* PropsTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropsTableView.swift; sourceTree = "<group>"; };
 		6C27A0465FC046B380C687BE /* JJHubWorkflowsE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JJHubWorkflowsE2ETests.swift; sourceTree = "<group>"; };
@@ -323,6 +330,7 @@
 		7D837C1D456F8A694724F5E1 /* NodeErrorBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeErrorBanner.swift; sourceTree = "<group>"; };
 		7F882EA0BF755DA40ACF0A4E /* DeveloperDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperDebugView.swift; sourceTree = "<group>"; };
 		815958F7C3477C3BA9F0F04E /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		83D764BB1F72080C3B23ED20 /* KeyboardShortcutRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutRecorder.swift; sourceTree = "<group>"; };
 		8481B9D7213A4EC9BC818A6D /* LiveRunTreePerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunTreePerformanceTests.swift; sourceTree = "<group>"; };
 		86860F7DE886872C26CD5EC7 /* RunsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsView.swift; sourceTree = "<group>"; };
 		8B9B664E0762E74CB32D2BBB /* SlashCommandE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandE2ETests.swift; sourceTree = "<group>"; };
@@ -330,6 +338,7 @@
 		8DC87D91597FAC181A269856 /* ApprovalsE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsE2ETests.swift; sourceTree = "<group>"; };
 		8EC0C110B0BA06054D579224 /* TicketsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketsView.swift; sourceTree = "<group>"; };
 		903BABEE4FCDFCEB64EABEA2 /* RunsScoresMemoryE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsScoresMemoryE2ETests.swift; sourceTree = "<group>"; };
+		921F53ED403B4D761F7E7DE9 /* ShortcutAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutAction.swift; sourceTree = "<group>"; };
 		93768B7AA7E507F56450F82E /* SlashCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommands.swift; sourceTree = "<group>"; };
 		95DA88753D359F39A1907002 /* JJHubWorkflowsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JJHubWorkflowsView.swift; sourceTree = "<group>"; };
 		9660FBD8BEF9DAE91F3E3481 /* CoreText.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreText.framework; path = System/Library/Frameworks/CoreText.framework; sourceTree = SDKROOT; };
@@ -340,6 +349,7 @@
 		98672C5D1554EEAC2A0B1419 /* FrameScrubberTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameScrubberTests.swift; sourceTree = "<group>"; };
 		9C2E02478404E1F3D46A9409 /* AgentProtocolAdditionalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProtocolAdditionalTests.swift; sourceTree = "<group>"; };
 		9D77B9B353FE42EF04A6B523 /* DiffTabTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffTabTests.swift; sourceTree = "<group>"; };
+		9E03CD76EB5C97A41BFB26A4 /* KeyboardShortcutSettingsFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutSettingsFileStore.swift; sourceTree = "<group>"; };
 		A2B2321AFDE317256A8C982D /* TreeSearchIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeSearchIndex.swift; sourceTree = "<group>"; };
 		A32DD4E7157360C36385B1F2 /* ApplyDeltaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplyDeltaTests.swift; sourceTree = "<group>"; };
 		A5D754B59E245DF9A93B5F50 /* TreeKeyboardHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeKeyboardHandler.swift; sourceTree = "<group>"; };
@@ -353,6 +363,7 @@
 		AC58F84BE388668CCF2B3FB4 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
 		AD9CF099915D3BDD32A7D6AE /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B0A96B90C01F74AAF96EBFE6 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		B16541C51EFF64EEE26CBBC7 /* StoredShortcut.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoredShortcut.swift; sourceTree = "<group>"; };
 		B25D849B66E37C1DD9E2EA49 /* ModelsAdditionalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsAdditionalTests.swift; sourceTree = "<group>"; };
 		B5EB1C26ABD228FEE305E530 /* SearchIssuesE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchIssuesE2ETests.swift; sourceTree = "<group>"; };
 		B6EC33AA500D6EEC5742A3C4 /* DiffHunkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffHunkView.swift; sourceTree = "<group>"; };
@@ -412,6 +423,7 @@
 		E8C0D1D16B0D589031300F30 /* OutputTabTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputTabTests.swift; sourceTree = "<group>"; };
 		EC16B2F6350BA50C4DB25AE4 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		EF6F646C6ACA4E656B7513A6 /* AgentProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProtocol.swift; sourceTree = "<group>"; };
+		F222F01D57F89DA5DD33D5C9 /* KeyboardShortcutSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutSettingsTests.swift; sourceTree = "<group>"; };
 		F2919E3F03DD22D39429ED8F /* CodexModelSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexModelSelectionTests.swift; sourceTree = "<group>"; };
 		F641CA472981DE892F75745C /* DevToolsClientError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevToolsClientError.swift; sourceTree = "<group>"; };
 		F65C9ED458C8EA93A69040A6 /* IssuesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IssuesView.swift; sourceTree = "<group>"; };
@@ -571,6 +583,9 @@
 				F65C9ED458C8EA93A69040A6 /* IssuesView.swift */,
 				95DA88753D359F39A1907002 /* JJHubWorkflowsView.swift */,
 				F793E0EC1492EAF5925C22E9 /* KeyboardShortcutController.swift */,
+				83D764BB1F72080C3B23ED20 /* KeyboardShortcutRecorder.swift */,
+				6A52A32703E953352D2D0AFC /* KeyboardShortcutSettings.swift */,
+				9E03CD76EB5C97A41BFB26A4 /* KeyboardShortcutSettingsFileStore.swift */,
 				1E9879F0E36EB69E3C34575B /* LandingsView.swift */,
 				E61A819BC2A10CA792DE8373 /* LiveRunDevToolsStore.swift */,
 				D98A79EE333E4C68340B7BD2 /* LiveRunHeaderView.swift */,
@@ -602,12 +617,14 @@
 				CF3DAFAD79C3A0526D76D66F /* SearchView.swift */,
 				3179D3684091E93D3787E91D /* SessionPersistenceStore.swift */,
 				815958F7C3477C3BA9F0F04E /* SessionStore.swift */,
+				921F53ED403B4D761F7E7DE9 /* ShortcutAction.swift */,
 				EC16B2F6350BA50C4DB25AE4 /* SidebarView.swift */,
 				93768B7AA7E507F56450F82E /* SlashCommands.swift */,
 				CAEC3D88A177B66B24C04D5A /* SmithersClient.swift */,
 				D924C71ACC5DDD8ECD6F4D6F /* SmithersHomepageWeb.swift */,
 				39A701BE26A2D3529816FB38 /* SmithersModels.swift */,
 				74495EDF1269E4DFA99893AC /* SQLBrowserView.swift */,
+				B16541C51EFF64EEE26CBBC7 /* StoredShortcut.swift */,
 				A6F2AD52B198BA505D208010 /* SurfaceNotificationStore.swift */,
 				4629F0B9B43F8AF7731E4919 /* TerminalView.swift */,
 				34FBCE6095A7B7A659B2B257 /* Theme.swift */,
@@ -664,6 +681,7 @@
 				98672C5D1554EEAC2A0B1419 /* FrameScrubberTests.swift */,
 				79DA76644A2887A32D103FFA /* GUINotificationsTests.swift */,
 				5FED589B5455608DF3A2AB30 /* HeartbeatStateTests.swift */,
+				F222F01D57F89DA5DD33D5C9 /* KeyboardShortcutSettingsTests.swift */,
 				6294F7B3AB91AB50DA97C578 /* LiveRunDevToolsStoreTests.swift */,
 				197BD7F637D122B505EC65BB /* LiveRunHeaderTests.swift */,
 				B81708C8F351548996C60CA6 /* LogsTabTests.swift */,
@@ -836,6 +854,7 @@
 				F494F0E663A500B127B69886 /* FrameScrubberTests.swift in Sources */,
 				3833139E83AD73C0168B5AF1 /* GUINotificationsTests.swift in Sources */,
 				27D677ED3BE858ED0F708CA6 /* HeartbeatStateTests.swift in Sources */,
+				4BCA21BC7DEFA1B840584151 /* KeyboardShortcutSettingsTests.swift in Sources */,
 				DFF39616E47A298CCBC8BC3D /* LiveRunDevToolsStoreTests.swift in Sources */,
 				2CC801095630E18DC0EC2B54 /* LiveRunHeaderTests.swift in Sources */,
 				F72DF3F7E7AEEF647ED4F51E /* LogsTabTests.swift in Sources */,
@@ -913,6 +932,9 @@
 				6897127ED83F7B3D1D2338BC /* IssuesView.swift in Sources */,
 				AEEC6E431D9EA5DC67A52AB0 /* JJHubWorkflowsView.swift in Sources */,
 				331C95A2B1855C27F87E75F7 /* KeyboardShortcutController.swift in Sources */,
+				928CBF72E70508EAECC6D1F0 /* KeyboardShortcutRecorder.swift in Sources */,
+				CAC75633BBEFE99E37D8467E /* KeyboardShortcutSettings.swift in Sources */,
+				6D11923653ACA24E24708811 /* KeyboardShortcutSettingsFileStore.swift in Sources */,
 				F0DD555FBE4AA4769F8C27CA /* LandingsView.swift in Sources */,
 				351FB31EF5C28073B6F85C94 /* LiveRunDevToolsStore.swift in Sources */,
 				43E33178F10FDA0EDD2BC457 /* LiveRunHeaderView.swift in Sources */,
@@ -945,11 +967,13 @@
 				DA3DF949D21B2E3AD5B25D74 /* SearchView.swift in Sources */,
 				AE8C48D9FB8ACE16F8D87DCA /* SessionPersistenceStore.swift in Sources */,
 				5F5FAD5924AB5CCD921AFEDE /* SessionStore.swift in Sources */,
+				9A1037F559DB6C1BAA59404A /* ShortcutAction.swift in Sources */,
 				B69731A09D6557560DF302FB /* SidebarView.swift in Sources */,
 				2B0E768B490FA302BB70231A /* SlashCommands.swift in Sources */,
 				D9706FC3A0379C52F44E0EE2 /* SmithersClient.swift in Sources */,
 				1DADE3E44C0F7C79E0E08728 /* SmithersHomepageWeb.swift in Sources */,
 				17FB38CE28BA917017F5F393 /* SmithersModels.swift in Sources */,
+				13F7BBFCCCD57BFC7A31E19F /* StoredShortcut.swift in Sources */,
 				B302459DF32292FB2AF9BD5E /* SurfaceNotificationStore.swift in Sources */,
 				92BDA2B86665F9C195BD22E7 /* TerminalView.swift in Sources */,
 				4B0E762863D273E68FC783E8 /* Theme.swift in Sources */,

@@ -412,6 +412,22 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         notifyChanged()
     }
 
+    func focusSurface(at index: Int) {
+        let ordered = orderedSurfaces
+        guard ordered.indices.contains(index) else { return }
+        focusSurface(ordered[index].id)
+    }
+
+    func focusAdjacentSurface(offset: Int) {
+        let ordered = orderedSurfaces
+        guard !ordered.isEmpty else { return }
+        let currentIndex = focusedSurfaceId.flatMap { focusedId in
+            ordered.firstIndex { $0.id == focusedId }
+        } ?? 0
+        let nextIndex = (currentIndex + offset + ordered.count) % ordered.count
+        focusSurface(ordered[nextIndex].id)
+    }
+
     func closeSurface(_ surfaceId: String) {
         guard surfaces[surfaceId] != nil else { return }
         guard surfaces.count > 1 else { return }

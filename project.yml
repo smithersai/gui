@@ -102,7 +102,12 @@ targets:
       - SmithersModels.swift
       - SurfaceNotificationStore.swift
       - TerminalView.swift
+      - StoredShortcut.swift
+      - ShortcutAction.swift
       - KeyboardShortcutController.swift
+      - KeyboardShortcutRecorder.swift
+      - KeyboardShortcutSettings.swift
+      - KeyboardShortcutSettingsFileStore.swift
       - TicketsView.swift
       - Theme.swift
       - TriggersView.swift

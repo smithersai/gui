@@ -80,6 +80,19 @@ final class SurfaceNotificationStore: ObservableObject {
         notificationCountBySurfaceId[surfaceId] = 0
     }
 
+    func flashFocusedSurface(duration: TimeInterval = 0.75) {
+        guard let focusedSurfaceId else {
+            AppNotifications.shared.post(title: "Workspace", message: "No focused pane to flash.", level: .info)
+            return
+        }
+
+        focusedIndicatorSurfaceIds.insert(focusedSurfaceId)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            self?.focusedIndicatorSurfaceIds.remove(focusedSurfaceId)
+        }
+    }
+
     func markWorkspaceRead(_ workspaceId: String) {
         let surfaceIds = surfaceWorkspaceIds
             .filter { $0.value == workspaceId }
