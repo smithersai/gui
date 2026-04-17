@@ -1,5 +1,12 @@
 .build/
+build/
+node_modules/
+.alchemy/
+.env
+.env.local
 *.db
 *.db-shm
 *.db-wal
 run-*.log
+vendor/
+.claude/scheduled_tasks.lock
