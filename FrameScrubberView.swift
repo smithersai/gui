@@ -115,7 +115,13 @@ struct FrameScrubberView: View {
 
     private var historicalBannerText: String? {
         guard let frameNo = historicalFrameNo else { return nil }
-        return "Viewing frame \(frameNo) of \(store.latestFrameNo) (historical)."
+        let base = "Viewing frame \(frameNo) of \(store.latestFrameNo) (historical)."
+        let running = store.runningNodeCount
+        if running > 0 {
+            let suffix = running == 1 ? "1 task running at this frame." : "\(running) tasks running at this frame."
+            return "\(base) \(suffix)"
+        }
+        return base
     }
 
     var body: some View {
@@ -150,6 +156,23 @@ struct FrameScrubberView: View {
                     Text(text)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Theme.warning)
+                        .accessibilityIdentifier("scrubber.historical.banner.text")
+
+                    if store.runningNodeCount > 0 {
+                        HStack(spacing: 3) {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 9, weight: .bold))
+                            Text("\(store.runningNodeCount)")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        }
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Theme.accent.opacity(0.14))
+                        .cornerRadius(4)
+                        .accessibilityIdentifier("scrubber.historical.runningCount")
+                        .accessibilityLabel("\(store.runningNodeCount) tasks running at this frame")
+                    }
 
                     Spacer()
 

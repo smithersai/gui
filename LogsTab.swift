@@ -11,6 +11,12 @@ protocol ChatStreamProviding: AnyObject {
     func streamChat(runId: String) -> AsyncThrowingStream<SSEEvent, Error>
 }
 
+/// Historical transcript fetch. Used when a run is finished (no live SSE) and
+/// the Logs tab needs to render the recorded chat for a node.
+protocol ChatHistoryProviding: Sendable {
+    func getChatOutput(runId: String) async throws -> [ChatBlock]
+}
+
 @MainActor
 final class EmptyChatStreamProvider: ChatStreamProviding {
     static let shared = EmptyChatStreamProvider()
@@ -20,6 +26,11 @@ final class EmptyChatStreamProvider: ChatStreamProviding {
             continuation.finish()
         }
     }
+}
+
+final class EmptyChatHistoryProvider: ChatHistoryProviding, @unchecked Sendable {
+    static let shared = EmptyChatHistoryProvider()
+    func getChatOutput(runId: String) async throws -> [ChatBlock] { [] }
 }
 
 extension SmithersClient: ChatStreamProviding {
@@ -37,6 +48,12 @@ extension SmithersClient: ChatStreamProviding {
                 task.cancel()
             }
         }
+    }
+}
+
+extension SmithersClient: @preconcurrency ChatHistoryProviding {
+    func getChatOutput(runId: String) async throws -> [ChatBlock] {
+        try await self.getChatOutput(runId, port: SmithersClient.defaultHTTPTransportPort)
     }
 }
 
@@ -67,18 +84,22 @@ final class LogsTabModel: ObservableObject {
     private(set) var activeNodeId: String?
 
     private let streamProvider: ChatStreamProviding
+    private let historyProvider: ChatHistoryProviding
     private let pasteboard: TranscriptPasteboarding
 
     private var streamTask: Task<Void, Never>?
+    private var snapshotTask: Task<Void, Never>?
     private var merger = ChatBlockMerger()
     private var subscribedAt: Date?
 
     init(
         streamProvider: ChatStreamProviding,
+        historyProvider: ChatHistoryProviding = EmptyChatHistoryProvider.shared,
         pasteboard: TranscriptPasteboarding = SystemTranscriptPasteboard(),
         hideNoiseByDefault: Bool = true
     ) {
         self.streamProvider = streamProvider
+        self.historyProvider = historyProvider
         self.pasteboard = pasteboard
         hideNoise = hideNoiseByDefault
     }
@@ -161,10 +182,68 @@ final class LogsTabModel: ObservableObject {
 
         streamTask?.cancel()
         streamTask = nil
+        snapshotTask?.cancel()
+        snapshotTask = nil
         isStreaming = false
         subscribedAt = nil
         activeRunId = nil
         activeNodeId = nil
+    }
+
+    /// Loads a finished run's recorded transcript for a node. Used when the
+    /// run is no longer live so there's no SSE stream to subscribe to.
+    func loadSnapshot(runId: String, nodeId: String) {
+        guard !runId.isEmpty, !nodeId.isEmpty else {
+            deactivate(reason: "invalid_context")
+            return
+        }
+
+        if activeRunId == runId, activeNodeId == nodeId, snapshotTask != nil {
+            return
+        }
+
+        deactivate(reason: "switch_context")
+
+        activeRunId = runId
+        activeNodeId = nodeId
+        streamError = nil
+        merger.reset()
+        blocks = []
+
+        AppLogger.ui.debug("Logs snapshot fetch", metadata: [
+            "run_id": runId,
+            "node_id": nodeId,
+        ])
+
+        subscribedAt = Date()
+        isStreaming = false
+        let provider = historyProvider
+
+        snapshotTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let all = try await provider.getChatOutput(runId: runId)
+                guard !Task.isCancelled else { return }
+                guard self.activeRunId == runId, self.activeNodeId == nodeId else { return }
+
+                for block in all where Self.blockMatchesNode(block, nodeId: nodeId) {
+                    _ = self.merger.append(block)
+                }
+                self.blocks = self.merger.blocks
+                if self.followToBottom {
+                    self.requestScrollToBottom()
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                guard self.activeRunId == runId, self.activeNodeId == nodeId else { return }
+                self.streamError = "Couldn't load recorded transcript."
+                AppLogger.network.warning("Logs snapshot fetch failed", metadata: [
+                    "run_id": runId,
+                    "node_id": nodeId,
+                    "error": String(describing: error),
+                ])
+            }
+        }
     }
 
     func retryCurrentSubscription() {
@@ -172,7 +251,11 @@ final class LogsTabModel: ObservableObject {
               let nodeId = activeNodeId else {
             return
         }
-        activate(runId: runId, nodeId: nodeId)
+        if snapshotTask != nil || streamTask == nil {
+            loadSnapshot(runId: runId, nodeId: nodeId)
+        } else {
+            activate(runId: runId, nodeId: nodeId)
+        }
     }
 
     func userScrolledAwayFromBottom() {
@@ -307,12 +390,14 @@ struct LogsTab: View {
     init(
         store: LiveRunDevToolsStore,
         streamProvider: ChatStreamProviding = EmptyChatStreamProvider.shared,
+        historyProvider: ChatHistoryProviding = EmptyChatHistoryProvider.shared,
         pasteboard: TranscriptPasteboarding = SystemTranscriptPasteboard()
     ) {
         self.store = store
         _model = StateObject(
             wrappedValue: LogsTabModel(
                 streamProvider: streamProvider,
+                historyProvider: historyProvider,
                 pasteboard: pasteboard
             )
         )
@@ -351,6 +436,9 @@ struct LogsTab: View {
         .onChange(of: store.runId) { _, _ in
             activateSubscriptionIfPossible()
         }
+        .onChange(of: store.runStatus) { _, _ in
+            activateSubscriptionIfPossible()
+        }
         .onChange(of: model.followToBottom) { _, enabled in
             if enabled {
                 model.requestScrollToBottom()
@@ -369,6 +457,7 @@ struct LogsTab: View {
                 .toggleStyle(.switch)
                 .font(.system(size: 11))
                 .accessibilityIdentifier("logs.noiseToggle")
+                .help("Hide stderr, warnings, and timestamp-only log lines so only chat blocks remain.")
 
             Spacer()
 
@@ -504,7 +593,11 @@ struct LogsTab: View {
             return
         }
 
-        model.activate(runId: runId, nodeId: nodeId)
+        if store.isRunFinished {
+            model.loadSnapshot(runId: runId, nodeId: nodeId)
+        } else {
+            model.activate(runId: runId, nodeId: nodeId)
+        }
     }
 
     private func handleBottomOffset(_ markerBottom: CGFloat, viewportHeight: CGFloat) {

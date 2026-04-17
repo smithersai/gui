@@ -13,6 +13,8 @@ struct LiveRunHeaderView: View {
     var onHijack: (() -> Void)?
     var onOpenLogs: (() -> Void)?
     var onRefresh: (() -> Void)?
+    var onOpenWorkflow: (() -> Void)?
+    var smithersVersion: String?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -25,10 +27,23 @@ struct LiveRunHeaderView: View {
             )
 
             HStack(spacing: 4) {
-                Text(workflowName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
+                if let onOpenWorkflow {
+                    Button(action: onOpenWorkflow) {
+                        Text(workflowName)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .underline()
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open workflow")
+                    .accessibilityIdentifier("liveRun.header.openWorkflow")
+                } else {
+                    Text(workflowName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                }
 
                 Text(runId)
                     .font(.system(size: 11, design: .monospaced))
@@ -77,6 +92,10 @@ struct LiveRunHeaderView: View {
             Divider()
             if onCancel != nil {
                 Button("Cancel Run", role: .destructive) { onCancel?() }
+            }
+            if let smithersVersion {
+                Divider()
+                Text("Smithers \(smithersVersion)")
             }
         } label: {
             Image(systemName: "ellipsis.circle")

@@ -3,6 +3,12 @@ import SwiftUI
 struct PropsTableView: View {
     let props: [String: JSONValue]
     let orderedKeys: [String]
+    var onOpenPrompt: (() -> Void)? = nil
+
+    private static let promptKeys: Set<String> = [
+        "prompt", "promptId", "prompt_id", "promptPath", "prompt_path",
+        "promptName", "prompt_name", "promptKey", "prompt_key", "text",
+    ]
 
     init(props: [String: JSONValue]) {
         self.props = props
@@ -12,6 +18,12 @@ struct PropsTableView: View {
     init(props: [String: JSONValue], orderedKeys: [String]) {
         self.props = props
         self.orderedKeys = orderedKeys
+    }
+
+    init(props: [String: JSONValue], onOpenPrompt: (() -> Void)?) {
+        self.props = props
+        self.orderedKeys = props.keys.sorted()
+        self.onOpenPrompt = onOpenPrompt
     }
 
     var body: some View {
@@ -49,6 +61,18 @@ struct PropsTableView: View {
 
             PropValueView(value: value)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let onOpenPrompt, Self.promptKeys.contains(key) {
+                Button(action: onOpenPrompt) {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .help("Open prompts")
+                .accessibilityLabel("Open prompt page")
+                .accessibilityIdentifier("inspector.props.openPrompt.\(key)")
+            }
 
             Button {
                 copyValue(value)

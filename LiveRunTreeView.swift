@@ -29,6 +29,12 @@ struct LiveRunTreeView: View {
         .onChange(of: store.seq) { newSeq in
             rebuildIndices(seq: newSeq)
         }
+        .onChange(of: store.displayedFrameNo) { _ in
+            // Historical scrubbing can land on a frame whose seq matches the previous
+            // displayed seq (e.g. when `seq == frameNo`). Rebuild indices so the
+            // running-row auto-expand fires for the new per-frame state regardless.
+            rebuildIndices(seq: store.seq, force: true)
+        }
         .onChange(of: store.selectedNodeId) { _, newSelectedNodeId in
             guard let newSelectedNodeId else { return }
             expandPathToSelectedNode(newSelectedNodeId)
@@ -225,8 +231,15 @@ struct LiveRunTreeView: View {
 
     // MARK: - Index Rebuilding
 
-    private func rebuildIndices(seq: Int) {
-        guard seq != lastProcessedSeq else { return }
+    /// Rebuild the failure/search indices and re-run the running-row auto-expand.
+    ///
+    /// - Parameter force: when true, bypass the `seq == lastProcessedSeq` short-circuit.
+    ///   The historical-scrubber path uses this because different frames can share a seq
+    ///   under some replay conditions (and always share it when the frameNo hasn't moved
+    ///   but the scrub re-fetches) — we still want to re-expand running paths when the
+    ///   displayed frame changes.
+    private func rebuildIndices(seq: Int, force: Bool = false) {
+        if !force && seq == lastProcessedSeq { return }
         lastProcessedSeq = seq
 
         let signpostState = AppLogger.performance.beginInterval("treeIndexRebuild")

@@ -197,16 +197,20 @@ final class DiffTabModel: ObservableObject {
 struct DiffTab: View {
     let runId: String?
     let selectedNode: DevToolsNode?
+    var isExpanded: Bool = false
 
     @StateObject private var model: DiffTabModel
+    @State private var modalPresented = false
 
     init(
         runId: String?,
         selectedNode: DevToolsNode?,
-        client: any NodeDiffFetching = EmptyNodeDiffFetcher.shared
+        client: any NodeDiffFetching = EmptyNodeDiffFetcher.shared,
+        isExpanded: Bool = false
     ) {
         self.runId = runId
         self.selectedNode = selectedNode
+        self.isExpanded = isExpanded
         _model = StateObject(wrappedValue: DiffTabModel(client: client))
     }
 
@@ -223,6 +227,9 @@ struct DiffTab: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if !isExpanded, request != nil, !model.files.isEmpty {
+                expandToolbar
+            }
             if let request {
                 content(request: request)
             } else {
@@ -248,6 +255,40 @@ struct DiffTab: View {
         .onDisappear {
             model.cancel()
         }
+        .sheet(isPresented: $modalPresented) {
+            DiffModalView(model: model) {
+                modalPresented = false
+            }
+            .frame(minWidth: 900, idealWidth: 1200, minHeight: 600, idealHeight: 800)
+        }
+    }
+
+    private var expandToolbar: some View {
+        HStack(spacing: 6) {
+            Spacer()
+            Button {
+                modalPresented = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 10))
+                    Text("Expand")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(Theme.textSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Theme.inputBg)
+                .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+            .help("Open diff in a larger window")
+            .accessibilityIdentifier("diffTab.expand")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Theme.surface2.opacity(0.5))
+        .overlay(Rectangle().fill(Theme.border).frame(height: 1), alignment: .bottom)
     }
 
     @ViewBuilder
@@ -398,5 +439,62 @@ struct DiffTab: View {
             }
             return "_"
         })
+    }
+}
+
+struct DiffModalView: View {
+    @ObservedObject var model: DiffTabModel
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Diff")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Theme.textPrimary)
+                if !model.files.isEmpty {
+                    Text("\(model.files.count) files")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                Spacer()
+                Button("Done", action: onClose)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Theme.accent)
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("diffTab.modal.close")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Theme.surface2)
+            .overlay(Rectangle().fill(Theme.border).frame(height: 1), alignment: .bottom)
+
+            if model.files.isEmpty {
+                Text("No file changes.")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(model.files) { file in
+                            DiffFileView(
+                                file: file,
+                                isExpanded: Binding(
+                                    get: { model.isFileExpanded(file.id) },
+                                    set: { model.setFileExpanded(file.id, expanded: $0) }
+                                )
+                            )
+                            .id(file.id)
+                        }
+                    }
+                    .padding(14)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.surface1)
+        .accessibilityIdentifier("diffTab.modal")
     }
 }

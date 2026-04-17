@@ -19,8 +19,17 @@ struct TreeRowView: View {
         extractState(from: node)
     }
 
+    /// Running-node cursor: show a visible marker only on leaf task nodes that are
+    /// actually in-flight at the current frame. Structural parents get the "running"
+    /// label via rollup but we don't want to paint every ancestor — the glow should
+    /// pinpoint discrete work units.
+    private var showsRunningCursor: Bool {
+        state == .running && node.children.isEmpty
+    }
+
     var body: some View {
         HStack(spacing: 4) {
+            runningCursor
             chevron
             tagLabel
             propsText
@@ -32,6 +41,23 @@ struct TreeRowView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(rowBackground)
+        .overlay(alignment: .leading) {
+            // Subtle left-edge accent bar on running rows — separate from the state
+            // badge label so the row reads as "currently-executing" at a glance.
+            if showsRunningCursor {
+                Rectangle()
+                    .fill(Theme.accent)
+                    .frame(width: 2)
+                    .opacity(reduceMotion ? 1.0 : pulseOpacity)
+                    .animation(
+                        reduceMotion
+                            ? .default
+                            : .easeInOut(duration: 1.0).repeatForever(autoreverses: true),
+                        value: showsRunningCursor
+                    )
+                    .accessibilityHidden(true)
+            }
+        }
         .opacity(isDimmed ? 0.35 : 1.0)
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
@@ -40,6 +66,30 @@ struct TreeRowView: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityValue(accessibilityValueText)
         .accessibilityIdentifier("tree.row.\(node.id)")
+    }
+
+    /// Small triangle glyph that appears just before the tag on rows whose state
+    /// is `running`. Visible cue separate from the "Running" badge label so a user
+    /// scanning the tree can immediately spot what's currently executing even when
+    /// the badge column is offscreen.
+    @ViewBuilder
+    private var runningCursor: some View {
+        if showsRunningCursor {
+            Image(systemName: "play.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(Theme.accent)
+                .frame(width: 10)
+                .opacity(reduceMotion ? 1.0 : pulseOpacity)
+                .animation(
+                    reduceMotion
+                        ? .default
+                        : .easeInOut(duration: 1.0).repeatForever(autoreverses: true),
+                    value: showsRunningCursor
+                )
+                .accessibilityIdentifier("tree.row.\(node.id).runningCursor")
+        } else {
+            Color.clear.frame(width: 10, height: 10)
+        }
     }
 
     @ViewBuilder
@@ -130,6 +180,9 @@ struct TreeRowView: View {
         let summary = keyPropsSummary(for: node)
         if !summary.isEmpty { parts.append(summary) }
         parts.append(state.label)
+        if showsRunningCursor {
+            parts.append("currently running at this frame")
+        }
         if let iteration = node.task?.iteration {
             parts.append("iteration \(iteration)")
         }

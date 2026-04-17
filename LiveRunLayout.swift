@@ -112,18 +112,35 @@ struct LiveRunLayout<TreePane: View, InspectorPane: View>: View {
     }
 
     private var narrowLayout: some View {
-        treePane()
-            .sheet(
-                isPresented: Binding(
-                    get: { inspectorSheetPresented && mode == .narrow && hasSelection },
-                    set: { inspectorSheetPresented = $0 }
-                )
-            ) {
+        ZStack(alignment: .center) {
+            treePane()
+
+            if inspectorSheetPresented && mode == .narrow && hasSelection {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            inspectorSheetPresented = false
+                        }
+                    }
+                    .transition(.opacity)
+                    .accessibilityIdentifier("liveRun.layout.inspectorSheet.dimmer")
+
                 inspectorPane()
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
+                    .frame(maxWidth: 480, maxHeight: 600)
+                    .background(Theme.surface1)
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Theme.border, lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.3), radius: 20, x: 0, y: 10)
+                    .padding(24)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     .accessibilityIdentifier("liveRun.layout.inspectorSheet")
             }
+        }
+        .animation(.easeOut(duration: 0.15), value: inspectorSheetPresented)
     }
 
     private func divider(totalWidth: CGFloat) -> some View {

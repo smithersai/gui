@@ -10,6 +10,8 @@ struct LiveRunView: View {
     let runId: String
     let nodeId: String?
     var onOpenTerminalCommand: ((String, String, String) -> Void)? = nil
+    var onOpenWorkflow: ((String) -> Void)? = nil
+    var onOpenPrompt: (() -> Void)? = nil
     var onClose: () -> Void = {}
 
     @StateObject private var store: LiveRunDevToolsStore
@@ -40,6 +42,7 @@ struct LiveRunView: View {
     @State private var layoutMode: LiveRunLayoutMode = .wide
 
     @State private var pendingDeepLinkSelection = true
+    @State private var orchestratorVersion: String?
 
     private var useLiveRunTreeHarness: Bool {
         UITestSupport.isEnabled && ProcessInfo.processInfo.environment["SMITHERS_GUI_UITEST_TREE"] == "1"
@@ -78,12 +81,16 @@ struct LiveRunView: View {
         runId: String,
         nodeId: String?,
         onOpenTerminalCommand: ((String, String, String) -> Void)? = nil,
+        onOpenWorkflow: ((String) -> Void)? = nil,
+        onOpenPrompt: (() -> Void)? = nil,
         onClose: @escaping () -> Void = {}
     ) {
         self.smithers = smithers
         self.runId = runId
         self.nodeId = nodeId
         self.onOpenTerminalCommand = onOpenTerminalCommand
+        self.onOpenWorkflow = onOpenWorkflow
+        self.onOpenPrompt = onOpenPrompt
         self.onClose = onClose
         _store = StateObject(wrappedValue: LiveRunDevToolsStore(streamProvider: smithers))
     }
@@ -183,7 +190,11 @@ struct LiveRunView: View {
                         store.connect(runId: runId)
                         await refreshRunSummary()
                     }
-                }
+                },
+                onOpenWorkflow: onOpenWorkflow.map { handler in
+                    { handler(workflowName) }
+                },
+                smithersVersion: orchestratorVersion
             )
 
             FrameScrubberView(store: store) { frameNo in
@@ -223,7 +234,9 @@ struct LiveRunView: View {
                     store: store,
                     selectedTab: $selectedTab,
                     outputProvider: smithers,
-                    logsStreamProvider: smithers
+                    logsStreamProvider: smithers,
+                    logsHistoryProvider: smithers,
+                    onOpenPrompt: onOpenPrompt
                 )
             }
             .historicalOverlay(active: store.mode.isHistorical)
@@ -389,6 +402,11 @@ struct LiveRunView: View {
         await refreshRunSummary()
         startPollingRunSummary()
         applyDeepLinkSelectionIfNeeded()
+        if orchestratorVersion == nil {
+            Task { @MainActor in
+                orchestratorVersion = await smithers.getOrchestratorVersion()
+            }
+        }
     }
 
     private func teardown() {

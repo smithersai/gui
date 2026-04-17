@@ -6,6 +6,8 @@ struct NodeInspectorView: View {
     @Binding var selectedTab: InspectorTab
     private let outputProvider: NodeOutputProvider
     private let logsStreamProvider: ChatStreamProviding
+    private let logsHistoryProvider: ChatHistoryProviding
+    var onOpenPrompt: (() -> Void)? = nil
 
     @State private var buildStart: CFAbsoluteTime = 0
 
@@ -14,12 +16,16 @@ struct NodeInspectorView: View {
         store: LiveRunDevToolsStore,
         selectedTab: Binding<InspectorTab>,
         outputProvider: NodeOutputProvider? = nil,
-        logsStreamProvider: ChatStreamProviding? = nil
+        logsStreamProvider: ChatStreamProviding? = nil,
+        logsHistoryProvider: ChatHistoryProviding? = nil,
+        onOpenPrompt: (() -> Void)? = nil
     ) {
         self.store = store
         _selectedTab = selectedTab
         self.outputProvider = outputProvider ?? SmithersClient()
         self.logsStreamProvider = logsStreamProvider ?? EmptyChatStreamProvider.shared
+        self.logsHistoryProvider = logsHistoryProvider ?? EmptyChatHistoryProvider.shared
+        self.onOpenPrompt = onOpenPrompt
     }
 
     private var node: DevToolsNode? {
@@ -142,7 +148,7 @@ struct NodeInspectorView: View {
                 .foregroundColor(Theme.textTertiary)
                 .textCase(.uppercase)
 
-            PropsTableView(props: node.props)
+            PropsTableView(props: node.props, onOpenPrompt: onOpenPrompt)
         }
         .padding(12)
     }
@@ -177,7 +183,8 @@ struct NodeInspectorView: View {
         case .logs:
             LogsTab(
                 store: store,
-                streamProvider: logsStreamProvider
+                streamProvider: logsStreamProvider,
+                historyProvider: logsHistoryProvider
             )
                 .accessibilityIdentifier("inspector.tab.content.logs")
         }
