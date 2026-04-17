@@ -142,12 +142,12 @@ final class ChangesE2ETests: SmithersGUIUITestCase {
 
 final class TerminalE2ETests: SmithersGUIUITestCase {
     private func terminalTabCount() -> Int {
-        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "tab.terminal:")
+        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "workspace.terminal:")
         return app.buttons.matching(predicate).count
     }
 
     private func terminalTabIdentifiers() -> Set<String> {
-        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "tab.terminal:")
+        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "workspace.terminal:")
         let tabs = app.buttons.matching(predicate).allElementsBoundByIndex
         return Set(tabs.map(\.identifier))
     }
@@ -199,7 +199,7 @@ final class TerminalE2ETests: SmithersGUIUITestCase {
         navigate(to: "Dashboard", expectedViewIdentifier: "view.dashboard")
 
         // Navigate back by clicking the terminal tab in the sidebar
-        let terminalTab = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tab.terminal:")).firstMatch
+        let terminalTab = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "workspace.terminal:")).firstMatch
         XCTAssertTrue(terminalTab.waitForExistence(timeout: 5))
         terminalTab.click()
         XCTAssertTrue(element("view.terminal").waitForExistence(timeout: 5))

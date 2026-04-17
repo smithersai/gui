@@ -52,10 +52,10 @@ struct TerminalWorkspaceView: View {
         .background(Theme.base)
         .onAppear {
             if let focusedSurfaceId = workspace.focusedSurfaceId {
-                notifications.setFocusedSurface(focusedSurfaceId, workspaceId: workspace.id)
+                notifications.setFocusedSurface(focusedSurfaceId.rawValue, workspaceId: workspace.id.rawValue)
             }
         }
-        .accessibilityIdentifier("terminalWorkspace.root")
+        .accessibilityIdentifier("workspace.terminal.root")
     }
 }
 
@@ -107,7 +107,7 @@ private struct WorkspaceSurfaceContainer: View {
     }
 
     private var needsAttention: Bool {
-        notifications.hasVisibleIndicator(surfaceId: surface.id)
+        notifications.hasVisibleIndicator(surfaceId: surface.id.rawValue)
     }
 
     private var ringColor: Color {
@@ -138,7 +138,7 @@ private struct WorkspaceSurfaceContainer: View {
         .onTapGesture {
             workspace.focusSurface(surface.id)
         }
-        .accessibilityIdentifier("workspace.surface.\(surface.id)")
+        .accessibilityIdentifier("surface.\(surface.id.rawValue)")
     }
 
     private var paneHeader: some View {
@@ -167,7 +167,7 @@ private struct WorkspaceSurfaceContainer: View {
                 Circle()
                     .fill(Theme.danger)
                     .frame(width: 7, height: 7)
-                    .accessibilityIdentifier("workspace.surface.unread.\(surface.id)")
+                    .accessibilityIdentifier("surface.unread.\(surface.id.rawValue)")
             }
 
             WorkspaceToolbarButton(title: "Split Right", systemName: "rectangle.split.1x2") {
@@ -194,7 +194,7 @@ private struct WorkspaceSurfaceContainer: View {
             WorkspaceToolbarButton(title: "Unread", systemName: "bell.badge") {
                 jumpToLatestUnread()
             }
-            .disabled(notifications.latestUnreadSurface(in: workspace.id) == nil)
+            .disabled(notifications.latestUnreadSurface(in: workspace.id.rawValue) == nil)
             .appKeyboardShortcut(.jumpToUnread)
             .accessibilityIdentifier("workspace.surface.unreadBtn.\(surface.id)")
 
@@ -205,7 +205,7 @@ private struct WorkspaceSurfaceContainer: View {
                     workspace.closeSurface(surface.id)
                 }
             }
-            .accessibilityIdentifier("workspace.surface.close.\(surface.id)")
+            .accessibilityIdentifier("workspace.surface.close.\(surface.id.rawValue)")
         }
         .padding(.horizontal, 8)
         .frame(height: 38)
@@ -217,7 +217,7 @@ private struct WorkspaceSurfaceContainer: View {
     }
 
     private func jumpToLatestUnread() {
-        guard let surfaceId = notifications.latestUnreadSurface(in: workspace.id) else { return }
+        guard let surfaceId = notifications.latestUnreadSurface(in: workspace.id.rawValue) else { return }
         workspace.focusSurface(surfaceId)
     }
 
@@ -226,7 +226,7 @@ private struct WorkspaceSurfaceContainer: View {
         switch surface.kind {
         case .terminal:
             TerminalView(
-                sessionId: surface.id,
+                sessionId: surface.id.rawValue,
                 command: terminalCommand(for: surface),
                 workingDirectory: surface.terminalWorkingDirectory,
                 onClose: {
@@ -243,14 +243,14 @@ private struct WorkspaceSurfaceContainer: View {
                 },
                 onNotification: { title, body in
                     SurfaceNotificationStore.shared.addNotification(
-                        surfaceId: surface.id,
+                        surfaceId: surface.id.rawValue,
                         title: title,
                         body: body
                     )
                 },
                 onBell: {
                     SurfaceNotificationStore.shared.addNotification(
-                        surfaceId: surface.id,
+                        surfaceId: surface.id.rawValue,
                         title: surface.title,
                         body: "Terminal bell"
                     )
@@ -265,7 +265,7 @@ private struct WorkspaceSurfaceContainer: View {
                     workspace.splitFocused(axis: .horizontal, kind: .browser)
                 },
                 onJumpToUnread: {
-                    if let surfaceId = SurfaceNotificationStore.shared.latestUnreadSurface(in: workspace.id) {
+                    if let surfaceId = SurfaceNotificationStore.shared.latestUnreadSurface(in: workspace.id.rawValue) {
                         workspace.focusSurface(surfaceId)
                     }
                 }

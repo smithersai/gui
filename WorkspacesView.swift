@@ -6,7 +6,7 @@ struct WorkspacesView: View {
     @State private var snapshots: [WorkspaceSnapshot] = []
     @State private var isLoading = true
     @State private var error: String?
-    @State private var tab: WSTab = .workspaces
+    @State private var selectedMode: WorkspaceListMode = .workspaces
     @State private var loadGeneration = 0
     @State private var showCreate = false
     @State private var newName = ""
@@ -16,7 +16,7 @@ struct WorkspacesView: View {
     @State private var deleteSnapshotTarget: String?
     @State private var selectedWorkspaceID: String?
 
-    enum WSTab: String, CaseIterable {
+    enum WorkspaceListMode: String, CaseIterable {
         case workspaces = "Workspaces"
         case snapshots = "Snapshots"
     }
@@ -25,29 +25,29 @@ struct WorkspacesView: View {
         VStack(spacing: 0) {
             header
 
-            // Tabs
+            // Modes
             HStack(spacing: 0) {
-                ForEach(WSTab.allCases, id: \.self) { t in
+                ForEach(WorkspaceListMode.allCases, id: \.self) { mode in
                     Button(action: {
-                        tab = t
-                        // Bug 1: Clear stale data from the other tab
-                        if t == .workspaces {
+                        selectedMode = mode
+                        // Bug 1: Clear stale data from the other mode
+                        if mode == .workspaces {
                             snapshots = []
                         } else {
                             workspaces = []
                         }
                         Task { await loadData() }
                     }) {
-                        Text(t.rawValue)
-                            .font(.system(size: 12, weight: tab == t ? .semibold : .regular))
-                            .foregroundColor(tab == t ? Theme.accent : Theme.textSecondary)
+                        Text(mode.rawValue)
+                            .font(.system(size: 12, weight: selectedMode == mode ? .semibold : .regular))
+                            .foregroundColor(selectedMode == mode ? Theme.accent : Theme.textSecondary)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("workspaces.tab.\(t.rawValue)")
+                    .accessibilityIdentifier("workspaces.mode.\(mode.rawValue)")
                     .overlay(alignment: .bottom) {
-                        if tab == t {
+                        if selectedMode == mode {
                             Rectangle().fill(Theme.accent).frame(height: 2)
                         }
                     }
@@ -59,7 +59,7 @@ struct WorkspacesView: View {
             if let error {
                 errorView(error)
             } else {
-                switch tab {
+                switch selectedMode {
                 case .workspaces: workspacesList
                 case .snapshots: snapshotsList
                 }
@@ -437,13 +437,13 @@ struct WorkspacesView: View {
     private func loadData() async {
         loadGeneration += 1
         let generation = loadGeneration
-        let capturedTab = tab
+        let capturedMode = selectedMode
         isLoading = true
         error = nil
         do {
-            if capturedTab == .workspaces {
+            if capturedMode == .workspaces {
                 let fetched = try await smithers.listWorkspaces()
-                guard generation == loadGeneration, tab == capturedTab else { return }
+                guard generation == loadGeneration, selectedMode == capturedMode else { return }
                 workspaces = fetched
                 if let selectedWorkspaceID,
                    !fetched.contains(where: { $0.id == selectedWorkspaceID }) {
@@ -451,7 +451,7 @@ struct WorkspacesView: View {
                 }
             } else {
                 let fetched = try await smithers.listWorkspaceSnapshots()
-                guard generation == loadGeneration, tab == capturedTab else { return }
+                guard generation == loadGeneration, selectedMode == capturedMode else { return }
                 snapshots = fetched
             }
         } catch {
@@ -538,7 +538,7 @@ struct WorkspacesView: View {
                 name: Self.restoredWorkspaceName(for: snap),
                 snapshotId: snap.id
             )
-            tab = .workspaces
+            selectedMode = .workspaces
             selectWorkspace(workspace, insertAtTop: true)
         } catch {
             self.error = error.localizedDescription
@@ -556,7 +556,7 @@ struct WorkspacesView: View {
         defer { actionInFlight.remove(snap.id) }
         do {
             let workspace = try await smithers.viewWorkspace(workspaceId)
-            tab = .workspaces
+            selectedMode = .workspaces
             selectWorkspace(workspace, insertAtTop: true)
         } catch {
             self.error = error.localizedDescription

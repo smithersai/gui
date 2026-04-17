@@ -38,7 +38,7 @@ final class CommandPaletteProviderTests: XCTestCase {
 
         let items = CommandPaletteBuilder.items(for: "runs", context: context)
         XCTAssertFalse(items.isEmpty)
-        XCTAssertEqual(items.first?.id, "tab:chat:session-1")
+        XCTAssertEqual(items.first?.id, "workspace:chat:session-1")
     }
 
     func testRouteProviderIncludesExpectedDestinations() {

@@ -80,7 +80,7 @@ class SmithersGUIUITestCase: XCTestCase {
     }
 
     func sessionButtonCount() -> Int {
-        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "tab.chat:")
+        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "workspace.chat:")
         return app.buttons.matching(predicate).count
     }
 }

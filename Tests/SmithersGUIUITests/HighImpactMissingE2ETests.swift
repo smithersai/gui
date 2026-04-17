@@ -161,7 +161,7 @@ final class HighImpactMissingE2ETests: SmithersGUIUITestCase {
 
         waitForElement("workflows.runButton").click()
         XCTAssertTrue(element("view.liveRun").waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tab.run:")).count, 1)
+        XCTAssertGreaterThanOrEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "workspace.run:")).count, 1)
     }
 
     func testRunsLiveChatActionOpensLiveRunTab() {
@@ -169,7 +169,7 @@ final class HighImpactMissingE2ETests: SmithersGUIUITestCase {
 
         waitForElement("runs.chat.ui-run-active-001").click()
         XCTAssertTrue(element("view.liveRun").waitForExistence(timeout: 5))
-        XCTAssertGreaterThanOrEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tab.run:")).count, 1)
+        XCTAssertGreaterThanOrEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "workspace.run:")).count, 1)
     }
 
     func testRunsSnapshotsActionOpensAndClosesSnapshotsSheet() {

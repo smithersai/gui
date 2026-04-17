@@ -78,7 +78,7 @@ final class WorkspacesTabTests: XCTestCase {
     /// WORKSPACES_TAB_WORKSPACES_SNAPSHOTS: Two tabs exist -- "Workspaces" and "Snapshots".
     @MainActor
     func test_tabEnum_hasTwoCases() {
-        let cases = WorkspacesView.WSTab.allCases
+        let cases = WorkspacesView.WorkspaceListMode.allCases
         XCTAssertEqual(cases.count, 2)
         XCTAssertEqual(cases[0].rawValue, "Workspaces")
         XCTAssertEqual(cases[1].rawValue, "Snapshots")
@@ -108,7 +108,7 @@ final class WorkspacesTabTests: XCTestCase {
         // loadData() at line 313-326 only loads data for the current tab,
         // but never clears the other tab's array. Stale data persists.
         // This is documented as a bug.
-        let cases = WorkspacesView.WSTab.allCases
+        let cases = WorkspacesView.WorkspaceListMode.allCases
         XCTAssertEqual(cases.count, 2, "Both tabs exist but switching does not clear stale data")
     }
 }
@@ -666,7 +666,7 @@ final class WorkspacesViewBugDocumentation: XCTestCase {
     /// .task will load whichever tab is currently selected, which could be stale.
     @MainActor
     func test_taskOnAppear_defaultsToWorkspacesTab() {
-        let tab = WorkspacesView.WSTab.workspaces
+        let tab = WorkspacesView.WorkspaceListMode.workspaces
         XCTAssertEqual(tab.rawValue, "Workspaces", "Default tab is workspaces")
     }
 

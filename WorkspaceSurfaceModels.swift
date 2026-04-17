@@ -24,20 +24,57 @@ enum WorkspaceSplitAxis: String, Hashable, Codable {
     case vertical
 }
 
+enum Placement: Hashable {
+    case beforeSurface(SurfaceID)
+    case afterSurface(SurfaceID)
+    case beforeWorkspace(WorkspaceID)
+    case afterWorkspace(WorkspaceID)
+    case start
+    case end
+}
+
+enum Anchor: Hashable {
+    case beforeSurface(SurfaceID)
+    case afterSurface(SurfaceID)
+    case beforeWorkspace(WorkspaceID)
+    case afterWorkspace(WorkspaceID)
+}
+
+enum WorkspaceSurfacePlacementError: Error, Equatable {
+    case surfaceNotFound
+    case paneNotFound
+    case workspaceNotFound
+    case windowNotFound
+    case invalidPlacement
+    case cannotMoveOnlySurface
+}
+
+struct WorkspaceSurfacePlacementResult: Equatable {
+    let windowID: WindowID
+    let workspaceID: WorkspaceID
+    let paneID: PaneID
+    let surfaceID: SurfaceID
+
+    var window_id: WindowID { windowID }
+    var workspace_id: WorkspaceID { workspaceID }
+    var pane_id: PaneID { paneID }
+    var surface_id: SurfaceID { surfaceID }
+}
+
 indirect enum WorkspaceLayoutNode: Hashable, Codable {
-    case leaf(String)
-    case split(id: String, axis: WorkspaceSplitAxis, first: WorkspaceLayoutNode, second: WorkspaceLayoutNode)
+    case leaf(SurfaceID)
+    case split(id: PaneID, axis: WorkspaceSplitAxis, first: WorkspaceLayoutNode, second: WorkspaceLayoutNode)
 
     var id: String {
         switch self {
         case .leaf(let surfaceId):
-            return "leaf-\(surfaceId)"
+            return "leaf-\(surfaceId.rawValue)"
         case .split(let id, _, _, _):
-            return id
+            return id.rawValue
         }
     }
 
-    var surfaceIds: [String] {
+    var surfaceIds: [SurfaceID] {
         switch self {
         case .leaf(let surfaceId):
             return [surfaceId]
@@ -46,7 +83,7 @@ indirect enum WorkspaceLayoutNode: Hashable, Codable {
         }
     }
 
-    var firstSurfaceId: String? {
+    var firstSurfaceId: SurfaceID? {
         switch self {
         case .leaf(let surfaceId):
             return surfaceId
@@ -55,11 +92,11 @@ indirect enum WorkspaceLayoutNode: Hashable, Codable {
         }
     }
 
-    func contains(surfaceId: String) -> Bool {
+    func contains(surfaceId: SurfaceID) -> Bool {
         surfaceIds.contains(surfaceId)
     }
 
-    func replacingLeaf(_ surfaceId: String, with replacement: WorkspaceLayoutNode) -> WorkspaceLayoutNode {
+    func replacingLeaf(_ surfaceId: SurfaceID, with replacement: WorkspaceLayoutNode) -> WorkspaceLayoutNode {
         switch self {
         case .leaf(let currentId):
             return currentId == surfaceId ? replacement : self
@@ -73,7 +110,7 @@ indirect enum WorkspaceLayoutNode: Hashable, Codable {
         }
     }
 
-    func removingLeaf(_ surfaceId: String) -> WorkspaceLayoutNode? {
+    func removingLeaf(_ surfaceId: SurfaceID) -> WorkspaceLayoutNode? {
         switch self {
         case .leaf(let currentId):
             return currentId == surfaceId ? nil : self
@@ -93,7 +130,14 @@ indirect enum WorkspaceLayoutNode: Hashable, Codable {
     }
 
     static func makeSplit(axis: WorkspaceSplitAxis, first: WorkspaceLayoutNode, second: WorkspaceLayoutNode) -> WorkspaceLayoutNode {
-        .split(id: UUID().uuidString, axis: axis, first: first, second: second)
+        .split(id: PaneID(), axis: axis, first: first, second: second)
+    }
+
+    static func fromOrderedSurfaceIDs(_ surfaceIds: [SurfaceID], axis: WorkspaceSplitAxis = .horizontal) -> WorkspaceLayoutNode? {
+        guard let first = surfaceIds.first else { return nil }
+        return surfaceIds.dropFirst().reduce(WorkspaceLayoutNode.leaf(first)) { partial, surfaceId in
+            WorkspaceLayoutNode.makeSplit(axis: axis, first: partial, second: .leaf(surfaceId))
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -115,10 +159,10 @@ indirect enum WorkspaceLayoutNode: Hashable, Codable {
         let kind = try container.decode(Kind.self, forKey: .kind)
         switch kind {
         case .leaf:
-            self = .leaf(try container.decode(String.self, forKey: .surfaceId))
+            self = .leaf(try container.decode(SurfaceID.self, forKey: .surfaceId))
         case .split:
             self = .split(
-                id: try container.decode(String.self, forKey: .id),
+                id: try container.decode(PaneID.self, forKey: .id),
                 axis: try container.decode(WorkspaceSplitAxis.self, forKey: .axis),
                 first: try container.decode(WorkspaceLayoutNode.self, forKey: .first),
                 second: try container.decode(WorkspaceLayoutNode.self, forKey: .second)
@@ -143,7 +187,7 @@ indirect enum WorkspaceLayoutNode: Hashable, Codable {
 }
 
 struct WorkspaceSurface: Identifiable, Hashable, Codable {
-    let id: String
+    let id: SurfaceID
     var kind: WorkspaceSurfaceKind
     var title: String
     var subtitle: String
@@ -156,7 +200,7 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
     var tmuxSessionName: String?
 
     static func terminal(
-        id: String = UUID().uuidString,
+        id: SurfaceID = SurfaceID(),
         workingDirectory: String? = nil,
         command: String? = nil,
         backend: TerminalBackend = .tmux,
@@ -178,7 +222,7 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
         )
     }
 
-    static func browser(id: String = UUID().uuidString, urlString: String? = nil) -> WorkspaceSurface {
+    static func browser(id: SurfaceID = SurfaceID(), urlString: String? = nil) -> WorkspaceSurface {
         WorkspaceSurface(
             id: id,
             kind: .browser,
@@ -199,7 +243,7 @@ struct TerminalWorkspaceSnapshot: Hashable, Codable {
     var title: String
     var surfaces: [WorkspaceSurface]
     var layout: WorkspaceLayoutNode
-    var focusedSurfaceId: String?
+    var focusedSurfaceId: SurfaceID?
 }
 
 @MainActor
@@ -209,32 +253,36 @@ protocol TerminalWorkspaceChangeDelegate: AnyObject {
 
 @MainActor
 final class TerminalWorkspace: ObservableObject, Identifiable {
-    let id: String
+    let id: WorkspaceID
+    @Published private(set) var windowID: WindowID
     @Published var title: String
-    @Published private(set) var surfaces: [String: WorkspaceSurface]
+    @Published private(set) var surfaces: [SurfaceID: WorkspaceSurface]
     @Published private(set) var layout: WorkspaceLayoutNode
-    @Published var focusedSurfaceId: String?
+    @Published private(set) var paneIdsBySurfaceId: [SurfaceID: PaneID]
+    @Published var focusedSurfaceId: SurfaceID?
     private let defaultWorkingDirectory: String?
     private let backend: TerminalBackend
     private let tmuxSocketName: String?
     weak var changeDelegate: TerminalWorkspaceChangeDelegate?
 
     init(
-        id: String,
+        id: WorkspaceID,
+        windowID: WindowID = WindowID(),
         title: String,
         workingDirectory: String? = nil,
         command: String? = nil,
-        rootSurfaceId: String? = nil,
+        rootSurfaceId: SurfaceID? = nil,
         backend: TerminalBackend = .tmux,
         tmuxSocketName: String? = nil
     ) {
         self.id = id
+        self.windowID = windowID
         self.title = title
         self.defaultWorkingDirectory = workingDirectory
         self.backend = backend
         self.tmuxSocketName = tmuxSocketName
 
-        let surfaceId = rootSurfaceId ?? TmuxController.rootSurfaceId(for: id)
+        let surfaceId = rootSurfaceId ?? SurfaceID()
         let target = Self.tmuxTarget(
             surfaceId: surfaceId,
             workingDirectory: workingDirectory,
@@ -251,25 +299,28 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         initialSurface.title = title
         self.surfaces = [initialSurface.id: initialSurface]
         self.layout = .leaf(initialSurface.id)
+        self.paneIdsBySurfaceId = [initialSurface.id: PaneID()]
         self.focusedSurfaceId = initialSurface.id
-        SurfaceNotificationStore.shared.register(surfaceId: initialSurface.id, workspaceId: id)
+        SurfaceNotificationStore.shared.register(surfaceId: initialSurface.id.rawValue, workspaceId: id.rawValue)
         prepareTerminalSession(initialSurface)
     }
 
     init(
-        id: String,
+        id: WorkspaceID,
+        windowID: WindowID = WindowID(),
         snapshot: TerminalWorkspaceSnapshot,
         workingDirectory: String? = nil,
         backend: TerminalBackend = .tmux,
         tmuxSocketName: String? = nil
     ) {
         self.id = id
+        self.windowID = windowID
         self.title = snapshot.title
         self.defaultWorkingDirectory = workingDirectory
         self.backend = backend
         self.tmuxSocketName = tmuxSocketName
 
-        var nextSurfaces: [String: WorkspaceSurface] = [:]
+        var nextSurfaces: [SurfaceID: WorkspaceSurface] = [:]
         for var surface in snapshot.surfaces {
             if surface.kind == .terminal {
                 surface = Self.normalizedTerminalSurface(
@@ -282,8 +333,11 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
             nextSurfaces[surface.id] = surface
         }
 
+        let restoredLayout: WorkspaceLayoutNode
+        let restoredFocusedSurfaceID: SurfaceID?
+
         if nextSurfaces.isEmpty {
-            let fallbackSurfaceId = TmuxController.rootSurfaceId(for: id)
+            let fallbackSurfaceId = SurfaceID()
             let target = Self.tmuxTarget(
                 surfaceId: fallbackSurfaceId,
                 workingDirectory: workingDirectory,
@@ -298,16 +352,19 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
             )
             fallback.title = snapshot.title
             nextSurfaces[fallback.id] = fallback
-            self.layout = .leaf(fallback.id)
-            self.focusedSurfaceId = fallback.id
+            restoredLayout = .leaf(fallback.id)
+            restoredFocusedSurfaceID = fallback.id
         } else {
-            self.layout = snapshot.layout
-            self.focusedSurfaceId = snapshot.focusedSurfaceId ?? snapshot.layout.firstSurfaceId
+            restoredLayout = snapshot.layout
+            restoredFocusedSurfaceID = snapshot.focusedSurfaceId ?? snapshot.layout.firstSurfaceId
         }
 
         self.surfaces = nextSurfaces
+        self.layout = restoredLayout
+        self.paneIdsBySurfaceId = Dictionary(uniqueKeysWithValues: restoredLayout.surfaceIds.map { ($0, PaneID()) })
+        self.focusedSurfaceId = restoredFocusedSurfaceID
         for surface in nextSurfaces.values {
-            SurfaceNotificationStore.shared.register(surfaceId: surface.id, workspaceId: id)
+            SurfaceNotificationStore.shared.register(surfaceId: surface.id.rawValue, workspaceId: id.rawValue)
             if surface.kind == .terminal {
                 prepareTerminalSession(surface)
             }
@@ -318,7 +375,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         layout.surfaceIds.compactMap { surfaces[$0] }
     }
 
-    var terminalSurfaceIds: [String] {
+    var terminalSurfaceIds: [SurfaceID] {
         surfaces.values
             .filter { $0.kind == .terminal }
             .map(\.id)
@@ -346,12 +403,137 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         )
     }
 
+    var paneIDs: [PaneID] {
+        layout.surfaceIds.compactMap { paneIdsBySurfaceId[$0] }
+    }
+
+    func moveToWindow(_ windowID: WindowID) {
+        self.windowID = windowID
+        notifyChanged()
+    }
+
+    func paneID(containing surfaceId: SurfaceID) -> PaneID? {
+        guard surfaces[surfaceId] != nil else { return nil }
+        return paneIdsBySurfaceId[surfaceId]
+    }
+
+    func containsPane(_ paneID: PaneID) -> Bool {
+        paneIdsBySurfaceId.values.contains(paneID)
+    }
+
     @discardableResult
-    func splitFocused(axis: WorkspaceSplitAxis, kind: WorkspaceSurfaceKind) -> String {
+    func moveSurface(
+        _ surfaceId: SurfaceID,
+        toPane paneID: PaneID,
+        placement: Placement
+    ) -> Swift.Result<WorkspaceSurfacePlacementResult, WorkspaceSurfacePlacementError> {
+        guard surfaces[surfaceId] != nil else {
+            return .failure(.surfaceNotFound)
+        }
+        guard containsPane(paneID) else {
+            return .failure(.paneNotFound)
+        }
+        guard let nextOrder = reorderedSurfaceIDs(moving: surfaceId, placement: placement) else {
+            return .failure(.invalidPlacement)
+        }
+        guard rebuildLayout(with: nextOrder) else {
+            return .failure(.invalidPlacement)
+        }
+
+        paneIdsBySurfaceId[surfaceId] = paneID
+        focusSurface(surfaceId)
+        notifyChanged()
+        return .success(
+            WorkspaceSurfacePlacementResult(
+                windowID: windowID,
+                workspaceID: id,
+                paneID: paneID,
+                surfaceID: surfaceId
+            )
+        )
+    }
+
+    @discardableResult
+    func reorderSurface(
+        _ surfaceId: SurfaceID,
+        anchor: Anchor
+    ) -> Swift.Result<WorkspaceSurfacePlacementResult, WorkspaceSurfacePlacementError> {
+        guard let paneID = paneID(containing: surfaceId) else {
+            return .failure(.surfaceNotFound)
+        }
+
+        switch anchor {
+        case .beforeSurface(let anchorID):
+            return moveSurface(surfaceId, toPane: paneID, placement: .beforeSurface(anchorID))
+        case .afterSurface(let anchorID):
+            return moveSurface(surfaceId, toPane: paneID, placement: .afterSurface(anchorID))
+        case .beforeWorkspace, .afterWorkspace:
+            return .failure(.invalidPlacement)
+        }
+    }
+
+    func detachSurfaceForMove(
+        _ surfaceId: SurfaceID
+    ) -> Swift.Result<WorkspaceSurface, WorkspaceSurfacePlacementError> {
+        guard let surface = surfaces[surfaceId] else {
+            return .failure(.surfaceNotFound)
+        }
+        guard surfaces.count > 1 else {
+            return .failure(.cannotMoveOnlySurface)
+        }
+
+        surfaces[surfaceId] = nil
+        paneIdsBySurfaceId[surfaceId] = nil
+        layout = layout.removingLeaf(surfaceId) ?? layout
+        if focusedSurfaceId == surfaceId {
+            focusedSurfaceId = layout.firstSurfaceId
+        }
+        notifyChanged()
+        return .success(surface)
+    }
+
+    @discardableResult
+    func attachMovedSurface(
+        _ surface: WorkspaceSurface,
+        toPane paneID: PaneID,
+        placement: Placement
+    ) -> Swift.Result<WorkspaceSurfacePlacementResult, WorkspaceSurfacePlacementError> {
+        guard containsPane(paneID) else {
+            return .failure(.paneNotFound)
+        }
+
+        surfaces[surface.id] = surface
+        paneIdsBySurfaceId[surface.id] = paneID
+        guard let nextOrder = reorderedSurfaceIDs(moving: surface.id, placement: placement),
+              rebuildLayout(with: nextOrder)
+        else {
+            surfaces[surface.id] = nil
+            paneIdsBySurfaceId[surface.id] = nil
+            return .failure(.invalidPlacement)
+        }
+
+        SurfaceNotificationStore.shared.register(surfaceId: surface.id.rawValue, workspaceId: id.rawValue)
+        if surface.kind == .terminal {
+            prepareTerminalSession(surface)
+        }
+        focusSurface(surface.id)
+        notifyChanged()
+        return .success(
+            WorkspaceSurfacePlacementResult(
+                windowID: windowID,
+                workspaceID: id,
+                paneID: paneID,
+                surfaceID: surface.id
+            )
+        )
+    }
+
+    @discardableResult
+    func splitFocused(axis: WorkspaceSplitAxis, kind: WorkspaceSurfaceKind) -> SurfaceID {
         let newSurface: WorkspaceSurface
         switch kind {
         case .terminal:
-            let surfaceId = UUID().uuidString
+            let surfaceId = SurfaceID()
             let target = Self.tmuxTarget(
                 surfaceId: surfaceId,
                 workingDirectory: defaultWorkingDirectory,
@@ -369,7 +551,8 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         }
 
         surfaces[newSurface.id] = newSurface
-        SurfaceNotificationStore.shared.register(surfaceId: newSurface.id, workspaceId: id)
+        paneIdsBySurfaceId[newSurface.id] = PaneID()
+        SurfaceNotificationStore.shared.register(surfaceId: newSurface.id.rawValue, workspaceId: id.rawValue)
         if newSurface.kind == .terminal {
             prepareTerminalSession(newSurface)
         }
@@ -401,14 +584,18 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         if let urlString {
             updateBrowser(surfaceId: surfaceId, urlString: urlString, title: nil)
         }
-        return surfaceId
+        return surfaceId.rawValue
     }
 
     func focusSurface(_ surfaceId: String) {
+        focusSurface(SurfaceID(surfaceId))
+    }
+
+    func focusSurface(_ surfaceId: SurfaceID) {
         guard surfaces[surfaceId] != nil else { return }
         focusedSurfaceId = surfaceId
-        SurfaceNotificationStore.shared.setFocusedSurface(surfaceId, workspaceId: id)
-        SurfaceNotificationStore.shared.markRead(surfaceId: surfaceId)
+        SurfaceNotificationStore.shared.setFocusedSurface(surfaceId.rawValue, workspaceId: id.rawValue)
+        SurfaceNotificationStore.shared.markRead(surfaceId: surfaceId.rawValue)
         notifyChanged()
     }
 
@@ -429,21 +616,26 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     }
 
     func closeSurface(_ surfaceId: String) {
+        closeSurface(SurfaceID(surfaceId))
+    }
+
+    func closeSurface(_ surfaceId: SurfaceID) {
         guard surfaces[surfaceId] != nil else { return }
         guard surfaces.count > 1 else { return }
 
         let removed = surfaces.removeValue(forKey: surfaceId)
-        layout = layout.removingLeaf(surfaceId) ?? .leaf(surfaces.keys.sorted().first ?? surfaceId)
-        SurfaceNotificationStore.shared.unregister(surfaceId: surfaceId)
+        layout = layout.removingLeaf(surfaceId) ?? .leaf(surfaces.keys.first ?? surfaceId)
+        paneIdsBySurfaceId[surfaceId] = nil
+        SurfaceNotificationStore.shared.unregister(surfaceId: surfaceId.rawValue)
 
         if removed?.kind == .terminal {
-            TerminalSurfaceRegistry.shared.deregister(sessionId: surfaceId)
+            TerminalSurfaceRegistry.shared.deregister(sessionId: surfaceId.rawValue)
             TmuxController.terminateSession(
                 socketName: removed?.tmuxSocketName,
                 sessionName: removed?.tmuxSessionName
             )
         } else if removed?.kind == .browser {
-            BrowserSurfaceRegistry.shared.remove(surfaceId: surfaceId)
+            BrowserSurfaceRegistry.shared.remove(surfaceId: surfaceId.rawValue)
         }
 
         if focusedSurfaceId == surfaceId {
@@ -474,6 +666,10 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     }
 
     func updateTerminalTitle(surfaceId: String, title: String) {
+        updateTerminalTitle(surfaceId: SurfaceID(surfaceId), title: title)
+    }
+
+    func updateTerminalTitle(surfaceId: SurfaceID, title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, var surface = surfaces[surfaceId] else { return }
         surface.title = trimmed
@@ -483,6 +679,10 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     }
 
     func updateTerminalWorkingDirectory(surfaceId: String, workingDirectory: String) {
+        updateTerminalWorkingDirectory(surfaceId: SurfaceID(surfaceId), workingDirectory: workingDirectory)
+    }
+
+    func updateTerminalWorkingDirectory(surfaceId: SurfaceID, workingDirectory: String) {
         guard var surface = surfaces[surfaceId] else { return }
         surface.terminalWorkingDirectory = workingDirectory
         if !workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -493,6 +693,10 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     }
 
     func updateBrowser(surfaceId: String, urlString: String?, title: String?) {
+        updateBrowser(surfaceId: SurfaceID(surfaceId), urlString: urlString, title: title)
+    }
+
+    func updateBrowser(surfaceId: SurfaceID, urlString: String?, title: String?) {
         guard var surface = surfaces[surfaceId] else { return }
         if let urlString, !urlString.isEmpty {
             surface.browserURLString = urlString
@@ -522,7 +726,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
 
         _ = TmuxController.ensureSession(
             socketName: surface.tmuxSocketName ?? TmuxController.socketName(for: defaultWorkingDirectory ?? ""),
-            sessionName: surface.tmuxSessionName ?? TmuxController.sessionName(for: surface.id),
+            sessionName: surface.tmuxSessionName ?? TmuxController.sessionName(for: surface.id.rawValue),
             workingDirectory: surface.terminalWorkingDirectory ?? defaultWorkingDirectory,
             command: surface.terminalCommand,
             title: surface.title
@@ -531,6 +735,43 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
 
     private func notifyChanged() {
         changeDelegate?.terminalWorkspaceDidChange(self)
+    }
+
+    private func reorderedSurfaceIDs(moving surfaceId: SurfaceID, placement: Placement) -> [SurfaceID]? {
+        var order = layout.surfaceIds.filter { $0 != surfaceId }
+        let insertionIndex: Int
+
+        switch placement {
+        case .start:
+            insertionIndex = 0
+        case .end:
+            insertionIndex = order.count
+        case .beforeSurface(let anchorID):
+            guard anchorID != surfaceId else {
+                return layout.surfaceIds
+            }
+            guard let index = order.firstIndex(of: anchorID) else { return nil }
+            insertionIndex = index
+        case .afterSurface(let anchorID):
+            guard anchorID != surfaceId else {
+                return layout.surfaceIds
+            }
+            guard let index = order.firstIndex(of: anchorID) else { return nil }
+            insertionIndex = order.index(after: index)
+        case .beforeWorkspace, .afterWorkspace:
+            return nil
+        }
+
+        order.insert(surfaceId, at: insertionIndex)
+        return order
+    }
+
+    private func rebuildLayout(with surfaceIds: [SurfaceID]) -> Bool {
+        guard let nextLayout = WorkspaceLayoutNode.fromOrderedSurfaceIDs(surfaceIds) else {
+            return false
+        }
+        layout = nextLayout
+        return true
     }
 
     private static func normalizedTerminalSurface(
@@ -557,14 +798,14 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     }
 
     private static func tmuxTarget(
-        surfaceId: String,
+        surfaceId: SurfaceID,
         workingDirectory: String?,
         socketName: String?
     ) -> TmuxTerminalTarget? {
         let socket = socketName ?? TmuxController.socketName(for: workingDirectory ?? "")
         return TmuxTerminalTarget(
             socketName: socket,
-            sessionName: TmuxController.sessionName(for: surfaceId)
+            sessionName: TmuxController.sessionName(for: surfaceId.rawValue)
         )
     }
 }

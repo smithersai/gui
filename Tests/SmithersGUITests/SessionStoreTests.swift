@@ -546,8 +546,8 @@ final class SessionStoreTests: XCTestCase {
         let tab = store.terminalTabs.first
 
         XCTAssertEqual(tab?.backend, .tmux)
-        XCTAssertEqual(tab?.rootSurfaceId, TmuxController.rootSurfaceId(for: terminalId))
-        XCTAssertEqual(tab?.tmuxSessionName, TmuxController.sessionName(for: TmuxController.rootSurfaceId(for: terminalId)))
+        XCTAssertNotNil(tab?.rootSurfaceId.flatMap { UUID(uuidString: $0) })
+        XCTAssertEqual(tab?.tmuxSessionName, tab?.rootSurfaceId.map(TmuxController.sessionName(for:)))
         XCTAssertEqual(tab?.tmuxSocketName, store.terminalWorkingDirectory(terminalId).map(TmuxController.socketName(for:)))
     }
 
@@ -736,7 +736,7 @@ final class SessionStoreTests: XCTestCase {
         XCTAssertEqual(restored.title, "Server")
         XCTAssertTrue(restored.isPinned)
         XCTAssertEqual(restored.backend, .tmux)
-        XCTAssertEqual(restored.rootSurfaceId, TmuxController.rootSurfaceId(for: terminalId))
+        XCTAssertNotNil(restored.rootSurfaceId.flatMap { UUID(uuidString: $0) })
     }
 }
 

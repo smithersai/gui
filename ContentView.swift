@@ -1186,7 +1186,7 @@ struct ContentView: View {
                     clearPendingTerminalClose()
                 }
             } message: {
-                Text("Terminate \"\(pendingTerminalCloseTitle)\"? This will stop the terminal session and close the tab. This action cannot be undone.")
+            Text("Terminate \"\(pendingTerminalCloseTitle)\"? This will stop the terminal session and close the workspace. This action cannot be undone.")
             }
         } // end else (isLoading)
     }
@@ -1226,7 +1226,7 @@ struct ContentView: View {
             .frame(width: 1, height: 1)
             .opacity(0.01)
 
-            Button("New Terminal Tab") {
+            Button("New Terminal Workspace") {
                 createNewTerminalTab()
             }
             .appKeyboardShortcut(.newTerminal)
@@ -1234,15 +1234,15 @@ struct ContentView: View {
             .frame(width: 1, height: 1)
             .opacity(0.01)
 
-            Button("Reopen Closed Tab") {
+            Button("Reopen Closed Workspace") {
                 AppNotifications.shared.post(
-                    title: "Tabs",
-                    message: "Reopen closed tab is not available yet.",
+                    title: "Workspaces",
+                    message: "Reopen closed workspace is not available yet.",
                     level: .info
                 )
             }
             .appKeyboardShortcut(.reopenClosedTab)
-            .accessibilityIdentifier("shortcut.reopenTab")
+            .accessibilityIdentifier("shortcut.reopenWorkspace")
             .frame(width: 1, height: 1)
             .opacity(0.01)
 
@@ -1264,19 +1264,19 @@ struct ContentView: View {
             .frame(width: 1, height: 1)
             .opacity(0.01)
 
-            Button("Previous Visible Tab") {
+            Button("Previous Visible Workspace") {
                 moveVisibleTab(offset: -1)
             }
             .appKeyboardShortcut(.prevSidebarTab)
-            .accessibilityIdentifier("shortcut.previousTab")
+            .accessibilityIdentifier("shortcut.previousWorkspace")
             .frame(width: 1, height: 1)
             .opacity(0.01)
 
-            Button("Next Visible Tab") {
+            Button("Next Visible Workspace") {
                 moveVisibleTab(offset: 1)
             }
             .appKeyboardShortcut(.nextSidebarTab)
-            .accessibilityIdentifier("shortcut.nextTab")
+            .accessibilityIdentifier("shortcut.nextWorkspace")
             .frame(width: 1, height: 1)
             .opacity(0.01)
 
@@ -1321,11 +1321,11 @@ struct ContentView: View {
             .opacity(0.01)
 
             ForEach(1...9, id: \.self) { index in
-                Button("Switch to Tab \(index)") {
+                Button("Switch to Workspace \(index)") {
                     switchVisibleTab(at: index - 1)
                 }
                 .appNumberedKeyboardShortcut(.selectWorkspaceByNumber, digit: index)
-                .accessibilityIdentifier("shortcut.switchTab.\(index)")
+                .accessibilityIdentifier("shortcut.switchWorkspace.\(index)")
                 .frame(width: 1, height: 1)
                 .opacity(0.01)
             }
@@ -1620,9 +1620,9 @@ struct ContentView: View {
         case .showShortcutCheatSheet:
             openCommandPalette(prefill: ">shortcut")
         case .openTabSwitcher:
-            openCommandPalette(prefill: "tab")
+            openCommandPalette(prefill: "workspace")
         case .findTab:
-            openCommandPalette(prefill: "tab")
+            openCommandPalette(prefill: "workspace")
         case .unsupported(let message):
             AppNotifications.shared.post(
                 title: "Command Palette",

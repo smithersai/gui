@@ -194,7 +194,7 @@ struct BrowserSurfaceView: View {
             toolbar
 
             BrowserWebViewRepresentable(
-                surfaceId: surface.id,
+                surfaceId: surface.id.rawValue,
                 urlString: surface.browserURLString,
                 onTitleChange: { title in
                     workspace.updateBrowser(surfaceId: surface.id, urlString: nil, title: title)
@@ -228,15 +228,15 @@ struct BrowserSurfaceView: View {
     private var toolbar: some View {
         HStack(spacing: 6) {
             BrowserToolbarButton(systemName: "chevron.left", label: "Back") {
-                BrowserSurfaceRegistry.shared.webView(for: surface.id).goBack()
+                BrowserSurfaceRegistry.shared.webView(for: surface.id.rawValue).goBack()
             }
 
             BrowserToolbarButton(systemName: "chevron.right", label: "Forward") {
-                BrowserSurfaceRegistry.shared.webView(for: surface.id).goForward()
+                BrowserSurfaceRegistry.shared.webView(for: surface.id.rawValue).goForward()
             }
 
             BrowserToolbarButton(systemName: "arrow.clockwise", label: "Reload") {
-                BrowserSurfaceRegistry.shared.webView(for: surface.id).reload()
+                BrowserSurfaceRegistry.shared.webView(for: surface.id.rawValue).reload()
             }
 
             TextField("Search or enter URL", text: $addressText)
@@ -252,7 +252,7 @@ struct BrowserSurfaceView: View {
                 .onSubmit {
                     navigate()
                 }
-                .accessibilityIdentifier("browser.address.\(surface.id)")
+                .accessibilityIdentifier("browser.address.\(surface.id.rawValue)")
 
             BrowserToolbarButton(systemName: "arrow.right", label: "Go") {
                 navigate()
@@ -269,13 +269,13 @@ struct BrowserSurfaceView: View {
         let urlString = url.absoluteString
         addressText = urlString
         workspace.updateBrowser(surfaceId: surface.id, urlString: urlString, title: nil)
-        
+
         if url.host == "smithers.sh" || url.host == "www.smithers.sh" {
-            BrowserSurfaceRegistry.shared.webView(for: surface.id).loadHTMLString(SmithersHomepageWeb.html, baseURL: url)
+            BrowserSurfaceRegistry.shared.webView(for: surface.id.rawValue).loadHTMLString(SmithersHomepageWeb.html, baseURL: url)
         } else {
-            BrowserSurfaceRegistry.shared.webView(for: surface.id).load(URLRequest(url: url))
+            BrowserSurfaceRegistry.shared.webView(for: surface.id.rawValue).load(URLRequest(url: url))
         }
-        
+
         onFocus()
     }
 }

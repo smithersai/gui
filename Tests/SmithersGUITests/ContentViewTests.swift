@@ -139,7 +139,7 @@ final class ContentViewRoutingSourceTests: XCTestCase {
         )
         XCTAssertTrue(
             source.contains("store.removeTerminalTab(terminalId)"),
-            "Expected confirmed terminal close to remove the terminal tab."
+            "Expected confirmed terminal close to remove the terminal workspace."
         )
     }
 

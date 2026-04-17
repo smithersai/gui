@@ -85,6 +85,7 @@ targets:
       - PropsTableView.swift
       - PropValueView.swift
       - GhostBanner.swift
+      - HandleResolver.swift
       - HistoricalOverlay.swift
       - NodeErrorBanner.swift
       - InspectorTabSwitcher.swift

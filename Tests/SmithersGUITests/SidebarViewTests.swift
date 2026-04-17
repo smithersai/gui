@@ -138,7 +138,7 @@ final class SidebarViewTests: XCTestCase {
         )
         XCTAssertTrue(
             source.contains("store.removeTerminalTab(terminalId)"),
-            "Confirmed terminal termination should still remove the terminal tab."
+            "Confirmed terminal termination should still remove the terminal workspace."
         )
     }
 }

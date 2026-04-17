@@ -46,6 +46,9 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     @Published var codexSelectionDefaults: CodexModelSelection
     @Published var codexApprovalDefaults: CodexApprovalSelection
 
+    let windowID: WindowID = WindowID()
+    private var workspaceWindowIds: [WorkspaceID: WindowID] = [:]
+
     private struct PersistedMessageState {
         var dbMessageID: String
         var role: PersistedChatRole
@@ -125,11 +128,14 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             session.timestamp = Date()
             sessions.insert(session, at: 0)
             activeSessionId = session.id
+            registerWorkspace(WorkspaceID(session.id))
             persistSessionRecord(id: session.id, title: session.title)
             return session.id
         }
 
-        let id = UUID().uuidString
+        let workspaceID = WorkspaceID()
+        let id = workspaceID.rawValue
+        registerWorkspace(workspaceID)
         AppLogger.state.info("SessionStore newSession", metadata: ["id": String(id.prefix(8))])
         let initialSelection = codexSelectionDefaults
         let initialApprovalSelection = codexApprovalDefaults
@@ -262,6 +268,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         loadedSessionMessageIDs.remove(id)
         persistenceSuppressedSessionIDs.remove(id)
         persistedMessageStateBySessionID[id] = nil
+        workspaceWindowIds[WorkspaceID(id)] = nil
         persistDeleteSession(id)
 
         if activeSessionId == id {
@@ -290,6 +297,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         loadedSessionMessageIDs.remove(id)
         persistenceSuppressedSessionIDs.remove(id)
         persistedMessageStateBySessionID[id] = nil
+        workspaceWindowIds[WorkspaceID(id)] = nil
         persistDeleteSession(id)
 
         if activeSessionId == id {
@@ -306,6 +314,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
 
     @discardableResult
     func addRunTab(runId: String, title: String?, preview: String? = nil) -> String {
+        registerWorkspace(WorkspaceID(runId))
         let displayTitle = runTabTitle(runId: runId, title: title)
         let displayPreview = runTabPreview(preview)
         let now = Date()
@@ -328,6 +337,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
 
     func removeRunTab(_ runId: String) {
         runTabs.removeAll { $0.runId == runId }
+        workspaceWindowIds[WorkspaceID(runId)] = nil
     }
 
     @discardableResult
@@ -336,20 +346,24 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         workingDirectory requestedWorkingDirectory: String? = nil,
         command: String? = nil
     ) -> String {
-        let id = UUID().uuidString
+        let workspaceID = WorkspaceID()
+        let id = workspaceID.rawValue
+        registerWorkspace(workspaceID)
         let tabNumber = terminalTabs.count + 1
         let title = normalizedOptionalText(requestedTitle) ?? "Terminal \(tabNumber)"
         let cwd = normalizedOptionalText(requestedWorkingDirectory) ?? workingDirectory
-        let rootSurfaceId = TmuxController.rootSurfaceId(for: id)
+        let rootSurfaceID = SurfaceID()
+        let rootSurfaceId = rootSurfaceID.rawValue
         let socketName = TmuxController.socketName(for: cwd)
         let sessionName = TmuxController.sessionName(for: rootSurfaceId)
         AppLogger.state.info("SessionStore addTerminalTab", metadata: ["id": String(id.prefix(8))])
         let workspace = TerminalWorkspace(
-            id: id,
+            id: workspaceID,
+            windowID: windowID,
             title: title,
             workingDirectory: cwd,
             command: command,
-            rootSurfaceId: rootSurfaceId,
+            rootSurfaceId: rootSurfaceID,
             backend: .tmux,
             tmuxSocketName: socketName
         )
@@ -407,6 +421,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             return workspace
         }
 
+        let workspaceID = WorkspaceID(terminalId)
+        registerWorkspace(workspaceID)
         let tab = terminalTabs.first(where: { $0.terminalId == terminalId })
         let title = tab?.title ?? "Terminal"
         let cwd = normalizedOptionalText(tab?.workingDirectory) ?? workingDirectory
@@ -415,19 +431,22 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
 
         if let snapshot = persistedTerminalWorkspaceSnapshots[terminalId] {
             workspace = TerminalWorkspace(
-                id: terminalId,
+                id: workspaceID,
+                windowID: workspaceWindowIds[workspaceID] ?? windowID,
                 snapshot: snapshot,
                 workingDirectory: cwd,
                 backend: tab?.backend ?? .tmux,
                 tmuxSocketName: socketName
             )
         } else {
+            let rootSurfaceID = tab?.rootSurfaceId.map { SurfaceID($0) } ?? SurfaceID()
             workspace = TerminalWorkspace(
-                id: terminalId,
+                id: workspaceID,
+                windowID: workspaceWindowIds[workspaceID] ?? windowID,
                 title: title,
                 workingDirectory: cwd,
                 command: tab?.command,
-                rootSurfaceId: tab?.rootSurfaceId ?? TmuxController.rootSurfaceId(for: terminalId),
+                rootSurfaceId: rootSurfaceID,
                 backend: tab?.backend ?? .tmux,
                 tmuxSocketName: socketName
             )
@@ -437,7 +456,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         syncTerminalTabMetadata(from: workspace)
 
         if !terminalTabs.contains(where: { $0.terminalId == terminalId }) {
-            let rootSurfaceId = TmuxController.rootSurfaceId(for: terminalId)
+            let rootSurfaceId = workspace.orderedSurfaces.first?.id.rawValue ?? SurfaceID().rawValue
             let now = Date()
             terminalTabs.insert(
                 TerminalTab(
@@ -511,22 +530,22 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         if let workspace = terminalWorkspaces.removeValue(forKey: terminalId) {
             let snapshot = workspace.snapshot
             for surface in snapshot.surfaces {
-                SurfaceNotificationStore.shared.unregister(surfaceId: surface.id)
+                SurfaceNotificationStore.shared.unregister(surfaceId: surface.id.rawValue)
                 switch surface.kind {
                 case .terminal:
-                    TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id)
+                    TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id.rawValue)
                 case .browser:
-                    BrowserSurfaceRegistry.shared.remove(surfaceId: surface.id)
+                    BrowserSurfaceRegistry.shared.remove(surfaceId: surface.id.rawValue)
                 }
             }
             terminateTmuxSessions(in: snapshot)
         } else if let snapshot = persistedTerminalWorkspaceSnapshots[terminalId] {
             for surface in snapshot.surfaces {
-                SurfaceNotificationStore.shared.unregister(surfaceId: surface.id)
+                SurfaceNotificationStore.shared.unregister(surfaceId: surface.id.rawValue)
                 if surface.kind == .terminal {
-                    TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id)
+                    TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id.rawValue)
                 } else if surface.kind == .browser {
-                    BrowserSurfaceRegistry.shared.remove(surfaceId: surface.id)
+                    BrowserSurfaceRegistry.shared.remove(surfaceId: surface.id.rawValue)
                 }
             }
             terminateTmuxSessions(in: snapshot)
@@ -538,8 +557,101 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         }
         terminalTabs.removeAll { $0.terminalId == terminalId }
         persistedTerminalWorkspaceSnapshots[terminalId] = nil
+        workspaceWindowIds[WorkspaceID(terminalId)] = nil
         TerminalSurfaceRegistry.shared.deregister(sessionId: terminalId)
         persistDeleteTerminalTab(terminalId)
+    }
+
+    @discardableResult
+    func moveSurface(
+        _ surfaceID: SurfaceID,
+        toPane paneID: PaneID,
+        placement: Placement
+    ) -> Swift.Result<WorkspaceSurfacePlacementResult, WorkspaceSurfacePlacementError> {
+        guard let sourceWorkspace = terminalWorkspaces.values.first(where: { $0.surfaces[surfaceID] != nil }) else {
+            return .failure(.surfaceNotFound)
+        }
+        guard let targetWorkspace = terminalWorkspaces.values.first(where: { $0.containsPane(paneID) }) else {
+            return .failure(.paneNotFound)
+        }
+
+        if sourceWorkspace === targetWorkspace {
+            return sourceWorkspace.moveSurface(surfaceID, toPane: paneID, placement: placement)
+        }
+
+        let detached = sourceWorkspace.detachSurfaceForMove(surfaceID)
+        switch detached {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let surface):
+            return targetWorkspace.attachMovedSurface(surface, toPane: paneID, placement: placement)
+        }
+    }
+
+    @discardableResult
+    func reorderSurface(
+        _ surfaceID: SurfaceID,
+        anchor: Anchor
+    ) -> Swift.Result<WorkspaceSurfacePlacementResult, WorkspaceSurfacePlacementError> {
+        guard let workspace = terminalWorkspaces.values.first(where: { $0.surfaces[surfaceID] != nil }) else {
+            return .failure(.surfaceNotFound)
+        }
+        return workspace.reorderSurface(surfaceID, anchor: anchor)
+    }
+
+    @discardableResult
+    func moveWorkspace(
+        _ workspaceID: WorkspaceID,
+        toWindow windowID: WindowID,
+        placement: Placement
+    ) -> Swift.Result<WorkspaceSurfacePlacementResult, WorkspaceSurfacePlacementError> {
+        let terminalId = terminalTabs.first(where: { $0.workspaceID == workspaceID })?.terminalId
+        let hasChatWorkspace = sessions.contains { WorkspaceID($0.id) == workspaceID }
+        let hasRunWorkspace = runTabs.contains { $0.workspaceID == workspaceID }
+        guard terminalId != nil || hasChatWorkspace || hasRunWorkspace
+        else {
+            return .failure(.workspaceNotFound)
+        }
+
+        if terminalId != nil {
+            guard reorderTerminalWorkspace(workspaceID: workspaceID, placement: placement) else {
+                return .failure(.invalidPlacement)
+            }
+        }
+
+        workspaceWindowIds[workspaceID] = windowID
+        if let terminalId, let workspace = terminalWorkspaces[terminalId] {
+            workspace.moveToWindow(windowID)
+        }
+
+        let workspace = terminalId.flatMap { terminalWorkspaces[$0] }
+        let surface = workspace?.orderedSurfaces.first
+        let paneID = surface.flatMap { workspace?.paneID(containing: $0.id) } ?? PaneID()
+        return .success(
+            WorkspaceSurfacePlacementResult(
+                windowID: windowID,
+                workspaceID: workspaceID,
+                paneID: paneID,
+                surfaceID: surface?.id ?? SurfaceID()
+            )
+        )
+    }
+
+    @discardableResult
+    func reorderWorkspace(
+        _ workspaceID: WorkspaceID,
+        anchor: Anchor
+    ) -> Swift.Result<WorkspaceSurfacePlacementResult, WorkspaceSurfacePlacementError> {
+        let placement: Placement
+        switch anchor {
+        case .beforeWorkspace(let anchorID):
+            placement = .beforeWorkspace(anchorID)
+        case .afterWorkspace(let anchorID):
+            placement = .afterWorkspace(anchorID)
+        case .beforeSurface, .afterSurface:
+            return .failure(.invalidPlacement)
+        }
+        return moveWorkspace(workspaceID, toWindow: workspaceWindowIds[workspaceID] ?? windowID, placement: placement)
     }
 
     @discardableResult
@@ -671,7 +783,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         return .success(selection)
     }
 
-    func sidebarTabs(matching searchText: String = "") -> [SidebarTab] {
+    func sidebarWorkspaces(matching searchText: String = "") -> [SidebarWorkspace] {
         let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let now = Date()
         let chatTabs = sessions.filter { !$0.isArchived }.map { session in
@@ -745,6 +857,10 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             }
     }
 
+    func sidebarTabs(matching searchText: String = "") -> [SidebarTab] {
+        sidebarWorkspaces(matching: searchText)
+    }
+
     func chatSessions() -> [ChatSession] {
         let now = Date()
         return sessions.filter { !$0.isArchived }.map { s in
@@ -795,6 +911,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             }
 
             for session in sessions {
+                registerWorkspace(WorkspaceID(session.id))
                 observeMessages(for: session.id, agent: session.agent)
             }
 
@@ -819,7 +936,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         do {
             let persisted = try persistence.loadTerminalTabs()
             terminalTabs = persisted.map { tab in
-                TerminalTab(
+                registerWorkspace(WorkspaceID(tab.id))
+                return TerminalTab(
                     terminalId: tab.id,
                     title: tab.title,
                     preview: tab.preview,
@@ -1041,6 +1159,55 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
 
     private func attachTerminalWorkspaceChangeHandler(_ workspace: TerminalWorkspace) {
         workspace.changeDelegate = self
+        registerWorkspace(workspace.id, in: workspace.windowID)
+    }
+
+    private func registerWorkspace(_ workspaceID: WorkspaceID, in windowID: WindowID? = nil) {
+        if let windowID {
+            workspaceWindowIds[workspaceID] = windowID
+        } else if workspaceWindowIds[workspaceID] == nil {
+            workspaceWindowIds[workspaceID] = self.windowID
+        }
+    }
+
+    private func reorderTerminalWorkspace(workspaceID: WorkspaceID, placement: Placement) -> Bool {
+        guard let currentIndex = terminalTabs.firstIndex(where: { $0.workspaceID == workspaceID }) else {
+            return true
+        }
+
+        var tabs = terminalTabs
+        let tab = tabs.remove(at: currentIndex)
+        let insertionIndex: Int
+
+        switch placement {
+        case .start:
+            insertionIndex = 0
+        case .end:
+            insertionIndex = tabs.count
+        case .beforeWorkspace(let anchorID):
+            guard anchorID != workspaceID else {
+                terminalTabs = tabs
+                terminalTabs.insert(tab, at: currentIndex)
+                return true
+            }
+            guard let anchorIndex = tabs.firstIndex(where: { $0.workspaceID == anchorID }) else { return false }
+            insertionIndex = anchorIndex
+        case .afterWorkspace(let anchorID):
+            guard anchorID != workspaceID else {
+                terminalTabs = tabs
+                terminalTabs.insert(tab, at: currentIndex)
+                return true
+            }
+            guard let anchorIndex = tabs.firstIndex(where: { $0.workspaceID == anchorID }) else { return false }
+            insertionIndex = tabs.index(after: anchorIndex)
+        case .beforeSurface, .afterSurface:
+            return false
+        }
+
+        tabs.insert(tab, at: insertionIndex)
+        terminalTabs = tabs
+        persistTerminalTab(tab.terminalId)
+        return true
     }
 
     func terminalWorkspaceDidChange(_ workspace: TerminalWorkspace) {
@@ -1048,18 +1215,19 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     private func syncTerminalTabMetadata(from workspace: TerminalWorkspace) {
-        guard let idx = terminalTabs.firstIndex(where: { $0.terminalId == workspace.id }) else { return }
+        guard let idx = terminalTabs.firstIndex(where: { $0.workspaceID == workspace.id }) else { return }
+        let workspaceId = terminalTabs[idx].terminalId
 
         let firstTerminal = workspace.orderedSurfaces.first { $0.kind == .terminal }
         terminalTabs[idx].title = workspace.title
         terminalTabs[idx].preview = workspace.displayPreview
         terminalTabs[idx].workingDirectory = firstTerminal?.terminalWorkingDirectory ?? terminalTabs[idx].workingDirectory
-        terminalTabs[idx].rootSurfaceId = firstTerminal?.id ?? terminalTabs[idx].rootSurfaceId
+        terminalTabs[idx].rootSurfaceId = firstTerminal?.id.rawValue ?? terminalTabs[idx].rootSurfaceId
         terminalTabs[idx].tmuxSocketName = firstTerminal?.tmuxSocketName ?? terminalTabs[idx].tmuxSocketName
         terminalTabs[idx].tmuxSessionName = firstTerminal?.tmuxSessionName ?? terminalTabs[idx].tmuxSessionName
         terminalTabs[idx].timestamp = Date()
-        persistedTerminalWorkspaceSnapshots[workspace.id] = workspace.snapshot
-        persistTerminalTab(workspace.id)
+        persistedTerminalWorkspaceSnapshots[workspaceId] = workspace.snapshot
+        persistTerminalTab(workspaceId)
     }
 
     private func persistTerminalTab(_ terminalId: String) {
@@ -1083,7 +1251,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             workingDirectory: firstTerminal?.terminalWorkingDirectory ?? tab.workingDirectory,
             command: firstTerminal?.terminalCommand ?? tab.command,
             backend: firstTerminal?.terminalBackend ?? tab.backend,
-            rootSurfaceId: firstTerminal?.id ?? tab.rootSurfaceId,
+            rootSurfaceId: firstTerminal?.id.rawValue ?? tab.rootSurfaceId,
             tmuxSocketName: firstTerminal?.tmuxSocketName ?? tab.tmuxSocketName,
             tmuxSessionName: firstTerminal?.tmuxSessionName ?? tab.tmuxSessionName,
             workspaceStateJSON: workspaceStateJSON,
@@ -1154,7 +1322,9 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private func forkSession(_ id: String, workingDirectory: String?) -> String? {
         guard let source = sessions.first(where: { $0.id == id }) else { return nil }
 
-        let forkID = UUID().uuidString
+        let forkWorkspaceID = WorkspaceID()
+        let forkID = forkWorkspaceID.rawValue
+        registerWorkspace(forkWorkspaceID)
         let cwd = workingDirectory ?? source.agent.workingDirectory
         let agent = AgentService(
             workingDir: cwd,

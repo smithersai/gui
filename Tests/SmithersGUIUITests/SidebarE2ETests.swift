@@ -19,7 +19,7 @@ final class SidebarE2ETests: SmithersGUIUITestCase {
         XCTAssertTrue(app.staticTexts["Sidebar test"].waitForExistence(timeout: 5))
 
         // Verify a session tab appeared in sidebar
-        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "tab.chat:")
+        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "workspace.chat:")
         let tabs = app.buttons.matching(predicate)
         XCTAssertGreaterThan(tabs.count, 0)
     }

@@ -33,6 +33,6 @@ final class DashboardWorkflowsE2ETests: SmithersGUIUITestCase {
 
         element("workflows.launchButton").click()
         XCTAssertTrue(element("view.liveRun").waitForExistence(timeout: 5), "Launching a workflow should open a live run tab")
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "tab.run:")).count >= 1)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "workspace.run:")).count >= 1)
     }
 }

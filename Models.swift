@@ -54,7 +54,7 @@ struct ChatSession: Identifiable, Hashable {
     var isUnread: Bool = false
 }
 
-struct RunTab: Identifiable, Hashable {
+struct RunWorkspace: Identifiable, Hashable {
     let runId: String
     var title: String
     var preview: String
@@ -62,14 +62,17 @@ struct RunTab: Identifiable, Hashable {
     let createdAt: Date
 
     var id: String { runId }
+    var workspaceID: WorkspaceID { WorkspaceID(runId) }
 }
+
+typealias RunTab = RunWorkspace
 
 enum TerminalBackend: String, Hashable, Codable {
     case ghostty
     case tmux
 }
 
-struct TerminalTab: Identifiable, Hashable {
+struct TerminalWorkspaceRecord: Identifiable, Hashable {
     let terminalId: String
     var title: String
     var preview: String
@@ -84,7 +87,10 @@ struct TerminalTab: Identifiable, Hashable {
     var isPinned: Bool = false
 
     var id: String { terminalId }
+    var workspaceID: WorkspaceID { WorkspaceID(terminalId) }
 }
+
+typealias TerminalTab = TerminalWorkspaceRecord
 
 struct TmuxTerminalTarget: Hashable {
     let socketName: String
@@ -326,7 +332,7 @@ enum TmuxControllerError: LocalizedError {
     }
 }
 
-enum SidebarTabKind: Hashable {
+enum SidebarWorkspaceKind: Hashable {
     case chat
     case run
     case terminal
@@ -340,9 +346,11 @@ enum SidebarTabKind: Hashable {
     }
 }
 
-struct SidebarTab: Identifiable, Hashable {
+typealias SidebarTabKind = SidebarWorkspaceKind
+
+struct SidebarWorkspace: Identifiable, Hashable {
     let id: String
-    let kind: SidebarTabKind
+    let kind: SidebarWorkspaceKind
     let chatSessionId: String?
     let runId: String?
     let terminalId: String?
@@ -356,7 +364,22 @@ struct SidebarTab: Identifiable, Hashable {
     var isUnread: Bool = false
     var workingDirectory: String? = nil
     var sessionIdentifier: String? = nil
+
+    var workspaceID: WorkspaceID {
+        if let terminalId {
+            return WorkspaceID(terminalId)
+        }
+        if let runId {
+            return WorkspaceID(runId)
+        }
+        if let chatSessionId {
+            return WorkspaceID(chatSessionId)
+        }
+        return WorkspaceID(id)
+    }
 }
+
+typealias SidebarTab = SidebarWorkspace
 
 struct ChatMessage: Identifiable {
     let id: String

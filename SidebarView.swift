@@ -193,7 +193,7 @@ struct SidebarView: View {
                     }
 
                     SidebarSection(
-                        title: "TABS",
+                        title: "WORKSPACES",
                         trailingAccessory: {
                             Button(action: onOpenNewTabPicker) {
                                 Image(systemName: "plus")
@@ -206,8 +206,13 @@ struct SidebarView: View {
                             .help("New Tab (⌘T)")
                         }
                     ) {
+                        NewChatMenuRow(
+                            newChatAction: startNewChat,
+                            terminalAction: startNewTerminal
+                        )
+                        .padding(.bottom, 6)
 
-                        tabList
+                        workspaceList
                     }
 
                     if developerDebugAvailable {
@@ -327,7 +332,7 @@ struct SidebarView: View {
                 clearTerminateTerminalSelection()
             }
         } message: {
-            Text("Terminate \"\(terminateTerminalTitle)\"? This will stop the terminal session and close the tab. This action cannot be undone.")
+            Text("Terminate \"\(terminateTerminalTitle)\"? This will stop the terminal session and close the workspace. This action cannot be undone.")
         }
         .background(Theme.sidebarBg)
         .accessibilityIdentifier("sidebar")
@@ -343,16 +348,16 @@ struct SidebarView: View {
         destination = .terminal(id: terminalId)
     }
 
-    private var tabList: some View {
+    private var workspaceList: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(Theme.textTertiary)
                     .font(.system(size: 10))
-                TextField("Search tabs...", text: $searchText)
+                TextField("Search workspaces...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
-                    .accessibilityIdentifier("sidebar.sessionSearch")
+                    .accessibilityIdentifier("sidebar.workspaceSearch")
             }
             .padding(.horizontal, 10)
             .frame(height: 28)
@@ -368,10 +373,10 @@ struct SidebarView: View {
             let groups = ["Pinned", "Today", "Yesterday", "Older"]
             let _ = surfaceNotifications.unreadSurfaceIds
             let _ = surfaceNotifications.focusedIndicatorSurfaceIds
-            let allTabs = store.sidebarTabs(matching: searchText)
+            let allTabs = store.sidebarWorkspaces(matching: searchText)
 
             if allTabs.isEmpty {
-                Text("No tabs yet")
+                Text("No workspaces yet")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textTertiary)
                     .padding(.horizontal, 12)
@@ -389,7 +394,7 @@ struct SidebarView: View {
                         .padding(.bottom, 4)
 
                     ForEach(tabs) { tab in
-                        SidebarTabRow(
+                        SidebarWorkspaceRow(
                             tab: tab,
                             isSelected: isSelected(tab)
                         ) {
@@ -451,7 +456,7 @@ struct SidebarView: View {
                                     copyTextToClipboard(tab.workingDirectory ?? store.terminalWorkingDirectory(terminalId) ?? "")
                                 }
                                 .disabled((tab.workingDirectory ?? store.terminalWorkingDirectory(terminalId)) == nil)
-                                Button("Copy terminal ID") {
+                                Button("Copy workspace ID") {
                                     copyTextToClipboard(terminalId)
                                 }
                                 Button("Copy tmux attach command") {
@@ -725,7 +730,7 @@ struct SessionRow: View {
     }
 }
 
-struct SidebarTabRow: View {
+struct SidebarWorkspaceRow: View {
     let tab: SidebarTab
     let isSelected: Bool
     let action: () -> Void
@@ -750,14 +755,14 @@ struct SidebarTabRow: View {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 8))
                             .foregroundColor(Theme.textTertiary)
-                            .accessibilityIdentifier("tab.pinned.\(tab.id)")
+                            .accessibilityIdentifier("workspace.pinned.\(tab.id)")
                     }
 
                     if tab.isUnread {
                         Circle()
                             .fill(Theme.accent)
                             .frame(width: 6, height: 6)
-                            .accessibilityIdentifier("tab.unread.\(tab.id)")
+                            .accessibilityIdentifier("workspace.unread.\(tab.id)")
                     }
 
                     Text(tab.timestamp)
@@ -779,9 +784,11 @@ struct SidebarTabRow: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
-        .accessibilityIdentifier("tab.\(tab.id)")
+        .accessibilityIdentifier("workspace.\(tab.id)")
     }
 }
+
+typealias SidebarTabRow = SidebarWorkspaceRow
 
 // MARK: - Edge Border (kept from original)
 
