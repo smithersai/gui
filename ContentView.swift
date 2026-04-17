@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #endif
@@ -1105,6 +1106,9 @@ struct ContentView: View {
                     hiddenShortcutButtons
                 }
                 .accessibilityIdentifier("app.root")
+                .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
+                    handleMarkdownFileDrop(providers)
+                }
                 .onChange(of: destination) { _, newValue in
                     AppLogger.ui.debug("Navigate to \(newValue.label)")
                     recordHistory(newValue)
@@ -1589,6 +1593,8 @@ struct ContentView: View {
             startNewChat()
         case .newTerminal:
             createNewTerminalTab()
+        case .openMarkdownFilePicker:
+            openMarkdownFilePicker()
         case .closeCurrentTab:
             closeCurrentTab()
         case .askAI(let query):
@@ -1665,7 +1671,7 @@ struct ContentView: View {
     private func jumpToLatestUnreadSurface() {
         let notifications = SurfaceNotificationStore.shared
         if let workspace = currentTerminalWorkspace(),
-           let surfaceId = notifications.latestUnreadSurface(in: workspace.id) {
+           let surfaceId = notifications.latestUnreadSurface(in: workspace.id.rawValue) {
             workspace.focusSurface(surfaceId)
             return
         }
@@ -1702,7 +1708,7 @@ struct ContentView: View {
         else {
             return nil
         }
-        return surfaceId
+        return surfaceId.rawValue
     }
 
     @discardableResult
@@ -1746,6 +1752,83 @@ struct ContentView: View {
             )
             destination = .terminal(id: terminalId)
         }
+    }
+
+    private func openMarkdownFilePicker() {
+        let panel = NSOpenPanel()
+        panel.title = "Open Markdown File"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: store.workspaceRootPath, isDirectory: true)
+        let markdownTypes = [
+            UTType(filenameExtension: "md"),
+            UTType(filenameExtension: "markdown"),
+        ].compactMap { $0 }
+        panel.allowedContentTypes = markdownTypes.isEmpty ? [.plainText] : markdownTypes
+
+        guard panel.runModal() == .OK,
+              let url = panel.url
+        else {
+            return
+        }
+
+        openMarkdownFile(url)
+    }
+
+    private func openMarkdownFile(_ url: URL) {
+        guard isMarkdownFile(url) else {
+            AppNotifications.shared.post(
+                title: "Markdown",
+                message: "Choose a .md file.",
+                level: .warning
+            )
+            return
+        }
+
+        let normalizedPath = (url.path as NSString).standardizingPath
+        let terminalId: String
+        if case .terminal(let id) = destination {
+            terminalId = id
+        } else {
+            let rawTitle = url.deletingPathExtension().lastPathComponent
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = rawTitle.isEmpty ? "Markdown" : rawTitle
+            terminalId = store.addTerminalTab(title: title, workingDirectory: store.workspaceRootPath)
+        }
+
+        let workspace = store.ensureTerminalWorkspace(terminalId)
+        if let existing = workspace.orderedSurfaces.first(where: {
+            $0.kind == .markdown && $0.markdownFilePath == normalizedPath
+        }) {
+            workspace.focusSurface(existing.id)
+        } else {
+            workspace.addMarkdown(filePath: normalizedPath, splitAxis: .horizontal)
+        }
+        destination = .terminal(id: terminalId)
+    }
+
+    private func handleMarkdownFileDrop(_ providers: [NSItemProvider]) -> Bool {
+        let fileProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        }
+        guard !fileProviders.isEmpty else { return false }
+
+        for provider in fileProviders {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                guard let data,
+                      let url = URL(dataRepresentation: data, relativeTo: nil)
+                else {
+                    return
+                }
+
+                DispatchQueue.main.async {
+                    openMarkdownFile(url)
+                }
+            }
+        }
+
+        return true
     }
 
     private func handleFindShortcut() {
@@ -1989,10 +2072,14 @@ struct ContentView: View {
             return
         }
 
-        let absolutePath = (store.workspaceRootPath as NSString).appendingPathComponent(path)
+        let absolutePath = absoluteWorkspacePath(for: path)
         let fileURL = URL(fileURLWithPath: absolutePath)
         if FileManager.default.fileExists(atPath: absolutePath) {
-            NSWorkspace.shared.open(fileURL)
+            if isMarkdownFile(fileURL) {
+                openMarkdownFile(fileURL)
+            } else {
+                NSWorkspace.shared.open(fileURL)
+            }
         } else {
             copyTextToClipboard(fileMention)
             AppNotifications.shared.post(
@@ -2001,6 +2088,18 @@ struct ContentView: View {
                 level: .warning
             )
         }
+    }
+
+    private func absoluteWorkspacePath(for path: String) -> String {
+        if path.hasPrefix("/") {
+            return (path as NSString).standardizingPath
+        }
+        return ((store.workspaceRootPath as NSString).appendingPathComponent(path) as NSString).standardizingPath
+    }
+
+    private func isMarkdownFile(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ext == "md" || ext == "markdown"
     }
 
     private func copyTextToClipboard(_ text: String) {

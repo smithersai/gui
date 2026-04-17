@@ -38,6 +38,9 @@ let package = Package(
                 ".smithers",
                 "vendor",
             ],
+            resources: [
+                .process("Resources"),
+            ],
             linkerSettings: [
                 .unsafeFlags([
                     "-Lcodex/codex-rs/target/release",

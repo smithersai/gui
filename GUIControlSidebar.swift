@@ -345,6 +345,8 @@ struct GUIControlSidebar: View {
                     lines.append("Surface \(surface.id): terminal \(surface.title)")
                 case .browser:
                     lines.append("Surface \(surface.id): browser \(surface.title) \(surface.browserURLString ?? "")")
+                case .markdown:
+                    lines.append("Surface \(surface.id): markdown \(surface.title) \(surface.markdownFilePath ?? "")")
                 }
             }
         }

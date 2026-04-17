@@ -1,0 +1,7 @@
+Pinned browser assets used by the Smithers Markdown shell:
+
+- marked 15.0.12, MIT License, https://github.com/markedjs/marked
+- mermaid 11.14.0, MIT License, https://github.com/mermaid-js/mermaid
+- highlight.js 11.11.1, BSD-3-Clause License, https://github.com/highlightjs/highlight.js
+
+Downloaded from jsDelivr for local app bundling.

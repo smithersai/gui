@@ -536,6 +536,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                     TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id.rawValue)
                 case .browser:
                     BrowserSurfaceRegistry.shared.remove(surfaceId: surface.id.rawValue)
+                case .markdown:
+                    MarkdownSurfaceRegistry.shared.remove(surfaceId: surface.id.rawValue)
                 }
             }
             terminateTmuxSessions(in: snapshot)
@@ -546,6 +548,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                     TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id.rawValue)
                 } else if surface.kind == .browser {
                     BrowserSurfaceRegistry.shared.remove(surfaceId: surface.id.rawValue)
+                } else if surface.kind == .markdown {
+                    MarkdownSurfaceRegistry.shared.remove(surfaceId: surface.id.rawValue)
                 }
             }
             terminateTmuxSessions(in: snapshot)

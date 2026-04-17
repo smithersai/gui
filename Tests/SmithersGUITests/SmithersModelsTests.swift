@@ -5,9 +5,9 @@ final class SmithersModelsTests: XCTestCase {
 
     // MARK: - RunStatus
 
-    func testRunStatusHas6Variants() {
-        XCTAssertEqual(RunStatus.allCases.count, 6)
-        let expected: Set<RunStatus> = [.running, .waitingApproval, .finished, .failed, .cancelled, .unknown]
+    func testRunStatusHasExpectedVariants() {
+        XCTAssertEqual(RunStatus.allCases.count, 8)
+        let expected: Set<RunStatus> = [.running, .waitingApproval, .finished, .failed, .cancelled, .stale, .orphaned, .unknown]
         XCTAssertEqual(Set(RunStatus.allCases), expected)
     }
 

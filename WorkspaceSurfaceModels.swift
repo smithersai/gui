@@ -3,11 +3,13 @@ import Foundation
 enum WorkspaceSurfaceKind: String, Hashable, Codable {
     case terminal
     case browser
+    case markdown
 
     var icon: String {
         switch self {
         case .terminal: return "terminal.fill"
         case .browser: return "safari"
+        case .markdown: return "doc.richtext"
         }
     }
 
@@ -15,6 +17,7 @@ enum WorkspaceSurfaceKind: String, Hashable, Codable {
         switch self {
         case .terminal: return "Terminal"
         case .browser: return "Browser"
+        case .markdown: return "Markdown"
         }
     }
 }
@@ -198,6 +201,7 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
     var terminalBackend: TerminalBackend
     var tmuxSocketName: String?
     var tmuxSessionName: String?
+    var markdownFilePath: String?
 
     static func terminal(
         id: SurfaceID = SurfaceID(),
@@ -218,7 +222,8 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             terminalCommand: command,
             terminalBackend: backend,
             tmuxSocketName: tmuxSocketName,
-            tmuxSessionName: tmuxSessionName
+            tmuxSessionName: tmuxSessionName,
+            markdownFilePath: nil
         )
     }
 
@@ -234,7 +239,27 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             terminalCommand: nil,
             terminalBackend: .ghostty,
             tmuxSocketName: nil,
-            tmuxSessionName: nil
+            tmuxSessionName: nil,
+            markdownFilePath: nil
+        )
+    }
+
+    static func markdown(id: SurfaceID = SurfaceID(), filePath: String) -> WorkspaceSurface {
+        let normalizedPath = (filePath as NSString).standardizingPath
+        let fileName = (normalizedPath as NSString).lastPathComponent
+        return WorkspaceSurface(
+            id: id,
+            kind: .markdown,
+            title: fileName.isEmpty ? WorkspaceSurfaceKind.markdown.defaultTitle : fileName,
+            subtitle: normalizedPath,
+            createdAt: Date(),
+            browserURLString: nil,
+            terminalWorkingDirectory: nil,
+            terminalCommand: nil,
+            terminalBackend: .ghostty,
+            tmuxSocketName: nil,
+            tmuxSessionName: nil,
+            markdownFilePath: normalizedPath
         )
     }
 }
@@ -384,12 +409,16 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     var displayPreview: String {
         let terminalCount = surfaces.values.filter { $0.kind == .terminal }.count
         let browserCount = surfaces.values.filter { $0.kind == .browser }.count
+        let markdownCount = surfaces.values.filter { $0.kind == .markdown }.count
         var parts: [String] = []
         if terminalCount > 0 {
             parts.append("\(terminalCount) terminal\(terminalCount == 1 ? "" : "s")")
         }
         if browserCount > 0 {
             parts.append("\(browserCount) browser\(browserCount == 1 ? "" : "s")")
+        }
+        if markdownCount > 0 {
+            parts.append("\(markdownCount) markdown\(markdownCount == 1 ? "" : "s")")
         }
         return parts.isEmpty ? "Workspace" : parts.joined(separator: ", ")
     }
@@ -548,8 +577,21 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
             )
         case .browser:
             newSurface = .browser()
+        case .markdown:
+            assertionFailure("Use addMarkdown(filePath:splitAxis:) for markdown surfaces.")
+            newSurface = .markdown(filePath: "")
         }
 
+        return insertSurface(newSurface, splitAxis: axis)
+    }
+
+    @discardableResult
+    func addMarkdown(filePath: String, splitAxis: WorkspaceSplitAxis = .horizontal) -> SurfaceID {
+        insertSurface(.markdown(filePath: filePath), splitAxis: splitAxis)
+    }
+
+    @discardableResult
+    private func insertSurface(_ newSurface: WorkspaceSurface, splitAxis: WorkspaceSplitAxis) -> SurfaceID {
         surfaces[newSurface.id] = newSurface
         paneIdsBySurfaceId[newSurface.id] = PaneID()
         SurfaceNotificationStore.shared.register(surfaceId: newSurface.id.rawValue, workspaceId: id.rawValue)
@@ -560,14 +602,14 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         let targetSurfaceId = focusedSurfaceId ?? layout.firstSurfaceId ?? newSurface.id
         if layout.contains(surfaceId: targetSurfaceId) {
             let replacement = WorkspaceLayoutNode.makeSplit(
-                axis: axis,
+                axis: splitAxis,
                 first: .leaf(targetSurfaceId),
                 second: .leaf(newSurface.id)
             )
             layout = layout.replacingLeaf(targetSurfaceId, with: replacement)
         } else {
             layout = WorkspaceLayoutNode.makeSplit(
-                axis: axis,
+                axis: splitAxis,
                 first: layout,
                 second: .leaf(newSurface.id)
             )
@@ -636,6 +678,8 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
             )
         } else if removed?.kind == .browser {
             BrowserSurfaceRegistry.shared.remove(surfaceId: surfaceId.rawValue)
+        } else if removed?.kind == .markdown {
+            MarkdownSurfaceRegistry.shared.remove(surfaceId: surfaceId.rawValue)
         }
 
         if focusedSurfaceId == surfaceId {

@@ -218,7 +218,7 @@ struct BrowserSurfaceView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: Self.focusAddressBarNotification)) { notification in
-            guard notification.userInfo?[Self.surfaceIdUserInfoKey] as? String == surface.id else { return }
+            guard notification.userInfo?[Self.surfaceIdUserInfoKey] as? String == surface.id.rawValue else { return }
             onFocus()
             addressFocused = true
         }

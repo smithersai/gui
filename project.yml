@@ -63,6 +63,8 @@ targets:
       - JJHubWorkflowsView.swift
       - LandingsView.swift
       - LogViewerView.swift
+      - MarkdownSurface.swift
+      - MarkdownSurfaceView.swift
       - MarkdownEditorView.swift
       - MemoryView.swift
       - Models.swift
@@ -120,6 +122,8 @@ targets:
       - WorkspaceSurfaceModels.swift
       - WorkflowsView.swift
       - WorkspacesView.swift
+      - path: Resources/MarkdownShell
+        type: folder
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUI

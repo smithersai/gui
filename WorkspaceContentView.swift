@@ -278,6 +278,14 @@ private struct WorkspaceSurfaceContainer: View {
                     workspace.focusSurface(surface.id)
                 }
             )
+        case .markdown:
+            MarkdownSurfaceView(
+                surface: surface,
+                workspace: workspace,
+                onFocus: {
+                    workspace.focusSurface(surface.id)
+                }
+            )
         }
     }
 

@@ -206,12 +206,6 @@ struct SidebarView: View {
                             .help("New Tab (⌘T)")
                         }
                     ) {
-                        NewChatMenuRow(
-                            newChatAction: startNewChat,
-                            terminalAction: startNewTerminal
-                        )
-                        .padding(.bottom, 6)
-
                         workspaceList
                     }
 

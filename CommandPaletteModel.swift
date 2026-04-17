@@ -96,6 +96,7 @@ enum CommandPaletteAction: Hashable {
     case selectSidebarTab(String)
     case newChat
     case newTerminal
+    case openMarkdownFilePicker
     case closeCurrentTab
     case askAI(String)
     case slashCommand(String)
@@ -275,6 +276,17 @@ enum CommandPaletteBuilder {
                 keywords: ["terminal", "shell", "workspace", "tmux"],
                 shortcut: "Cmd+T",
                 action: .newTerminal,
+                isEnabled: true
+            ),
+            CommandPaletteItem(
+                id: "command.open-markdown-file",
+                title: "Open Markdown File…",
+                subtitle: "Render a local markdown file in the workspace.",
+                icon: "doc.richtext",
+                section: "Commands",
+                keywords: ["markdown", "md", "mermaid", "preview", "viewer", "file"],
+                shortcut: nil,
+                action: .openMarkdownFilePicker,
                 isEnabled: true
             ),
             CommandPaletteItem(

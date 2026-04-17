@@ -78,6 +78,18 @@ final class CommandPaletteProviderTests: XCTestCase {
         }))
     }
 
+    func testCommandModeIncludesOpenMarkdownFileCommand() {
+        let items = CommandPaletteBuilder.items(for: ">markdown", context: makeContext())
+        let item = items.first { $0.id == "command.open-markdown-file" }
+
+        XCTAssertEqual(item?.title, "Open Markdown File…")
+        if case .some(.openMarkdownFilePicker) = item?.action {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Expected open markdown file action")
+        }
+    }
+
     func testSessionStoreSidebarTabsIncludesChatRunAndTerminal() {
         let store = SessionStore()
         let runId = "run-test-1"
