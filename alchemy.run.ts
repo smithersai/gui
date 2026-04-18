@@ -26,7 +26,8 @@ if (!has("--skip-build")) await build();
 const app = await alchemy("smithers-gui");
 export const releases = await R2Bucket("smithers-gui-releases", {
   name: "smithers-gui-releases",
-  domains: "get.smithers.sh",
+  devDomain: true,
+  adopt: true,
 });
 
 if (!has("--no-upload")) await upload();
@@ -55,7 +56,7 @@ async function build() {
         "ENABLE_HARDENED_RUNTIME=YES",
         "OTHER_CODE_SIGN_FLAGS=--options=runtime",
       ]
-    : ["CODE_SIGN_IDENTITY=-", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGNING_ALLOWED=NO"];
+    : ["CODE_SIGN_IDENTITY=-"];
   await $`xcodebuild -project ${SCHEME}.xcodeproj -scheme ${SCHEME} -configuration Release -archivePath ${ARCHIVE} -destination generic/platform=macOS archive ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGN_STYLE=Manual ${signArgs}`.cwd(ROOT);
 
   console.log("→ export");
@@ -91,8 +92,9 @@ async function upload() {
   console.log(`\n→ uploading ${(statSync(DMG).size / 1024 / 1024).toFixed(1)}MB`);
   for (const key of keys) await releases.put(key, body, opts);
 
-  console.log("\n✓ live at:");
-  for (const key of keys) console.log(`  https://get.smithers.sh/${key}`);
+  const base = releases.devDomain ? `https://${releases.devDomain}` : null;
+  console.log("\n✓ uploaded:");
+  for (const key of keys) console.log(`  ${base ? `${base}/${key}` : `(r2://smithers-gui-releases/${key})`}`);
   if (!signed) console.log("\n⚠ unsigned — users must right-click → Open on first launch");
 }
 
