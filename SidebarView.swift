@@ -463,6 +463,19 @@ struct SidebarView: View {
                                 }
                             }
                         }
+
+                        if tab.kind == .terminal,
+                           let terminalId = tab.terminalId,
+                           let workspace = store.terminalWorkspaces[terminalId] {
+                            SidebarTerminalPaneChildren(
+                                workspace: workspace,
+                                tabId: tab.id,
+                                isParentSelected: isSelected(tab)
+                            ) { surfaceId in
+                                destination = .terminal(id: terminalId)
+                                workspace.focusSurface(surfaceId)
+                            }
+                        }
                     }
                 }
             }
@@ -783,6 +796,56 @@ struct SidebarWorkspaceRow: View {
 }
 
 typealias SidebarTabRow = SidebarWorkspaceRow
+
+struct SidebarTerminalPaneChildren: View {
+    @ObservedObject var workspace: TerminalWorkspace
+    let tabId: String
+    let isParentSelected: Bool
+    let onSelectPane: (SurfaceID) -> Void
+
+    var body: some View {
+        let surfaceIds = workspace.layout.surfaceIds
+        if surfaceIds.count > 1 {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(surfaceIds, id: \.self) { surfaceId in
+                    if let surface = workspace.surfaces[surfaceId] {
+                        paneRow(surface: surface, isFocused: workspace.focusedSurfaceId == surfaceId)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func paneRow(surface: WorkspaceSurface, isFocused: Bool) -> some View {
+        let isHighlighted = isParentSelected && isFocused
+        Button {
+            onSelectPane(surface.id)
+        } label: {
+            HStack(spacing: 7) {
+                Rectangle()
+                    .fill(Theme.border)
+                    .frame(width: 1, height: 14)
+                    .padding(.leading, 10)
+                Image(systemName: surface.kind.icon)
+                    .font(.system(size: 10))
+                    .foregroundColor(isHighlighted ? Theme.accent : Theme.textTertiary)
+                    .frame(width: 14)
+                Text(surface.title)
+                    .font(.system(size: 11, weight: isHighlighted ? .semibold : .regular))
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .themedSidebarRowBackground(isSelected: isHighlighted, cornerRadius: 6)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .accessibilityIdentifier("workspace.pane.\(tabId).\(surface.id.rawValue)")
+    }
+}
 
 // MARK: - Edge Border (kept from original)
 
