@@ -623,13 +623,19 @@ final class SQLiteSessionPersistence: SessionPersisting {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
-        try process.run()
         let readerGroup = DispatchGroup()
         let outputReader = SQLitePipeReader(fileHandle: outputPipe.fileHandleForReading)
         let errorReader = SQLitePipeReader(fileHandle: errorPipe.fileHandleForReading)
         outputReader.start(group: readerGroup)
         errorReader.start(group: readerGroup)
-        process.waitUntilExit()
+
+        // Use a DispatchSemaphore-based wait rather than process.waitUntilExit() —
+        // the latter pumps the caller's CFRunLoop, which is forbidden when invoked
+        // from inside a SwiftUI AttributeGraph update (crashes with AG precondition).
+        let exitSemaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exitSemaphore.signal() }
+        try process.run()
+        exitSemaphore.wait()
         readerGroup.wait()
 
         let outputData = outputReader.collectedData()
