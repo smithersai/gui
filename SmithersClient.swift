@@ -347,10 +347,13 @@ class SmithersClient: ObservableObject {
     ) {
         let trimmedCwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedCwd = (trimmedCwd?.isEmpty == false) ? trimmedCwd : nil
-        self.cwd = CWDResolver.resolve(resolvedCwd)
-        // Don't spawn a process during init — just use "smithers" and rely on PATH
-        self.smithersBin = smithersBin
-        self.jjhubBin = jjhubBin
+        let workingDir = CWDResolver.resolve(resolvedCwd)
+        self.cwd = workingDir
+        // Prefer a project-local CLI (e.g. .smithers/node_modules/.bin/smithers)
+        // so the GUI uses the same build the project's workflows depend on,
+        // rather than whatever stale `smithers` happens to be on $PATH.
+        self.smithersBin = Self.resolveProjectBinary(name: smithersBin, cwd: workingDir)
+        self.jjhubBin = Self.resolveProjectBinary(name: jjhubBin, cwd: workingDir)
         self.codexHomeOverride = codexHome
         self.decoder = JSONDecoder()
         self.session = URLSession(configuration: Self.makeHTTPURLSessionConfiguration())
@@ -1357,12 +1360,48 @@ class SmithersClient: ObservableObject {
             return "/usr/local/bin/\(smithersBin)"
         }
 
+        // If init resolved to an absolute path via node_modules/.bin, use it.
+        if smithersBin.hasPrefix("/") {
+            return smithersBin
+        }
+
         let data = try await execBinaryArgs(bin: "which", args: [smithersBin], displayName: "which")
         let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty else {
             throw SmithersError.cli("smithers binary not found on PATH")
         }
         return path
+    }
+
+    /// Resolve a CLI name to a project-local node_modules/.bin path when available,
+    /// falling back to the bare name so $PATH resolution still applies.
+    ///
+    /// Precedence:
+    ///   1. `<cwd>/.smithers/node_modules/.bin/<name>`
+    ///   2. `<cwd>/node_modules/.bin/<name>`, walking up toward the filesystem root
+    ///   3. `<name>` (unchanged — resolved via $PATH at exec time)
+    static func resolveProjectBinary(name: String, cwd: String) -> String {
+        // Respect absolute or explicit paths from the caller.
+        if name.contains("/") { return name }
+
+        let fm = FileManager.default
+        let smithersLocal = (cwd as NSString).appendingPathComponent(".smithers/node_modules/.bin/\(name)")
+        if fm.isExecutableFile(atPath: smithersLocal) {
+            return smithersLocal
+        }
+
+        var dir = cwd
+        while !dir.isEmpty, dir != "/" {
+            let candidate = (dir as NSString).appendingPathComponent("node_modules/.bin/\(name)")
+            if fm.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+            let parent = (dir as NSString).deletingLastPathComponent
+            if parent == dir { break }
+            dir = parent
+        }
+
+        return name
     }
 
     // MARK: - Workflow Source (filesystem)
