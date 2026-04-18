@@ -269,6 +269,7 @@ struct TerminalWorkspaceSnapshot: Hashable, Codable {
     var surfaces: [WorkspaceSurface]
     var layout: WorkspaceLayoutNode
     var focusedSurfaceId: SurfaceID?
+    var hasCustomTitle: Bool?
 }
 
 @MainActor
@@ -281,6 +282,8 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     let id: WorkspaceID
     @Published private(set) var windowID: WindowID
     @Published var title: String
+    @Published private(set) var hasCustomTitle: Bool = false
+    @Published private(set) var runningProcessName: String?
     @Published private(set) var surfaces: [SurfaceID: WorkspaceSurface]
     @Published private(set) var layout: WorkspaceLayoutNode
     @Published private(set) var paneIdsBySurfaceId: [SurfaceID: PaneID]
@@ -297,6 +300,8 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         workingDirectory: String? = nil,
         command: String? = nil,
         rootSurfaceId: SurfaceID? = nil,
+        rootKind: WorkspaceSurfaceKind = .terminal,
+        browserURLString: String? = nil,
         backend: TerminalBackend = .tmux,
         tmuxSocketName: String? = nil
     ) {
@@ -308,26 +313,48 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         self.tmuxSocketName = tmuxSocketName
 
         let surfaceId = rootSurfaceId ?? SurfaceID()
-        let target = Self.tmuxTarget(
-            surfaceId: surfaceId,
-            workingDirectory: workingDirectory,
-            socketName: tmuxSocketName
-        )
-        var initialSurface = WorkspaceSurface.terminal(
-            id: surfaceId,
-            workingDirectory: workingDirectory,
-            command: command,
-            backend: backend,
-            tmuxSocketName: target?.socketName,
-            tmuxSessionName: target?.sessionName
-        )
+        var initialSurface: WorkspaceSurface
+        switch rootKind {
+        case .terminal:
+            let target = Self.tmuxTarget(
+                surfaceId: surfaceId,
+                workingDirectory: workingDirectory,
+                socketName: tmuxSocketName
+            )
+            initialSurface = WorkspaceSurface.terminal(
+                id: surfaceId,
+                workingDirectory: workingDirectory,
+                command: command,
+                backend: backend,
+                tmuxSocketName: target?.socketName,
+                tmuxSessionName: target?.sessionName
+            )
+        case .browser:
+            initialSurface = WorkspaceSurface.browser(id: surfaceId, urlString: browserURLString)
+        case .markdown:
+            let target = Self.tmuxTarget(
+                surfaceId: surfaceId,
+                workingDirectory: workingDirectory,
+                socketName: tmuxSocketName
+            )
+            initialSurface = WorkspaceSurface.terminal(
+                id: surfaceId,
+                workingDirectory: workingDirectory,
+                command: command,
+                backend: backend,
+                tmuxSocketName: target?.socketName,
+                tmuxSessionName: target?.sessionName
+            )
+        }
         initialSurface.title = title
         self.surfaces = [initialSurface.id: initialSurface]
         self.layout = .leaf(initialSurface.id)
         self.paneIdsBySurfaceId = [initialSurface.id: PaneID()]
         self.focusedSurfaceId = initialSurface.id
         SurfaceNotificationStore.shared.register(surfaceId: initialSurface.id.rawValue, workspaceId: id.rawValue)
-        prepareTerminalSession(initialSurface)
+        if initialSurface.kind == .terminal {
+            prepareTerminalSession(initialSurface)
+        }
     }
 
     init(
@@ -341,6 +368,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         self.id = id
         self.windowID = windowID
         self.title = snapshot.title
+        self.hasCustomTitle = snapshot.hasCustomTitle ?? false
         self.defaultWorkingDirectory = workingDirectory
         self.backend = backend
         self.tmuxSocketName = tmuxSocketName
@@ -428,7 +456,8 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
             title: title,
             surfaces: orderedSurfaces,
             layout: layout,
-            focusedSurfaceId: focusedSurfaceId
+            focusedSurfaceId: focusedSurfaceId,
+            hasCustomTitle: hasCustomTitle
         )
     }
 
@@ -576,7 +605,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
                 tmuxSessionName: target?.sessionName
             )
         case .browser:
-            newSurface = .browser()
+            newSurface = .browser(urlString: "https://smithers.sh")
         case .markdown:
             assertionFailure("Use addMarkdown(filePath:splitAxis:) for markdown surfaces.")
             newSurface = .markdown(filePath: "")
@@ -700,6 +729,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         self.title = trimmed
+        self.hasCustomTitle = true
         if let firstSurfaceId = layout.firstSurfaceId,
            var surface = surfaces[firstSurfaceId],
            surface.kind == .terminal {
@@ -719,6 +749,26 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         surface.title = trimmed
         surface.subtitle = "Shell session"
         surfaces[surfaceId] = surface
+        if !hasCustomTitle, layout.firstSurfaceId == surfaceId {
+            self.title = trimmed
+        }
+        notifyChanged()
+    }
+
+    func updateRunningProcessName(surfaceId: SurfaceID, name: String?) {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolved = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        guard layout.firstSurfaceId == surfaceId else { return }
+        guard runningProcessName != resolved else { return }
+        runningProcessName = resolved
+        if !hasCustomTitle, let resolved,
+           var surface = surfaces[surfaceId],
+           surface.kind == .terminal,
+           surface.title == WorkspaceSurfaceKind.terminal.defaultTitle || surface.title.isEmpty {
+            self.title = resolved
+            surface.title = resolved
+            surfaces[surfaceId] = surface
+        }
         notifyChanged()
     }
 

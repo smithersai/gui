@@ -18,6 +18,7 @@ final class SurfaceNotificationStore: ObservableObject {
     @Published private(set) var notificationCountBySurfaceId: [String: Int] = [:]
     @Published private(set) var unreadSurfaceIds: Set<String> = []
     @Published private(set) var focusedIndicatorSurfaceIds: Set<String> = []
+    @Published private(set) var erroredSurfaceIds: Set<String> = []
     @Published private(set) var surfaceWorkspaceIds: [String: String] = [:]
     @Published private(set) var focusedSurfaceId: String?
     @Published private(set) var focusedWorkspaceId: String?
@@ -34,9 +35,22 @@ final class SurfaceNotificationStore: ObservableObject {
         notificationCountBySurfaceId[surfaceId] = nil
         unreadSurfaceIds.remove(surfaceId)
         focusedIndicatorSurfaceIds.remove(surfaceId)
+        erroredSurfaceIds.remove(surfaceId)
         if focusedSurfaceId == surfaceId {
             focusedSurfaceId = nil
         }
+    }
+
+    func markErrored(surfaceId: String) {
+        erroredSurfaceIds.insert(surfaceId)
+    }
+
+    func clearErrored(surfaceId: String) {
+        erroredSurfaceIds.remove(surfaceId)
+    }
+
+    func hasError(surfaceId: String) -> Bool {
+        erroredSurfaceIds.contains(surfaceId)
     }
 
     func setFocusedSurface(_ surfaceId: String?, workspaceId: String?) {
