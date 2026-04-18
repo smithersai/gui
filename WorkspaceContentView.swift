@@ -110,15 +110,41 @@ private struct WorkspaceSurfaceContainer: View {
         notifications.hasVisibleIndicator(surfaceId: surface.id.rawValue)
     }
 
-    private var ringColor: Color {
-        if needsAttention {
+    private var hasError: Bool {
+        notifications.hasError(surfaceId: surface.id.rawValue)
+    }
+
+    private var accentColor: Color {
+        if hasError {
             return Theme.danger
         }
-        return isFocused ? Theme.accent : Theme.border
+        if needsAttention {
+            return Theme.accent
+        }
+        if isFocused {
+            return Theme.success
+        }
+        return Theme.textTertiary
+    }
+
+    private var ringColor: Color {
+        if hasError {
+            return Theme.danger
+        }
+        if needsAttention {
+            return Theme.accent
+        }
+        if isFocused {
+            return Theme.success
+        }
+        return Theme.border
     }
 
     private var ringWidth: CGFloat {
-        needsAttention ? 3 : (isFocused ? 2 : 1)
+        if hasError { return 3 }
+        if needsAttention { return 3 }
+        if isFocused { return 2 }
+        return 1
     }
 
     var body: some View {
@@ -132,6 +158,7 @@ private struct WorkspaceSurfaceContainer: View {
                 .stroke(ringColor, lineWidth: ringWidth)
                 .padding(2)
                 .animation(.easeInOut(duration: 0.16), value: needsAttention)
+                .animation(.easeInOut(duration: 0.16), value: hasError)
                 .animation(.easeInOut(duration: 0.16), value: isFocused)
         )
         .contentShape(Rectangle())
@@ -145,12 +172,12 @@ private struct WorkspaceSurfaceContainer: View {
         HStack(spacing: 6) {
             Image(systemName: surface.kind.icon)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(needsAttention ? Theme.danger : (isFocused ? Theme.accent : Theme.textTertiary))
+                .foregroundColor(accentColor)
                 .frame(width: 14)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(surface.title)
-                    .font(.system(size: 11, weight: needsAttention ? .bold : .semibold))
+                    .font(.system(size: 11, weight: (needsAttention || hasError) ? .bold : .semibold))
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(1)
                 if !surface.subtitle.isEmpty {
@@ -163,9 +190,9 @@ private struct WorkspaceSurfaceContainer: View {
 
             Spacer()
 
-            if needsAttention {
+            if hasError || needsAttention {
                 Circle()
-                    .fill(Theme.danger)
+                    .fill(hasError ? Theme.danger : Theme.accent)
                     .frame(width: 7, height: 7)
                     .accessibilityIdentifier("surface.unread.\(surface.id.rawValue)")
             }
@@ -183,13 +210,6 @@ private struct WorkspaceSurfaceContainer: View {
             }
             .appKeyboardShortcut(.splitDown)
             .accessibilityIdentifier("workspace.surface.splitDown.\(surface.id)")
-
-            WorkspaceToolbarButton(title: "Browser", systemName: "safari") {
-                workspace.focusSurface(surface.id)
-                workspace.splitFocused(axis: .horizontal, kind: .browser)
-            }
-            .appKeyboardShortcut(.openBrowser)
-            .accessibilityIdentifier("workspace.surface.browser.\(surface.id)")
 
             WorkspaceToolbarButton(title: "Unread", systemName: "bell.badge") {
                 jumpToLatestUnread()
@@ -270,6 +290,18 @@ private struct WorkspaceSurfaceContainer: View {
                     }
                 }
             )
+            .onAppear {
+                let surfaceIdString = surface.id.rawValue
+                TerminalProcessTracker.shared.register(
+                    surfaceId: surfaceIdString,
+                    workspaceId: workspace.id.rawValue
+                ) { [weak workspace] sid, name in
+                    workspace?.updateRunningProcessName(surfaceId: SurfaceID(sid), name: name)
+                }
+            }
+            .onDisappear {
+                TerminalProcessTracker.shared.unregister(surfaceId: surface.id.rawValue)
+            }
         case .browser:
             BrowserSurfaceView(
                 surface: surface,
