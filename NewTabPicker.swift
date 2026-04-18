@@ -7,12 +7,14 @@ import AppKit
 enum NewTabSelection: Equatable {
     case smithersChat
     case terminal
+    case browser
     case externalAgent(ChatTargetOption)
 
     static func == (lhs: NewTabSelection, rhs: NewTabSelection) -> Bool {
         switch (lhs, rhs) {
         case (.smithersChat, .smithersChat),
-             (.terminal, .terminal):
+             (.terminal, .terminal),
+             (.browser, .browser):
             return true
         case (.externalAgent(let a), .externalAgent(let b)):
             return a.id == b.id
@@ -65,6 +67,16 @@ struct NewTabPicker: View {
                 selection: .terminal,
                 isEnabled: true,
                 searchTokens: ["terminal", "shell", "new", "tab", "command"]
+            ),
+            NewTabOption(
+                id: "tab.browser",
+                title: "New Browser",
+                subtitle: "Open a web browser in a new tab",
+                icon: "safari",
+                iconTint: Theme.textSecondary,
+                selection: .browser,
+                isEnabled: true,
+                searchTokens: ["browser", "web", "safari", "new", "tab", "url"]
             ),
         ]
 

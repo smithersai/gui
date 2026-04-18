@@ -391,6 +391,53 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     @discardableResult
+    func addBrowserTab(
+        title requestedTitle: String? = nil,
+        urlString: String? = nil
+    ) -> String {
+        let workspaceID = WorkspaceID()
+        let id = workspaceID.rawValue
+        registerWorkspace(workspaceID)
+        let browserTabCount = terminalTabs.filter { ($0.title).hasPrefix("Browser") }.count
+        let title = normalizedOptionalText(requestedTitle) ?? "Browser \(browserTabCount + 1)"
+        let rootSurfaceID = SurfaceID()
+        let rootSurfaceId = rootSurfaceID.rawValue
+        AppLogger.state.info("SessionStore addBrowserTab", metadata: ["id": String(id.prefix(8))])
+        let workspace = TerminalWorkspace(
+            id: workspaceID,
+            windowID: windowID,
+            title: title,
+            workingDirectory: workingDirectory,
+            rootSurfaceId: rootSurfaceID,
+            rootKind: .browser,
+            browserURLString: urlString,
+            backend: .tmux,
+            tmuxSocketName: nil
+        )
+        attachTerminalWorkspaceChangeHandler(workspace)
+        terminalWorkspaces[id] = workspace
+        let now = Date()
+        terminalTabs.insert(
+            TerminalTab(
+                terminalId: id,
+                title: title,
+                preview: urlString ?? "Web browser",
+                timestamp: now,
+                createdAt: now,
+                workingDirectory: workingDirectory,
+                command: nil,
+                backend: .tmux,
+                rootSurfaceId: rootSurfaceId,
+                tmuxSocketName: nil,
+                tmuxSessionName: nil
+            ),
+            at: 0
+        )
+        persistTerminalTab(id)
+        return id
+    }
+
+    @discardableResult
     func launchExternalAgentTab(name: String, command: String) -> String {
         let placeholderSessionId = activeSessionId
         let cwd = activeAgent?.workingDirectory ?? workingDirectory
