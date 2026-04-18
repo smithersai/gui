@@ -745,9 +745,16 @@ private struct ShortcutSettingsRow: View {
 #endif
 
 struct ContentView: View {
-    @StateObject private var store = SessionStore()
+    @StateObject private var store: SessionStore
     @StateObject private var smithers = SmithersClient()
-    @StateObject private var fileSearchIndex = WorkspaceFileSearchIndex(rootPath: CWDResolver.resolve(nil))
+    @StateObject private var fileSearchIndex: WorkspaceFileSearchIndex
+
+    init(workspacePath: String? = nil) {
+        let resolved = CWDResolver.resolve(workspacePath)
+        _store = StateObject(wrappedValue: SessionStore(workingDirectory: resolved))
+        _fileSearchIndex = StateObject(wrappedValue: WorkspaceFileSearchIndex(rootPath: resolved))
+    }
+
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
     @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
     @AppStorage(AppPreferenceKeys.smithersFeatureEnabled) private var smithersFeatureEnabled = false
@@ -1745,6 +1752,9 @@ struct ContentView: View {
         case .terminal:
             let terminalId = store.addTerminalTab()
             destination = .terminal(id: terminalId)
+        case .browser:
+            let terminalId = store.addBrowserTab()
+            destination = .terminal(id: terminalId)
         case .externalAgent(let target):
             let terminalId = store.launchExternalAgentTab(
                 name: target.name,
@@ -2244,14 +2254,46 @@ struct ContentView: View {
 @main
 struct SmithersApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var workspaceManager = WorkspaceManager.shared
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            SmithersRootView(manager: workspaceManager)
                 .preferredColorScheme(.dark)
+                .onOpenURL { url in
+                    SmithersApp.handleOpenedURL(url, manager: workspaceManager)
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
+    }
+
+    static func handleOpenedURL(_ url: URL, manager: WorkspaceManager) {
+        if url.isFileURL {
+            manager.openWorkspace(at: url)
+            return
+        }
+        guard url.scheme == "smithers-gui" else { return }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        if let path = components.queryItems?.first(where: { $0.name == "path" })?.value {
+            manager.openWorkspace(at: URL(fileURLWithPath: path, isDirectory: true))
+        }
+    }
+}
+
+struct SmithersRootView: View {
+    @ObservedObject var manager: WorkspaceManager
+
+    var body: some View {
+        Group {
+            if let path = manager.activeWorkspacePath {
+                ContentView(workspacePath: path)
+                    .id(path)
+            } else {
+                WelcomeView(manager: manager)
+            }
+        }
+        .environmentObject(manager)
     }
 }
 
@@ -2260,6 +2302,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         AppLogger.lifecycle.info("Application did finish launching")
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        Task { @MainActor in
+            for url in urls {
+                SmithersApp.handleOpenedURL(url, manager: WorkspaceManager.shared)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

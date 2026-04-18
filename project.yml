@@ -42,7 +42,6 @@ targets:
       - AncestorErrorIndex.swift
       - TreeKeyboardHandler.swift
       - BrowserSurfaceView.swift
-      - SmithersHomepageWeb.swift
       - CWDResolver.swift
       - DateFormatters.swift
       - CodexMCPStatus.swift
@@ -105,6 +104,10 @@ targets:
       - SmithersClient.swift
       - SmithersModels.swift
       - SurfaceNotificationStore.swift
+      - TerminalProcessTracker.swift
+      - RecentWorkspaceStore.swift
+      - WorkspaceManager.swift
+      - WelcomeView.swift
       - TerminalView.swift
       - StoredShortcut.swift
       - ShortcutAction.swift
