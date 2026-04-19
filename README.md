@@ -6,18 +6,6 @@ Requires **macOS 14 (Sonoma)** or later, **Apple Silicon (arm64)**.
 
 ## Dependencies
 
-### Required
-
-These must be present at runtime or the app will not function:
-
-| Dependency | How it's used | Install |
-|---|---|---|
-| **smithers** | Primary workflow engine — runs, approvals, cron, landings, tickets, scoring. The app shells out to `smithers` via PATH. | See smithers repo |
-| **jjhub** | VCS operations — landings, issues, repository metadata. Shelled out via PATH. | See jjhub repo |
-| **Codex FFI** (`libcodex_ffi.a`) | Rust FFI library powering agent execution. Vendored as a git submodule (`codex/`) and linked at compile time — no runtime install needed. | `git submodule update --init` then build with `codex/codex-rs` |
-| **Ghostty** (`GhosttyKit.xcframework`) | Terminal emulator framework for all terminal surfaces. Vendored as a git submodule (`ghostty/`) and linked at compile time — no runtime install needed. | `git submodule update --init` then build the xcframework |
-| **sqlite3** | Session persistence — chat history, terminal state, settings. Uses `/usr/bin/sqlite3` which ships with macOS. | Pre-installed on macOS |
-
 ### Optional
 
 The app degrades gracefully without these — specific features will be unavailable:
