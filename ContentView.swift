@@ -2302,6 +2302,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         AppLogger.lifecycle.info("Application did finish launching")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            AppDelegate.relocateOffScreenWindows()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            AppDelegate.relocateOffScreenWindows()
+        }
+    }
+
+    private static func relocateOffScreenWindows() {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return }
+        // Fallback target when a window is off every connected screen. Prefer
+        // the screen anchored at origin (0, 0) — NSScreen.main can point at a
+        // phantom display remembered from a prior multi-monitor setup.
+        let anchored = screens.first(where: { $0.frame.origin == .zero })
+        guard let fallbackScreen = anchored ?? NSScreen.main else { return }
+        let visibleFrame = fallbackScreen.visibleFrame
+        for window in NSApp.windows {
+            let frame = window.frame
+            guard frame.width > 0, frame.height > 0 else { continue }
+            let onAnyScreen = screens.contains { $0.visibleFrame.intersects(frame) }
+            if onAnyScreen { continue }
+            let size = NSSize(
+                width: min(frame.width, visibleFrame.width * 0.9),
+                height: min(frame.height, visibleFrame.height * 0.9)
+            )
+            let origin = NSPoint(
+                x: visibleFrame.midX - size.width / 2,
+                y: visibleFrame.midY - size.height / 2
+            )
+            AppLogger.ui.info("relocating off-screen window", metadata: [
+                "from": "\(frame)",
+                "to": "\(NSRect(origin: origin, size: size))"
+            ])
+            window.setFrame(NSRect(origin: origin, size: size), display: true)
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
