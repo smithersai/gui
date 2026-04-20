@@ -2,9 +2,9 @@
 set -e
 
 echo "Building codex-ffi (Rust)..."
-cd codex/codex-rs
-cargo build -p codex-ffi --release
-cd ../..
+cd codex-ffi
+cargo build --release
+cd ..
 
 echo "Building SmithersGUI (Swift)..."
 swift build

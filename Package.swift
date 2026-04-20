@@ -22,6 +22,7 @@ let package = Package(
             path: ".",
             exclude: [
                 "codex",
+                "codex-ffi",
                 "ghostty",
                 "CCodexFFI",
                 "CGhosttyKit",
@@ -51,7 +52,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .unsafeFlags([
-                    "-Lcodex/codex-rs/target/release",
+                    "-Lcodex-ffi/target/release",
                     "-Lghostty/macos/GhosttyKit.xcframework/macos-arm64",
                 ]),
                 .unsafeFlags([

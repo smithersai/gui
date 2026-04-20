@@ -70,6 +70,7 @@ targets:
       - Models.swift
       - NewTabPicker.swift
       - NodeInspectView.swift
+      - QuickLaunchConfirmSheet.swift
       - NodeInspectorView.swift
       - NodeInspectorHeader.swift
       - OutputTab.swift
@@ -136,7 +137,7 @@ targets:
         INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CCodexFFI $(SRCROOT)/CGhosttyKit"
         HEADER_SEARCH_PATHS: "$(SRCROOT)/CCodexFFI"
-        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/codex/codex-rs/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/codex-ffi/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64"
         OTHER_LDFLAGS: "$(inherited) -lcodex_ffi -lghostty-fat -lc++ -lresolv -lz -lbz2"
     dependencies:
       - sdk: Security.framework
@@ -171,7 +172,7 @@ targets:
         TEST_TARGET_NAME: SmithersGUI
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CCodexFFI $(SRCROOT)/CGhosttyKit"
         HEADER_SEARCH_PATHS: "$(SRCROOT)/CCodexFFI"
-        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/codex/codex-rs/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/codex-ffi/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64"
   SmithersGUIUITests:
     type: bundle.ui-testing
     platform: macOS

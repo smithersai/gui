@@ -152,6 +152,7 @@
 		A505E0D77A297B6D35397305 /* TreeKeyboardHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5D754B59E245DF9A93B5F50 /* TreeKeyboardHandler.swift */; };
 		A7D89EA208E3DEE3FA34D4C4 /* NodeInspectorHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 175D18E5C4B372E96F40C913 /* NodeInspectorHeader.swift */; };
 		A866DEA5638161F9A357881E /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 44338B1B1002218C169AFD31 /* Security.framework */; };
+		A92B7BA3A8B9169D5D6C2B71 /* QuickLaunchConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE12A9332FA984C1711391E /* QuickLaunchConfirmSheet.swift */; };
 		A981F2BEC685C93B68D63AD8 /* NavigationE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E873048241F8F1D8C08AC4 /* NavigationE2ETests.swift */; };
 		AB2A2BE85C1744B214C7D0FE /* VCSDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 084DCDF8CB360AEC7497D0DC /* VCSDashboardView.swift */; };
 		AC081A7F3BC3E152A3779311 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1CEA9D8755141E850C0A0D21 /* WebKit.framework */; };
@@ -379,6 +380,7 @@
 		AC3B8A062A7DFC2D9B0C7B62 /* TreeRowState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeRowState.swift; sourceTree = "<group>"; };
 		AC58F84BE388668CCF2B3FB4 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
 		AD9CF099915D3BDD32A7D6AE /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AFE12A9332FA984C1711391E /* QuickLaunchConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLaunchConfirmSheet.swift; sourceTree = "<group>"; };
 		B0A96B90C01F74AAF96EBFE6 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		B16541C51EFF64EEE26CBBC7 /* StoredShortcut.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoredShortcut.swift; sourceTree = "<group>"; };
 		B25D849B66E37C1DD9E2EA49 /* ModelsAdditionalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsAdditionalTests.swift; sourceTree = "<group>"; };
@@ -634,6 +636,7 @@
 				4C5DD1A2B538A0BBA1E775B4 /* PromptsView.swift */,
 				6B50CE9DFF801FD2489E85A8 /* PropsTableView.swift */,
 				D71A2BBEC05A7C0C90B54AAC /* PropValueView.swift */,
+				AFE12A9332FA984C1711391E /* QuickLaunchConfirmSheet.swift */,
 				CF4D972C90D331875885A5A4 /* RecentWorkspaceStore.swift */,
 				D83ED392DEC8DC60CBDE92B8 /* RewindConfirmationDialog.swift */,
 				A8CDE6436EE63BE626BD050B /* RunInspectView.swift */,
@@ -1006,6 +1009,7 @@
 				B7A72132C037A0F1D40097F1 /* PromptsView.swift in Sources */,
 				2FBE5415E440AA113DBD2FB9 /* PropValueView.swift in Sources */,
 				493C5C8395C847909605CF3B /* PropsTableView.swift in Sources */,
+				A92B7BA3A8B9169D5D6C2B71 /* QuickLaunchConfirmSheet.swift in Sources */,
 				0690945BB83921005E994C68 /* RecentWorkspaceStore.swift in Sources */,
 				71DC853E87004BB35DDD5B61 /* RewindConfirmationDialog.swift in Sources */,
 				837BB432CBD8DF8D14A93BB0 /* RunInspectView.swift in Sources */,
@@ -1113,7 +1117,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/codex/codex-rs/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/codex-ffi/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64";
 				PRODUCT_BUNDLE_IDENTIFIER = com.smithers.SmithersGUITests;
 				SDKROOT = macosx;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/CCodexFFI $(SRCROOT)/CGhosttyKit";
@@ -1275,7 +1279,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/codex/codex-rs/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/codex-ffi/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64";
 				OTHER_LDFLAGS = "$(inherited) -lcodex_ffi -lghostty-fat -lc++ -lresolv -lz -lbz2";
 				PRODUCT_BUNDLE_IDENTIFIER = com.smithers.SmithersGUI;
 				SDKROOT = macosx;
@@ -1295,7 +1299,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/codex/codex-rs/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/codex-ffi/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64";
 				PRODUCT_BUNDLE_IDENTIFIER = com.smithers.SmithersGUITests;
 				SDKROOT = macosx;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/CCodexFFI $(SRCROOT)/CGhosttyKit";
@@ -1334,7 +1338,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/codex/codex-rs/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/codex-ffi/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64";
 				OTHER_LDFLAGS = "$(inherited) -lcodex_ffi -lghostty-fat -lc++ -lresolv -lz -lbz2";
 				PRODUCT_BUNDLE_IDENTIFIER = com.smithers.SmithersGUI;
 				SDKROOT = macosx;
