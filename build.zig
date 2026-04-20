@@ -44,11 +44,36 @@ fn ensureGhostty(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!
     };
 }
 
+/// Sentinel files inside each submodule. If any is missing, the submodule
+/// wasn't initialized (clone without --recursive) and every downstream step
+/// will fail with a confusing error.
+const submodule_sentinels = [_][]const u8{
+    "codex/codex-rs/Cargo.toml",
+    "ghostty/build.zig",
+};
+
+fn ensureSubmodules(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
+    for (submodule_sentinels) |path| {
+        std.fs.cwd().access(path, .{}) catch {
+            return step.fail(
+                \\
+                \\{s} is missing — git submodules are not initialized.
+                \\       Run:  git submodule update --init --recursive
+                \\
+            , .{path});
+        };
+    }
+}
+
 pub fn build(b: *std.Build) void {
     const release = b.option(bool, "release", "Build in release mode") orelse false;
 
+    const check_submodules = b.step("check-submodules", "Verify git submodules are initialized");
+    check_submodules.makeFn = ensureSubmodules;
+
     const check_ghostty = b.step("check-ghostty", "Verify GhosttyKit.xcframework exists");
     check_ghostty.makeFn = ensureGhostty;
+    check_ghostty.dependOn(check_submodules);
 
     // ---- codex-ffi (cargo) --------------------------------------------------
     // Always built release: project.yml / Package.swift link against
@@ -56,6 +81,7 @@ pub fn build(b: *std.Build) void {
     // the Swift target with an unresolved `-lcodex_ffi`.
     const cargo_build_release = b.addSystemCommand(&.{ "cargo", "build", "--release" });
     cargo_build_release.setCwd(b.path("codex-ffi"));
+    cargo_build_release.step.dependOn(check_submodules);
     const codex_ffi_step = b.step("codex-ffi", "Build the codex-ffi Rust staticlib (release)");
     codex_ffi_step.dependOn(&cargo_build_release.step);
 
@@ -111,6 +137,7 @@ pub fn build(b: *std.Build) void {
         "-Demit-xcframework=true",
     });
     ghostty_build.setCwd(b.path("ghostty"));
+    ghostty_build.step.dependOn(check_submodules);
     const ghostty_step = b.step("ghostty", "Rebuild ghostty/macos/GhosttyKit.xcframework");
     ghostty_step.dependOn(&ghostty_build.step);
 
