@@ -34,6 +34,7 @@ export const releases = await R2Bucket("smithers-gui-releases", {
 const ethSig = !notarize && !has("--no-eth-sign") ? await ethSign() : null;
 
 if (!has("--no-upload")) await upload();
+if (!has("--no-vercel")) await deployVercelRedirect();
 await app.finalize();
 
 // ---------- build ----------
@@ -117,7 +118,19 @@ async function upload() {
     console.log(`\n  signer:    ${ethSig.address}`);
     console.log(`  signature: ${ethSig.signature}`);
   }
-  if (!signed) console.log("\n⚠ unsigned — users must right-click → Open on first launch");
+  console.log("\n  public:    https://download.smithers.sh/SmithersGUI.dmg");
+  if (!signed) {
+    console.log(
+      "\n⚠ unsigned — first-launch instructions: System Settings → Privacy & Security → 'Open Anyway'",
+    );
+  }
+}
+
+async function deployVercelRedirect() {
+  const script = join(ROOT, "scripts/deploy-download-redirect.ts");
+  if (!existsSync(script)) return;
+  console.log("\n→ vercel: refresh download.smithers.sh redirect");
+  await $`bun ${script}`.nothrow();
 }
 
 async function ethSign() {

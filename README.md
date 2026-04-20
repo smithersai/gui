@@ -6,11 +6,11 @@ Requires **macOS 14 (Sonoma)** or later, **Apple Silicon (arm64)**.
 
 ## Download
 
-[**Download SmithersGUI.dmg**](https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg)
-&nbsp; · &nbsp; [`.sha256`](https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg.sha256)
-&nbsp; · &nbsp; [`.sig`](https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg.sig)
+[**Download SmithersGUI.dmg**](https://download.smithers.sh/SmithersGUI.dmg)
+&nbsp; · &nbsp; [`.sha256`](https://download.smithers.sh/SmithersGUI.dmg.sha256)
+&nbsp; · &nbsp; [`.sig`](https://download.smithers.sh/SmithersGUI.dmg.sig)
 
-> Unsigned by Apple — on first launch, right-click the app → **Open** (Gatekeeper will then remember it).
+> **Unsigned by Apple.** On first launch macOS will refuse to open it ("can't be opened because Apple cannot check it for malicious software"). To allow it: open **System Settings → Privacy & Security**, scroll to the message about SmithersGUI being blocked, and click **Open Anyway** (you'll be prompted for your password). macOS will remember this for future launches. Verifying the eth signature below is the way to confirm the binary is the one we built.
 
 ### Verify the binary
 
@@ -22,8 +22,8 @@ The signature is over the SHA-256 of the DMG. Verify with [foundry's `cast`](htt
 
 ```bash
 # 1. download the artifacts
-curl -LO https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg
-curl -LO https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg.sig
+curl -LO https://download.smithers.sh/SmithersGUI.dmg
+curl -LO https://download.smithers.sh/SmithersGUI.dmg.sig
 
 # 2. hash the DMG and verify the signature recovers the signer address
 HASH=0x$(shasum -a 256 SmithersGUI.dmg | awk '{print $1}')
