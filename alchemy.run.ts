@@ -2,8 +2,9 @@
 import alchemy from "alchemy";
 import { R2Bucket } from "alchemy/cloudflare";
 import { $ } from "bun";
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 const ROOT = import.meta.dir;
@@ -29,6 +30,8 @@ export const releases = await R2Bucket("smithers-gui-releases", {
   devDomain: true,
   adopt: true,
 });
+
+const ethSig = !notarize && !has("--no-eth-sign") ? await ethSign() : null;
 
 if (!has("--no-upload")) await upload();
 await app.finalize();
@@ -86,16 +89,53 @@ async function upload() {
   if (!existsSync(DMG)) return console.log(`(no DMG at ${DMG} — skipping)`);
   const version = process.env.RELEASE_VERSION ?? "latest";
   const body = await readFile(DMG);
-  const opts = { httpMetadata: { contentType: "application/x-apple-diskimage" } };
-  const keys = [`${SCHEME}.dmg`, `releases/${version}/${SCHEME}.dmg`];
+  const dmgOpts = { httpMetadata: { contentType: "application/x-apple-diskimage" } };
+  const txtOpts = { httpMetadata: { contentType: "text/plain; charset=utf-8" } };
+  const dmgKeys = [`${SCHEME}.dmg`, `releases/${version}/${SCHEME}.dmg`];
 
   console.log(`\n→ uploading ${(statSync(DMG).size / 1024 / 1024).toFixed(1)}MB`);
-  for (const key of keys) await releases.put(key, body, opts);
+  for (const key of dmgKeys) await releases.put(key, body, dmgOpts);
+
+  if (ethSig) {
+    const shaBody = await readFile(ethSig.shaFile);
+    const sigBody = await readFile(ethSig.sigFile);
+    for (const base of dmgKeys) {
+      await releases.put(`${base}.sha256`, shaBody, txtOpts);
+      await releases.put(`${base}.sig`, sigBody, txtOpts);
+    }
+  }
 
   const base = releases.devDomain ? `https://${releases.devDomain}` : null;
+  const url = (key: string) => (base ? `${base}/${key}` : `(r2://smithers-gui-releases/${key})`);
   console.log("\n✓ uploaded:");
-  for (const key of keys) console.log(`  ${base ? `${base}/${key}` : `(r2://smithers-gui-releases/${key})`}`);
+  for (const key of dmgKeys) console.log(`  ${url(key)}`);
+  if (ethSig) {
+    for (const key of dmgKeys) {
+      console.log(`  ${url(`${key}.sha256`)}`);
+      console.log(`  ${url(`${key}.sig`)}`);
+    }
+    console.log(`\n  signer:    ${ethSig.address}`);
+    console.log(`  signature: ${ethSig.signature}`);
+  }
   if (!signed) console.log("\n⚠ unsigned — users must right-click → Open on first launch");
+}
+
+async function ethSign() {
+  const addrFile = join(ROOT, "scripts", ".signing-address");
+  if (!existsSync(addrFile)) {
+    console.log("(no scripts/.signing-address — skipping eth signing; run `bun scripts/init-signing-key.ts`)");
+    return null;
+  }
+  if (!existsSync(DMG)) return null;
+  console.log("→ eth-sign DMG");
+  await $`bun ${join(ROOT, "scripts/sign-dmg.ts")} ${DMG}`;
+  return {
+    address: readFileSync(addrFile, "utf8").trim(),
+    sha: readFileSync(`${DMG}.sha256`, "utf8").split(/\s+/)[0],
+    signature: readFileSync(`${DMG}.sig`, "utf8").trim(),
+    shaFile: `${DMG}.sha256`,
+    sigFile: `${DMG}.sig`,
+  };
 }
 
 function exportPlist(team?: string) {

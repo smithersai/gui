@@ -4,6 +4,36 @@ A native macOS SwiftUI application for managing smithers workflows, agent sessio
 
 Requires **macOS 14 (Sonoma)** or later, **Apple Silicon (arm64)**.
 
+## Download
+
+[**Download SmithersGUI.dmg**](https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg)
+&nbsp; · &nbsp; [`.sha256`](https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg.sha256)
+&nbsp; · &nbsp; [`.sig`](https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg.sig)
+
+> Unsigned by Apple — on first launch, right-click the app → **Open** (Gatekeeper will then remember it).
+
+### Verify the binary
+
+Releases are signed with a secp256k1 key (an Ethereum wallet) so you can prove the DMG you downloaded is the same bits we built — no Apple Developer ID required.
+
+**Signer address:** `0xA1aaEC6B60547BE8677247f9Eb2d9fCc975496fb`
+
+The signature is over the SHA-256 of the DMG. Verify with [foundry's `cast`](https://book.getfoundry.sh/getting-started/installation):
+
+```bash
+# 1. download the artifacts
+curl -LO https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg
+curl -LO https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg.sig
+
+# 2. hash the DMG and verify the signature recovers the signer address
+HASH=0x$(shasum -a 256 SmithersGUI.dmg | awk '{print $1}')
+SIG=$(cat SmithersGUI.dmg.sig)
+cast wallet verify --address 0xA1aaEC6B60547BE8677247f9Eb2d9fCc975496fb "$HASH" "$SIG"
+# → prints "Validation succeeded." on a good signature
+```
+
+If `cast wallet verify` succeeds, the DMG matches what was signed by the holder of the private key (stored in the maintainer's macOS Keychain — see `scripts/init-signing-key.ts` and `scripts/sign-dmg.ts`).
+
 ## Dependencies
 
 ### Optional
