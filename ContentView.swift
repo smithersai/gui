@@ -746,12 +746,13 @@ private struct ShortcutSettingsRow: View {
 
 struct ContentView: View {
     @StateObject private var store: SessionStore
-    @StateObject private var smithers = SmithersClient()
+    @StateObject private var smithers: SmithersClient
     @StateObject private var fileSearchIndex: WorkspaceFileSearchIndex
 
     init(workspacePath: String? = nil) {
         let resolved = CWDResolver.resolve(workspacePath)
         _store = StateObject(wrappedValue: SessionStore(workingDirectory: resolved))
+        _smithers = StateObject(wrappedValue: SmithersClient(cwd: resolved))
         _fileSearchIndex = StateObject(wrappedValue: WorkspaceFileSearchIndex(rootPath: resolved))
     }
 
