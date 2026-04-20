@@ -95,6 +95,7 @@ pub fn build(b: *std.Build) void {
 
     const swift_test = b.addSystemCommand(&.{ "swift", "test" });
     swift_test.step.dependOn(&cargo_build_release.step);
+    swift_test.step.dependOn(check_ghostty);
 
     const test_step = b.step("test", "Run cargo + swift tests");
     test_step.dependOn(&cargo_test.step);
