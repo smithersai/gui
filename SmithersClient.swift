@@ -1256,6 +1256,157 @@ class SmithersClient: ObservableObject {
         return try decoder.decode(LaunchResult.self, from: data)
     }
 
+    // MARK: - Quick Launch
+
+    struct QuickLaunchResult {
+        let inputs: [String: JSONValue]
+        let notes: String
+        let parseRunId: String
+    }
+
+    /// Kicks off the `quick-launch` workflow to turn a natural-language prompt into a
+    /// `[String: JSONValue]` input dictionary for `target`. Polls the run log until the
+    /// parse task finishes and returns the structured result.
+    func runQuickLaunchParser(
+        target: Workflow,
+        prompt: String,
+        timeoutSeconds: Double = 90
+    ) async throws -> QuickLaunchResult {
+        let dag = try await getWorkflowDAG(target)
+        let fields = dag.launchFields
+        let schemaJSON = Self.encodeQuickLaunchSchema(fields)
+
+        let quickLaunchPath = (cwd as NSString).appendingPathComponent(".smithers/workflows/quick-launch.tsx")
+        let launch = try await runWorkflow(workflowPath: quickLaunchPath, inputs: [
+            "target": .string(target.name),
+            "prompt": .string(prompt),
+            "schema": .string(schemaJSON),
+        ])
+        let parseRunId = launch.runId
+
+        let start = Date()
+        while Date().timeIntervalSince(start) < timeoutSeconds {
+            let inspection = try await inspectRun(parseRunId)
+            switch inspection.run.status {
+            case .finished:
+                let (inputs, notes) = try Self.readQuickLaunchOutput(runId: parseRunId, cwd: cwd)
+                return QuickLaunchResult(inputs: inputs, notes: notes, parseRunId: parseRunId)
+            case .failed, .cancelled:
+                throw SmithersError.api("quick-launch parser run \(parseRunId) \(inspection.run.status.rawValue)")
+            default:
+                try await Task.sleep(nanoseconds: 750_000_000)
+            }
+        }
+        throw SmithersError.api("quick-launch parser run \(parseRunId) timed out after \(Int(timeoutSeconds))s")
+    }
+
+    private static func encodeQuickLaunchSchema(_ fields: [WorkflowLaunchField]) -> String {
+        let arr: [[String: JSONValue]] = fields.map { field in
+            var obj: [String: JSONValue] = [
+                "key": .string(field.key),
+                "name": .string(field.name),
+                "required": .bool(field.required),
+            ]
+            if let type = field.type { obj["type"] = .string(type) }
+            if let def = field.defaultValue { obj["default"] = .string(def) }
+            return obj
+        }
+        return JSONValue.array(arr.map { .object($0) }).compactJSONString ?? "[]"
+    }
+
+    private static func readQuickLaunchOutput(
+        runId: String,
+        cwd: String
+    ) throws -> (inputs: [String: JSONValue], notes: String) {
+        let logPath = (cwd as NSString)
+            .appendingPathComponent(".smithers/executions/\(runId)/logs/stream.ndjson")
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: logPath)),
+              let contents = String(data: data, encoding: .utf8) else {
+            throw SmithersError.api("quick-launch log not found at \(logPath)")
+        }
+
+        var lastStdoutText: String?
+        for line in contents.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let lineData = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { continue }
+            guard (obj["type"] as? String) == "NodeOutput",
+                  (obj["nodeId"] as? String) == "parse",
+                  (obj["stream"] as? String) == "stdout",
+                  let text = obj["text"] as? String else { continue }
+            lastStdoutText = text
+        }
+
+        guard let rawText = lastStdoutText else {
+            throw SmithersError.api("quick-launch parse produced no output for run \(runId)")
+        }
+
+        let jsonText = Self.extractJSONObject(from: rawText) ?? rawText
+        guard let parsed = try? JSONSerialization.jsonObject(with: Data(jsonText.utf8)) as? [String: Any] else {
+            throw SmithersError.api("quick-launch output was not valid JSON: \(rawText.prefix(200))")
+        }
+
+        let inputsAny = (parsed["inputs"] as? [String: Any]) ?? [:]
+        var inputs: [String: JSONValue] = [:]
+        for (k, v) in inputsAny {
+            inputs[k] = Self.jsonValue(from: v)
+        }
+        let notes = (parsed["notes"] as? String) ?? ""
+        return (inputs, notes)
+    }
+
+    private static func extractJSONObject(from raw: String) -> String? {
+        // Strip markdown fences and find the first {...} balanced block.
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var candidate = trimmed
+        if candidate.hasPrefix("```") {
+            if let fenceEnd = candidate.range(of: "\n") {
+                candidate = String(candidate[fenceEnd.upperBound...])
+            }
+            if let closing = candidate.range(of: "```", options: .backwards) {
+                candidate = String(candidate[..<closing.lowerBound])
+            }
+        }
+        guard let start = candidate.firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escape = false
+        var idx = start
+        while idx < candidate.endIndex {
+            let ch = candidate[idx]
+            if escape { escape = false }
+            else if ch == "\\" && inString { escape = true }
+            else if ch == "\"" { inString.toggle() }
+            else if !inString {
+                if ch == "{" { depth += 1 }
+                else if ch == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        return String(candidate[start...idx])
+                    }
+                }
+            }
+            idx = candidate.index(after: idx)
+        }
+        return nil
+    }
+
+    private static func jsonValue(from any: Any) -> JSONValue {
+        if any is NSNull { return .null }
+        if let b = any as? Bool { return .bool(b) }
+        if let n = any as? NSNumber {
+            // Disambiguate Bool-as-NSNumber already handled above.
+            return .number(n.doubleValue)
+        }
+        if let s = any as? String { return .string(s) }
+        if let arr = any as? [Any] { return .array(arr.map { jsonValue(from: $0) }) }
+        if let dict = any as? [String: Any] {
+            var out: [String: JSONValue] = [:]
+            for (k, v) in dict { out[k] = jsonValue(from: v) }
+            return .object(out)
+        }
+        return .null
+    }
+
     func runWorkflowDoctor(_ workflow: Workflow) async -> [WorkflowDoctorIssue] {
         var issues: [WorkflowDoctorIssue] = []
 

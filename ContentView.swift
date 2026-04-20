@@ -784,6 +784,19 @@ struct ContentView: View {
     @State private var paletteLandings: [Landing] = []
     @State private var paletteDataLastRefreshAt: Date = .distantPast
     @State private var paletteDataRefreshTask: Task<Void, Never>?
+    @State private var quickLaunchState: QuickLaunchState?
+
+    private struct QuickLaunchState: Identifiable {
+        let id = UUID()
+        let workflow: Workflow
+        let prompt: String
+        var phase: Phase
+        enum Phase {
+            case parsing
+            case confirming(fields: [WorkflowLaunchField], inputs: [String: JSONValue], notes: String)
+            case error(String)
+        }
+    }
 
     private var defaultDestination: NavDestination {
         smithersFeatureEnabled ? .dashboard : .chat
@@ -1172,6 +1185,12 @@ struct ContentView: View {
                         onDismiss: { newTabPickerVisible = false }
                     )
                     .transition(.opacity)
+                }
+            }
+            .overlay {
+                if let state = quickLaunchState {
+                    quickLaunchOverlay(state: state)
+                        .transition(.opacity)
                 }
             }
             .background(Theme.base)
@@ -1587,7 +1606,125 @@ struct ContentView: View {
 
     private func executePaletteItem(_ item: CommandPaletteItem, rawQuery: String) {
         commandPaletteVisible = false
+        // If the user selected a workflow item and typed trailing prompt text
+        // (e.g. "implement add a /health endpoint"), route through quick-launch
+        // instead of the default "type /name in chat" hint.
+        if case .slashCommand(let name) = item.action,
+           let cmd = paletteSlashCommands.first(where: { $0.name == name }),
+           case .runWorkflow(let workflow) = cmd.action,
+           let trailing = trailingPrompt(from: rawQuery, matchedTokens: [name, item.title, cmd.title] + cmd.aliases),
+           !trailing.isEmpty {
+            startQuickLaunch(workflow: workflow, prompt: trailing)
+            return
+        }
         executePaletteAction(item.action, rawQuery: rawQuery)
+    }
+
+    private func trailingPrompt(from rawQuery: String, matchedTokens: [String]) -> String? {
+        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        // Strip leading sigils like `/` or `>` the palette uses for command modes.
+        let stripped: String = {
+            if trimmed.hasPrefix("/") || trimmed.hasPrefix(">") {
+                return String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+            }
+            return trimmed
+        }()
+        guard let firstSpace = stripped.firstIndex(of: " ") else { return nil }
+        let first = String(stripped[..<firstSpace])
+        let rest = stripped[firstSpace...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return nil }
+        let lowered = first.lowercased()
+        for token in matchedTokens {
+            if token.lowercased() == lowered { return rest }
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private func quickLaunchOverlay(state: QuickLaunchState) -> some View {
+        switch state.phase {
+        case .parsing:
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea()
+                    .onTapGesture { quickLaunchState = nil }
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text("Parsing prompt for \(state.workflow.name)…")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textSecondary)
+                }
+                .padding(24)
+                .background(Theme.surface1)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.border))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, 160)
+            }
+        case .confirming(let fields, let inputs, let notes):
+            QuickLaunchConfirmSheet(
+                smithers: smithers,
+                target: state.workflow,
+                fields: fields,
+                initialInputs: inputs,
+                notes: notes,
+                prompt: state.prompt,
+                onLaunched: { result in
+                    quickLaunchState = nil
+                    destination = .liveRun(runId: result.runId, nodeId: nil)
+                },
+                onDismiss: { quickLaunchState = nil }
+            )
+        case .error(let message):
+            ZStack {
+                Color.black.opacity(0.35).ignoresSafeArea()
+                    .onTapGesture { quickLaunchState = nil }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Quick-launch failed")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text(message)
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textSecondary)
+                        .lineLimit(6)
+                    HStack {
+                        Spacer()
+                        Button("Close") { quickLaunchState = nil }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: 520)
+                .background(Theme.surface1)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.border))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, 160)
+                .padding(.horizontal, 24)
+            }
+        }
+    }
+
+    private func startQuickLaunch(workflow: Workflow, prompt: String) {
+        quickLaunchState = QuickLaunchState(workflow: workflow, prompt: prompt, phase: .parsing)
+        let client = smithers
+        Task { @MainActor in
+            do {
+                let result = try await client.runQuickLaunchParser(target: workflow, prompt: prompt)
+                let dag = try await client.getWorkflowDAG(workflow)
+                quickLaunchState = QuickLaunchState(
+                    workflow: workflow,
+                    prompt: prompt,
+                    phase: .confirming(fields: dag.launchFields, inputs: result.inputs, notes: result.notes)
+                )
+            } catch {
+                quickLaunchState = QuickLaunchState(
+                    workflow: workflow,
+                    prompt: prompt,
+                    phase: .error(error.localizedDescription)
+                )
+            }
+        }
     }
 
     private func executePaletteAction(_ action: CommandPaletteAction, rawQuery: String) {
