@@ -4,6 +4,8 @@ A native macOS SwiftUI application for managing smithers workflows, agent sessio
 
 Requires **macOS 14 (Sonoma)** or later, **Apple Silicon (arm64)**.
 
+> **Status: early / unstable.** SmithersGUI is in active development and is **not expected to be stable until ~mid-March 2027**. Expect crashes, broken flows, and breaking changes between releases. If you hit a bug, please send logs (see [Reporting bugs](#reporting-bugs) below).
+
 ## Download
 
 [**Download SmithersGUI.dmg**](https://download.smithers.sh/SmithersGUI.dmg)
@@ -33,6 +35,23 @@ cast wallet verify --address 0xA1aaEC6B60547BE8677247f9Eb2d9fCc975496fb "$HASH" 
 ```
 
 If `cast wallet verify` succeeds, the DMG matches what was signed by the holder of the private key (stored in the maintainer's macOS Keychain — see `scripts/init-signing-key.ts` and `scripts/sign-dmg.ts`).
+
+## Reporting bugs
+
+The app writes a structured JSON log to `~/Library/Logs/SmithersGUI/app.log`, and macOS drops native crash reports into `~/Library/Logs/DiagnosticReports/SmithersGUI-*.ips`. To send everything in one go, paste this into Terminal:
+
+```bash
+zip -j ~/Desktop/smithers-logs.zip \
+  ~/Library/Logs/SmithersGUI/app.log \
+  ~/Library/Logs/DiagnosticReports/SmithersGUI-*.ips 2>/dev/null
+open -R ~/Desktop/smithers-logs.zip
+```
+
+That produces `~/Desktop/smithers-logs.zip` and reveals it in Finder. Attach the zip to your bug report along with:
+
+- a short description of what you were doing
+- the workspace folder you'd opened (path is fine — we don't need its contents)
+- whether you were on the splash/welcome screen or inside a workspace when it broke
 
 ## Dependencies
 
