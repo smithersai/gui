@@ -131,11 +131,46 @@ pub fn build(b: *std.Build) void {
     });
     const run_tree_state_unit = b.addRunArtifact(tree_state_unit);
     test_step.dependOn(&run_tree_state_unit.step);
+
+    const shortcuts_mod = b.createModule(.{
+        .root_source_file = b.path("src/features/shortcuts.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    addGtkImportsToModule(b, shortcuts_mod, target, optimize);
+    const shortcuts_test_mod = b.createModule(.{
+        .root_source_file = b.path("test/shortcuts.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    shortcuts_test_mod.addImport("shortcuts", shortcuts_mod);
+    const shortcuts_unit = b.addTest(.{
+        .root_module = shortcuts_test_mod,
+    });
+    if (target.result.os.tag == .macos) shortcuts_unit.dead_strip_dylibs = true;
+    shortcuts_unit.step.dependOn(check_gtk);
+    const run_shortcuts_unit = b.addRunArtifact(shortcuts_unit);
+    test_step.dependOn(&run_shortcuts_unit.step);
 }
 
 fn addGtkImportsAndLinks(
     b: *std.Build,
     step: *std.Build.Step.Compile,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    addGtkImportsToModule(b, step.root_module, target, optimize);
+    // The gobject zig dependency's gtk4/adw1 modules already call
+    // linkSystemLibrary("gtk-4") and "adwaita-1" via pkg-config. Re-linking
+    // them explicitly here produces duplicate LC_LOAD_DYLIB entries that
+    // macOS dyld rejects at runtime. Linux linkers dedupe, but it's still
+    // redundant — rely on the module imports above.
+    _ = dynamic_link_opts;
+}
+
+fn addGtkImportsToModule(
+    b: *std.Build,
+    module: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) void {
@@ -154,14 +189,7 @@ fn addGtkImportsAndLinks(
         .{ "pango", "pango1" },
     };
     inline for (imports) |import| {
-        const name, const module = import;
-        step.root_module.addImport(name, gobject_dep.module(module));
+        const name, const module_name = import;
+        module.addImport(name, gobject_dep.module(module_name));
     }
-
-    // The gobject zig dependency's gtk4/adw1 modules already call
-    // linkSystemLibrary("gtk-4") and "adwaita-1" via pkg-config. Re-linking
-    // them explicitly here produces duplicate LC_LOAD_DYLIB entries that
-    // macOS dyld rejects at runtime. Linux linkers dedupe, but it's still
-    // redundant — rely on the module imports above.
-    _ = dynamic_link_opts;
 }

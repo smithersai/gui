@@ -109,6 +109,7 @@ pub const MainWindow = extern struct {
         active_workspace: ?[]u8 = null,
         opening_workspace: bool = false,
         closing_workspace: bool = false,
+        sidebar_hidden: bool = false,
         active_session_index: ?usize = null,
         visible: Nav = .welcome,
         workflows: std.ArrayList(models.Workflow) = .empty,
@@ -402,6 +403,70 @@ pub const MainWindow = extern struct {
 
     pub fn activeWorkspace(self: *Self) ?[]const u8 {
         return self.private().active_workspace;
+    }
+
+    pub fn focusSidebar(self: *Self) void {
+        const priv = self.private();
+        priv.sidebar_hidden = false;
+        priv.split_view.setCollapsed(0);
+        priv.split_view.setShowContent(0);
+        _ = priv.sidebar.as(gtk.Widget).grabFocus();
+    }
+
+    pub fn focusContent(self: *Self) void {
+        const priv = self.private();
+        priv.split_view.setShowContent(1);
+        _ = priv.stack.as(gtk.Widget).grabFocus();
+    }
+
+    pub fn toggleSidebar(self: *Self) void {
+        const priv = self.private();
+        if (priv.sidebar_hidden) {
+            priv.sidebar_hidden = false;
+            priv.split_view.setCollapsed(0);
+            priv.split_view.setShowContent(1);
+        } else {
+            priv.sidebar_hidden = true;
+            priv.split_view.setCollapsed(1);
+            priv.split_view.setShowContent(1);
+        }
+    }
+
+    pub fn cycleSession(self: *Self, offset: isize) void {
+        const priv = self.private();
+        const len = priv.sessions.items.len;
+        if (len == 0) {
+            self.showToast("No sessions");
+            return;
+        }
+        const current = priv.active_session_index orelse 0;
+        const next = @mod(@as(isize, @intCast(current)) + offset, @as(isize, @intCast(len)));
+        self.showSession(@intCast(next));
+    }
+
+    pub fn openRecentWorkspace(self: *Self, index: usize) void {
+        if (self.private().workspaces.items.len <= index) {
+            self.loadWorkspaces() catch |err| {
+                self.showToastFmt("Workspace refresh failed: {}", .{err});
+                return;
+            };
+        }
+        if (index >= self.private().workspaces.items.len) {
+            self.showToast("No recent workspace");
+            return;
+        }
+        self.openWorkspace(self.private().workspaces.items[index].id) catch |err| {
+            self.showToastFmt("Open workspace failed: {}", .{err});
+        };
+    }
+
+    pub fn toggleFullscreen(self: *Self) void {
+        const window = self.as(gtk.Window);
+        if (window.isFullscreen() != 0) {
+            window.unfullscreen();
+        } else {
+            window.fullscreen();
+        }
     }
 
     pub fn openSession(

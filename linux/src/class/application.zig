@@ -9,6 +9,7 @@ const gtk = @import("gtk");
 const smithers = @import("../smithers.zig");
 const App = @import("../App.zig");
 const Common = @import("../class.zig").Common;
+const shortcuts = @import("../features/shortcuts.zig");
 const MainWindow = @import("main_window.zig").MainWindow;
 
 const log = std.log.scoped(.smithers_gtk_application);
@@ -32,6 +33,7 @@ pub const Application = extern struct {
         client: smithers.c.smithers_client_t = null,
         palette: smithers.c.smithers_palette_t = null,
         main_window: ?*MainWindow = null,
+        shortcut_bindings: shortcuts.Bindings = .{},
         clipboard: CachedClipboard = .{},
         running: bool = false,
         needs_refresh: std.atomic.Value(bool) = .init(false),
@@ -75,6 +77,17 @@ pub const Application = extern struct {
         priv.palette = smithers.c.smithers_palette_new(priv.core_app);
         if (priv.palette == null) return error.PaletteCreateFailed;
 
+        if (shortcuts.defaultPath(alloc)) |path| {
+            defer alloc.free(path);
+            priv.shortcut_bindings = shortcuts.load(alloc, path) catch |err| loaded: {
+                log.warn("failed to load keyboard shortcuts from {s}: {}", .{ path, err });
+                break :loaded .{ .allocator = alloc };
+            };
+        } else |err| {
+            log.warn("failed to resolve keyboard shortcut path: {}", .{err});
+            priv.shortcut_bindings = .{ .allocator = alloc };
+        }
+
         self.installActions();
         _ = gio.Application.signals.activate.connect(
             self.as(gio.Application),
@@ -96,6 +109,8 @@ pub const Application = extern struct {
             win.unref();
             priv.main_window = null;
         }
+        shortcuts.setCallback(null, null);
+        priv.shortcut_bindings.deinit();
         priv.clipboard.deinit(priv.alloc);
         if (priv.palette) |p| {
             smithers.c.smithers_palette_free(p);
@@ -181,45 +196,8 @@ pub const Application = extern struct {
     }
 
     fn installActions(self: *Self) void {
-        const palette_action = gio.SimpleAction.new("command-palette", null);
-        defer palette_action.unref();
-        _ = gio.SimpleAction.signals.activate.connect(
-            palette_action,
-            *Self,
-            actionPresentPalette,
-            self,
-            .{},
-        );
-        self.as(gio.ActionMap).addAction(palette_action.as(gio.Action));
-
-        const new_tab_action = gio.SimpleAction.new("new-tab", null);
-        defer new_tab_action.unref();
-        _ = gio.SimpleAction.signals.activate.connect(
-            new_tab_action,
-            *Self,
-            actionNewTab,
-            self,
-            .{},
-        );
-        self.as(gio.ActionMap).addAction(new_tab_action.as(gio.Action));
-
-        const close_tab_action = gio.SimpleAction.new("close-tab", null);
-        defer close_tab_action.unref();
-        _ = gio.SimpleAction.signals.activate.connect(
-            close_tab_action,
-            *Self,
-            actionCloseTab,
-            self,
-            .{},
-        );
-        self.as(gio.ActionMap).addAction(close_tab_action.as(gio.Action));
-
-        const palette_accels = [_:null]?[*:0]const u8{"<Control>k"};
-        self.as(gtk.Application).setAccelsForAction("app.command-palette", &palette_accels);
-        const new_tab_accels = [_:null]?[*:0]const u8{ "<Control>n", "<Control>t" };
-        self.as(gtk.Application).setAccelsForAction("app.new-tab", &new_tab_accels);
-        const close_tab_accels = [_:null]?[*:0]const u8{"<Control>w"};
-        self.as(gtk.Application).setAccelsForAction("app.close-tab", &close_tab_accels);
+        shortcuts.setCallback(actionShortcutActivated, self);
+        shortcuts.register(self.as(adw.Application), self.private().shortcut_bindings);
     }
 
     fn drainPendingUiWork(self: *Self) void {
@@ -257,16 +235,67 @@ pub const Application = extern struct {
         return 0;
     }
 
-    fn actionPresentPalette(_: *gio.SimpleAction, _: ?*glib.Variant, self: *Self) callconv(.c) void {
-        self.presentCommandPalette();
+    fn actionShortcutActivated(action: shortcuts.Action, userdata: ?*anyopaque) callconv(.c) void {
+        const self: *Self = @ptrCast(@alignCast(userdata orelse return));
+        self.handleShortcutAction(action);
     }
 
-    fn actionNewTab(_: *gio.SimpleAction, _: ?*glib.Variant, self: *Self) callconv(.c) void {
-        if (self.private().main_window) |win| win.presentNewTabPicker();
-    }
+    fn handleShortcutAction(self: *Self, action: shortcuts.Action) void {
+        switch (action) {
+            .show_palette,
+            .show_palette_command_mode,
+            .show_palette_ask_ai,
+            .show_shortcut_cheat_sheet,
+            => self.presentCommandPalette(),
 
-    fn actionCloseTab(_: *gio.SimpleAction, _: ?*glib.Variant, self: *Self) callconv(.c) void {
-        if (self.private().main_window) |win| win.closeCurrentSession();
+            .dismiss_palette => if (self.private().main_window) |win| win.dismissCommandPalette(),
+            .new_tab, .split_right, .split_down => if (self.private().main_window) |win| win.presentNewTabPicker(),
+            .close_tab => if (self.private().main_window) |win| win.closeCurrentSession(),
+            .reopen_closed_tab => self.showToast("Reopen closed tab is not available yet"),
+
+            .cycle_next_tab, .next_surface => if (self.private().main_window) |win| win.cycleSession(1),
+            .cycle_prev_tab, .prev_surface => if (self.private().main_window) |win| win.cycleSession(-1),
+            .select_workspace_by_number, .select_surface_by_number => self.showToast("Use the numbered workspace shortcuts"),
+            .recent_workspace_1 => if (self.private().main_window) |win| win.openRecentWorkspace(0),
+            .recent_workspace_2 => if (self.private().main_window) |win| win.openRecentWorkspace(1),
+            .recent_workspace_3 => if (self.private().main_window) |win| win.openRecentWorkspace(2),
+            .recent_workspace_4 => if (self.private().main_window) |win| win.openRecentWorkspace(3),
+            .recent_workspace_5 => if (self.private().main_window) |win| win.openRecentWorkspace(4),
+
+            .focus_sidebar => if (self.private().main_window) |win| win.focusSidebar(),
+            .focus_content => if (self.private().main_window) |win| win.focusContent(),
+            .toggle_sidebar => if (self.private().main_window) |win| win.toggleSidebar(),
+            .open_settings => if (self.private().main_window) |win| win.showNav(.settings),
+            .quit_app => self.quit(),
+            .reload_workspace, .browser_reload => if (self.private().main_window) |win| win.refreshVisible(),
+            .open_workspace => if (self.private().main_window) |win| win.showNav(.workspaces),
+            .new_workspace => self.showToast("New workspace is not available yet"),
+            .toggle_fullscreen => if (self.private().main_window) |win| win.toggleFullscreen(),
+
+            .toggle_developer_debug => self.showToast("Developer debug is not available in this build"),
+            .focus_left, .focus_up => if (self.private().main_window) |win| win.cycleSession(-1),
+            .focus_right, .focus_down => if (self.private().main_window) |win| win.cycleSession(1),
+            .toggle_split_zoom => self.showToast("Split zoom is not available yet"),
+            .rename_workspace => self.showToast("Rename workspace is not available yet"),
+            .rename_surface => self.showToast("Rename surface is not available yet"),
+            .jump_to_unread => self.showToast("No unread pane is available"),
+            .trigger_flash => self.showToast("Focused pane flash is not available yet"),
+            .show_notifications => self.showToast("No notifications"),
+            .focus_browser_address_bar => self.showToast("No browser surface is focused"),
+            .browser_back, .go_back => self.showToast("Back is not available in this view"),
+            .browser_forward, .go_forward => self.showToast("Forward is not available in this view"),
+            .search_within_view, .global_search, .hide_find => self.presentCommandPalette(),
+            .find_next => self.showToast("Find next is not available in this view"),
+            .find_previous => self.showToast("Find previous is not available in this view"),
+            .use_selection_for_find => self.showToast("Use selection for find is not available in this view"),
+            .open_browser => self.showToast("Open browser surface is not available yet"),
+            .cancel_current_operation => self.showToast("No cancellable operation"),
+            .cancel_run => self.showToast("No run selection"),
+            .rerun => self.showToast("No run selection"),
+            .approve_selected => self.showToast("No approval selection"),
+            .deny_selected => self.showToast("No approval selection"),
+            .linear_navigation_prefix, .tmux_prefix => {},
+        }
     }
 
     fn wakeupCallback(userdata: smithers.c.smithers_userdata_t) callconv(.c) void {
