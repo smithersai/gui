@@ -1,0 +1,7 @@
+.{
+    .name = .libsmithers_fuzz,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.2",
+    .fingerprint = 0x541a9ccf1ea4eb42,
+    .paths = .{""},
+}
