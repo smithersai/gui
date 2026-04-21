@@ -29,6 +29,7 @@ pub const CommandPalette = extern struct {
         search: *gtk.SearchEntry = undefined,
         list: *gtk.ListBox = undefined,
         items: std.ArrayList(models.PaletteItem) = .empty,
+        did_dispose: bool = false,
 
         pub var offset: c_int = 0;
     };
@@ -47,6 +48,10 @@ pub const CommandPalette = extern struct {
         };
         self.private().dialog.present(self.private().window.as(gtk.Widget));
         _ = self.private().search.as(gtk.Widget).grabFocus();
+    }
+
+    pub fn dismiss(self: *Self) void {
+        _ = self.private().dialog.close();
     }
 
     fn build(self: *Self) !void {
@@ -91,7 +96,10 @@ pub const CommandPalette = extern struct {
             smithers.c.smithers_palette_set_query(palette, query_z.ptr);
             const json = try smithers.paletteItemsJson(alloc, palette);
             defer alloc.free(json);
-            priv.items = models.parsePaletteItems(alloc, json) catch .empty;
+            priv.items = models.parsePaletteItems(alloc, json) catch |err| parsed: {
+                log.warn("palette JSON parse failed: {}", .{err});
+                break :parsed .empty;
+            };
         }
 
         if (priv.items.items.len == 0) try self.addFallbackItems(query);
@@ -109,6 +117,9 @@ pub const CommandPalette = extern struct {
         try self.addFallback("nav:workflows", "Workflows", "List and launch workflows", "command", query);
         try self.addFallback("nav:runs", "Runs", "Inspect recent runs", "command", query);
         try self.addFallback("nav:approvals", "Approvals", "Review approval gates", "command", query);
+        try self.addFallback("nav:agents", "Agents", "Review available agents", "command", query);
+        try self.addFallback("nav:workspaces", "Workspaces", "Open recent workspaces", "command", query);
+        try self.addFallback("nav:settings", "Settings", "Review Linux shell settings", "command", query);
         try self.addFallback("new:terminal", "New Terminal", "Open a terminal session", "session", query);
         try self.addFallback("new:chat", "New Chat", "Open a chat session", "session", query);
     }
@@ -156,10 +167,10 @@ pub const CommandPalette = extern struct {
         if (std.mem.eql(u8, item.id, "nav:approvals")) return priv.window.showNav(.approvals);
         if (std.mem.eql(u8, item.id, "nav:agents")) return priv.window.showNav(.agents);
         if (std.mem.eql(u8, item.id, "nav:workspaces")) return priv.window.showNav(.workspaces);
+        if (std.mem.eql(u8, item.id, "nav:settings")) return priv.window.showNav(.settings);
         if (std.mem.eql(u8, item.id, "new:terminal")) return priv.window.openSession(smithers.c.SMITHERS_SESSION_KIND_TERMINAL, null) catch {};
         if (std.mem.eql(u8, item.id, "new:chat")) return priv.window.openSession(smithers.c.SMITHERS_SESSION_KIND_CHAT, null) catch {};
         if (std.mem.startsWith(u8, item.id, "workflow:")) return priv.window.showNav(.workflows);
-        if (std.mem.startsWith(u8, item.id, "file:")) priv.window.showToast("File search is indexed by libsmithers; opening files is not wired in v1");
     }
 
     fn paletteIcon(kind: []const u8, id: []const u8) [:0]const u8 {
@@ -187,8 +198,16 @@ pub const CommandPalette = extern struct {
     }
 
     fn dispose(self: *Self) callconv(.c) void {
-        models.clearList(models.PaletteItem, self.private().window.allocator(), &self.private().items);
-        self.private().items.deinit(self.private().window.allocator());
+        const priv = self.private();
+        if (!priv.did_dispose) {
+            priv.did_dispose = true;
+            const alloc = priv.window.allocator();
+            models.clearList(models.PaletteItem, alloc, &priv.items);
+            priv.items.deinit(alloc);
+            priv.dialog.setChild(null);
+            priv.dialog.forceClose();
+            priv.dialog.unref();
+        }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
     }
 

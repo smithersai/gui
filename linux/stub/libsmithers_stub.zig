@@ -9,6 +9,7 @@ const alloc = std.heap.c_allocator;
 const StubApp = struct {
     cfg: c.smithers_runtime_config_s,
     active_path: ?[]u8 = null,
+    approval_pending: bool = true,
 };
 
 const StubWorkspace = struct {
@@ -48,7 +49,7 @@ fn makeString(text: []const u8) c.smithers_string_s {
 }
 
 fn freeString(s: c.smithers_string_s) void {
-    if (s.ptr == null or s.len == 0) return;
+    if (s.ptr == null) return;
     const ptr: [*]u8 = @ptrCast(@constCast(s.ptr));
     alloc.free(ptr[0 .. s.len + 1]);
 }
@@ -98,7 +99,7 @@ export fn smithers_error_free(e: c.smithers_error_s) callconv(.c) void {
 }
 
 export fn smithers_bytes_free(b: c.smithers_bytes_s) callconv(.c) void {
-    if (b.ptr == null or b.len == 0) return;
+    if (b.ptr == null) return;
     const ptr: [*]u8 = @ptrCast(@constCast(b.ptr));
     alloc.free(ptr[0..b.len]);
 }
@@ -143,12 +144,24 @@ export fn smithers_app_open_workspace(handle: c.smithers_app_t, path: [*c]const 
     app.active_path = alloc.dupe(u8, path_slice) catch null;
 
     const ws = alloc.create(StubWorkspace) catch return null;
-    ws.* = .{ .path = alloc.dupe(u8, path_slice) catch return null };
+    ws.* = .{ .path = alloc.dupe(u8, path_slice) catch {
+        alloc.destroy(ws);
+        return null;
+    } };
     return ws;
 }
 
-export fn smithers_app_close_workspace(_: c.smithers_app_t, handle: c.smithers_workspace_t) callconv(.c) void {
+export fn smithers_app_close_workspace(app_handle: c.smithers_app_t, handle: c.smithers_workspace_t) callconv(.c) void {
+    const app = appFrom(app_handle);
     const ws: *StubWorkspace = @ptrCast(@alignCast(handle orelse return));
+    if (app) |a| {
+        if (a.active_path) |path| {
+            if (std.mem.eql(u8, path, ws.path)) {
+                alloc.free(path);
+                a.active_path = null;
+            }
+        }
+    }
     alloc.free(ws.path);
     alloc.destroy(ws);
 }
@@ -182,10 +195,14 @@ export fn smithers_session_new(handle: c.smithers_app_t, opts: c.smithers_sessio
         else => "Session",
     };
     const session = alloc.create(StubSession) catch return null;
+    const title_copy = alloc.dupe(u8, title) catch {
+        alloc.destroy(session);
+        return null;
+    };
     session.* = .{
         .app = app,
         .kind = opts.kind,
-        .title = alloc.dupe(u8, title) catch return null,
+        .title = title_copy,
         .userdata = opts.userdata,
     };
     return session;
@@ -267,16 +284,21 @@ export fn smithers_client_call(
     _: [*c]const u8,
     out_err: [*c]c.smithers_error_s,
 ) callconv(.c) c.smithers_string_s {
-    _ = clientFrom(handle) orelse return makeString("null");
+    const client = clientFrom(handle) orelse return makeString("null");
     setOk(out_err);
     const name = spanZ(method);
     if (std.mem.eql(u8, name, "listWorkflows")) return makeString(workflows_json);
     if (std.mem.eql(u8, name, "listRuns")) return makeString(runs_json);
     if (std.mem.eql(u8, name, "inspectRun")) return makeString(inspect_json);
-    if (std.mem.eql(u8, name, "listPendingApprovals")) return makeString(approvals_json);
+    if (std.mem.eql(u8, name, "listPendingApprovals")) return makeString(if (client.app.approval_pending) approvals_json else "[]");
     if (std.mem.eql(u8, name, "listAgents")) return makeString(agents_json);
     if (std.mem.eql(u8, name, "listWorkspaces")) return makeString(workspaces_json);
     if (std.mem.eql(u8, name, "runWorkflow")) return makeString("{\"runId\":\"stub-run-003\",\"status\":\"running\"}");
+    if (std.mem.eql(u8, name, "approveNode") or std.mem.eql(u8, name, "denyNode")) {
+        client.app.approval_pending = false;
+        if (client.app.cfg.state_changed) |state_changed| state_changed(client.app.cfg.userdata);
+        return makeString("{}");
+    }
     return makeString("[]");
 }
 

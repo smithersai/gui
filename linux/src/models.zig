@@ -69,6 +69,7 @@ pub const Approval = struct {
     node_id: []u8,
     gate: ?[]u8 = null,
     status: []u8,
+    iteration: ?i64 = null,
     requested_at: ?i64 = null,
     source: ?[]u8 = null,
 
@@ -186,7 +187,7 @@ pub fn parseRunInspection(alloc: std.mem.Allocator, json: []const u8) !RunInspec
     };
     errdefer inspection.deinit(alloc);
 
-    if (arrayField(root, &.{ "tasks", "nodes" })) |tasks| {
+    if (arrayField(root, &.{ "tasks", "nodes", "items", "data" })) |tasks| {
         for (tasks) |*task_value| {
             const task_obj = object(task_value) orelse continue;
             const node_id = try stringField(alloc, task_obj, &.{ "nodeId", "node_id", "id" }) orelse continue;
@@ -227,7 +228,8 @@ pub fn parseApprovals(alloc: std.mem.Allocator, json: []const u8) !std.ArrayList
                 .node_id = node_id,
                 .gate = try stringField(alloc, obj, &.{"gate"}),
                 .status = status,
-                .requested_at = intField(obj, &.{ "requestedAt", "requested_at" }),
+                .iteration = intField(obj, &.{"iteration"}),
+                .requested_at = intField(obj, &.{ "requestedAtMs", "requested_at_ms", "requestedAt", "requested_at" }),
                 .source = try stringField(alloc, obj, &.{"source"}),
             });
         }
@@ -271,9 +273,9 @@ pub fn parseWorkspaces(alloc: std.mem.Allocator, json: []const u8) !std.ArrayLis
     if (arrayFromRoot(&parsed.value, &.{ "workspaces", "recent", "items", "data" })) |items| {
         for (items) |*item| {
             const obj = object(item) orelse continue;
-            const id = try stringField(alloc, obj, &.{ "id", "path", "name" }) orelse continue;
+            const id = try stringField(alloc, obj, &.{ "path", "workspacePath", "workspace_path", "rootPath", "root_path", "id", "name" }) orelse continue;
             errdefer alloc.free(id);
-            const name = try stringField(alloc, obj, &.{ "name", "displayName", "path" }) orelse try alloc.dupe(u8, id);
+            const name = try stringField(alloc, obj, &.{ "name", "displayName", "display_name", "path", "id" }) orelse try alloc.dupe(u8, id);
             errdefer alloc.free(name);
             try result.append(alloc, .{
                 .id = id,
@@ -345,10 +347,8 @@ fn arrayFromRoot(root: *Value, keys: []const []const u8) ?[]Value {
         .object => |obj| {
             for (keys) |key| {
                 if (obj.get(key)) |value| {
-                    switch (value) {
-                        .array => |array| return array.items,
-                        else => {},
-                    }
+                    var value_copy = value;
+                    if (arrayFromRoot(&value_copy, keys)) |array| return array;
                 }
             }
         },
@@ -367,10 +367,8 @@ fn object(value: *Value) ?*std.json.ObjectMap {
 fn arrayField(obj: *std.json.ObjectMap, keys: []const []const u8) ?[]Value {
     for (keys) |key| {
         if (obj.get(key)) |value| {
-            switch (value) {
-                .array => |array| return array.items,
-                else => {},
-            }
+            var value_copy = value;
+            if (arrayFromRoot(&value_copy, keys)) |array| return array;
         }
     }
     return null;

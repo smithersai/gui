@@ -30,7 +30,10 @@ pub fn callJson(
     const result = c.smithers_client_call(client, method_z.ptr, args_z.ptr, &err);
     defer c.smithers_error_free(err);
 
-    if (err.code != 0) return Error.SmithersCallFailed;
+    if (err.code != 0) {
+        c.smithers_string_free(result);
+        return Error.SmithersCallFailed;
+    }
     return try ownedString(alloc, result);
 }
 

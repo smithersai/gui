@@ -23,6 +23,7 @@ pub const NewTabPicker = extern struct {
         window: *MainWindow = undefined,
         dialog: *adw.Dialog = undefined,
         list: *gtk.ListBox = undefined,
+        did_dispose: bool = false,
 
         pub var offset: c_int = 0;
     };
@@ -90,6 +91,13 @@ pub const NewTabPicker = extern struct {
     }
 
     fn dispose(self: *Self) callconv(.c) void {
+        const priv = self.private();
+        if (!priv.did_dispose) {
+            priv.did_dispose = true;
+            priv.dialog.setChild(null);
+            priv.dialog.forceClose();
+            priv.dialog.unref();
+        }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
     }
 

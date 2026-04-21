@@ -29,6 +29,7 @@ pub const SessionWidget = extern struct {
         kind: smithers.c.smithers_session_kind_e = smithers.c.SMITHERS_SESSION_KIND_DASHBOARD,
         body: *gtk.Box = undefined,
         input: ?*gtk.Entry = null,
+        did_dispose: bool = false,
 
         pub var offset: c_int = 0;
     };
@@ -109,6 +110,10 @@ pub const SessionWidget = extern struct {
         };
     }
 
+    pub fn handle(self: *Self) smithers.c.smithers_session_t {
+        return self.private().session;
+    }
+
     pub fn drainEvents(self: *Self) !void {
         const priv = self.private();
         const stream = priv.stream orelse return;
@@ -159,23 +164,23 @@ pub const SessionWidget = extern struct {
         try self.appendMarkdown(switch (self.private().kind) {
             smithers.c.SMITHERS_SESSION_KIND_TERMINAL =>
             \\# Terminal
-            \\PTY rendering is reserved for the next Linux milestone. Commands and terminal text still flow through the libsmithers session ABI.
+            \\Terminal output and command responses appear here.
             ,
             smithers.c.SMITHERS_SESSION_KIND_CHAT =>
             \\# Chat
-            \\Markdown chat blocks render here. Send a message to append a local block and forward it through smithers_session_send_text.
+            \\Markdown chat blocks appear here.
             ,
             smithers.c.SMITHERS_SESSION_KIND_RUN_INSPECT =>
             \\# Run Inspector
-            \\Open a run from the Runs view for the read-only inspector, or bind this tab to a target run when libsmithers exposes one.
+            \\Open a run from the Runs view to inspect its tasks.
             ,
             smithers.c.SMITHERS_SESSION_KIND_WORKFLOW =>
             \\# Workflow
-            \\Use the Workflows view to launch definitions. Workflow sessions are ready for richer graph/source tooling.
+            \\Workflow details appear here.
             ,
             smithers.c.SMITHERS_SESSION_KIND_MEMORY =>
             \\# Memory
-            \\Memory browsing is stubbed in the GTK MVP.
+            \\Memory results appear here.
             ,
             else =>
             \\# Dashboard
@@ -192,6 +197,7 @@ pub const SessionWidget = extern struct {
             entry.setPlaceholderText(if (self.private().kind == smithers.c.SMITHERS_SESSION_KIND_CHAT) "Message" else "Send text");
             entry.as(gtk.Widget).setHexpand(1);
             self.private().input = entry;
+            _ = gtk.Entry.signals.activate.connect(entry, *Self, entryActivated, self, .{});
             input_row.append(entry.as(gtk.Widget));
             const send = ui.iconButton("mail-send-symbolic", "Send");
             _ = gtk.Button.signals.clicked.connect(send, *Self, sendClicked, self, .{});
@@ -212,6 +218,13 @@ pub const SessionWidget = extern struct {
             else => return self.appendMarkdown(payload),
         };
         const text = stringFromObject(obj, &.{ "markdown", "content", "text", "message" }) orelse payload;
+        if (text.ptr != payload.ptr) {
+            if (stringFromObject(obj, &.{ "role", "author", "speaker" })) |role| {
+                const block = try std.fmt.allocPrint(self.allocator(), "## {s}\n{s}", .{ role, text });
+                defer self.allocator().free(block);
+                return self.appendMarkdown(block);
+            }
+        }
         try self.appendMarkdown(text);
     }
 
@@ -222,7 +235,7 @@ pub const SessionWidget = extern struct {
 
     fn eventPayload(alloc: std.mem.Allocator, ev: smithers.c.smithers_event_s) ![]u8 {
         defer smithers.c.smithers_event_free(ev);
-        if (ev.payload.len == 0) return alloc.dupe(u8, "");
+        if (ev.payload.ptr == null or ev.payload.len == 0) return alloc.dupe(u8, "");
         return try alloc.dupe(u8, @as([*]const u8, @ptrCast(ev.payload.ptr))[0..ev.payload.len]);
     }
 
@@ -238,6 +251,14 @@ pub const SessionWidget = extern struct {
     }
 
     fn sendClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.sendInput();
+    }
+
+    fn entryActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
+        self.sendInput();
+    }
+
+    fn sendInput(self: *Self) void {
         const entry = self.private().input orelse return;
         const text = std.mem.span(entry.as(gtk.Editable).getText());
         if (text.len == 0) return;
@@ -250,13 +271,17 @@ pub const SessionWidget = extern struct {
 
     fn dispose(self: *Self) callconv(.c) void {
         const priv = self.private();
-        if (priv.stream) |stream| {
-            smithers.c.smithers_event_stream_free(stream);
-            priv.stream = null;
-        }
-        if (priv.session) |session| {
-            smithers.c.smithers_session_free(session);
-            priv.session = null;
+        if (!priv.did_dispose) {
+            priv.did_dispose = true;
+            self.as(adw.Bin).setChild(null);
+            if (priv.stream) |stream| {
+                smithers.c.smithers_event_stream_free(stream);
+                priv.stream = null;
+            }
+            if (priv.session) |session| {
+                smithers.c.smithers_session_free(session);
+                priv.session = null;
+            }
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
     }

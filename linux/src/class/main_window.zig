@@ -61,7 +61,11 @@ pub const MainWindow = extern struct {
         command_palette: ?*CommandPalette = null,
         new_tab_picker: ?*NewTabPicker = null,
 
+        workspace_handle: smithers.c.smithers_workspace_t = null,
         active_workspace: ?[]u8 = null,
+        opening_workspace: bool = false,
+        closing_workspace: bool = false,
+        active_session_index: ?usize = null,
         visible: Nav = .welcome,
         workflows: std.ArrayList(models.Workflow) = .empty,
         runs: std.ArrayList(models.RunSummary) = .empty,
@@ -69,6 +73,7 @@ pub const MainWindow = extern struct {
         agents: std.ArrayList(models.Agent) = .empty,
         workspaces: std.ArrayList(models.Workspace) = .empty,
         sessions: std.ArrayList(*SessionWidget) = .empty,
+        did_dispose: bool = false,
 
         pub var offset: c_int = 0;
     };
@@ -112,6 +117,10 @@ pub const MainWindow = extern struct {
         priv.command_palette.?.present();
     }
 
+    pub fn dismissCommandPalette(self: *Self) void {
+        if (self.private().command_palette) |palette| palette.dismiss();
+    }
+
     pub fn presentNewTabPicker(self: *Self) void {
         const priv = self.private();
         if (priv.new_tab_picker == null) {
@@ -142,17 +151,88 @@ pub const MainWindow = extern struct {
         const alloc = self.allocator();
         const z = try alloc.dupeZ(u8, path);
         defer alloc.free(z);
+
+        self.private().opening_workspace = true;
+        defer self.private().opening_workspace = false;
+
         const ws = smithers.c.smithers_app_open_workspace(self.private().app.core(), z.ptr);
         if (ws == null) return error.OpenWorkspaceFailed;
+        errdefer smithers.c.smithers_app_close_workspace(self.private().app.core(), ws);
 
+        try self.adoptWorkspace(path, ws);
+    }
+
+    pub fn workspaceOpenedFromCore(self: *Self, path: []const u8) bool {
+        if (self.private().opening_workspace) return true;
+        self.adoptWorkspace(path, null) catch |err| {
+            log.warn("workspace action adoption failed: {}", .{err});
+            self.showToastFmt("Workspace refresh failed: {}", .{err});
+            return false;
+        };
+        return true;
+    }
+
+    pub fn closeWorkspace(self: *Self) void {
+        const priv = self.private();
+        if (priv.workspace_handle) |ws| {
+            priv.workspace_handle = null;
+            priv.closing_workspace = true;
+            smithers.c.smithers_app_close_workspace(priv.app.core(), ws);
+            priv.closing_workspace = false;
+        }
+        self.clearWorkspaceUi();
+    }
+
+    pub fn workspaceClosedFromCore(self: *Self) void {
+        if (self.private().closing_workspace) return;
+        self.clearWorkspaceUi();
+    }
+
+    fn adoptWorkspace(self: *Self, path: []const u8, handle: smithers.c.smithers_workspace_t) !void {
+        const alloc = self.allocator();
+        const owned_path = try alloc.dupe(u8, path);
+        errdefer alloc.free(owned_path);
+
+        if (self.private().workspace_handle) |old| {
+            if (handle == null or old != handle.?) self.closeWorkspaceHandle();
+        }
+        self.closeAllSessions();
+
+        self.private().workspace_handle = handle;
         if (self.private().active_workspace) |old| alloc.free(old);
-        self.private().active_workspace = try alloc.dupe(u8, path);
+        self.private().active_workspace = owned_path;
         self.private().sidebar.refresh();
         self.refreshAll() catch |err| {
             log.warn("refresh after workspace open failed: {}", .{err});
             self.showToast("Workspace opened, but some data could not be loaded");
         };
         self.showNav(.dashboard);
+    }
+
+    fn clearWorkspaceUi(self: *Self) void {
+        const priv = self.private();
+        const alloc = self.allocator();
+        self.closeWorkspaceHandle();
+        if (priv.active_workspace) |path| {
+            alloc.free(path);
+            priv.active_workspace = null;
+        }
+        self.closeAllSessions();
+        models.clearList(models.Workflow, alloc, &priv.workflows);
+        models.clearList(models.RunSummary, alloc, &priv.runs);
+        models.clearList(models.Approval, alloc, &priv.approvals);
+        models.clearList(models.Agent, alloc, &priv.agents);
+        models.clearList(models.Workspace, alloc, &priv.workspaces);
+        self.showNav(.welcome);
+    }
+
+    fn closeWorkspaceHandle(self: *Self) void {
+        const priv = self.private();
+        const ws = priv.workspace_handle orelse return;
+        priv.workspace_handle = null;
+        priv.closing_workspace = true;
+        smithers.c.smithers_app_close_workspace(priv.app.core(), ws);
+        priv.closing_workspace = false;
     }
 
     pub fn showNav(self: *Self, nav: Nav) void {
@@ -232,26 +312,101 @@ pub const MainWindow = extern struct {
         const workspace = self.private().active_workspace;
         const session = try SessionWidget.new(self.private().app, kind, workspace, target_id);
         errdefer session.unref();
-        try self.private().sessions.append(self.allocator(), session.ref());
 
-        const name = try std.fmt.allocPrintSentinel(self.allocator(), "session-{d}", .{self.private().sessions.items.len}, 0);
+        const next_index = self.private().sessions.items.len;
+        const name = try std.fmt.allocPrintSentinel(self.allocator(), "session-{d}", .{next_index + 1}, 0);
         defer self.allocator().free(name);
         const title_z = try session.titleZ(self.allocator());
         defer self.allocator().free(title_z);
+
+        try self.private().sessions.ensureUnusedCapacity(self.allocator(), 1);
+        _ = session.ref();
+        self.private().sessions.appendAssumeCapacity(session);
+
         _ = self.private().stack.addTitled(session.as(gtk.Widget), name.ptr, title_z.ptr);
-        self.private().stack.setVisibleChildName(name.ptr);
+        self.private().stack.setVisibleChild(session.as(gtk.Widget));
         self.private().visible = .session;
+        self.private().active_session_index = next_index;
+        self.setTitle(title_z);
         self.private().sidebar.refresh();
     }
 
     pub fn showSession(self: *Self, index: usize) void {
         if (index >= self.private().sessions.items.len) return;
-        const name = std.fmt.allocPrintSentinel(self.allocator(), "session-{d}", .{index + 1}, 0) catch return;
-        defer self.allocator().free(name);
-        self.private().stack.setVisibleChildName(name.ptr);
+        const session = self.private().sessions.items[index];
+        self.private().stack.setVisibleChild(session.as(gtk.Widget));
         self.private().visible = .session;
-        self.setTitle("Session");
+        self.private().active_session_index = index;
+        if (session.titleZ(self.allocator())) |title_z| {
+            defer self.allocator().free(title_z);
+            self.setTitle(title_z);
+        } else |_| {
+            self.setTitle("Session");
+        }
         self.private().sidebar.refresh();
+    }
+
+    pub fn showSessionHandle(self: *Self, handle: smithers.c.smithers_session_t) bool {
+        if (handle == null) return false;
+        for (self.private().sessions.items, 0..) |session, index| {
+            if (session.handle() == handle) {
+                self.showSession(index);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn closeCurrentSession(self: *Self) void {
+        const priv = self.private();
+        if (priv.visible != .session) {
+            self.as(gtk.Window).close();
+            return;
+        }
+        const index = priv.active_session_index orelse {
+            self.as(gtk.Window).close();
+            return;
+        };
+        self.closeSession(index);
+    }
+
+    pub fn closeSessionHandle(self: *Self, handle: smithers.c.smithers_session_t) bool {
+        if (handle == null) return false;
+        for (self.private().sessions.items, 0..) |session, index| {
+            if (session.handle() == handle) {
+                self.closeSession(index);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn closeSession(self: *Self, index: usize) void {
+        const priv = self.private();
+        if (index >= priv.sessions.items.len) return;
+
+        const session = priv.sessions.orderedRemove(index);
+        priv.stack.remove(session.as(gtk.Widget));
+        session.unref();
+
+        if (priv.sessions.items.len == 0) {
+            priv.active_session_index = null;
+            self.showNav(if (priv.active_workspace == null) .welcome else .dashboard);
+            return;
+        }
+
+        const next_index = if (index >= priv.sessions.items.len) priv.sessions.items.len - 1 else index;
+        self.showSession(next_index);
+    }
+
+    fn closeAllSessions(self: *Self) void {
+        const priv = self.private();
+        for (priv.sessions.items) |session| {
+            priv.stack.remove(session.as(gtk.Widget));
+            session.unref();
+        }
+        priv.sessions.clearRetainingCapacity();
+        priv.active_session_index = null;
     }
 
     pub fn inspectRun(self: *Self, run_id: []const u8) void {
@@ -482,6 +637,7 @@ pub const MainWindow = extern struct {
         recent.as(gtk.Widget).addCssClass("boxed-list");
         recent.setSelectionMode(.none);
         recent.setShowSeparators(1);
+        _ = gtk.ListBox.signals.row_activated.connect(recent, *Self, runRowActivated, self, .{});
         const max = @min(priv.runs.items.len, 5);
         if (max == 0) {
             recent.append((try ui.row(self.allocator(), "view-list-symbolic", "No recent runs", "Runs will appear here after workflows start.")).as(gtk.Widget));
@@ -581,11 +737,48 @@ pub const MainWindow = extern struct {
             list.append((try ui.row(self.allocator(), "emblem-ok-symbolic", "No pending approvals", "Approval gates will appear here when a run pauses.")).as(gtk.Widget));
             return;
         }
-        for (self.private().approvals.items) |approval| {
+        for (self.private().approvals.items, 0..) |approval, index| {
             const title = approval.gate orelse approval.node_id;
-            const subtitle = try std.fmt.allocPrint(self.allocator(), "Run {s} - {s}", .{ approval.run_id, approval.status });
+            const subtitle = if (approval.iteration) |iteration|
+                try std.fmt.allocPrint(self.allocator(), "Run {s} - node {s} - iteration {d} - {s}", .{ approval.run_id, approval.node_id, iteration, approval.status })
+            else
+                try std.fmt.allocPrint(self.allocator(), "Run {s} - node {s} - {s}", .{ approval.run_id, approval.node_id, approval.status });
             defer self.allocator().free(subtitle);
-            list.append((try ui.row(self.allocator(), "security-high-symbolic", title, subtitle)).as(gtk.Widget));
+
+            const row = gtk.ListBoxRow.new();
+            row.setActivatable(0);
+            row.setSelectable(0);
+            const box = gtk.Box.new(.horizontal, 12);
+            ui.margin(box.as(gtk.Widget), 10);
+
+            const icon = gtk.Image.newFromIconName("security-high-symbolic");
+            icon.setPixelSize(20);
+            icon.as(gtk.Widget).setValign(.center);
+            box.append(icon.as(gtk.Widget));
+
+            const text = gtk.Box.new(.vertical, 3);
+            text.as(gtk.Widget).setHexpand(1);
+            const title_z = try self.allocator().dupeZ(u8, title);
+            defer self.allocator().free(title_z);
+            text.append(ui.label(title_z, "heading").as(gtk.Widget));
+            const subtitle_z = try self.allocator().dupeZ(u8, subtitle);
+            defer self.allocator().free(subtitle_z);
+            text.append(ui.dim(subtitle_z).as(gtk.Widget));
+            box.append(text.as(gtk.Widget));
+
+            const approve = ui.textButton("Approve", true);
+            ui.setIndex(approve.as(gobject.Object), index);
+            _ = gtk.Button.signals.clicked.connect(approve, *Self, approveClicked, self, .{});
+            box.append(approve.as(gtk.Widget));
+
+            const deny = ui.textButton("Deny", false);
+            deny.as(gtk.Widget).addCssClass("destructive-action");
+            ui.setIndex(deny.as(gobject.Object), index);
+            _ = gtk.Button.signals.clicked.connect(deny, *Self, denyClicked, self, .{});
+            box.append(deny.as(gtk.Widget));
+
+            row.setChild(box.as(gtk.Widget));
+            list.append(row.as(gtk.Widget));
         }
     }
 
@@ -619,12 +812,15 @@ pub const MainWindow = extern struct {
         list.as(gtk.Widget).addCssClass("boxed-list");
         list.setSelectionMode(.none);
         list.setShowSeparators(1);
+        _ = gtk.ListBox.signals.row_activated.connect(list, *Self, workspaceRowActivated, self, .{});
         if (self.private().workspaces.items.len == 0) {
             list.append((try ui.row(self.allocator(), "folder-symbolic", "No recent workspaces", "Open a directory from the welcome screen.")).as(gtk.Widget));
         } else {
-            for (self.private().workspaces.items) |workspace| {
+            for (self.private().workspaces.items, 0..) |workspace, index| {
                 const subtitle = workspace.status orelse workspace.id;
-                list.append((try ui.row(self.allocator(), "folder-symbolic", workspace.name, subtitle)).as(gtk.Widget));
+                const row = try ui.row(self.allocator(), "folder-symbolic", workspace.name, subtitle);
+                ui.setIndex(row.as(gobject.Object), index);
+                list.append(row.as(gtk.Widget));
             }
         }
         box.append(list.as(gtk.Widget));
@@ -640,7 +836,8 @@ pub const MainWindow = extern struct {
         list.setSelectionMode(.none);
         list.setShowSeparators(1);
         list.append((try ui.row(self.allocator(), "system-search-symbolic", "Command Palette", "Ctrl+K")).as(gtk.Widget));
-        list.append((try ui.row(self.allocator(), "tab-new-symbolic", "New Tab", "Ctrl+T")).as(gtk.Widget));
+        list.append((try ui.row(self.allocator(), "tab-new-symbolic", "New Tab", "Ctrl+N or Ctrl+T")).as(gtk.Widget));
+        list.append((try ui.row(self.allocator(), "window-close-symbolic", "Close Tab", "Ctrl+W")).as(gtk.Widget));
         list.append((try ui.row(self.allocator(), "view-refresh-symbolic", "Refresh Current View", "Toolbar refresh button")).as(gtk.Widget));
         box.append(list.as(gtk.Widget));
     }
@@ -702,6 +899,23 @@ pub const MainWindow = extern struct {
         self.showNav(.runs);
     }
 
+    fn completeApproval(self: *Self, index: usize, method: []const u8, verb: []const u8) void {
+        if (index >= self.private().approvals.items.len) return;
+        const approval = self.private().approvals.items[index];
+        const args = approvalArgs(self.allocator(), approval) catch {
+            self.showToast("Unable to encode approval action");
+            return;
+        };
+        defer self.allocator().free(args);
+        const json = smithers.callJson(self.allocator(), self.private().app.client(), method, args) catch |err| {
+            self.showToastFmt("{s} failed: {}", .{ verb, err });
+            return;
+        };
+        defer self.allocator().free(json);
+        self.showToastFmt("{s} {s}", .{ verb, approval.gate orelse approval.node_id });
+        self.refreshApprovals() catch |err| self.showToastFmt("Approval refresh failed: {}", .{err});
+    }
+
     fn setTitle(self: *Self, text: [:0]const u8) void {
         self.private().title_label.setText(text.ptr);
     }
@@ -713,6 +927,23 @@ pub const MainWindow = extern struct {
         try jw.beginObject();
         try jw.objectField(key);
         try jw.write(value);
+        try jw.endObject();
+        return try out.toOwnedSlice();
+    }
+
+    fn approvalArgs(alloc: std.mem.Allocator, approval: models.Approval) ![]u8 {
+        var out: std.Io.Writer.Allocating = try .initCapacity(alloc, approval.run_id.len + approval.node_id.len + 64);
+        defer out.deinit();
+        var jw: std.json.Stringify = .{ .writer = &out.writer, .options = .{} };
+        try jw.beginObject();
+        try jw.objectField("runId");
+        try jw.write(approval.run_id);
+        try jw.objectField("nodeId");
+        try jw.write(approval.node_id);
+        if (approval.iteration) |iteration| {
+            try jw.objectField("iteration");
+            try jw.write(iteration);
+        }
         try jw.endObject();
         return try out.toOwnedSlice();
     }
@@ -763,6 +994,16 @@ pub const MainWindow = extern struct {
         self.launchWorkflow(index);
     }
 
+    fn approveClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const index = ui.getIndex(button.as(gobject.Object)) orelse return;
+        self.completeApproval(index, "approveNode", "Approved");
+    }
+
+    fn denyClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const index = ui.getIndex(button.as(gobject.Object)) orelse return;
+        self.completeApproval(index, "denyNode", "Denied");
+    }
+
     fn workflowRowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const index = ui.getIndex(row.as(gobject.Object)) orelse return;
         self.launchWorkflow(index);
@@ -774,34 +1015,50 @@ pub const MainWindow = extern struct {
         self.inspectRun(self.private().runs.items[index].run_id);
     }
 
-    fn dispose(self: *Self) callconv(.c) void {
-        const alloc = self.allocator();
-        const priv = self.private();
-        if (priv.command_palette) |palette| {
-            palette.unref();
-            priv.command_palette = null;
-        }
-        if (priv.new_tab_picker) |picker| {
-            picker.unref();
-            priv.new_tab_picker = null;
-        }
-        if (priv.active_workspace) |path| {
-            alloc.free(path);
-            priv.active_workspace = null;
-        }
-        models.clearList(models.Workflow, alloc, &priv.workflows);
-        priv.workflows.deinit(alloc);
-        models.clearList(models.RunSummary, alloc, &priv.runs);
-        priv.runs.deinit(alloc);
-        models.clearList(models.Approval, alloc, &priv.approvals);
-        priv.approvals.deinit(alloc);
-        models.clearList(models.Agent, alloc, &priv.agents);
-        priv.agents.deinit(alloc);
-        models.clearList(models.Workspace, alloc, &priv.workspaces);
-        priv.workspaces.deinit(alloc);
-        for (priv.sessions.items) |session| session.unref();
-        priv.sessions.deinit(alloc);
+    fn workspaceRowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
+        const index = ui.getIndex(row.as(gobject.Object)) orelse return;
+        if (index >= self.private().workspaces.items.len) return;
+        self.openWorkspace(self.private().workspaces.items[index].id) catch |err| {
+            self.showToastFmt("Open workspace failed: {}", .{err});
+        };
+    }
 
+    fn dispose(self: *Self) callconv(.c) void {
+        const priv = self.private();
+        if (!priv.did_dispose) {
+            priv.did_dispose = true;
+            const alloc = self.allocator();
+            if (priv.command_palette) |palette| {
+                palette.unref();
+                priv.command_palette = null;
+            }
+            if (priv.new_tab_picker) |picker| {
+                picker.unref();
+                priv.new_tab_picker = null;
+            }
+            if (priv.workspace_handle) |ws| {
+                smithers.c.smithers_app_close_workspace(priv.app.core(), ws);
+                priv.workspace_handle = null;
+            }
+            if (priv.active_workspace) |path| {
+                alloc.free(path);
+                priv.active_workspace = null;
+            }
+            models.clearList(models.Workflow, alloc, &priv.workflows);
+            priv.workflows.deinit(alloc);
+            models.clearList(models.RunSummary, alloc, &priv.runs);
+            priv.runs.deinit(alloc);
+            models.clearList(models.Approval, alloc, &priv.approvals);
+            priv.approvals.deinit(alloc);
+            models.clearList(models.Agent, alloc, &priv.agents);
+            priv.agents.deinit(alloc);
+            models.clearList(models.Workspace, alloc, &priv.workspaces);
+            priv.workspaces.deinit(alloc);
+            for (priv.sessions.items) |session| session.unref();
+            priv.sessions.deinit(alloc);
+
+            self.as(adw.ApplicationWindow).setContent(null);
+        }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
     }
 

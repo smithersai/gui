@@ -33,6 +33,7 @@ pub const Application = extern struct {
         palette: smithers.c.smithers_palette_t = null,
         main_window: ?*MainWindow = null,
         running: bool = false,
+        needs_refresh: std.atomic.Value(bool) = .init(false),
         did_deinit: bool = false,
 
         pub var offset: c_int = 0;
@@ -53,7 +54,9 @@ pub const Application = extern struct {
             .opts = opts,
         };
 
-        _ = smithers.c.smithers_init(0, null);
+        if (smithers.c.smithers_init(0, null) != smithers.c.SMITHERS_SUCCESS) {
+            return error.SmithersInitFailed;
+        }
 
         var cfg = std.mem.zeroes(smithers.c.smithers_runtime_config_s);
         cfg.userdata = self;
@@ -67,7 +70,9 @@ pub const Application = extern struct {
         priv.core_app = smithers.c.smithers_app_new(&cfg);
         if (priv.core_app == null) return error.CoreAppCreateFailed;
         priv.client = smithers.c.smithers_client_new(priv.core_app);
+        if (priv.client == null) return error.ClientCreateFailed;
         priv.palette = smithers.c.smithers_palette_new(priv.core_app);
+        if (priv.palette == null) return error.PaletteCreateFailed;
 
         self.installActions();
         _ = gio.Application.signals.activate.connect(
@@ -141,10 +146,13 @@ pub const Application = extern struct {
             _ = glib.MainContext.iteration(ctx, 1);
             if (self.private().core_app) |app| smithers.c.smithers_app_tick(app);
             if (self.private().main_window) |win| win.tick();
+            self.drainPendingUiWork();
 
             const windows = @as(?*glib.List, self.as(gtk.Application).getWindows());
             if (windows == null and !self.private().opts.smoke) self.private().running = false;
         }
+
+        while (glib.MainContext.iteration(ctx, 0) != 0) {}
     }
 
     pub fn quit(self: *Self) void {
@@ -157,6 +165,11 @@ pub const Application = extern struct {
         glib.MainContext.wakeup(null);
     }
 
+    pub fn queueRefresh(self: *Self) void {
+        self.private().needs_refresh.store(true, .seq_cst);
+        self.wakeup();
+    }
+
     pub fn showToast(self: *Self, title: []const u8) void {
         if (self.private().main_window) |win| win.showToast(title);
     }
@@ -167,6 +180,7 @@ pub const Application = extern struct {
 
     fn installActions(self: *Self) void {
         const palette_action = gio.SimpleAction.new("command-palette", null);
+        defer palette_action.unref();
         _ = gio.SimpleAction.signals.activate.connect(
             palette_action,
             *Self,
@@ -177,6 +191,7 @@ pub const Application = extern struct {
         self.as(gio.ActionMap).addAction(palette_action.as(gio.Action));
 
         const new_tab_action = gio.SimpleAction.new("new-tab", null);
+        defer new_tab_action.unref();
         _ = gio.SimpleAction.signals.activate.connect(
             new_tab_action,
             *Self,
@@ -186,10 +201,28 @@ pub const Application = extern struct {
         );
         self.as(gio.ActionMap).addAction(new_tab_action.as(gio.Action));
 
+        const close_tab_action = gio.SimpleAction.new("close-tab", null);
+        defer close_tab_action.unref();
+        _ = gio.SimpleAction.signals.activate.connect(
+            close_tab_action,
+            *Self,
+            actionCloseTab,
+            self,
+            .{},
+        );
+        self.as(gio.ActionMap).addAction(close_tab_action.as(gio.Action));
+
         const palette_accels = [_:null]?[*:0]const u8{"<Control>k"};
         self.as(gtk.Application).setAccelsForAction("app.command-palette", &palette_accels);
-        const new_tab_accels = [_:null]?[*:0]const u8{"<Control>t"};
+        const new_tab_accels = [_:null]?[*:0]const u8{ "<Control>n", "<Control>t" };
         self.as(gtk.Application).setAccelsForAction("app.new-tab", &new_tab_accels);
+        const close_tab_accels = [_:null]?[*:0]const u8{"<Control>w"};
+        self.as(gtk.Application).setAccelsForAction("app.close-tab", &close_tab_accels);
+    }
+
+    fn drainPendingUiWork(self: *Self) void {
+        if (!self.private().needs_refresh.swap(false, .seq_cst)) return;
+        if (self.private().main_window) |win| win.refreshVisible();
     }
 
     fn ensureWindow(self: *Self) !*MainWindow {
@@ -198,7 +231,8 @@ pub const Application = extern struct {
 
         const win = try MainWindow.new(self);
         priv.main_window = win.ref();
-        return win;
+        win.unref();
+        return priv.main_window.?;
     }
 
     fn activateCallback(_: *gio.Application, self: *Self) callconv(.c) void {
@@ -229,6 +263,10 @@ pub const Application = extern struct {
         if (self.private().main_window) |win| win.presentNewTabPicker();
     }
 
+    fn actionCloseTab(_: *gio.SimpleAction, _: ?*glib.Variant, self: *Self) callconv(.c) void {
+        if (self.private().main_window) |win| win.closeCurrentSession();
+    }
+
     fn wakeupCallback(userdata: smithers.c.smithers_userdata_t) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(userdata orelse return));
         self.wakeup();
@@ -236,27 +274,70 @@ pub const Application = extern struct {
 
     fn stateChangedCallback(userdata: smithers.c.smithers_userdata_t) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(userdata orelse return));
-        if (self.private().main_window) |win| win.refreshVisible();
+        self.queueRefresh();
     }
 
     fn actionCallback(
-        _: smithers.c.smithers_app_t,
-        _: smithers.c.smithers_action_target_s,
+        app: smithers.c.smithers_app_t,
+        target: smithers.c.smithers_action_target_s,
         action: smithers.c.smithers_action_s,
     ) callconv(.c) bool {
-        const app = gio.Application.getDefault() orelse return false;
-        const self = gobject.ext.cast(Self, app) orelse return false;
+        const self: *Self = @ptrCast(@alignCast(smithers.c.smithers_app_userdata(app) orelse return false));
         switch (action.tag) {
+            smithers.c.SMITHERS_ACTION_NONE => return true,
             smithers.c.SMITHERS_ACTION_OPEN_WORKSPACE => {
                 const path = std.mem.span(action.u.open_workspace.path);
-                if (self.private().main_window) |win| win.openWorkspace(path) catch return false;
+                if (self.private().main_window) |win| return win.workspaceOpenedFromCore(path);
+                return false;
+            },
+            smithers.c.SMITHERS_ACTION_CLOSE_WORKSPACE => {
+                if (self.private().main_window) |win| win.workspaceClosedFromCore();
                 return true;
+            },
+            smithers.c.SMITHERS_ACTION_NEW_SESSION => {
+                if (self.private().main_window) |win| {
+                    if (targetSession(target)) |session| {
+                        _ = win.showSessionHandle(session);
+                        return true;
+                    }
+                    win.openSession(smithers.c.SMITHERS_SESSION_KIND_TERMINAL, null) catch return false;
+                    return true;
+                }
+                return false;
             },
             smithers.c.SMITHERS_ACTION_PRESENT_COMMAND_PALETTE => {
                 self.presentCommandPalette();
                 return true;
             },
-            smithers.c.SMITHERS_ACTION_DISMISS_COMMAND_PALETTE => return true,
+            smithers.c.SMITHERS_ACTION_DISMISS_COMMAND_PALETTE => {
+                if (self.private().main_window) |win| win.dismissCommandPalette();
+                return true;
+            },
+            smithers.c.SMITHERS_ACTION_CLOSE_SESSION => {
+                if (self.private().main_window) |win| {
+                    const session = if (action.u.close_session.session != null) action.u.close_session.session else targetSession(target);
+                    if (session) |handle| {
+                        _ = win.closeSessionHandle(handle);
+                    } else {
+                        win.closeCurrentSession();
+                    }
+                }
+                return true;
+            },
+            smithers.c.SMITHERS_ACTION_FOCUS_SESSION => {
+                const session = targetSession(target) orelse return false;
+                if (self.private().main_window) |win| return win.showSessionHandle(session);
+                return false;
+            },
+            smithers.c.SMITHERS_ACTION_DESKTOP_NOTIFY => {
+                const title = std.mem.span(action.u.desktop_notify.title);
+                if (title.len > 0) self.showToast(title);
+                return true;
+            },
+            smithers.c.SMITHERS_ACTION_RUN_STARTED, smithers.c.SMITHERS_ACTION_RUN_FINISHED, smithers.c.SMITHERS_ACTION_RUN_STATE_CHANGED, smithers.c.SMITHERS_ACTION_APPROVAL_REQUESTED, smithers.c.SMITHERS_ACTION_CONFIG_CHANGED => {
+                self.queueRefresh();
+                return true;
+            },
             smithers.c.SMITHERS_ACTION_SHOW_TOAST => {
                 const title = std.mem.span(action.u.toast.title);
                 self.showToast(title);
@@ -280,6 +361,13 @@ pub const Application = extern struct {
                 return false;
             },
         }
+    }
+
+    fn targetSession(target: smithers.c.smithers_action_target_s) ?smithers.c.smithers_session_t {
+        return switch (target.tag) {
+            smithers.c.SMITHERS_ACTION_TARGET_SESSION => target.u.session,
+            else => null,
+        };
     }
 
     fn readClipboardCallback(_: smithers.c.smithers_userdata_t, _: [*c]smithers.c.smithers_string_s) callconv(.c) bool {

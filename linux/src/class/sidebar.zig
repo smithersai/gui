@@ -23,6 +23,7 @@ pub const Sidebar = extern struct {
         workspace_label: *gtk.Label = undefined,
         nav_list: *gtk.ListBox = undefined,
         session_list: *gtk.ListBox = undefined,
+        did_dispose: bool = false,
 
         pub var offset: c_int = 0;
     };
@@ -74,7 +75,7 @@ pub const Sidebar = extern struct {
         ui.clearList(priv.session_list);
         const count = priv.window.sessionCount();
         if (count == 0) {
-            const row = ui.row(alloc, "tab-new-symbolic", "No sessions", "Create one with Ctrl+T.") catch return;
+            const row = ui.row(alloc, "tab-new-symbolic", "No sessions", "Create one with Ctrl+N.") catch return;
             row.setSelectable(0);
             row.setActivatable(0);
             priv.session_list.append(row.as(gtk.Widget));
@@ -156,6 +157,10 @@ pub const Sidebar = extern struct {
     }
 
     fn dispose(self: *Self) callconv(.c) void {
+        if (!self.private().did_dispose) {
+            self.private().did_dispose = true;
+            self.as(adw.Bin).setChild(null);
+        }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
     }
 
