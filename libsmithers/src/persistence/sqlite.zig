@@ -9,6 +9,8 @@ const SQLITE_DONE = 101;
 const sqlite3 = opaque {};
 const sqlite3_stmt = opaque {};
 
+var sqlite_write_mutex: std.Thread.Mutex = .{};
+
 extern fn sqlite3_open(filename: [*:0]const u8, ppDb: *?*sqlite3) c_int;
 extern fn sqlite3_close(db: ?*sqlite3) c_int;
 extern fn sqlite3_errmsg(db: ?*sqlite3) [*:0]const u8;
@@ -50,6 +52,9 @@ pub fn open(allocator: std.mem.Allocator, db_path: []const u8) !*Persistence {
     errdefer allocator.destroy(p);
     p.* = .{ .allocator = allocator, .db = db };
 
+    sqlite_write_mutex.lock();
+    defer sqlite_write_mutex.unlock();
+    try configureConnection(db);
     try p.ensureSchema();
     return p;
 }
@@ -86,6 +91,8 @@ pub fn saveSessions(self: *Persistence, workspace_path: []const u8, sessions_jso
     self.mutex.lock();
     defer self.mutex.unlock();
     if (!isValidJsonArray(sessions_json)) return ffi.errorMessage(2, "sessions_json must be a JSON array");
+    sqlite_write_mutex.lock();
+    defer sqlite_write_mutex.unlock();
     const sql =
         \\INSERT INTO workspace_sessions (workspace_path, sessions_json, updated_at)
         \\VALUES (?, ?, strftime('%s', 'now'))
@@ -115,6 +122,19 @@ fn ensureSchema(self: *Persistence) !void {
     if (rc != SQLITE_OK) {
         if (errmsg) |msg| sqlite3_free(msg);
         return error.SchemaFailed;
+    }
+}
+
+fn configureConnection(db: ?*sqlite3) !void {
+    const sql =
+        \\PRAGMA journal_mode=WAL;
+        \\PRAGMA busy_timeout=5000;
+    ;
+    var errmsg: ?[*:0]u8 = null;
+    const rc = sqlite3_exec(db, sql, null, null, &errmsg);
+    if (rc != SQLITE_OK) {
+        if (errmsg) |msg| sqlite3_free(msg);
+        return error.ConfigureFailed;
     }
 }
 
