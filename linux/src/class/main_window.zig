@@ -510,8 +510,11 @@ pub const MainWindow = extern struct {
     }
 
     pub fn inspectRun(self: *Self, run_id: []const u8) void {
-        self.private().run_inspect_view.setRun(run_id);
-        self.showNav(.run_inspect);
+        self.openSession(smithers.c.SMITHERS_SESSION_KIND_RUN_INSPECT, run_id) catch |err| {
+            self.showToastFmt("Run inspector failed: {}", .{err});
+            self.private().run_inspect_view.setRun(run_id);
+            self.showNav(.run_inspect);
+        };
     }
 
     fn buildShell(self: *Self) !void {

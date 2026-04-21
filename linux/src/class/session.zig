@@ -7,6 +7,7 @@ const smithers = @import("../smithers.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const Application = @import("application.zig").Application;
+const LiveRunView = @import("live_run.zig").LiveRunView;
 
 const log = std.log.scoped(.smithers_gtk_session);
 
@@ -26,6 +27,7 @@ pub const SessionWidget = extern struct {
         app: *Application = undefined,
         session: smithers.c.smithers_session_t = null,
         stream: smithers.c.smithers_event_stream_t = null,
+        live_run: ?*LiveRunView = null,
         kind: smithers.c.smithers_session_kind_e = smithers.c.SMITHERS_SESSION_KIND_DASHBOARD,
         body: *gtk.Box = undefined,
         input: ?*gtk.Entry = null,
@@ -63,6 +65,16 @@ pub const SessionWidget = extern struct {
         };
         if (priv.session == null) return error.SessionCreateFailed;
         priv.stream = smithers.c.smithers_session_events(priv.session);
+
+        if (kind == smithers.c.SMITHERS_SESSION_KIND_RUN_INSPECT) {
+            const stream = priv.stream orelse return error.EventStreamCreateFailed;
+            const live = try LiveRunView.newForSession(app, priv.session, false, stream, target_id orelse "");
+            _ = live.ref();
+            priv.live_run = live;
+            priv.stream = null;
+            self.as(adw.Bin).setChild(live.as(gtk.Widget));
+            return self;
+        }
 
         try self.build();
         return self;
@@ -116,6 +128,7 @@ pub const SessionWidget = extern struct {
 
     pub fn drainEvents(self: *Self) !void {
         const priv = self.private();
+        if (priv.live_run != null) return;
         const stream = priv.stream orelse return;
         while (true) {
             const ev = smithers.c.smithers_event_stream_next(stream);
@@ -274,6 +287,10 @@ pub const SessionWidget = extern struct {
         if (!priv.did_dispose) {
             priv.did_dispose = true;
             self.as(adw.Bin).setChild(null);
+            if (priv.live_run) |live| {
+                live.unref();
+                priv.live_run = null;
+            }
             if (priv.stream) |stream| {
                 smithers.c.smithers_event_stream_free(stream);
                 priv.stream = null;
