@@ -93,6 +93,28 @@ pub const ExecutionState = enum {
             else => false,
         };
     }
+
+    pub fn glyph(self: ExecutionState) []const u8 {
+        return switch (self) {
+            .pending => "o",
+            .running => ">",
+            .finished => "ok",
+            .failed => "x",
+            .blocked, .waiting_approval => "!",
+            .cancelled => "-",
+            .unknown => "?",
+        };
+    }
+
+    pub fn cssClass(self: ExecutionState) [:0]const u8 {
+        return switch (self) {
+            .running => "accent",
+            .finished => "success",
+            .failed => "error",
+            .blocked, .waiting_approval => "warning",
+            .pending, .cancelled, .unknown => "dim-label",
+        };
+    }
 };
 
 pub const Prop = struct {
@@ -200,6 +222,14 @@ pub const Node = struct {
         return null;
     }
 
+    pub fn findParentConst(self: *const Node, id: i64) ?*const Node {
+        for (self.children.items) |child| {
+            if (child.id == id) return self;
+            if (child.findParentConst(id)) |found| return found;
+        }
+        return null;
+    }
+
     pub fn removeChildRecursive(self: *Node, alloc: std.mem.Allocator, id: i64) bool {
         for (self.children.items, 0..) |child, index| {
             if (child.id == id) {
@@ -233,6 +263,10 @@ pub const Node = struct {
         var total: usize = 1;
         for (self.children.items) |child| total += child.count();
         return total;
+    }
+
+    pub fn hasChildren(self: *const Node) bool {
+        return self.children.items.len > 0;
     }
 };
 
@@ -740,6 +774,212 @@ pub const AncestorErrorIndex = struct {
     }
 };
 
+pub const ExpandedSet = struct {
+    ids: std.AutoHashMap(i64, void),
+    user_collapsed: std.AutoHashMap(i64, void),
+
+    pub fn init(alloc: std.mem.Allocator) ExpandedSet {
+        return .{
+            .ids = .init(alloc),
+            .user_collapsed = .init(alloc),
+        };
+    }
+
+    pub fn deinit(self: *ExpandedSet) void {
+        self.ids.deinit();
+        self.user_collapsed.deinit();
+    }
+
+    pub fn contains(self: *const ExpandedSet, id: i64) bool {
+        return self.ids.contains(id);
+    }
+
+    pub fn expand(self: *ExpandedSet, id: i64) !void {
+        try self.ids.put(id, {});
+        _ = self.user_collapsed.remove(id);
+    }
+
+    pub fn collapse(self: *ExpandedSet, id: i64) !void {
+        _ = self.ids.remove(id);
+        try self.user_collapsed.put(id, {});
+    }
+
+    pub fn toggle(self: *ExpandedSet, id: i64) !void {
+        if (self.contains(id)) {
+            try self.collapse(id);
+        } else {
+            try self.expand(id);
+        }
+    }
+
+    pub fn expandAll(self: *ExpandedSet, root: ?*const Node) !void {
+        if (root) |node| try self.expandAllNode(node);
+    }
+
+    pub fn collapseAll(self: *ExpandedSet) void {
+        self.ids.clearRetainingCapacity();
+        self.user_collapsed.clearRetainingCapacity();
+    }
+
+    pub fn expandPathTo(self: *ExpandedSet, root: ?*const Node, target_id: i64) !void {
+        const node = root orelse return;
+        var path: std.ArrayList(i64) = .empty;
+        defer path.deinit(self.ids.allocator);
+        if (!try collectPathTo(self.ids.allocator, node, target_id, &path)) return;
+        if (path.items.len <= 1) return;
+        for (path.items[0 .. path.items.len - 1]) |id| try self.expand(id);
+    }
+
+    pub fn autoExpandRunningPaths(self: *ExpandedSet, root: ?*const Node) !void {
+        const node = root orelse return;
+        var path: std.ArrayList(i64) = .empty;
+        defer path.deinit(self.ids.allocator);
+        try self.walkRunning(node, &path);
+    }
+
+    fn expandAllNode(self: *ExpandedSet, node: *const Node) !void {
+        if (node.children.items.len > 0) try self.expand(node.id);
+        for (node.children.items) |child| try self.expandAllNode(child);
+    }
+
+    fn walkRunning(self: *ExpandedSet, node: *const Node, path: *std.ArrayList(i64)) !void {
+        if (node.state() == .running) {
+            for (path.items) |ancestor| {
+                if (!self.user_collapsed.contains(ancestor)) try self.ids.put(ancestor, {});
+            }
+            if (node.children.items.len > 0 and !self.user_collapsed.contains(node.id)) try self.ids.put(node.id, {});
+        }
+        try path.append(self.ids.allocator, node.id);
+        defer _ = path.pop();
+        for (node.children.items) |child| try self.walkRunning(child, path);
+    }
+};
+
+pub const VisibleRows = struct {
+    items: std.ArrayList(*const Node) = .empty,
+
+    pub fn deinit(self: *VisibleRows, alloc: std.mem.Allocator) void {
+        self.items.deinit(alloc);
+    }
+};
+
+pub fn collectVisibleRows(alloc: std.mem.Allocator, root: ?*const Node, expanded: *const ExpandedSet) !VisibleRows {
+    var rows = VisibleRows{};
+    if (root) |node| try collectVisibleNode(alloc, node, expanded, &rows.items);
+    return rows;
+}
+
+fn collectVisibleNode(
+    alloc: std.mem.Allocator,
+    node: *const Node,
+    expanded: *const ExpandedSet,
+    rows: *std.ArrayList(*const Node),
+) !void {
+    try rows.append(alloc, node);
+    if (!expanded.contains(node.id)) return;
+    for (node.children.items) |child| try collectVisibleNode(alloc, child, expanded, rows);
+}
+
+fn collectPathTo(
+    alloc: std.mem.Allocator,
+    node: *const Node,
+    target_id: i64,
+    path: *std.ArrayList(i64),
+) !bool {
+    try path.append(alloc, node.id);
+    if (node.id == target_id) return true;
+    for (node.children.items) |child| {
+        if (try collectPathTo(alloc, child, target_id, path)) return true;
+    }
+    _ = path.pop();
+    return false;
+}
+
+pub const TreeKeyboardAction = enum {
+    move_up,
+    move_down,
+    collapse,
+    expand,
+    move_first,
+    move_last,
+    focus_inspector,
+    focus_search,
+    clear_search,
+};
+
+pub const FocusTarget = enum {
+    inspector,
+    search,
+    clear_search,
+};
+
+pub const ExpandChange = union(enum) {
+    expand: i64,
+    collapse: i64,
+};
+
+pub const TreeKeyboardResult = struct {
+    selected_id: ?i64 = null,
+    expand_change: ?ExpandChange = null,
+    focus: ?FocusTarget = null,
+};
+
+pub fn handleTreeKeyboard(
+    action: TreeKeyboardAction,
+    selected_id: ?i64,
+    visible_rows: []const *const Node,
+    expanded: *const ExpandedSet,
+    root: ?*const Node,
+) TreeKeyboardResult {
+    switch (action) {
+        .move_up => return moveBy(selected_id, visible_rows, -1),
+        .move_down => return moveBy(selected_id, visible_rows, 1),
+        .move_first => return .{ .selected_id = if (visible_rows.len > 0) visible_rows[0].id else selected_id },
+        .move_last => return .{ .selected_id = if (visible_rows.len > 0) visible_rows[visible_rows.len - 1].id else selected_id },
+        .collapse => {
+            const id = selected_id orelse return .{};
+            const node = if (root) |r| r.findConst(id) else null;
+            if (node) |n| {
+                if (n.children.items.len > 0 and expanded.contains(id)) return .{ .selected_id = id, .expand_change = .{ .collapse = id } };
+            }
+            if (root) |r| {
+                if (r.findParentConst(id)) |parent| return .{ .selected_id = parent.id };
+            }
+            return .{ .selected_id = id };
+        },
+        .expand => {
+            const id = selected_id orelse return .{};
+            const index = rowIndex(visible_rows, id) orelse return .{ .selected_id = id };
+            const node = visible_rows[index];
+            if (node.children.items.len > 0 and !expanded.contains(id)) return .{ .selected_id = id, .expand_change = .{ .expand = id } };
+            if (node.children.items.len > 0 and index + 1 < visible_rows.len) return .{ .selected_id = visible_rows[index + 1].id };
+            return .{ .selected_id = id };
+        },
+        .focus_inspector => return .{ .selected_id = selected_id, .focus = .inspector },
+        .focus_search => return .{ .selected_id = selected_id, .focus = .search },
+        .clear_search => return .{ .selected_id = selected_id, .focus = .clear_search },
+    }
+}
+
+fn moveBy(selected_id: ?i64, visible_rows: []const *const Node, delta: i32) TreeKeyboardResult {
+    if (visible_rows.len == 0) return .{};
+    const selected = selected_id orelse return .{ .selected_id = if (delta < 0) visible_rows[visible_rows.len - 1].id else visible_rows[0].id };
+    const index = rowIndex(visible_rows, selected) orelse return .{ .selected_id = visible_rows[0].id };
+    if (delta < 0) {
+        if (index == 0) return .{ .selected_id = selected };
+        return .{ .selected_id = visible_rows[index - 1].id };
+    }
+    if (index + 1 >= visible_rows.len) return .{ .selected_id = selected };
+    return .{ .selected_id = visible_rows[index + 1].id };
+}
+
+fn rowIndex(rows: []const *const Node, id: i64) ?usize {
+    for (rows, 0..) |row, index| {
+        if (row.id == id) return index;
+    }
+    return null;
+}
+
 pub const SearchIndex = struct {
     matched: std.AutoHashMap(i64, void),
     active: bool = false,
@@ -766,11 +1006,169 @@ pub const SearchIndex = struct {
         return self.active and !self.matched.contains(id);
     }
 
+    pub fn hasMatches(self: *const SearchIndex) bool {
+        return !self.active or self.matched.count() > 0;
+    }
+
     fn walk(self: *SearchIndex, node: *const Node, query: []const u8) !void {
         if (try nodeMatches(self.matched.allocator, node, query)) try self.matched.put(node.id, {});
         for (node.children.items) |child| try self.walk(child, query);
     }
 };
+
+pub fn propMatchesSearch(prop: Prop, query: []const u8, alloc: std.mem.Allocator) !bool {
+    const trimmed = std.mem.trim(u8, query, &std.ascii.whitespace);
+    if (trimmed.len == 0) return true;
+    const lowered_query = try std.ascii.allocLowerString(alloc, trimmed);
+    defer alloc.free(lowered_query);
+    const lower_key = try std.ascii.allocLowerString(alloc, prop.key);
+    defer alloc.free(lower_key);
+    if (std.mem.indexOf(u8, lower_key, lowered_query) != null) return true;
+    const lower_value = try std.ascii.allocLowerString(alloc, prop.rendered);
+    defer alloc.free(lower_value);
+    return std.mem.indexOf(u8, lower_value, lowered_query) != null;
+}
+
+pub fn rawPropValue(alloc: std.mem.Allocator, prop: Prop) ![]u8 {
+    if (prop.string_value) |value| return alloc.dupe(u8, value);
+    return alloc.dupe(u8, prop.rendered);
+}
+
+pub fn singleLinePreview(alloc: std.mem.Allocator, text: []const u8, max_len: usize) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    var last_was_space = false;
+    for (text) |ch| {
+        const is_space = std.ascii.isWhitespace(ch);
+        if (is_space) {
+            if (!last_was_space and out.written().len > 0) {
+                try out.writer.writeByte(' ');
+                last_was_space = true;
+            }
+        } else {
+            try out.writer.writeByte(ch);
+            last_was_space = false;
+        }
+        if (out.written().len >= max_len) break;
+    }
+    const owned = try out.toOwnedSlice();
+    errdefer alloc.free(owned);
+    const trimmed = std.mem.trimRight(u8, owned, " ");
+    if (owned.len == max_len and text.len > max_len) {
+        const prefix_len = @max(trimmed.len, 3) - 3;
+        const truncated = try std.fmt.allocPrint(alloc, "{s}...", .{trimmed[0..prefix_len]});
+        alloc.free(owned);
+        return truncated;
+    }
+    if (trimmed.len == owned.len) return owned;
+    const result = try alloc.dupe(u8, trimmed);
+    alloc.free(owned);
+    return result;
+}
+
+pub fn lastLogForTask(state: *const LiveState, node_id: []const u8) ?*const ChatBlock {
+    var i = state.logs.items.len;
+    while (i > 0) {
+        i -= 1;
+        const block = &state.logs.items[i];
+        const block_node = block.node_id orelse continue;
+        if (std.mem.eql(u8, block_node, node_id)) return block;
+        if (std.mem.startsWith(u8, block_node, node_id) and block_node.len > node_id.len and block_node[node_id.len] == ':') return block;
+    }
+    return null;
+}
+
+pub const LogLevel = enum {
+    trace,
+    debug,
+    info,
+    warn,
+    err,
+
+    pub fn parse(raw: []const u8) ?LogLevel {
+        if (std.ascii.eqlIgnoreCase(raw, "trace")) return .trace;
+        if (std.ascii.eqlIgnoreCase(raw, "debug")) return .debug;
+        if (std.ascii.eqlIgnoreCase(raw, "info") or std.ascii.eqlIgnoreCase(raw, "log")) return .info;
+        if (std.ascii.eqlIgnoreCase(raw, "warn") or std.ascii.eqlIgnoreCase(raw, "warning")) return .warn;
+        if (std.ascii.eqlIgnoreCase(raw, "error") or std.ascii.eqlIgnoreCase(raw, "err") or std.ascii.eqlIgnoreCase(raw, "stderr")) return .err;
+        return null;
+    }
+
+    pub fn label(self: LogLevel) []const u8 {
+        return switch (self) {
+            .trace => "trace",
+            .debug => "debug",
+            .info => "info",
+            .warn => "warn",
+            .err => "error",
+        };
+    }
+};
+
+pub fn logBlockLevel(block: ChatBlock) LogLevel {
+    if (LogLevel.parse(block.role)) |level| return level;
+    const trimmed = std.mem.trimLeft(u8, block.content, &std.ascii.whitespace);
+    const levels = [_]LogLevel{ .trace, .debug, .info, .warn, .err };
+    for (levels) |level| {
+        if (std.ascii.startsWithIgnoreCase(trimmed, level.label())) return level;
+    }
+    return .info;
+}
+
+pub fn logMatches(block: ChatBlock, node_id: ?[]const u8, level: ?LogLevel, query: []const u8, alloc: std.mem.Allocator) !bool {
+    if (node_id) |id| {
+        const block_node = block.node_id orelse return false;
+        if (!std.mem.eql(u8, block_node, id) and !(std.mem.startsWith(u8, block_node, id) and block_node.len > id.len and block_node[id.len] == ':')) return false;
+    }
+    if (level) |wanted| {
+        if (logBlockLevel(block) != wanted) return false;
+    }
+    const trimmed = std.mem.trim(u8, query, &std.ascii.whitespace);
+    if (trimmed.len == 0) return true;
+    const lower_query = try std.ascii.allocLowerString(alloc, trimmed);
+    defer alloc.free(lower_query);
+    const lower_content = try std.ascii.allocLowerString(alloc, block.content);
+    defer alloc.free(lower_content);
+    if (std.mem.indexOf(u8, lower_content, lower_query) != null) return true;
+    const lower_role = try std.ascii.allocLowerString(alloc, block.role);
+    defer alloc.free(lower_role);
+    if (std.mem.indexOf(u8, lower_role, lower_query) != null) return true;
+    if (block.node_id) |block_node| {
+        const lower_node = try std.ascii.allocLowerString(alloc, block_node);
+        defer alloc.free(lower_node);
+        return std.mem.indexOf(u8, lower_node, lower_query) != null;
+    }
+    return false;
+}
+
+pub const Page = struct {
+    index: usize,
+    count: usize,
+    start: usize,
+    end: usize,
+};
+
+pub fn pageFor(total: usize, page_index: usize, page_size: usize) Page {
+    const size = @max(page_size, 1);
+    const count = @max(@divTrunc(total + size - 1, size), 1);
+    const index = @min(page_index, count - 1);
+    const start = @min(index * size, total);
+    const end = @min(start + size, total);
+    return .{ .index = index, .count = count, .start = start, .end = end };
+}
+
+pub fn looksLikeMarkdown(text: []const u8) bool {
+    return std.mem.indexOf(u8, text, "```") != null or
+        std.mem.indexOf(u8, text, "\n# ") != null or
+        std.mem.startsWith(u8, text, "# ") or
+        std.mem.indexOf(u8, text, "\n- ") != null;
+}
+
+pub fn looksLikeJson(text: []const u8) bool {
+    const trimmed = std.mem.trim(u8, text, &std.ascii.whitespace);
+    return (trimmed.len >= 2 and trimmed[0] == '{' and trimmed[trimmed.len - 1] == '}') or
+        (trimmed.len >= 2 and trimmed[0] == '[' and trimmed[trimmed.len - 1] == ']');
+}
 
 fn nodeMatches(alloc: std.mem.Allocator, node: *const Node, query: []const u8) !bool {
     const lower_name = try std.ascii.allocLowerString(alloc, node.name);

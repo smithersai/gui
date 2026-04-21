@@ -153,6 +153,8 @@ pub const LiveRunView = extern struct {
         inspector: *NodeInspector = undefined,
         banner: *gtk.Label = undefined,
         pending_rewind_frame: ?i64 = null,
+        rewind_dialog: ?*adw.AlertDialog = null,
+        rewind_reason: ?*gtk.Entry = null,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -246,6 +248,7 @@ pub const LiveRunView = extern struct {
         const panes = gtk.Paned.new(.horizontal);
         panes.as(gtk.Widget).setVexpand(1);
         self.private().tree = try LiveRunTree.new(alloc);
+        _ = gtk.ListBox.signals.row_selected.connect(self.private().tree.list(), *Self, treeRowSelected, self, .{});
         _ = gtk.ListBox.signals.row_activated.connect(self.private().tree.list(), *Self, treeRowActivated, self, .{});
         panes.setStartChild(self.private().tree.as(gtk.Widget));
 
@@ -294,10 +297,12 @@ pub const LiveRunView = extern struct {
             priv.banner.setText(z.ptr);
             priv.banner.as(gtk.Widget).setVisible(1);
         } else if (state.isHistorical()) {
-            priv.banner.setText("Historical frame active. Live events continue in the background.");
+            priv.banner.setText("Historical - read only. The tree is showing a past frame while live events continue in the background.");
             priv.banner.as(gtk.Widget).setVisible(1);
+            priv.tree.as(gtk.Widget).addCssClass("warning");
         } else {
             priv.banner.as(gtk.Widget).setVisible(0);
+            priv.tree.as(gtk.Widget).removeCssClass("warning");
         }
     }
 
@@ -336,27 +341,87 @@ pub const LiveRunView = extern struct {
         const state = if (priv.state) |*state| state else return;
         const frame = state.historicalFrameNo() orelse return;
         priv.pending_rewind_frame = frame;
-        const body = std.fmt.allocPrintZ(priv.app.allocator(), "Rewind this run to frame {d}? This cannot be undone.", .{frame}) catch return;
+        const body = std.fmt.allocPrintSentinel(
+            priv.app.allocator(),
+            "Rewind this run to frame {d}? This cannot be undone. Provide a reason to continue.",
+            .{frame},
+            0,
+        ) catch return;
         defer priv.app.allocator().free(body);
 
         const dialog = adw.AlertDialog.new("Confirm Rewind", body.ptr);
+        const reason = gtk.Entry.new();
+        reason.setPlaceholderText("Reason for rewind");
+        reason.as(gtk.Widget).setHexpand(1);
+        _ = gtk.Editable.signals.changed.connect(reason.as(gtk.Editable), *Self, rewindReasonChanged, self, .{});
+        dialog.setExtraChild(reason.as(gtk.Widget));
         dialog.addResponse("cancel", "Cancel");
         dialog.addResponse("rewind", "Rewind");
         dialog.setCloseResponse("cancel");
         dialog.setDefaultResponse("cancel");
         dialog.setResponseAppearance("rewind", .destructive);
+        dialog.setResponseEnabled("rewind", 0);
+        priv.rewind_dialog = dialog;
+        priv.rewind_reason = reason;
         _ = adw.AlertDialog.signals.response.connect(dialog, *Self, rewindDialogResponse, self, .{});
         dialog.as(adw.Dialog).present(self.as(gtk.Widget));
     }
 
     fn rewindDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
-        if (std.mem.orderZ(u8, response, "rewind") != .eq) return;
         const priv = self.private();
+        defer {
+            priv.rewind_dialog = null;
+            priv.rewind_reason = null;
+        }
+        if (std.mem.orderZ(u8, response, "rewind") != .eq) return;
         const frame = priv.pending_rewind_frame orelse return;
         priv.pending_rewind_frame = null;
-        self.sendCommandFmt("{{\"command\":\"rewind\",\"frameNo\":{d},\"confirm\":true}}", .{frame});
+        const entry = priv.rewind_reason orelse return;
+        const reason = std.mem.trim(u8, std.mem.span(entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        if (reason.len == 0) {
+            priv.banner.setText("Rewind reason is required.");
+            priv.banner.as(gtk.Widget).setVisible(1);
+            return;
+        }
+        self.sendRewindCommand(frame, reason);
+        priv.banner.setText("Rewind requested.");
+        priv.banner.as(gtk.Widget).setVisible(1);
         if (priv.state) |*state| state.returnToLive() catch {};
         self.refreshAll();
+    }
+
+    fn rewindReasonChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        const priv = self.private();
+        const dialog = priv.rewind_dialog orelse return;
+        const entry = priv.rewind_reason orelse return;
+        const reason = std.mem.trim(u8, std.mem.span(entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        dialog.setResponseEnabled("rewind", @intFromBool(reason.len > 0));
+    }
+
+    fn sendRewindCommand(self: *Self, frame: i64, reason: []const u8) void {
+        const alloc = self.private().app.allocator();
+        var out: std.Io.Writer.Allocating = .init(alloc);
+        defer out.deinit();
+        out.writer.print("{{\"command\":\"rewind\",\"frameNo\":{d},\"confirm\":true,\"reason\":", .{frame}) catch return;
+        appendJsonString(&out.writer, reason) catch return;
+        out.writer.writeAll("}") catch return;
+        self.sendCommand(out.written());
+    }
+
+    fn appendJsonString(writer: *std.Io.Writer, text: []const u8) !void {
+        try writer.writeByte('"');
+        for (text) |ch| {
+            switch (ch) {
+                '\\' => try writer.writeAll("\\\\"),
+                '"' => try writer.writeAll("\\\""),
+                '\n' => try writer.writeAll("\\n"),
+                '\r' => try writer.writeAll("\\r"),
+                '\t' => try writer.writeAll("\\t"),
+                0...8, 11...12, 14...0x1f => try writer.print("\\u{x:0>4}", .{ch}),
+                else => try writer.writeByte(ch),
+            }
+        }
+        try writer.writeByte('"');
     }
 
     fn scrubberChanged(_: *gtk.Range, self: *Self) callconv(.c) void {
@@ -374,6 +439,16 @@ pub const LiveRunView = extern struct {
         const id = LiveRunTree.nodeIdForRow(row) orelse return;
         const priv = self.private();
         if (priv.state) |*state| state.select(id);
+        self.refreshAll();
+    }
+
+    fn treeRowSelected(_: *gtk.ListBox, row: ?*gtk.ListBoxRow, self: *Self) callconv(.c) void {
+        const priv = self.private();
+        const state = if (priv.state) |*state| state else return;
+        const selected = if (row) |r| LiveRunTree.nodeIdForRow(r) else null;
+        if (state.selected_id == null and selected == null) return;
+        if (state.selected_id != null and selected != null and state.selected_id.? == selected.?) return;
+        state.select(selected);
         self.refreshAll();
     }
 
