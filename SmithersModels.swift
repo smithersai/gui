@@ -2739,80 +2739,7 @@ struct AggregateScore: Identifiable, Codable {
     var id: String { scorerName }
 
     static func aggregate(_ scores: [ScoreRow]) -> [AggregateScore] {
-        guard !scores.isEmpty else { return [] }
-
-        // Some score rows may omit scorerName while still including scorerId.
-        // Resolve scorerId -> scorerName mappings first so those rows roll up into
-        // the same per-scorer aggregate when a name is present elsewhere.
-        let scorerNamesByID = scores.reduce(into: [String: String]()) { mapping, row in
-            guard let scorerID = normalizedScorerValue(row.scorerId)?.lowercased(),
-                  let scorerName = normalizedScorerValue(row.scorerName) else {
-                return
-            }
-            mapping[scorerID] = scorerName
-        }
-
-        return Dictionary(grouping: scores) { score in
-            scorerGroupKey(for: score, scorerNamesByID: scorerNamesByID)
-        }
-            .map { _, rows in
-                let values = rows.map(\.score)
-                let sorted = values.sorted()
-                let middle = sorted.count / 2
-                let p50 = sorted.isEmpty
-                    ? nil
-                    : sorted.count.isMultiple(of: 2)
-                        ? (sorted[middle - 1] + sorted[middle]) / 2.0
-                        : sorted[middle]
-
-                return AggregateScore(
-                    scorerName: scorerGroupDisplayName(for: rows, scorerNamesByID: scorerNamesByID),
-                    count: values.count,
-                    mean: values.reduce(0, +) / Double(values.count),
-                    min: sorted.first ?? 0,
-                    max: sorted.last ?? 0,
-                    p50: p50
-                )
-            }
-            .sorted { lhs, rhs in
-                lhs.scorerName.localizedStandardCompare(rhs.scorerName) == .orderedAscending
-            }
-    }
-
-    private static func scorerGroupKey(for score: ScoreRow, scorerNamesByID: [String: String]) -> String {
-        if let scorerName = normalizedScorerValue(score.scorerName) {
-            return scorerName.lowercased()
-        }
-        guard let scorerID = normalizedScorerValue(score.scorerId) else {
-            return "unknown"
-        }
-        if let mappedScorerName = scorerNamesByID[scorerID.lowercased()] {
-            return mappedScorerName.lowercased()
-        }
-        return scorerID.lowercased()
-    }
-
-    private static func scorerGroupDisplayName(for rows: [ScoreRow], scorerNamesByID: [String: String]) -> String {
-        for row in rows {
-            if let scorerName = normalizedScorerValue(row.scorerName) {
-                return scorerName
-            }
-            if let scorerID = normalizedScorerValue(row.scorerId) {
-                if let mappedScorerName = scorerNamesByID[scorerID.lowercased()] {
-                    return mappedScorerName
-                }
-                return scorerID
-            }
-        }
-        return "Unknown"
-    }
-
-    private static func normalizedScorerValue(_ value: String?) -> String? {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
-            return nil
-        }
-        return value
+        (try? Smithers.Models.aggregateScores(scores)) ?? []
     }
 }
 
@@ -4207,46 +4134,28 @@ struct ChatBlock: Identifiable, Codable {
     }
 
     func canMergeAssistantStream(with incoming: ChatBlock) -> Bool {
-        guard isAssistantLike, incoming.isAssistantLike else { return false }
-        guard attemptIndex == incoming.attemptIndex else { return false }
-        if !Self.compatibleIdentifier(runId, incoming.runId) { return false }
-        if !Self.compatibleIdentifier(nodeId, incoming.nodeId) { return false }
-        return true
+        (try? Smithers.Models.chatBlockCanMerge(self, with: incoming)) ?? false
     }
 
     func hasStreamingContentOverlap(with incoming: ChatBlock) -> Bool {
-        Self.hasStreamingContentOverlap(existing: content, incoming: incoming.content)
+        (try? Smithers.Models.chatBlockHasOverlap(self, with: incoming)) ?? false
     }
 
     func mergingAssistantStream(with incoming: ChatBlock) -> ChatBlock {
-        let shouldMergeContent = hasStreamingContentOverlap(with: incoming)
-            || (timestampMs != nil && incoming.timestampMs != nil)
-        let mergedContent = shouldMergeContent
-            ? Self.mergedStreamingContent(
-                existing: content,
-                incoming: incoming.content,
-                existingTimestampMs: timestampMs,
-                incomingTimestampMs: incoming.timestampMs
-            )
-            : incoming.content
-        let mergedId = incoming.id ?? id
-        let mergedItemId = incoming.itemId ?? itemId
-        let mergedLifecycleId: String? = {
-            if let mergedId, !mergedId.isEmpty { return mergedId }
-            if let mergedItemId, !mergedItemId.isEmpty { return mergedItemId }
-            return nil
-        }()
-
+        guard let merged = try? Smithers.Models.chatBlockMerge(self, with: incoming) else {
+            return incoming
+        }
+        guard merged.lifecycleId == nil else { return merged }
         return ChatBlock(
-            id: mergedId,
-            itemId: mergedItemId,
-            runId: incoming.runId ?? runId,
-            nodeId: incoming.nodeId ?? nodeId,
-            attempt: incoming.attempt ?? attempt,
-            role: incoming.role,
-            content: mergedContent,
-            timestampMs: incoming.timestampMs ?? timestampMs,
-            fallbackId: mergedLifecycleId == nil ? _fallbackId : nil
+            id: merged.id,
+            itemId: merged.itemId,
+            runId: merged.runId,
+            nodeId: merged.nodeId,
+            attempt: merged.attempt,
+            role: merged.role,
+            content: merged.content,
+            timestampMs: merged.timestampMs,
+            fallbackId: _fallbackId
         )
     }
 
@@ -4256,160 +4165,17 @@ struct ChatBlock: Identifiable, Codable {
         existingTimestampMs: Int64? = nil,
         incomingTimestampMs: Int64? = nil
     ) -> String {
-        if existing.isEmpty { return incoming }
-        if incoming.isEmpty { return existing }
-        if existing == incoming { return existing }
-        if incoming.hasPrefix(existing) {
-            let continuation = String(incoming.dropFirst(existing.count))
-            if let collapsed = collapsedRetransmittedContinuation(
-                existing: existing,
-                continuation: continuation
-            ) {
-                return collapsed
-            }
-            return incoming
-        }
-        if existing.hasPrefix(incoming) { return existing }
-        if existing.contains(incoming) { return existing }
-        if incoming.contains(existing) { return incoming }
-
-        let forwardOverlap = suffixPrefixOverlap(existing, incoming)
-        let reverseOverlap = suffixPrefixOverlap(incoming, existing)
-        if forwardOverlap > 0 || reverseOverlap > 0 {
-            if reverseOverlap > forwardOverlap {
-                return incoming + String(existing.dropFirst(reverseOverlap))
-            }
-            return existing + String(incoming.dropFirst(forwardOverlap))
-        }
-
-        if let inferredOffsetMerge = mergeUsingInferredOffset(existing: existing, incoming: incoming) {
-            return inferredOffsetMerge
-        }
-
-        if let existingTimestampMs,
-           let incomingTimestampMs,
-           incomingTimestampMs < existingTimestampMs {
-            return incoming + existing
-        }
-
-        return existing + incoming
-    }
-
-    private static func hasStreamingContentOverlap(existing: String, incoming: String) -> Bool {
-        if existing.isEmpty || incoming.isEmpty { return false }
-        if existing == incoming { return true }
-        if existing.hasPrefix(incoming) || incoming.hasPrefix(existing) { return true }
-        if existing.contains(incoming) || incoming.contains(existing) { return true }
-        if let continuation = incoming.hasPrefix(existing) ? String(incoming.dropFirst(existing.count)) : nil,
-           collapsedRetransmittedContinuation(existing: existing, continuation: continuation) != nil {
-            return true
-        }
-        if mergeUsingInferredOffset(existing: existing, incoming: incoming) != nil {
-            return true
-        }
-        return suffixPrefixOverlap(existing, incoming) > 0 || suffixPrefixOverlap(incoming, existing) > 0
-    }
-
-    private static func collapsedRetransmittedContinuation(existing: String, continuation: String) -> String? {
-        guard !continuation.isEmpty else { return existing }
-
-        let overlap = suffixPrefixOverlap(existing, continuation)
-        guard overlap >= minimumReliableOverlapLength(existing: existing, incoming: continuation) else {
-            return nil
-        }
-        return existing + String(continuation.dropFirst(overlap))
-    }
-
-    private static func mergeUsingInferredOffset(existing: String, incoming: String) -> String? {
-        let maxLength = min(existing.count, incoming.count)
-        let minimumLength = minimumReliableOverlapLength(existing: existing, incoming: incoming)
-        guard minimumLength > 0, maxLength >= minimumLength else { return nil }
-
-        for length in stride(from: maxLength, through: minimumLength, by: -1) {
-            let prefix = String(incoming.prefix(length))
-            guard let match = existing.range(of: prefix, options: .backwards) else { continue }
-            guard match.upperBound < existing.endIndex else { continue }
-
-            let mergedPrefix = String(existing[..<match.upperBound])
-            let mergedSuffix = String(incoming.dropFirst(length))
-            return mergedPrefix + mergedSuffix
-        }
-
-        return nil
-    }
-
-    private static func minimumReliableOverlapLength(existing: String, incoming: String) -> Int {
-        let shortest = min(existing.count, incoming.count)
-        guard shortest >= 6 else { return 0 }
-        return min(24, max(6, shortest / 3))
-    }
-
-    private static func suffixPrefixOverlap(_ lhs: String, _ rhs: String) -> Int {
-        let maxLength = min(lhs.count, rhs.count)
-        guard maxLength > 0 else { return 0 }
-
-        for length in stride(from: maxLength, through: 1, by: -1) {
-            if lhs.suffix(length) == rhs.prefix(length) {
-                return length
-            }
-        }
-        return 0
-    }
-
-    private static func compatibleIdentifier(_ lhs: String?, _ rhs: String?) -> Bool {
-        guard let lhs, !lhs.isEmpty, let rhs, !rhs.isEmpty else { return true }
-        return lhs == rhs
+        (try? Smithers.Models.mergedStreamingContent(
+            existing: existing,
+            incoming: incoming,
+            existingTimestampMs: existingTimestampMs,
+            incomingTimestampMs: incomingTimestampMs
+        )) ?? incoming
     }
 }
 
 func deduplicatedChatBlocks(_ blocks: [ChatBlock]) -> [ChatBlock] {
-    var result: [ChatBlock] = []
-    var indexByLifecycleId: [String: Int] = [:]
-
-    for block in blocks {
-        if let lifecycleId = block.lifecycleId,
-           !lifecycleId.isEmpty,
-           let existingIndex = indexByLifecycleId[lifecycleId],
-           result.indices.contains(existingIndex) {
-            let existing = result[existingIndex]
-            if existing.canMergeAssistantStream(with: block) {
-                result[existingIndex] = existing.mergingAssistantStream(with: block)
-            } else {
-                result[existingIndex] = block
-            }
-            if let mergedLifecycleId = result[existingIndex].lifecycleId, !mergedLifecycleId.isEmpty {
-                indexByLifecycleId[mergedLifecycleId] = existingIndex
-            }
-            continue
-        }
-
-        if let lastIndex = result.indices.last {
-            let existing = result[lastIndex]
-            let canCorrelateStream = (existing.lifecycleId?.isEmpty == false) || (block.lifecycleId?.isEmpty == false)
-            if canCorrelateStream,
-               existing.canMergeAssistantStream(with: block),
-               existing.hasStreamingContentOverlap(with: block) {
-                result[lastIndex] = existing.mergingAssistantStream(with: block)
-                if let existingLifecycleId = existing.lifecycleId, !existingLifecycleId.isEmpty {
-                    indexByLifecycleId[existingLifecycleId] = lastIndex
-                }
-                if let incomingLifecycleId = block.lifecycleId, !incomingLifecycleId.isEmpty {
-                    indexByLifecycleId[incomingLifecycleId] = lastIndex
-                }
-                if let mergedLifecycleId = result[lastIndex].lifecycleId, !mergedLifecycleId.isEmpty {
-                    indexByLifecycleId[mergedLifecycleId] = lastIndex
-                }
-                continue
-            }
-        }
-
-        result.append(block)
-        if let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty {
-            indexByLifecycleId[lifecycleId] = result.count - 1
-        }
-    }
-
-    return result
+    (try? Smithers.Models.deduplicatedChatBlocks(blocks)) ?? blocks
 }
 
 // MARK: - Run Hijack Session
@@ -5235,22 +5001,13 @@ struct SSEEvent {
         expectedRunId: String?,
         requireAttributedRunId: Bool = false
     ) -> SSEEvent? {
-        let normalizedExpectedRunId = normalizedRunId(expectedRunId)
-        let normalizedEventRunId = normalizedRunId(eventRunId)
-        let payloadRunId = extractRunId(from: data)
-
-        if let normalizedEventRunId, let payloadRunId, normalizedEventRunId != payloadRunId {
-            return nil
-        }
-
-        let resolvedRunId = normalizedEventRunId ?? payloadRunId
-        if requireAttributedRunId,
-           normalizedExpectedRunId != nil,
-           resolvedRunId == nil {
-            return nil
-        }
-        guard runId(resolvedRunId, matches: normalizedExpectedRunId) else { return nil }
-        return SSEEvent(event: event, data: data, runId: resolvedRunId ?? normalizedExpectedRunId)
+        try? Smithers.Models.filteredSSEEvent(
+            event: event,
+            data: data,
+            eventRunId: eventRunId,
+            expectedRunId: expectedRunId,
+            requireAttributedRunId: requireAttributedRunId
+        )
     }
 
     func matches(runId expectedRunId: String?) -> Bool {
@@ -5258,90 +5015,15 @@ struct SSEEvent {
     }
 
     static func runId(_ actualRunId: String?, matches expectedRunId: String?) -> Bool {
-        guard let expected = normalizedRunId(expectedRunId) else { return true }
-        guard let actual = normalizedRunId(actualRunId) else { return true }
-        return actual == expected
+        (try? Smithers.Models.sseRunId(actualRunId, matches: expectedRunId)) ?? true
     }
 
     static func extractRunId(from data: String) -> String? {
-        let trimmed = data.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let bytes = trimmed.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: bytes) else {
-            return nil
-        }
-        return extractRunId(fromJSONObject: object)
+        try? Smithers.Models.sseExtractRunId(from: data)
     }
 
     static func normalizedRunId(_ runId: String?) -> String? {
-        guard let runId else { return nil }
-        let trimmed = runId.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private static let runIdKeys: Set<String> = [
-        "runId",
-        "run_id",
-        "workflowRunId",
-        "workflow_run_id",
-    ]
-
-    private static let preferredNestedRunIdKeys = [
-        "event",
-        "data",
-        "block",
-        "payload",
-        "message",
-    ]
-
-    private static func extractRunId(fromJSONObject object: Any) -> String? {
-        if let dictionary = object as? [String: Any] {
-            for key in runIdKeys {
-                if let runId = normalizedRunIdValue(dictionary[key]) {
-                    return runId
-                }
-            }
-
-            for key in preferredNestedRunIdKeys {
-                guard let nested = dictionary[key],
-                      let runId = extractRunId(fromJSONObject: nested) else {
-                    continue
-                }
-                return runId
-            }
-
-            for (key, nested) in dictionary where !preferredNestedRunIdKeys.contains(key) {
-                if let runId = extractRunId(fromJSONObject: nested) {
-                    return runId
-                }
-            }
-        }
-
-        if let array = object as? [Any] {
-            for nested in array {
-                if let runId = extractRunId(fromJSONObject: nested) {
-                    return runId
-                }
-            }
-        }
-
-        if let string = object as? String {
-            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.first == "{" || trimmed.first == "[" else { return nil }
-            return extractRunId(from: trimmed)
-        }
-
-        return nil
-    }
-
-    private static func normalizedRunIdValue(_ value: Any?) -> String? {
-        if let string = value as? String {
-            return normalizedRunId(string)
-        }
-        if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() {
-            return normalizedRunId(number.stringValue)
-        }
-        return nil
+        try? Smithers.Models.sseNormalizedRunId(runId)
     }
 }
 

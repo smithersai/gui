@@ -2,6 +2,7 @@ const std = @import("std");
 const ffi = @import("../ffi.zig");
 
 pub const app = @import("app.zig");
+pub const aggregations = @import("aggregations.zig");
 
 pub const ModelDescriptor = struct {
     name: []const u8,
@@ -106,6 +107,10 @@ pub fn validateJson(model_name: []const u8, input: []const u8) bool {
     const out = roundTripJson(ffi.allocator, model_name, input) catch return false;
     ffi.allocator.free(out);
     return true;
+}
+
+pub fn call(allocator: std.mem.Allocator, method: []const u8, args: std.json.Value) !?[]u8 {
+    return aggregations.call(allocator, method, args);
 }
 
 test "all model samples round trip as JSON" {

@@ -379,30 +379,7 @@ struct Command {
 }
 
 func deduplicatedChatMessages(_ messages: [ChatMessage]) -> [ChatMessage] {
-    var result: [ChatMessage] = []
-    var commandIndexByItemID: [String: Int] = [:]
-
-    for message in messages {
-        let commandItemID = message.command?.itemID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let toolItemID = message.tool?.itemID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let itemID = [commandItemID, toolItemID]
-            .compactMap { $0 }
-            .first { !$0.isEmpty }
-
-        guard let itemID else {
-            result.append(message)
-            continue
-        }
-
-        if let existingIndex = commandIndexByItemID[itemID] {
-            result[existingIndex] = message
-        } else {
-            commandIndexByItemID[itemID] = result.count
-            result.append(message)
-        }
-    }
-
-    return result
+    (try? Smithers.Models.deduplicatedChatMessages(messages)) ?? messages
 }
 
 struct Diff: Sendable {
