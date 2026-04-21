@@ -13,22 +13,14 @@ extension Notification.Name {
 }
 
 extension Smithers {
+    @MainActor
     class App: ObservableObject {
         @Published var readiness: Readiness = .loading
-        @Published var app: smithers_app_t? {
-            didSet {
-                #if !SMITHERS_STUB
-                if let oldValue {
-                    smithers_app_free(oldValue)
-                }
-                #endif
-            }
-        }
+        @Published private(set) var app: smithers_app_t?
+
+        nonisolated(unsafe) private let appHandle = MainThreadAppHandle()
 
         init() {
-            #if SMITHERS_STUB
-            readiness = .ready
-            #else
             var config = smithers_runtime_config_s(
                 userdata: Unmanaged.passUnretained(self).toOpaque(),
                 wakeup: { userdata in App.wakeup(userdata) },
@@ -45,42 +37,42 @@ extension Smithers {
                 readiness = .error
                 return
             }
+            appHandle.replace(created)
             app = created
             readiness = .ready
-            #endif
         }
 
         deinit {
-            #if !SMITHERS_STUB
-            if let app {
-                smithers_app_free(app)
-            }
-            #endif
+            appHandle.replace(nil)
         }
 
         func tick() {
-            #if !SMITHERS_STUB
             guard let app else { return }
             smithers_app_tick(app)
-            #endif
         }
 
         func setColorScheme(_ scheme: ColorScheme) {
-            #if !SMITHERS_STUB
             guard let app else { return }
             smithers_app_set_color_scheme(app, scheme.cValue)
-            #endif
         }
 
-        static func wakeup(_ userdata: UnsafeMutableRawPointer?) {
+        nonisolated static func wakeup(_ userdata: UnsafeMutableRawPointer?) {
             guard let userdata else { return }
             let state = Unmanaged<App>.fromOpaque(userdata).takeUnretainedValue()
-            DispatchQueue.main.async { state.tick() }
+            Task { @MainActor in state.tick() }
         }
 
-        static func action(_ app: smithers_app_t, target: smithers_action_target_s, action: smithers_action_s) -> Bool {
+        nonisolated static func action(_ app: smithers_app_t, target: smithers_action_target_s, action: smithers_action_s) -> Bool {
+            switch target.tag {
+            case SMITHERS_ACTION_TARGET_APP, SMITHERS_ACTION_TARGET_SESSION:
+                break
+            default:
+                AppLogger.network.warning("libsmithers unknown action target", metadata: ["target": String(target.tag.rawValue)])
+                return false
+            }
+
             let wrapped = Action(cValue: action)
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 NotificationCenter.default.post(
                     name: .smithersAction,
                     object: nil,
@@ -88,75 +80,136 @@ extension Smithers {
                 )
             }
 
+            switch action.tag {
+            case SMITHERS_ACTION_NONE:
+                return true
+            case SMITHERS_ACTION_SHOW_TOAST,
+                 SMITHERS_ACTION_DESKTOP_NOTIFY,
+                 SMITHERS_ACTION_CLIPBOARD_WRITE,
+                 SMITHERS_ACTION_OPEN_URL:
+                Task { @MainActor in perform(action: wrapped) }
+                return true
+            case SMITHERS_ACTION_OPEN_WORKSPACE,
+                 SMITHERS_ACTION_CLOSE_WORKSPACE,
+                 SMITHERS_ACTION_NEW_SESSION,
+                 SMITHERS_ACTION_CLOSE_SESSION,
+                 SMITHERS_ACTION_FOCUS_SESSION,
+                 SMITHERS_ACTION_PRESENT_COMMAND_PALETTE,
+                 SMITHERS_ACTION_DISMISS_COMMAND_PALETTE,
+                 SMITHERS_ACTION_RUN_STARTED,
+                 SMITHERS_ACTION_RUN_FINISHED,
+                 SMITHERS_ACTION_RUN_STATE_CHANGED,
+                 SMITHERS_ACTION_APPROVAL_REQUESTED,
+                 SMITHERS_ACTION_CONFIG_CHANGED:
+                AppLogger.network.warning("libsmithers action is not handled by macOS shell", metadata: ["tag": String(action.tag.rawValue)])
+                return false
+            default:
+                AppLogger.network.warning("libsmithers unknown action", metadata: ["tag": String(action.tag.rawValue)])
+                return false
+            }
+        }
+
+        @MainActor
+        private static func perform(action: Action) {
             #if os(macOS)
             switch action.tag {
-            case SMITHERS_ACTION_CLIPBOARD_WRITE:
-                if let text = wrapped.value {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    return true
-                }
-            case SMITHERS_ACTION_OPEN_URL:
-                if let value = wrapped.value, let url = URL(string: value) {
-                    NSWorkspace.shared.open(url)
-                    return true
-                }
-            case SMITHERS_ACTION_DESKTOP_NOTIFY:
+            case SMITHERS_ACTION_SHOW_TOAST:
                 let content = UNMutableNotificationContent()
-                content.title = wrapped.title ?? "Smithers"
-                content.body = wrapped.body ?? ""
+                content.title = action.title ?? "Smithers"
+                content.body = action.body ?? ""
                 let request = UNNotificationRequest(
                     identifier: UUID().uuidString,
                     content: content,
                     trigger: nil
                 )
                 UNUserNotificationCenter.current().add(request)
-                return true
+            case SMITHERS_ACTION_CLIPBOARD_WRITE:
+                if let text = action.value {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+            case SMITHERS_ACTION_OPEN_URL:
+                if let value = action.value, let url = URL(string: value) {
+                    NSWorkspace.shared.open(url)
+                }
+            case SMITHERS_ACTION_DESKTOP_NOTIFY:
+                let content = UNMutableNotificationContent()
+                content.title = action.title ?? "Smithers"
+                content.body = action.body ?? ""
+                let request = UNNotificationRequest(
+                    identifier: UUID().uuidString,
+                    content: content,
+                    trigger: nil
+                )
+                UNUserNotificationCenter.current().add(request)
             default:
                 break
             }
             #endif
-
-            return false
         }
 
-        static func readClipboard(
+        nonisolated static func readClipboard(
             _ userdata: UnsafeMutableRawPointer?,
             out: UnsafeMutablePointer<smithers_string_s>?
         ) -> Bool {
-            #if os(macOS)
-            guard let value = NSPasteboard.general.string(forType: .string), !value.isEmpty else {
-                return false
-            }
-            // The ABI does not currently define a host-owned string free callback,
-            // so avoid handing transient Swift storage to the core.
-            _ = value
+            _ = userdata
+            _ = out
             return false
-            #else
-            return false
-            #endif
         }
 
-        static func writeClipboard(_ userdata: UnsafeMutableRawPointer?, text: UnsafePointer<CChar>?) {
+        nonisolated static func writeClipboard(_ userdata: UnsafeMutableRawPointer?, text: UnsafePointer<CChar>?) {
+            _ = userdata
             #if os(macOS)
             guard let text else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(String(cString: text), forType: .string)
+            let value = String(cString: text)
+            Task { @MainActor in
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(value, forType: .string)
+            }
             #endif
         }
 
-        static func stateChanged(_ userdata: UnsafeMutableRawPointer?) {
-            DispatchQueue.main.async {
+        nonisolated static func stateChanged(_ userdata: UnsafeMutableRawPointer?) {
+            _ = userdata
+            Task { @MainActor in
                 NotificationCenter.default.post(name: .smithersStateChanged, object: nil)
             }
         }
 
-        static func log(_ userdata: UnsafeMutableRawPointer?, level: Int32, message: UnsafePointer<CChar>?) {
+        nonisolated static func log(_ userdata: UnsafeMutableRawPointer?, level: Int32, message: UnsafePointer<CChar>?) {
+            _ = userdata
             guard let message else { return }
             AppLogger.network.debug("libsmithers", metadata: [
                 "level": String(level),
                 "message": String(cString: message),
             ])
+        }
+    }
+}
+
+private final class MainThreadAppHandle {
+    private var app: smithers_app_t?
+
+    func replace(_ newValue: smithers_app_t?) {
+        if let app {
+            Self.free(app)
+        }
+        app = newValue
+    }
+
+    deinit {
+        if let app {
+            Self.free(app)
+        }
+    }
+
+    private static func free(_ app: smithers_app_t) {
+        if Thread.isMainThread {
+            smithers_app_free(app)
+        } else {
+            DispatchQueue.main.sync {
+                smithers_app_free(app)
+            }
         }
     }
 }

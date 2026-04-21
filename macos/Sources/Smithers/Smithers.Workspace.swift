@@ -9,21 +9,8 @@ import AppKit
 extension Smithers {
     enum CWD {
         static func resolve(_ requested: String?) -> String {
-            #if SMITHERS_STUB
-            let trimmed = requested?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let candidate = trimmed?.isEmpty == false ? trimmed! : FileManager.default.currentDirectoryPath
-            let standardized = (candidate as NSString).expandingTildeInPath
-            if standardized == "/" { return NSHomeDirectory() }
-            var isDirectory = ObjCBool(false)
-            guard FileManager.default.fileExists(atPath: standardized, isDirectory: &isDirectory),
-                  isDirectory.boolValue else {
-                return NSHomeDirectory()
-            }
-            return (standardized as NSString).standardizingPath
-            #else
             let resolved = requested.withOptionalCString { ptr in smithers_cwd_resolve(ptr) }
             return Smithers.string(from: resolved)
-            #endif
         }
     }
 }
@@ -37,6 +24,7 @@ final class WorkspaceManager: ObservableObject {
 
     private let app: Smithers.App
     private var activeWorkspace: smithers_workspace_t?
+    nonisolated(unsafe) private let activeWorkspaceHandle = MainThreadWorkspaceHandle()
 
     init(
         store: RecentWorkspaceStore = .shared,
@@ -52,23 +40,27 @@ final class WorkspaceManager: ObservableObject {
         }
     }
 
+    deinit {
+        activeWorkspaceHandle.close()
+    }
+
     func openWorkspace(at url: URL) {
         let path = Smithers.CWD.resolve(url.standardizedFileURL.path)
-        #if !SMITHERS_STUB
         guard let cApp = app.app else { return }
-        activeWorkspace = path.withCString { smithers_app_open_workspace(cApp, $0) }
-        #endif
+        if activeWorkspace != nil {
+            activeWorkspaceHandle.close()
+            self.activeWorkspace = nil
+        }
+        let opened = path.withCString { smithers_app_open_workspace(cApp, $0) }
+        activeWorkspace = opened
+        activeWorkspaceHandle.replace(app: cApp, workspace: opened)
         activeWorkspacePath = path
         refreshRecents()
         AppLogger.ui.info("WorkspaceManager opened workspace", metadata: ["path": path])
     }
 
     func closeWorkspace() {
-        #if !SMITHERS_STUB
-        if let cApp = app.app, let activeWorkspace {
-            smithers_app_close_workspace(cApp, activeWorkspace)
-        }
-        #endif
+        activeWorkspaceHandle.close()
         activeWorkspace = nil
         activeWorkspacePath = nil
         refreshRecents()
@@ -95,11 +87,6 @@ final class WorkspaceManager: ObservableObject {
     }
 
     func refreshRecents() {
-        #if SMITHERS_STUB
-        recents = activeWorkspacePath.map {
-            [RecentWorkspace(path: $0, displayName: ($0 as NSString).lastPathComponent, lastOpened: Date())]
-        } ?? []
-        #else
         guard let cApp = app.app else {
             recents = []
             return
@@ -111,7 +98,6 @@ final class WorkspaceManager: ObservableObject {
             return
         }
         recents = decoded
-        #endif
     }
 
     #if os(macOS)
@@ -125,5 +111,37 @@ final class WorkspaceManager: ObservableObject {
             openWorkspace(at: url)
         }
     }
-    #endif
+#endif
+}
+
+private final class MainThreadWorkspaceHandle {
+    private var app: smithers_app_t?
+    private var workspace: smithers_workspace_t?
+
+    func replace(app newApp: smithers_app_t?, workspace newWorkspace: smithers_workspace_t?) {
+        close()
+        app = newApp
+        workspace = newWorkspace
+    }
+
+    func close() {
+        guard let app, let workspace else { return }
+        Self.close(app: app, workspace: workspace)
+        self.app = nil
+        self.workspace = nil
+    }
+
+    deinit {
+        close()
+    }
+
+    private static func close(app: smithers_app_t, workspace: smithers_workspace_t) {
+        if Thread.isMainThread {
+            smithers_app_close_workspace(app, workspace)
+        } else {
+            DispatchQueue.main.sync {
+                smithers_app_close_workspace(app, workspace)
+            }
+        }
+    }
 }

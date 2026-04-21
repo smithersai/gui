@@ -41,7 +41,7 @@ extension Smithers {
 
         private let app: App
         private var session: smithers_session_t?
-        private var eventStream: EventStream?
+        nonisolated(unsafe) private let sessionHandle = MainThreadSessionHandle()
 
         var unsafeCValue: smithers_session_t? {
             session
@@ -52,12 +52,11 @@ extension Smithers {
             self.kind = kind
             self.title = kind.rawValue
 
-            #if !SMITHERS_STUB
             guard let cApp = app.app else { return }
             var created: smithers_session_t?
             workspacePath.withOptionalCString { workspacePtr in
                 targetID.withOptionalCString { targetPtr in
-                    var options = smithers_session_options_s(
+                    let options = smithers_session_options_s(
                         kind: kind.cValue,
                         workspace_path: workspacePtr,
                         target_id: targetPtr,
@@ -67,46 +66,34 @@ extension Smithers {
                 }
             }
             session = created
+            sessionHandle.replace(created)
             refresh()
-            #endif
         }
 
         deinit {
-            #if !SMITHERS_STUB
-            if let session {
-                smithers_session_free(session)
-            }
-            #endif
+            sessionHandle.replace(nil)
         }
 
         func refresh() {
-            #if !SMITHERS_STUB
             guard let session else { return }
             kind = Kind(cValue: smithers_session_kind(session))
             title = Smithers.string(from: smithers_session_title(session))
-            #endif
         }
 
         func sendText(_ text: String) {
-            #if !SMITHERS_STUB
             guard let session else { return }
             text.withCString { ptr in
                 smithers_session_send_text(session, ptr, text.utf8.count)
             }
-            #endif
         }
 
         func events() -> AsyncStream<Event> {
-            #if SMITHERS_STUB
-            return AsyncStream { continuation in continuation.finish() }
-            #else
             guard let session else {
                 return AsyncStream { continuation in continuation.finish() }
             }
             let stream = EventStream(smithers_session_events(session))
-            eventStream = stream
             return AsyncStream { continuation in
-                let task = Task {
+                let task = Task.detached {
                     while !Task.isCancelled {
                         let event = stream.next()
                         switch event.tag {
@@ -122,7 +109,33 @@ extension Smithers {
                 }
                 continuation.onTermination = { _ in task.cancel() }
             }
-            #endif
+        }
+    }
+}
+
+private final class MainThreadSessionHandle {
+    private var session: smithers_session_t?
+
+    func replace(_ newValue: smithers_session_t?) {
+        if let session {
+            Self.free(session)
+        }
+        session = newValue
+    }
+
+    deinit {
+        if let session {
+            Self.free(session)
+        }
+    }
+
+    private static func free(_ session: smithers_session_t) {
+        if Thread.isMainThread {
+            smithers_session_free(session)
+        } else {
+            DispatchQueue.main.sync {
+                smithers_session_free(session)
+            }
         }
     }
 }

@@ -27,9 +27,7 @@ extension Smithers {
     static func string(from value: smithers_string_s, free: Bool = true) -> String {
         defer {
             if free {
-                #if !SMITHERS_STUB
                 smithers_string_free(value)
-                #endif
             }
         }
         guard let ptr = value.ptr, value.len > 0 else { return "" }
@@ -42,9 +40,7 @@ extension Smithers {
 
     static func message(from error: smithers_error_s) -> String? {
         defer {
-            #if !SMITHERS_STUB
             smithers_error_free(error)
-            #endif
         }
         guard error.code != 0 else { return nil }
         guard let msg = error.msg else { return "libsmithers error \(error.code)" }

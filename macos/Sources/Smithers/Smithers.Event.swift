@@ -34,24 +34,20 @@ extension Smithers {
         }
 
         deinit {
-            #if !SMITHERS_STUB
             if let stream {
                 smithers_event_stream_free(stream)
             }
-            #endif
         }
 
         func next() -> Event {
-            #if SMITHERS_STUB
-            return Event(cValue: smithers_event_s(tag: SMITHERS_EVENT_END, payload: smithers_string_s(ptr: nil, len: 0)))
-            #else
             guard let stream else {
                 return Event(cValue: smithers_event_s(tag: SMITHERS_EVENT_END, payload: smithers_string_s(ptr: nil, len: 0)))
             }
             let event = smithers_event_stream_next(stream)
             defer { smithers_event_free(event) }
             return Event(cValue: event)
-            #endif
         }
     }
 }
+
+extension Smithers.EventStream: @unchecked Sendable {}

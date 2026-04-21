@@ -14,6 +14,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private let userDefaults: UserDefaults
     private let app: Smithers.App
     private var sessions: [String: Smithers.Session] = [:]
+    private var stateChangedObserver: NSObjectProtocol?
 
     var workspaceRootPath: String { workingDirectory }
 
@@ -25,7 +26,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         self.workingDirectory = Smithers.CWD.resolve(workingDirectory)
         self.userDefaults = userDefaults
         self.app = app ?? Smithers.App()
-        NotificationCenter.default.addObserver(
+        stateChangedObserver = NotificationCenter.default.addObserver(
             forName: .smithersStateChanged,
             object: nil,
             queue: .main
@@ -35,7 +36,10 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        sessions.removeAll()
+        if let stateChangedObserver {
+            NotificationCenter.default.removeObserver(stateChangedObserver)
+        }
     }
 
     @discardableResult

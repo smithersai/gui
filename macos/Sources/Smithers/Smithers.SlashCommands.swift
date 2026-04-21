@@ -155,14 +155,12 @@ enum SlashCommandRegistry {
     }
 
     static func parse(_ input: String) -> ParsedSlashCommand? {
-        #if !SMITHERS_STUB
         let parsed = input.withCString { smithers_slashcmd_parse($0) }
         let json = Smithers.string(from: parsed)
         if let data = json.data(using: .utf8),
            let payload = try? JSONDecoder().decode(SlashParsePayload.self, from: data) {
             return ParsedSlashCommand(name: payload.command ?? "", args: payload.args.joined(separator: " "))
         }
-        #endif
 
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/") else { return nil }
@@ -253,7 +251,7 @@ private struct SlashParsePayload: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         command = try container.decodeIfPresent(String.self, forKey: .command)
         if let values = try? container.decodeIfPresent([String].self, forKey: .args) {
-            args = values ?? []
+            args = values
         } else if let value = try? container.decodeIfPresent(String.self, forKey: .args) {
             args = [value]
         } else {
