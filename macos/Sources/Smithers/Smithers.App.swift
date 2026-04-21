@@ -72,12 +72,15 @@ extension Smithers {
             }
 
             let wrapped = Action(cValue: action)
-            Task { @MainActor in
-                NotificationCenter.default.post(
-                    name: .smithersAction,
-                    object: nil,
-                    userInfo: ["action": wrapped]
-                )
+            let shouldPostAction = action.tag != SMITHERS_ACTION_NEW_SESSION || target.tag == SMITHERS_ACTION_TARGET_APP
+            if shouldPostAction {
+                Task { @MainActor in
+                    NotificationCenter.default.post(
+                        name: .smithersAction,
+                        object: nil,
+                        userInfo: ["action": wrapped]
+                    )
+                }
             }
 
             switch action.tag {
@@ -89,9 +92,10 @@ extension Smithers {
                  SMITHERS_ACTION_OPEN_URL:
                 Task { @MainActor in perform(action: wrapped) }
                 return true
+            case SMITHERS_ACTION_NEW_SESSION:
+                return true
             case SMITHERS_ACTION_OPEN_WORKSPACE,
                  SMITHERS_ACTION_CLOSE_WORKSPACE,
-                 SMITHERS_ACTION_NEW_SESSION,
                  SMITHERS_ACTION_CLOSE_SESSION,
                  SMITHERS_ACTION_FOCUS_SESSION,
                  SMITHERS_ACTION_PRESENT_COMMAND_PALETTE,

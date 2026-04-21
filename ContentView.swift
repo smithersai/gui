@@ -1111,6 +1111,9 @@ struct ContentView: View {
                     AppLogger.ui.debug("Navigate to \(newValue.label)")
                     recordHistory(newValue)
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .smithersAction)) { notification in
+                    handleSmithersActionNotification(notification)
+                }
                 if guiControlSidebarEnabled {
                     GUIControlSidebar(
                         isExpanded: $guiControlSidebarExpanded,
@@ -1839,6 +1842,30 @@ struct ContentView: View {
     private func createNewTerminalTab() {
         let terminalId = store.addTerminalTab()
         destination = .terminal(id: terminalId)
+    }
+
+    private func handleSmithersActionNotification(_ notification: Notification) {
+        guard let action = notification.userInfo?["action"] as? Smithers.Action,
+              let kind = action.sessionKind
+        else {
+            return
+        }
+        openSmithersSession(kind)
+    }
+
+    private func openSmithersSession(_ kind: Smithers.Session.Kind) {
+        switch kind {
+        case .terminal, .chat:
+            createNewTerminalTab()
+        case .runInspect:
+            destination = .runs
+        case .workflow:
+            destination = .workflows
+        case .memory:
+            destination = .memory
+        case .dashboard:
+            destination = .dashboard
+        }
     }
 
     private func handleNewTabSelection(_ selection: NewTabSelection) {
