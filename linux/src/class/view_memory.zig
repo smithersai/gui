@@ -26,8 +26,12 @@ pub const MemoryView = extern struct {
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
         namespace_entry: *gtk.Entry = undefined,
+        workflow_entry: *gtk.Entry = undefined,
         query_entry: *gtk.Entry = undefined,
         topk_scale: *gtk.Scale = undefined,
+        clear_dialog: ?*adw.AlertDialog = null,
+        clear_confirm_entry: ?*gtk.Entry = null,
+        pending_clear_namespace: ?[]u8 = null,
         facts: std.ArrayList(vh.Item) = .empty,
         recall: std.ArrayList(vh.Item) = .empty,
         selected_index: ?usize = null,
@@ -70,11 +74,20 @@ pub const MemoryView = extern struct {
         self.private().namespace_entry.as(gtk.Widget).setSizeRequest(160, -1);
         _ = gtk.Entry.signals.activate.connect(self.private().namespace_entry, *Self, namespaceActivated, self, .{});
         header.append(self.private().namespace_entry.as(gtk.Widget));
+        self.private().workflow_entry = gtk.Entry.new();
+        self.private().workflow_entry.setPlaceholderText("Workflow path");
+        self.private().workflow_entry.as(gtk.Widget).setSizeRequest(190, -1);
+        _ = gtk.Entry.signals.activate.connect(self.private().workflow_entry, *Self, workflowActivated, self, .{});
+        header.append(self.private().workflow_entry.as(gtk.Widget));
         self.private().query_entry = gtk.Entry.new();
         self.private().query_entry.setPlaceholderText("Recall query");
         self.private().query_entry.as(gtk.Widget).setSizeRequest(240, -1);
         _ = gtk.Entry.signals.activate.connect(self.private().query_entry, *Self, queryActivated, self, .{});
         header.append(self.private().query_entry.as(gtk.Widget));
+        const clear = ui.textButton("Clear Namespace", false);
+        clear.as(gtk.Widget).addCssClass("destructive-action");
+        _ = gtk.Button.signals.clicked.connect(clear, *Self, clearNamespaceClicked, self, .{});
+        header.append(clear.as(gtk.Widget));
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh memory");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
@@ -106,7 +119,9 @@ pub const MemoryView = extern struct {
     fn loadFacts(self: *Self) void {
         self.private().recall_mode = false;
         const alloc = self.allocator();
-        const json = smithers.callJson(alloc, self.client(), "listAllMemoryFacts", "{}") catch |err| {
+        const json = vh.callJson(alloc, self.client(), "listAllMemoryFacts", &.{
+            .{ .key = "workflowPath", .value = .{ .optional_string = workflowFilter(self) } },
+        }) catch |err| {
             vh.setStatus(alloc, self.private().detail, "dialog-error-symbolic", "Memory unavailable", @errorName(err));
             return;
         };
@@ -134,6 +149,7 @@ pub const MemoryView = extern struct {
         const json = vh.callJson(alloc, self.client(), "recallMemory", &.{
             .{ .key = "query", .value = .{ .string = query } },
             .{ .key = "namespace", .value = .{ .optional_string = namespaceFilter(self) } },
+            .{ .key = "workflowPath", .value = .{ .optional_string = workflowFilter(self) } },
             .{ .key = "topK", .value = .{ .integer = @intFromFloat(self.private().topk_scale.as(gtk.Range).getValue()) } },
         }) catch |err| {
             vh.setStatus(alloc, self.private().detail, "dialog-error-symbolic", "Recall failed", @errorName(err));
@@ -214,6 +230,11 @@ pub const MemoryView = extern struct {
         return if (value.len == 0) null else value;
     }
 
+    fn workflowFilter(self: *Self) ?[]const u8 {
+        const value = vh.trimEntryText(self.private().workflow_entry);
+        return if (value.len == 0) null else value;
+    }
+
     fn selectedItem(self: *Self) ?vh.Item {
         const index = self.private().selected_index orelse return null;
         const source = if (self.private().recall_mode) self.private().recall.items else self.private().facts.items;
@@ -236,6 +257,14 @@ pub const MemoryView = extern struct {
         vh.detailRow(alloc, box, "ID", item.id) catch {};
         vh.detailRow(alloc, box, "Namespace", item.subtitle) catch {};
         vh.detailRow(alloc, box, "Schema", item.status) catch {};
+        const actions = vh.actionBar();
+        const copy_id = ui.textButton("Copy ID", false);
+        _ = gtk.Button.signals.clicked.connect(copy_id, *Self, copyIdClicked, self, .{});
+        actions.append(copy_id.as(gtk.Widget));
+        const copy_content = ui.textButton("Copy Content", false);
+        _ = gtk.Button.signals.clicked.connect(copy_content, *Self, copyContentClicked, self, .{});
+        actions.append(copy_content.as(gtk.Widget));
+        box.append(actions.as(gtk.Widget));
         vh.appendJsonViewer(alloc, box, "Value", item.body orelse item.title, 360) catch {};
         dialog.setChild(box.as(gtk.Widget));
         dialog.present(self.as(gtk.Widget));
@@ -254,6 +283,57 @@ pub const MemoryView = extern struct {
         self.loadFacts();
     }
 
+    fn confirmClearNamespace(self: *Self) void {
+        const namespace = namespaceFilter(self) orelse {
+            self.private().window.showToast("Enter a namespace to clear");
+            return;
+        };
+        const alloc = self.allocator();
+        if (self.private().pending_clear_namespace) |old| alloc.free(old);
+        self.private().pending_clear_namespace = alloc.dupe(u8, namespace) catch return;
+        const body = std.fmt.allocPrintSentinel(alloc, "Clear all visible facts in namespace {s}? Type the namespace to confirm.", .{namespace}, 0) catch return;
+        defer alloc.free(body);
+        const dialog = adw.AlertDialog.new("Clear Memory Namespace", body.ptr);
+        const entry = gtk.Entry.new();
+        const ns_z = alloc.dupeZ(u8, namespace) catch return;
+        defer alloc.free(ns_z);
+        entry.setPlaceholderText(ns_z.ptr);
+        _ = gtk.Editable.signals.changed.connect(entry.as(gtk.Editable), *Self, clearConfirmChanged, self, .{});
+        dialog.setExtraChild(entry.as(gtk.Widget));
+        dialog.addResponse("cancel", "Cancel");
+        dialog.addResponse("clear", "Clear");
+        dialog.setCloseResponse("cancel");
+        dialog.setDefaultResponse("cancel");
+        dialog.setResponseAppearance("clear", .destructive);
+        dialog.setResponseEnabled("clear", 0);
+        self.private().clear_dialog = dialog;
+        self.private().clear_confirm_entry = entry;
+        _ = adw.AlertDialog.signals.response.connect(dialog, *Self, clearDialogResponse, self, .{});
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
+    }
+
+    fn clearNamespace(self: *Self) void {
+        const namespace = self.private().pending_clear_namespace orelse return;
+        const alloc = self.allocator();
+        var deleted: usize = 0;
+        for (self.private().facts.items) |item| {
+            if (item.subtitle == null or !std.mem.eql(u8, item.subtitle.?, namespace)) continue;
+            const json = vh.callJson(alloc, self.client(), "deleteMemoryFact", &.{.{ .key = "id", .value = .{ .string = item.id } }}) catch continue;
+            alloc.free(json);
+            deleted += 1;
+        }
+        self.private().window.showToastFmt("Cleared {d} fact(s) from {s}", .{ deleted, namespace });
+        self.loadFacts();
+    }
+
+    fn copySelected(self: *Self, text: []const u8, label: []const u8) void {
+        const alloc = self.allocator();
+        const z = alloc.dupeZ(u8, text) catch return;
+        defer alloc.free(z);
+        self.as(gtk.Widget).getClipboard().setText(z.ptr);
+        self.private().window.showToastFmt("Copied {s}", .{label});
+    }
+
     fn modeClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.private().recall_mode = !self.private().recall_mode;
         self.refresh();
@@ -265,6 +345,10 @@ pub const MemoryView = extern struct {
 
     fn namespaceActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
         if (self.private().recall_mode) self.doRecall() else self.renderItems(self.private().facts.items, "No memory facts", "Facts written by workflows appear here.") catch {};
+    }
+
+    fn workflowActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
+        self.refresh();
     }
 
     fn queryActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
@@ -286,6 +370,38 @@ pub const MemoryView = extern struct {
         self.deleteSelectedFact();
     }
 
+    fn clearNamespaceClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.confirmClearNamespace();
+    }
+
+    fn copyIdClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        const item = self.selectedItem() orelse return;
+        self.copySelected(item.id, "memory id");
+    }
+
+    fn copyContentClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        const item = self.selectedItem() orelse return;
+        self.copySelected(item.body orelse item.title, "memory content");
+    }
+
+    fn clearConfirmChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        const dialog = self.private().clear_dialog orelse return;
+        const entry = self.private().clear_confirm_entry orelse return;
+        const namespace = self.private().pending_clear_namespace orelse return;
+        const enabled = std.mem.eql(u8, vh.trimEntryText(entry), namespace);
+        dialog.setResponseEnabled("clear", if (enabled) 1 else 0);
+    }
+
+    fn clearDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
+        defer {
+            self.private().clear_dialog = null;
+            self.private().clear_confirm_entry = null;
+            if (self.private().pending_clear_namespace) |namespace| self.allocator().free(namespace);
+            self.private().pending_clear_namespace = null;
+        }
+        if (std.mem.orderZ(u8, response, "clear") == .eq) self.clearNamespace();
+    }
+
     fn shortcutRefresh(self: *Self) void {
         self.refresh();
     }
@@ -298,6 +414,7 @@ pub const MemoryView = extern struct {
             priv.facts.deinit(self.allocator());
             vh.clearItems(self.allocator(), &priv.recall);
             priv.recall.deinit(self.allocator());
+            if (priv.pending_clear_namespace) |namespace| self.allocator().free(namespace);
             ui.clearBox(self.as(gtk.Box));
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
