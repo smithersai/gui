@@ -34,6 +34,7 @@ pub fn resolveC(requested: ?[*:0]const u8) ![]u8 {
 }
 
 fn isDirectory(path: []const u8) bool {
+    if (std.mem.indexOfScalar(u8, path, 0) != null) return false;
     var dir = std.fs.openDirAbsolute(path, .{}) catch return false;
     defer dir.close();
     const stat = dir.stat() catch return false;

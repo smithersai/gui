@@ -1,4 +1,5 @@
 const std = @import("std");
+const lib = @import("libsmithers");
 const h = @import("helpers.zig");
 
 test "client call out_err is set on failure cleared on success and free is safe" {
@@ -98,4 +99,16 @@ test "persistence open out_err is set on failure cleared on success and save err
     const save_ok = h.embedded.smithers_persistence_save_sessions(p, "/tmp/workspace", "[]");
     defer h.embedded.smithers_error_free(save_ok);
     try h.expectSuccess(save_ok);
+}
+
+test "cwd resolver falls back instead of panicking on embedded NUL bytes" {
+    const current = try std.process.getCwdAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(current);
+    const home_raw = std.posix.getenv("HOME") orelse current;
+    const expected = try lib.workspace.cwd.standardizeAbsolute(std.testing.allocator, home_raw, current);
+    defer std.testing.allocator.free(expected);
+
+    const resolved = try lib.workspace.cwd.resolve(std.testing.allocator, "prefix\x00suffix\xff\n");
+    defer std.testing.allocator.free(resolved);
+    try std.testing.expectEqualStrings(expected, resolved);
 }
