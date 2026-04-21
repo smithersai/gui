@@ -3,6 +3,7 @@ const ffi = @import("../ffi.zig");
 const structs = @import("../apprt/structs.zig");
 const EventStream = @import("../session/event_stream.zig");
 const App = @import("../App.zig");
+const terminal = @import("../terminal/tmux.zig");
 
 pub const Client = @This();
 
@@ -58,6 +59,10 @@ fn callImpl(self: *Client, method: []const u8, args_json: []const u8) !structs.S
         const resolved = try @import("../workspace/cwd.zig").resolve(self.allocator, requested);
         defer self.allocator.free(resolved);
         return ffi.stringJson(.{ .path = resolved });
+    }
+    if (try terminal.call(self.allocator, method, parsed.value)) |json| {
+        defer self.allocator.free(json);
+        return ffi.stringDup(json);
     }
     if (try localFallback(self, method, parsed.value)) |json| {
         defer self.allocator.free(json);

@@ -19,27 +19,11 @@ enum NeovimDetector {
     ]
 
     static func executablePath(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
-        let fileManager = FileManager.default
-        let pathCandidates = environment["PATH", default: ""]
-            .split(separator: ":", omittingEmptySubsequences: true)
-            .map { directory in
-                ((String(directory) as NSString).appendingPathComponent("nvim") as NSString).standardizingPath
-            }
-
-        var seen = Set<String>()
-        for candidate in pathCandidates + commonExecutablePaths {
-            let standardized = (candidate as NSString).standardizingPath
-            guard seen.insert(standardized).inserted else { continue }
-            if fileManager.isExecutableFile(atPath: standardized) {
-                return standardized
-            }
-        }
-
-        return nil
+        Smithers.Terminal.neovimExecutablePath(environment: environment)
     }
 
     static func isAvailable(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
-        executablePath(environment: environment) != nil
+        Smithers.Terminal.neovimIsAvailable(environment: environment)
     }
 }
 
@@ -94,40 +78,23 @@ enum TmuxController {
     ]
 
     static func executablePath(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
-        let fileManager = FileManager.default
-        let pathCandidates = environment["PATH", default: ""]
-            .split(separator: ":", omittingEmptySubsequences: true)
-            .map { directory in
-                ((String(directory) as NSString).appendingPathComponent("tmux") as NSString).standardizingPath
-            }
-
-        var seen = Set<String>()
-        for candidate in pathCandidates + commonExecutablePaths {
-            let standardized = (candidate as NSString).standardizingPath
-            guard seen.insert(standardized).inserted else { continue }
-            if fileManager.isExecutableFile(atPath: standardized) {
-                return standardized
-            }
-        }
-
-        return nil
+        Smithers.Terminal.tmuxExecutablePath(environment: environment)
     }
 
     static func isAvailable(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
-        executablePath(environment: environment) != nil
+        Smithers.Terminal.tmuxIsAvailable(environment: environment)
     }
 
     static func socketName(for workingDirectory: String) -> String {
-        "smithers-\(stableHash(workingDirectory))"
+        Smithers.Terminal.tmuxSocketName(for: workingDirectory)
     }
 
     static func rootSurfaceId(for terminalId: String) -> String {
-        "\(terminalId)-root"
+        Smithers.Terminal.tmuxRootSurfaceId(for: terminalId)
     }
 
     static func sessionName(for surfaceId: String) -> String {
-        let sanitized = sanitizeIdentifier(surfaceId)
-        return "smt-\(sanitized.isEmpty ? stableHash(surfaceId) : sanitized)"
+        Smithers.Terminal.tmuxSessionName(for: surfaceId)
     }
 
     static func attachCommand(
@@ -135,14 +102,11 @@ enum TmuxController {
         sessionName: String?,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String? {
-        guard let executable = executablePath(environment: environment),
-              let socketName = normalized(socketName),
-              let sessionName = normalized(sessionName)
-        else {
-            return nil
-        }
-
-        return "\(shellQuoted(executable)) -L \(shellQuoted(socketName)) attach-session -t \(shellQuoted(sessionName))"
+        Smithers.Terminal.tmuxAttachCommand(
+            socketName: socketName,
+            sessionName: sessionName,
+            environment: environment
+        )
     }
 
     @discardableResult
@@ -154,42 +118,18 @@ enum TmuxController {
         title: String?,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
-        guard let executable = executablePath(environment: environment) else {
-            AppLogger.terminal.warning("tmux executable not found; falling back to direct Ghostty shell")
-            return false
+        let ok = Smithers.Terminal.tmuxEnsureSession(
+            socketName: socketName,
+            sessionName: sessionName,
+            workingDirectory: workingDirectory,
+            command: command,
+            title: title,
+            environment: environment
+        )
+        if !ok {
+            AppLogger.terminal.warning("tmux session setup failed", metadata: ["session": sessionName])
         }
-
-        if runTmux(executable: executable, arguments: ["-L", socketName, "has-session", "-t", sessionName]).success {
-            renameWindow(
-                executable: executable,
-                socketName: socketName,
-                sessionName: sessionName,
-                title: title
-            )
-            return true
-        }
-
-        var arguments = ["-L", socketName, "new-session", "-d", "-s", sessionName]
-        if let title = normalized(title) {
-            arguments += ["-n", title]
-        }
-        if let workingDirectory = normalized(workingDirectory) {
-            arguments += ["-c", workingDirectory]
-        }
-        if let command = normalized(command) {
-            arguments.append(command)
-        }
-
-        let result = runTmux(executable: executable, arguments: arguments)
-        if !result.success {
-            AppLogger.terminal.warning("tmux new-session failed", metadata: [
-                "session": sessionName,
-                "error": result.error,
-            ])
-            return false
-        }
-
-        return true
+        return ok
     }
 
     static func terminateSession(
@@ -197,113 +137,24 @@ enum TmuxController {
         sessionName: String?,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
-        guard let executable = executablePath(environment: environment),
-              let socketName = normalized(socketName),
-              let sessionName = normalized(sessionName)
-        else {
-            return
-        }
-        _ = runTmux(executable: executable, arguments: ["-L", socketName, "kill-session", "-t", sessionName])
+        Smithers.Terminal.tmuxTerminateSession(
+            socketName: socketName,
+            sessionName: sessionName,
+            environment: environment
+        )
     }
 
     static func capturePane(socketName: String, sessionName: String, lines: Int = 200) throws -> String {
-        guard let executable = executablePath() else {
-            throw TmuxControllerError.tmuxUnavailable
-        }
-        let startLine = "-\(max(lines, 1))"
-        let result = runTmux(
-            executable: executable,
-            arguments: ["-L", socketName, "capture-pane", "-p", "-S", startLine, "-t", sessionName]
-        )
-        guard result.success else {
-            throw TmuxControllerError.commandFailed(result.error)
-        }
-        return result.output
+        try Smithers.Terminal.tmuxCapturePane(socketName: socketName, sessionName: sessionName, lines: lines)
     }
 
     static func sendText(socketName: String, sessionName: String, text: String, enter: Bool = false) throws {
-        guard let executable = executablePath() else {
-            throw TmuxControllerError.tmuxUnavailable
-        }
-        let literal = runTmux(
-            executable: executable,
-            arguments: ["-L", socketName, "send-keys", "-t", sessionName, "-l", "--", text]
+        try Smithers.Terminal.tmuxSendText(
+            socketName: socketName,
+            sessionName: sessionName,
+            text: text,
+            enter: enter
         )
-        guard literal.success else {
-            throw TmuxControllerError.commandFailed(literal.error)
-        }
-        if enter {
-            let enterResult = runTmux(
-                executable: executable,
-                arguments: ["-L", socketName, "send-keys", "-t", sessionName, "Enter"]
-            )
-            guard enterResult.success else {
-                throw TmuxControllerError.commandFailed(enterResult.error)
-            }
-        }
-    }
-
-    private static func renameWindow(
-        executable: String,
-        socketName: String,
-        sessionName: String,
-        title: String?
-    ) {
-        guard let title = normalized(title) else { return }
-        _ = runTmux(
-            executable: executable,
-            arguments: ["-L", socketName, "rename-window", "-t", sessionName, title]
-        )
-    }
-
-    private static func runTmux(executable: String, arguments: [String]) -> (success: Bool, output: String, error: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return (false, "", error.localizedDescription)
-        }
-
-        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let error = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return (process.terminationStatus == 0, output, error.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-
-    private static func sanitizeIdentifier(_ value: String) -> String {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-        let scalars = value.lowercased().unicodeScalars.map { scalar -> Character in
-            allowed.contains(scalar) ? Character(scalar) : "-"
-        }
-        return String(scalars)
-            .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-_"))
-    }
-
-    private static func stableHash(_ value: String) -> String {
-        var hash: UInt64 = 14695981039346656037
-        for byte in value.utf8 {
-            hash ^= UInt64(byte)
-            hash = hash &* 1099511628211
-        }
-        return String(hash, radix: 16)
-    }
-
-    private static func shellQuoted(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
-    }
-
-    private static func normalized(_ value: String?) -> String? {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
