@@ -31,6 +31,7 @@ pub const LogsViewer = extern struct {
         buffer: *gtk.TextBuffer = undefined,
         last_state: ?*const tree_state.LiveState = null,
         last_node: ?*const tree_state.Node = null,
+        scroll_value: f64 = 0,
         suppress_scroll: bool = false,
         did_dispose: bool = false,
 
@@ -96,7 +97,10 @@ pub const LogsViewer = extern struct {
             priv.suppress_scroll = true;
             const adj = priv.scroll.getVadjustment();
             adj.setValue(adj.getUpper());
+            priv.scroll_value = adj.getValue();
             priv.suppress_scroll = false;
+        } else {
+            self.restoreScroll();
         }
     }
 
@@ -168,7 +172,19 @@ pub const LogsViewer = extern struct {
         if (priv.suppress_scroll) return;
         const adj = priv.scroll.getVadjustment();
         const distance = adj.getUpper() - adj.getPageSize() - adj.getValue();
+        priv.scroll_value = adj.getValue();
         priv.follow.setActive(@intFromBool(distance <= 8));
+    }
+
+    fn restoreScroll(self: *Self) void {
+        const priv = self.private();
+        const adj = priv.scroll.getVadjustment();
+        var max = adj.getUpper() - adj.getPageSize();
+        if (max < 0) max = 0;
+        const value = if (priv.scroll_value > max) max else priv.scroll_value;
+        priv.suppress_scroll = true;
+        adj.setValue(value);
+        priv.suppress_scroll = false;
     }
 
     fn dispose(self: *Self) callconv(.c) void {

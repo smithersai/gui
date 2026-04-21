@@ -52,6 +52,18 @@ pub const LiveRunTree = extern struct {
         self.render(state);
     }
 
+    pub fn focusSelected(self: *Self) void {
+        const state = self.private().last_state orelse {
+            _ = self.private().list.as(gtk.Widget).grabFocus();
+            return;
+        };
+        if (state.selected_id) |id| {
+            self.selectRenderedRow(id);
+            return;
+        }
+        _ = self.private().list.as(gtk.Widget).grabFocus();
+    }
+
     fn render(self: *Self, state: *tree_state.LiveState) void {
         const priv = self.private();
         priv.list.removeAll();

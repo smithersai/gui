@@ -33,6 +33,8 @@ pub const LiveRunOutput = extern struct {
         buffer: *gtk.TextBuffer = undefined,
         rendered: ?[]u8 = null,
         current_page: usize = 0,
+        scroll_value: f64 = 0,
+        suppress_scroll: bool = false,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -98,6 +100,7 @@ pub const LiveRunOutput = extern struct {
         priv.page_label.setText(label.ptr);
         priv.prev.as(gtk.Widget).setSensitive(@intFromBool(page.index > 0));
         priv.next.as(gtk.Widget).setSensitive(@intFromBool(page.index + 1 < page.count));
+        self.restoreScroll();
     }
 
     fn build(self: *Self, title_text: [:0]const u8) !void {
@@ -135,6 +138,7 @@ pub const LiveRunOutput = extern struct {
         self.private().text.setWrapMode(.word_char);
         self.private().scroll = ui.scrolled(self.private().text.as(gtk.Widget));
         self.private().scroll.as(gtk.Widget).setVexpand(1);
+        _ = gtk.Adjustment.signals.value_changed.connect(self.private().scroll.getVadjustment(), *Self, scrollChanged, self, .{});
         root.append(self.private().scroll.as(gtk.Widget));
         self.as(adw.Bin).setChild(root.as(gtk.Widget));
     }
@@ -162,6 +166,7 @@ pub const LiveRunOutput = extern struct {
     fn latestClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         const adj = self.private().scroll.getVadjustment();
         adj.setValue(adj.getUpper());
+        self.private().scroll_value = adj.getValue();
     }
 
     fn downloadClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -169,6 +174,23 @@ pub const LiveRunOutput = extern struct {
         const z = self.private().alloc.dupeZ(u8, rendered) catch return;
         defer self.private().alloc.free(z);
         self.as(gtk.Widget).getClipboard().setText(z.ptr);
+    }
+
+    fn restoreScroll(self: *Self) void {
+        const priv = self.private();
+        const adj = priv.scroll.getVadjustment();
+        var max = adj.getUpper() - adj.getPageSize();
+        if (max < 0) max = 0;
+        const value = if (priv.scroll_value > max) max else priv.scroll_value;
+        priv.suppress_scroll = true;
+        adj.setValue(value);
+        priv.suppress_scroll = false;
+    }
+
+    fn scrollChanged(_: *gtk.Adjustment, self: *Self) callconv(.c) void {
+        const priv = self.private();
+        if (priv.suppress_scroll) return;
+        priv.scroll_value = priv.scroll.getVadjustment().getValue();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

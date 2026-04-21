@@ -22,10 +22,13 @@ pub const PropsTable = extern struct {
     const Private = struct {
         alloc: std.mem.Allocator = undefined,
         search: *gtk.SearchEntry = undefined,
+        scroll: *gtk.ScrolledWindow = undefined,
         list: *gtk.ListBox = undefined,
         empty: *gtk.Label = undefined,
         expanded: std.AutoHashMap(usize, void) = undefined,
         last_node: ?*const tree_state.Node = null,
+        scroll_value: f64 = 0,
+        suppress_scroll: bool = false,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -43,6 +46,7 @@ pub const PropsTable = extern struct {
     }
 
     pub fn update(self: *Self, node: ?*const tree_state.Node) void {
+        if (self.private().last_node != node) self.private().expanded.clearRetainingCapacity();
         self.private().last_node = node;
         self.render();
     }
@@ -78,6 +82,7 @@ pub const PropsTable = extern struct {
         } else {
             priv.empty.as(gtk.Widget).setVisible(0);
         }
+        self.restoreScroll();
     }
 
     fn build(self: *Self) !void {
@@ -95,7 +100,10 @@ pub const PropsTable = extern struct {
         self.private().list = gtk.ListBox.new();
         self.private().list.setSelectionMode(.none);
         self.private().list.as(gtk.Widget).addCssClass("boxed-list");
-        root.append(self.private().list.as(gtk.Widget));
+        self.private().scroll = ui.scrolled(self.private().list.as(gtk.Widget));
+        self.private().scroll.as(gtk.Widget).setVexpand(1);
+        _ = gtk.Adjustment.signals.value_changed.connect(self.private().scroll.getVadjustment(), *Self, scrollChanged, self, .{});
+        root.append(self.private().scroll.as(gtk.Widget));
 
         self.as(adw.Bin).setChild(root.as(gtk.Widget));
     }
@@ -179,6 +187,23 @@ pub const PropsTable = extern struct {
 
     fn searchChanged(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
         self.render();
+    }
+
+    fn restoreScroll(self: *Self) void {
+        const priv = self.private();
+        const adj = priv.scroll.getVadjustment();
+        var max = adj.getUpper() - adj.getPageSize();
+        if (max < 0) max = 0;
+        const value = if (priv.scroll_value > max) max else priv.scroll_value;
+        priv.suppress_scroll = true;
+        adj.setValue(value);
+        priv.suppress_scroll = false;
+    }
+
+    fn scrollChanged(_: *gtk.Adjustment, self: *Self) callconv(.c) void {
+        const priv = self.private();
+        if (priv.suppress_scroll) return;
+        priv.scroll_value = priv.scroll.getVadjustment().getValue();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

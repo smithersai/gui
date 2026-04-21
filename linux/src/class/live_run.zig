@@ -228,6 +228,7 @@ pub const LiveRunView = extern struct {
     fn build(self: *Self) !void {
         const alloc = self.private().app.allocator();
         const root = gtk.Box.new(.vertical, 0);
+        self.installShortcuts(root.as(gtk.Widget));
 
         self.private().header = try LiveRunHeader.new(alloc);
         _ = gtk.Button.signals.clicked.connect(self.private().header.refreshButton(), *Self, refreshClicked, self, .{});
@@ -257,6 +258,20 @@ pub const LiveRunView = extern struct {
         root.append(panes.as(gtk.Widget));
 
         self.as(adw.Bin).setChild(root.as(gtk.Widget));
+    }
+
+    fn installShortcuts(self: *Self, widget: *gtk.Widget) void {
+        const controller = gtk.ShortcutController.new();
+        controller.setScope(.managed);
+        self.addShortcut(controller, "<Control>j", shortcutJumpToNode);
+        widget.addController(controller.as(gtk.EventController));
+    }
+
+    fn addShortcut(self: *Self, controller: *gtk.ShortcutController, trigger_text: [:0]const u8, callback: gtk.ShortcutFunc) void {
+        const trigger = gtk.ShortcutTrigger.parseString(trigger_text.ptr) orelse return;
+        const action = gtk.CallbackAction.new(callback, self, null);
+        const shortcut = gtk.Shortcut.new(trigger, action.as(gtk.ShortcutAction));
+        controller.addShortcut(shortcut);
     }
 
     fn restartSubscription(self: *Self) !void {
@@ -450,6 +465,12 @@ pub const LiveRunView = extern struct {
         if (state.selected_id != null and selected != null and state.selected_id.? == selected.?) return;
         state.select(selected);
         self.refreshAll();
+    }
+
+    fn shortcutJumpToNode(_: *gtk.Widget, _: ?*glib.Variant, data: ?*anyopaque) callconv(.c) c_int {
+        const self: *Self = @ptrCast(@alignCast(data orelse return 0));
+        self.private().tree.focusSelected();
+        return 1;
     }
 
     fn dispose(self: *Self) callconv(.c) void {
