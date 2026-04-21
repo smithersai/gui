@@ -41,14 +41,6 @@ final class SurfaceNotificationStore: ObservableObject {
         }
     }
 
-    func markErrored(surfaceId: String) {
-        erroredSurfaceIds.insert(surfaceId)
-    }
-
-    func clearErrored(surfaceId: String) {
-        erroredSurfaceIds.remove(surfaceId)
-    }
-
     func hasError(surfaceId: String) -> Bool {
         erroredSurfaceIds.contains(surfaceId)
     }
@@ -104,15 +96,6 @@ final class SurfaceNotificationStore: ObservableObject {
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
             self?.focusedIndicatorSurfaceIds.remove(focusedSurfaceId)
-        }
-    }
-
-    func markWorkspaceRead(_ workspaceId: String) {
-        let surfaceIds = surfaceWorkspaceIds
-            .filter { $0.value == workspaceId }
-            .map(\.key)
-        for surfaceId in surfaceIds {
-            markRead(surfaceId: surfaceId)
         }
     }
 

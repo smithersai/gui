@@ -241,24 +241,6 @@ enum AppLogger {
         }
     }
 
-    /// Measure sync work duration and log it.
-    static func measureSync<T>(_ label: String, _ work: () throws -> T) rethrows -> T {
-        let start = CFAbsoluteTimeGetCurrent()
-        let signpostState = performance.beginInterval("measure")
-        do {
-            let result = try work()
-            performance.endInterval("measure", signpostState)
-            performance.info("\(label) completed", metadata: durationMetadata(since: start))
-            return result
-        } catch {
-            performance.endInterval("measure", signpostState)
-            var metadata = durationMetadata(since: start)
-            metadata["error"] = error.localizedDescription
-            performance.error("\(label) failed", metadata: metadata)
-            throw error
-        }
-    }
-
     static let fileWriter = FileLogWriter()
 
     private static func durationMetadata(since start: CFAbsoluteTime) -> [String: String] {

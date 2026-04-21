@@ -293,11 +293,6 @@ struct SidebarView: View {
         .accessibilityIdentifier("sidebar")
     }
 
-    private func openCurrentTerminal() {
-        let terminalId = store.ensureTerminalTab()
-        destination = .terminal(id: terminalId)
-    }
-
     private var workspaceList: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {

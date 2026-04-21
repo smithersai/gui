@@ -237,13 +237,6 @@ final class AppNotifications: ObservableObject {
         toasts.removeAll { $0.id == id }
     }
 
-    func dismissAll() {
-        for toast in toasts {
-            cancelDismissalTask(for: toast.id)
-        }
-        toasts.removeAll()
-    }
-
     func beginRunEventMonitoring(smithers: SmithersClient) {
         guard runEventTask == nil else { return }
 

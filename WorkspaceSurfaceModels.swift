@@ -649,15 +649,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         return newSurface.id
     }
 
-    @discardableResult
-    func addBrowser(urlString: String? = nil, splitAxis: WorkspaceSplitAxis = .horizontal) -> String {
-        let surfaceId = splitFocused(axis: splitAxis, kind: .browser)
-        if let urlString {
-            updateBrowser(surfaceId: surfaceId, urlString: urlString, title: nil)
-        }
-        return surfaceId.rawValue
-    }
-
     func focusSurface(_ surfaceId: String) {
         focusSurface(SurfaceID(surfaceId))
     }
@@ -718,11 +709,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
             }
         }
         notifyChanged()
-    }
-
-    func closeFocusedSurface() {
-        guard let focusedSurfaceId else { return }
-        closeSurface(focusedSurfaceId)
     }
 
     func updateWorkspaceTitle(_ title: String) {

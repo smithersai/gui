@@ -42,13 +42,6 @@ enum KeyboardShortcutSettings {
         postDidChangeNotification(action: action)
     }
 
-    static func resetAll() {
-        for action in ShortcutAction.allCases {
-            userDefaults.removeObject(forKey: action.defaultsKey)
-        }
-        postDidChangeNotification()
-    }
-
     static func isManagedBySettingsFile(_ action: ShortcutAction) -> Bool {
         settingsFileStore.isManagedByFile(action)
     }

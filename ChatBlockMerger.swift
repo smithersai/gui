@@ -19,11 +19,6 @@ struct ChatBlockMerger {
         indexByLifecycleId.removeAll(keepingCapacity: false)
     }
 
-    mutating func replaceAll(with newBlocks: [ChatBlock]) {
-        reset()
-        append(contentsOf: newBlocks)
-    }
-
     @discardableResult
     mutating func append(_ block: ChatBlock) -> ChatBlockMergeStats {
         if let lifecycleId = block.lifecycleId,
