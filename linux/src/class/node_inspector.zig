@@ -27,12 +27,16 @@ pub const NodeInspector = extern struct {
         title: *gtk.Label = undefined,
         subtitle: *gtk.Label = undefined,
         state: *gtk.Label = undefined,
-        error_banner: *gtk.Label = undefined,
+        copy_id: *gtk.Button = undefined,
+        error_box: *gtk.Box = undefined,
+        error_label: *gtk.Label = undefined,
+        copy_stack: *gtk.Button = undefined,
         props: *PropsTable = undefined,
         logs: *LogsViewer = undefined,
         output: *LiveRunOutput = undefined,
         diff: *LiveRunOutput = undefined,
         stack: *gtk.Stack = undefined,
+        current_node: ?*const tree_state.Node = null,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -49,15 +53,17 @@ pub const NodeInspector = extern struct {
     pub fn update(self: *Self, state: *const tree_state.LiveState) void {
         const priv = self.private();
         const node = state.selectedNodeConst();
+        priv.current_node = node;
         if (node) |n| {
-            const title_z = std.fmt.allocPrintZ(priv.alloc, "<{s}>", .{n.name}) catch return;
+            const title_z = std.fmt.allocPrintSentinel(priv.alloc, "<{s}>", .{n.name}, 0) catch return;
             defer priv.alloc.free(title_z);
             priv.title.setText(title_z.ptr);
 
             const node_id = if (n.task) |task| task.node_id else "";
-            const subtitle_z = std.fmt.allocPrintZ(priv.alloc, "node {d} {s}", .{ n.id, node_id }) catch return;
+            const subtitle_z = std.fmt.allocPrintSentinel(priv.alloc, "node {d} {s}", .{ n.id, node_id }, 0) catch return;
             defer priv.alloc.free(subtitle_z);
             priv.subtitle.setText(subtitle_z.ptr);
+            priv.copy_id.as(gtk.Widget).setSensitive(@intFromBool(node_id.len > 0));
 
             const state_z = priv.alloc.dupeZ(u8, n.state().label()) catch return;
             defer priv.alloc.free(state_z);
@@ -65,18 +71,21 @@ pub const NodeInspector = extern struct {
 
             if (n.state() == .failed) {
                 const error_text = n.stringProp("error") orelse "Task failed.";
-                const error_z = std.fmt.allocPrintZ(priv.alloc, "Task Failed: {s}", .{error_text}) catch return;
+                const error_z = std.fmt.allocPrintSentinel(priv.alloc, "Task Failed: {s}", .{error_text}, 0) catch return;
                 defer priv.alloc.free(error_z);
-                priv.error_banner.setText(error_z.ptr);
-                priv.error_banner.as(gtk.Widget).setVisible(1);
+                priv.error_label.setText(error_z.ptr);
+                priv.error_box.as(gtk.Widget).setVisible(1);
+                priv.copy_stack.as(gtk.Widget).setSensitive(@intFromBool(n.stringProp("errorStack") != null or n.stringProp("error") != null));
             } else {
-                priv.error_banner.as(gtk.Widget).setVisible(0);
+                priv.error_box.as(gtk.Widget).setVisible(0);
             }
         } else {
+            priv.current_node = null;
             priv.title.setText("Select a node to inspect");
             priv.subtitle.setText("");
             priv.state.setText("No selection");
-            priv.error_banner.as(gtk.Widget).setVisible(0);
+            priv.copy_id.as(gtk.Widget).setSensitive(0);
+            priv.error_box.as(gtk.Widget).setVisible(0);
         }
 
         priv.props.update(node);
@@ -101,15 +110,25 @@ pub const NodeInspector = extern struct {
         self.private().subtitle.setEllipsize(.middle);
         self.private().subtitle.as(gtk.Widget).setHexpand(1);
         meta.append(self.private().subtitle.as(gtk.Widget));
+        self.private().copy_id = ui.iconButton("edit-copy-symbolic", "Copy node ID");
+        self.private().copy_id.as(gtk.Widget).setSensitive(0);
+        _ = gtk.Button.signals.clicked.connect(self.private().copy_id, *Self, copyNodeClicked, self, .{});
+        meta.append(self.private().copy_id.as(gtk.Widget));
         self.private().state = ui.dim("No selection");
         meta.append(self.private().state.as(gtk.Widget));
         header.append(meta.as(gtk.Widget));
         root.append(header.as(gtk.Widget));
 
-        self.private().error_banner = ui.label("", null);
-        ui.margin4(self.private().error_banner.as(gtk.Widget), 8, 12, 8, 12);
-        self.private().error_banner.as(gtk.Widget).setVisible(0);
-        root.append(self.private().error_banner.as(gtk.Widget));
+        self.private().error_box = gtk.Box.new(.horizontal, 8);
+        ui.margin4(self.private().error_box.as(gtk.Widget), 8, 12, 8, 12);
+        self.private().error_label = ui.label("", "error");
+        self.private().error_label.as(gtk.Widget).setHexpand(1);
+        self.private().error_box.append(self.private().error_label.as(gtk.Widget));
+        self.private().copy_stack = ui.iconButton("edit-copy-symbolic", "Copy error detail");
+        _ = gtk.Button.signals.clicked.connect(self.private().copy_stack, *Self, copyStackClicked, self, .{});
+        self.private().error_box.append(self.private().copy_stack.as(gtk.Widget));
+        self.private().error_box.as(gtk.Widget).setVisible(0);
+        root.append(self.private().error_box.as(gtk.Widget));
 
         const switcher = gtk.StackSwitcher.new();
         self.private().stack = gtk.Stack.new();
@@ -118,11 +137,11 @@ pub const NodeInspector = extern struct {
         ui.margin4(switcher.as(gtk.Widget), 4, 12, 4, 12);
         root.append(switcher.as(gtk.Widget));
 
-        self.private().props = try PropsTable.new(self.private().alloc);
-        _ = self.private().stack.addTitled(self.private().props.as(gtk.Widget), "props", "Props");
-
         self.private().output = try LiveRunOutput.new(self.private().alloc, "Output");
         _ = self.private().stack.addTitled(self.private().output.as(gtk.Widget), "output", "Output");
+
+        self.private().props = try PropsTable.new(self.private().alloc);
+        _ = self.private().stack.addTitled(self.private().props.as(gtk.Widget), "props", "Props");
 
         self.private().logs = try LogsViewer.new(self.private().alloc);
         _ = self.private().stack.addTitled(self.private().logs.as(gtk.Widget), "logs", "Logs");
@@ -135,6 +154,22 @@ pub const NodeInspector = extern struct {
         self.private().stack.setVisibleChildName("logs");
 
         self.as(adw.Bin).setChild(root.as(gtk.Widget));
+    }
+
+    fn copyNodeClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        const node = self.private().current_node orelse return;
+        const id = if (node.task) |task| task.node_id else return;
+        const z = self.private().alloc.dupeZ(u8, id) catch return;
+        defer self.private().alloc.free(z);
+        self.as(gtk.Widget).getClipboard().setText(z.ptr);
+    }
+
+    fn copyStackClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        const node = self.private().current_node orelse return;
+        const detail = node.stringProp("errorStack") orelse node.stringProp("error") orelse return;
+        const z = self.private().alloc.dupeZ(u8, detail) catch return;
+        defer self.private().alloc.free(z);
+        self.as(gtk.Widget).getClipboard().setText(z.ptr);
     }
 
     fn dispose(self: *Self) callconv(.c) void {

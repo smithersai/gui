@@ -21,8 +21,11 @@ pub const PropsTable = extern struct {
 
     const Private = struct {
         alloc: std.mem.Allocator = undefined,
+        search: *gtk.SearchEntry = undefined,
         list: *gtk.ListBox = undefined,
         empty: *gtk.Label = undefined,
+        expanded: std.AutoHashMap(usize, void) = undefined,
+        last_node: ?*const tree_state.Node = null,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -31,16 +34,24 @@ pub const PropsTable = extern struct {
     pub fn new(alloc: std.mem.Allocator) !*Self {
         const self = gobject.ext.newInstance(Self, .{});
         errdefer self.unref();
-        self.private().* = .{ .alloc = alloc };
+        self.private().* = .{
+            .alloc = alloc,
+            .expanded = .init(alloc),
+        };
         try self.build();
         return self;
     }
 
     pub fn update(self: *Self, node: ?*const tree_state.Node) void {
+        self.private().last_node = node;
+        self.render();
+    }
+
+    fn render(self: *Self) void {
         const priv = self.private();
         priv.list.removeAll();
 
-        const target = node orelse {
+        const target = priv.last_node orelse {
             priv.empty.setText("Select a node to inspect props.");
             priv.empty.as(gtk.Widget).setVisible(1);
             return;
@@ -52,15 +63,32 @@ pub const PropsTable = extern struct {
             return;
         }
 
-        priv.empty.as(gtk.Widget).setVisible(0);
-        for (target.props.items) |prop| {
-            const row = propRow(priv.alloc, prop) catch continue;
+        const query = std.mem.span(priv.search.as(gtk.Editable).getText());
+        var rendered: usize = 0;
+        for (target.props.items, 0..) |prop, index| {
+            if (!(tree_state.propMatchesSearch(prop, query, priv.alloc) catch false)) continue;
+            const row = self.propRow(prop, index) catch continue;
             priv.list.append(row.as(gtk.Widget));
+            rendered += 1;
+        }
+
+        if (rendered == 0) {
+            priv.empty.setText("No props match search");
+            priv.empty.as(gtk.Widget).setVisible(1);
+        } else {
+            priv.empty.as(gtk.Widget).setVisible(0);
         }
     }
 
     fn build(self: *Self) !void {
         const root = gtk.Box.new(.vertical, 8);
+
+        self.private().search = gtk.SearchEntry.new();
+        self.private().search.setPlaceholderText("Search props");
+        _ = gtk.SearchEntry.signals.search_changed.connect(self.private().search, *Self, searchChanged, self, .{});
+        ui.margin4(self.private().search.as(gtk.Widget), 6, 8, 0, 8);
+        root.append(self.private().search.as(gtk.Widget));
+
         self.private().empty = ui.dim("No props");
         root.append(self.private().empty.as(gtk.Widget));
 
@@ -72,13 +100,23 @@ pub const PropsTable = extern struct {
         self.as(adw.Bin).setChild(root.as(gtk.Widget));
     }
 
-    fn propRow(alloc: std.mem.Allocator, prop: tree_state.Prop) !*gtk.ListBoxRow {
+    fn propRow(self: *Self, prop: tree_state.Prop, index: usize) !*gtk.ListBoxRow {
+        const alloc = self.private().alloc;
         const row = gtk.ListBoxRow.new();
         row.setSelectable(0);
         row.setActivatable(0);
 
-        const box = gtk.Box.new(.horizontal, 10);
+        const box = gtk.Box.new(.horizontal, 8);
         ui.margin4(box.as(gtk.Widget), 6, 8, 6, 8);
+
+        const nested = isNested(prop.rendered);
+        if (nested) {
+            const expanded = self.private().expanded.contains(index);
+            const toggle = ui.iconButton(if (expanded) "pan-down-symbolic" else "pan-end-symbolic", if (expanded) "Collapse value" else "Expand value");
+            ui.setIndex(toggle.as(gobject.Object), index);
+            _ = gtk.Button.signals.clicked.connect(toggle, *Self, toggleClicked, self, .{});
+            box.append(toggle.as(gtk.Widget));
+        }
 
         const key_z = try alloc.dupeZ(u8, prop.key);
         defer alloc.free(key_z);
@@ -88,7 +126,12 @@ pub const PropsTable = extern struct {
         key.setEllipsize(.end);
         box.append(key.as(gtk.Widget));
 
-        const value_z = try alloc.dupeZ(u8, prop.rendered);
+        const shown = if (nested and !self.private().expanded.contains(index))
+            try tree_state.singleLinePreview(alloc, prop.rendered, 160)
+        else
+            try alloc.dupe(u8, prop.rendered);
+        defer alloc.free(shown);
+        const value_z = try alloc.dupeZ(u8, shown);
         defer alloc.free(value_z);
         const value = ui.label(value_z, null);
         value.as(gtk.Widget).setHexpand(1);
@@ -97,13 +140,51 @@ pub const PropsTable = extern struct {
         value.setWrapMode(.word_char);
         box.append(value.as(gtk.Widget));
 
+        const copy = ui.iconButton("edit-copy-symbolic", "Copy value");
+        ui.setIndex(copy.as(gobject.Object), index);
+        _ = gtk.Button.signals.clicked.connect(copy, *Self, copyClicked, self, .{});
+        box.append(copy.as(gtk.Widget));
+
         row.setChild(box.as(gtk.Widget));
         return row;
+    }
+
+    fn isNested(value: []const u8) bool {
+        const trimmed = std.mem.trim(u8, value, &std.ascii.whitespace);
+        return trimmed.len > 1 and (trimmed[0] == '{' or trimmed[0] == '[');
+    }
+
+    fn toggleClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const index = ui.getIndex(button.as(gobject.Object)) orelse return;
+        const node = self.private().last_node orelse return;
+        if (index >= node.props.items.len) return;
+        if (self.private().expanded.contains(index)) {
+            _ = self.private().expanded.remove(index);
+        } else {
+            self.private().expanded.put(index, {}) catch {};
+        }
+        self.render();
+    }
+
+    fn copyClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const index = ui.getIndex(button.as(gobject.Object)) orelse return;
+        const node = self.private().last_node orelse return;
+        if (index >= node.props.items.len) return;
+        const raw = tree_state.rawPropValue(self.private().alloc, node.props.items[index]) catch return;
+        defer self.private().alloc.free(raw);
+        const z = self.private().alloc.dupeZ(u8, raw) catch return;
+        defer self.private().alloc.free(z);
+        self.as(gtk.Widget).getClipboard().setText(z.ptr);
+    }
+
+    fn searchChanged(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
+        self.render();
     }
 
     fn dispose(self: *Self) callconv(.c) void {
         if (!self.private().did_dispose) {
             self.private().did_dispose = true;
+            self.private().expanded.deinit();
             self.as(adw.Bin).setChild(null);
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
