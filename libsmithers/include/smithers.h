@@ -113,6 +113,18 @@ typedef enum {
 } smithers_color_scheme_e;
 
 //------------------------------------------------------------------------------
+// Session kind (referenced by both actions and session options)
+
+typedef enum {
+  SMITHERS_SESSION_KIND_TERMINAL = 0,
+  SMITHERS_SESSION_KIND_CHAT,
+  SMITHERS_SESSION_KIND_RUN_INSPECT,
+  SMITHERS_SESSION_KIND_WORKFLOW,
+  SMITHERS_SESSION_KIND_MEMORY,
+  SMITHERS_SESSION_KIND_DASHBOARD,
+} smithers_session_kind_e;
+
+//------------------------------------------------------------------------------
 // Actions (host ← core)
 //
 // Modelled on ghostty apprt.action.Action: a tagged union of things the core
@@ -158,6 +170,7 @@ typedef struct {
   smithers_action_tag_e tag;
   union {
     struct { const char *path; } open_workspace;
+    struct { smithers_session_kind_e kind; } new_session;
     struct { smithers_session_t session; } close_session;
     struct { const char *title; const char *body; int32_t kind; } toast;
     struct { const char *title; const char *body; } desktop_notify;
@@ -198,6 +211,12 @@ typedef struct {
   bool (*action)(smithers_app_t, smithers_action_target_s, smithers_action_s);
 
   // Clipboard (host implements using native APIs).
+  //
+  // read_clipboard: on success, fills *out with UTF-8 bytes BORROWED by the
+  // host for the duration of this call. Core MUST copy the bytes synchronously
+  // before returning from the callback and MUST NOT pass the returned value to
+  // smithers_string_free. Hosts return host-owned storage; libsmithers never
+  // frees it. Returns true iff *out is populated.
   bool (*read_clipboard)(smithers_userdata_t, smithers_string_s *out);
   void (*write_clipboard)(smithers_userdata_t, const char *text);
 
@@ -244,15 +263,6 @@ SMITHERS_API smithers_string_s smithers_app_recent_workspaces_json(smithers_app_
 //
 // Mirrors ghostty_surface_t in role: the long-lived per-tab object the UI binds
 // to. The Swift SurfaceView and GTK widget both wrap one of these.
-
-typedef enum {
-  SMITHERS_SESSION_KIND_TERMINAL = 0,
-  SMITHERS_SESSION_KIND_CHAT,
-  SMITHERS_SESSION_KIND_RUN_INSPECT,
-  SMITHERS_SESSION_KIND_WORKFLOW,
-  SMITHERS_SESSION_KIND_MEMORY,
-  SMITHERS_SESSION_KIND_DASHBOARD,
-} smithers_session_kind_e;
 
 typedef struct {
   smithers_session_kind_e kind;

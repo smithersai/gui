@@ -56,6 +56,7 @@ pub const ActionTag = enum(c_int) {
 // keep in sync: smithers_action_s union payloads
 pub const ActionValue = extern union {
     open_workspace: extern struct { path: ?[*:0]const u8 },
+    new_session: extern struct { kind: SessionKind },
     close_session: extern struct { session: ?*anyopaque },
     toast: extern struct {
         title: ?[*:0]const u8,
