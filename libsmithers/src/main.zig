@@ -2,6 +2,7 @@ pub const App = @import("App.zig");
 pub const apprt = @import("apprt/apprt.zig");
 pub const client = @import("client/client.zig");
 pub const commands = @import("commands/mod.zig");
+pub const devtools = @import("devtools/DevToolsClient.zig");
 pub const ffi = @import("ffi.zig");
 pub const models = @import("models/mod.zig");
 pub const persistence = @import("persistence/sqlite.zig");
