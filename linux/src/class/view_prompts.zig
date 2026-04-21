@@ -7,6 +7,7 @@ const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const vh = @import("../features/view_helpers.zig");
 const MainWindow = @import("main_window.zig").MainWindow;
+const MarkdownEditor = @import("markdown_editor.zig").MarkdownEditor;
 
 pub const PromptsView = extern struct {
     const Self = @This();
@@ -25,9 +26,14 @@ pub const PromptsView = extern struct {
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
         search_entry: *gtk.Entry = undefined,
-        source_view: *gtk.TextView = undefined,
-        input_view: *gtk.TextView = undefined,
+        source_editor: *MarkdownEditor = undefined,
+        input_box: *gtk.Box = undefined,
+        preview_box: *gtk.Box = undefined,
         prompts: std.ArrayList(vh.Item) = .empty,
+        props: std.ArrayList(vh.Item) = .empty,
+        input_entries: std.ArrayList(*gtk.Entry) = .empty,
+        undo_prompt_id: ?[]u8 = null,
+        undo_source: ?[]u8 = null,
         selected_index: ?usize = null,
         did_dispose: bool = false,
 
@@ -159,18 +165,21 @@ pub const PromptsView = extern struct {
         const preview = ui.textButton("Preview", false);
         _ = gtk.Button.signals.clicked.connect(preview, *Self, previewClicked, self, .{});
         actions.append(preview.as(gtk.Widget));
+        const fake = ui.textButton("Fake Inputs", false);
+        _ = gtk.Button.signals.clicked.connect(fake, *Self, fakeInputsClicked, self, .{});
+        actions.append(fake.as(gtk.Widget));
+        if (self.canUndo(prompt.id)) {
+            const undo = ui.textButton("Undo Save", false);
+            _ = gtk.Button.signals.clicked.connect(undo, *Self, undoClicked, self, .{});
+            actions.append(undo.as(gtk.Widget));
+        }
         self.private().detail.append(actions.as(gtk.Widget));
-        self.private().source_view = vh.textView(true);
-        try vh.setTextViewText(alloc, self.private().source_view, source_text);
-        const source_scroll = ui.scrolled(self.private().source_view.as(gtk.Widget));
-        source_scroll.as(gtk.Widget).setSizeRequest(-1, 300);
-        self.private().detail.append(source_scroll.as(gtk.Widget));
-        self.private().input_view = vh.textView(true);
-        try vh.setTextViewText(alloc, self.private().input_view, "{}");
-        const input_scroll = ui.scrolled(self.private().input_view.as(gtk.Widget));
-        input_scroll.as(gtk.Widget).setSizeRequest(-1, 100);
-        self.private().detail.append(input_scroll.as(gtk.Widget));
-        try self.appendDiscoveredProps(prompt.id);
+        self.private().source_editor = try MarkdownEditor.new(alloc, source_text);
+        self.private().source_editor.as(gtk.Widget).setSizeRequest(-1, 360);
+        self.private().detail.append(self.private().source_editor.as(gtk.Widget));
+        try self.renderInputForm(prompt.id);
+        self.private().preview_box = gtk.Box.new(.vertical, 8);
+        self.private().detail.append(self.private().preview_box.as(gtk.Widget));
     }
 
     fn selectedPrompt(self: *Self) ?vh.Item {
@@ -182,25 +191,36 @@ pub const PromptsView = extern struct {
     fn savePrompt(self: *Self) void {
         const prompt = self.selectedPrompt() orelse return;
         const alloc = self.allocator();
-        const source = vh.getTextViewText(alloc, self.private().source_view) catch return;
+        const source = vh.markdownEditorText(alloc, self.private().source_editor.as(gtk.Widget)) catch return;
         defer alloc.free(source);
+        const old_source = if (self.private().selected_index) |index|
+            if (index < self.private().prompts.items.len) self.private().prompts.items[index].body orelse "" else ""
+        else
+            "";
+        self.setUndo(prompt.id, old_source) catch {};
+        self.replaceSelectedSource(source) catch {};
         const json = vh.callJson(alloc, self.client(), "updatePrompt", &.{
             .{ .key = "promptId", .value = .{ .string = prompt.id } },
             .{ .key = "source", .value = .{ .string = source } },
         }) catch |err| {
+            self.replaceSelectedSource(old_source) catch {};
             self.private().window.showToastFmt("Save prompt failed: {}", .{err});
             return;
         };
         defer alloc.free(json);
-        self.private().window.showToastFmt("Saved {s}", .{prompt.id});
+        self.private().window.showToastFmt("Saved {s}; Undo Save is available", .{prompt.id});
+        if (self.private().selected_index) |index| self.renderDetail(index) catch {};
     }
 
     fn previewPrompt(self: *Self) void {
         const prompt = self.selectedPrompt() orelse return;
         const alloc = self.allocator();
-        const source = vh.getTextViewText(alloc, self.private().source_view) catch return;
+        const source = vh.markdownEditorText(alloc, self.private().source_editor.as(gtk.Widget)) catch return;
         defer alloc.free(source);
-        const input = vh.getTextViewText(alloc, self.private().input_view) catch return;
+        const input = self.inputJson(alloc) catch |err| {
+            self.private().window.showToastFmt("Input form invalid: {}", .{err});
+            return;
+        };
         defer alloc.free(input);
         const json = vh.callJson(alloc, self.client(), "previewPrompt", &.{
             .{ .key = "promptId", .value = .{ .string = prompt.id } },
@@ -213,37 +233,128 @@ pub const PromptsView = extern struct {
         defer alloc.free(json);
         const text = vh.parseStringResult(alloc, json) catch alloc.dupe(u8, json) catch return;
         defer alloc.free(text);
+        ui.clearBox(self.private().preview_box);
+        vh.addSectionTitle(self.private().preview_box, "Rendered Preview");
         const view = vh.textView(false);
         vh.setTextViewText(alloc, view, text) catch return;
         const scroll = ui.scrolled(view.as(gtk.Widget));
         scroll.as(gtk.Widget).setSizeRequest(-1, 180);
-        self.private().detail.append(scroll.as(gtk.Widget));
+        self.private().preview_box.append(scroll.as(gtk.Widget));
     }
 
-    fn appendDiscoveredProps(self: *Self, prompt_id: []const u8) !void {
+    fn renderInputForm(self: *Self, prompt_id: []const u8) !void {
         const alloc = self.allocator();
         const json = vh.callJson(alloc, self.client(), "discoverPromptProps", &.{.{ .key = "promptId", .value = .{ .string = prompt_id } }}) catch return;
         defer alloc.free(json);
-        var props = vh.parseItems(alloc, json, &.{ "props", "inputs", "items", "data" }, .{
+        const props = vh.parseItems(alloc, json, &.{ "props", "inputs", "items", "data" }, .{
             .id = &.{ "key", "name", "id" },
             .title = &.{ "key", "name", "id" },
             .subtitle = &.{ "type", "kind", "default", "defaultValue" },
             .body = &.{ "description", "help" },
         }) catch std.ArrayList(vh.Item).empty;
-        defer {
-            vh.clearItems(alloc, &props);
-            props.deinit(alloc);
-        }
+        vh.clearItems(alloc, &self.private().props);
+        self.private().props = props;
+        self.private().input_entries.clearRetainingCapacity();
         vh.addSectionTitle(self.private().detail, "Discovered Props");
-        const list = vh.listBox();
-        if (props.items.len == 0) {
-            list.append((try ui.row(alloc, "insert-text-symbolic", "No props discovered", "Use JSON test input for ad-hoc values.")).as(gtk.Widget));
+        self.private().input_box = gtk.Box.new(.vertical, 8);
+        if (self.private().props.items.len == 0) {
+            self.private().input_box.append(ui.dim("No inputs discovered").as(gtk.Widget));
         } else {
-            for (props.items) |prop| {
-                list.append((try vh.itemRow(alloc, prop, "insert-text-symbolic")).as(gtk.Widget));
+            for (self.private().props.items) |prop| {
+                const row = gtk.Box.new(.vertical, 4);
+                const title = try std.fmt.allocPrintSentinel(alloc, "{s}{s}{s}", .{ prop.title, if (prop.subtitle) |_| " · " else "", prop.subtitle orelse "" }, 0);
+                defer alloc.free(title);
+                row.append(ui.dim(title).as(gtk.Widget));
+                const entry = gtk.Entry.new();
+                if (propDefault(alloc, prop)) |default_value| {
+                    defer alloc.free(default_value);
+                    const default_z = try alloc.dupeZ(u8, default_value);
+                    defer alloc.free(default_z);
+                    entry.as(gtk.Editable).setText(default_z.ptr);
+                } else {
+                    entry.setPlaceholderText("Value");
+                }
+                if (prop.body) |body| {
+                    const help_z = try alloc.dupeZ(u8, body);
+                    defer alloc.free(help_z);
+                    entry.as(gtk.Widget).setTooltipText(help_z.ptr);
+                }
+                row.append(entry.as(gtk.Widget));
+                try self.private().input_entries.append(alloc, entry);
+                self.private().input_box.append(row.as(gtk.Widget));
             }
         }
-        self.private().detail.append(list.as(gtk.Widget));
+        self.private().detail.append(self.private().input_box.as(gtk.Widget));
+    }
+
+    fn inputJson(self: *Self, alloc: std.mem.Allocator) ![]u8 {
+        var fields: std.ArrayList(vh.JsonField) = .empty;
+        defer fields.deinit(alloc);
+        for (self.private().props.items, 0..) |prop, index| {
+            if (index >= self.private().input_entries.items.len) break;
+            const value = vh.trimEntryText(self.private().input_entries.items[index]);
+            try fields.append(alloc, .{ .key = prop.title, .value = .{ .string = value } });
+        }
+        return vh.jsonObject(alloc, fields.items);
+    }
+
+    fn setFakeInputs(self: *Self) void {
+        const alloc = self.allocator();
+        for (self.private().props.items, 0..) |prop, index| {
+            if (index >= self.private().input_entries.items.len) break;
+            const fallback = propDefault(alloc, prop) orelse std.fmt.allocPrint(alloc, "fake-{s}", .{prop.title}) catch continue;
+            defer alloc.free(fallback);
+            const z = alloc.dupeZ(u8, fallback) catch continue;
+            defer alloc.free(z);
+            self.private().input_entries.items[index].as(gtk.Editable).setText(z.ptr);
+        }
+        self.previewPrompt();
+    }
+
+    fn propDefault(alloc: std.mem.Allocator, prop: vh.Item) ?[]u8 {
+        const raw = prop.raw_json orelse return null;
+        var parsed = std.json.parseFromSlice(std.json.Value, alloc, raw, .{}) catch return null;
+        defer parsed.deinit();
+        const obj = vh.object(&parsed.value) orelse return null;
+        return vh.stringField(alloc, obj, &.{ "default", "defaultValue", "example", "placeholder" }) catch null;
+    }
+
+    fn replaceSelectedSource(self: *Self, source: []const u8) !void {
+        const index = self.private().selected_index orelse return;
+        if (index >= self.private().prompts.items.len) return;
+        const alloc = self.allocator();
+        const prompt = &self.private().prompts.items[index];
+        if (prompt.body) |old| alloc.free(old);
+        prompt.body = try alloc.dupe(u8, source);
+    }
+
+    fn setUndo(self: *Self, prompt_id: []const u8, source: []const u8) !void {
+        const alloc = self.allocator();
+        if (self.private().undo_prompt_id) |old| alloc.free(old);
+        if (self.private().undo_source) |old| alloc.free(old);
+        self.private().undo_prompt_id = try alloc.dupe(u8, prompt_id);
+        self.private().undo_source = try alloc.dupe(u8, source);
+    }
+
+    fn canUndo(self: *Self, prompt_id: []const u8) bool {
+        return if (self.private().undo_prompt_id) |id| std.mem.eql(u8, id, prompt_id) and self.private().undo_source != null else false;
+    }
+
+    fn undoSave(self: *Self) void {
+        const prompt_id = self.private().undo_prompt_id orelse return;
+        const source = self.private().undo_source orelse return;
+        const alloc = self.allocator();
+        const json = vh.callJson(alloc, self.client(), "updatePrompt", &.{
+            .{ .key = "promptId", .value = .{ .string = prompt_id } },
+            .{ .key = "source", .value = .{ .string = source } },
+        }) catch |err| {
+            self.private().window.showToastFmt("Undo failed: {}", .{err});
+            return;
+        };
+        defer alloc.free(json);
+        self.replaceSelectedSource(source) catch {};
+        self.private().window.showToastFmt("Restored {s}", .{prompt_id});
+        if (self.private().selected_index) |index| self.renderDetail(index) catch {};
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -257,6 +368,8 @@ pub const PromptsView = extern struct {
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const index = vh.getIndex(row.as(gobject.Object)) orelse return;
         self.private().selected_index = index;
+        vh.clearItems(self.allocator(), &self.private().props);
+        self.private().input_entries.clearRetainingCapacity();
         self.renderDetail(index) catch {};
     }
 
@@ -266,6 +379,14 @@ pub const PromptsView = extern struct {
 
     fn previewClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.previewPrompt();
+    }
+
+    fn fakeInputsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.setFakeInputs();
+    }
+
+    fn undoClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.undoSave();
     }
 
     fn shortcutRefresh(self: *Self) void {
@@ -282,6 +403,11 @@ pub const PromptsView = extern struct {
             priv.did_dispose = true;
             vh.clearItems(self.allocator(), &priv.prompts);
             priv.prompts.deinit(self.allocator());
+            vh.clearItems(self.allocator(), &priv.props);
+            priv.props.deinit(self.allocator());
+            priv.input_entries.deinit(self.allocator());
+            if (priv.undo_prompt_id) |id| self.allocator().free(id);
+            if (priv.undo_source) |source| self.allocator().free(source);
             ui.clearBox(self.as(gtk.Box));
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
