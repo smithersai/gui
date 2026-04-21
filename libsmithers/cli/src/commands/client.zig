@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const args_pkg = @import("../args.zig");
 const Context = @import("../context.zig").Context;
 const lib = @import("../libsmithers.zig");
@@ -8,18 +9,58 @@ pub const usage =
     \\  smithers-cli client call <METHOD> [--args '<JSON>']
     \\  smithers-cli client stream <METHOD> [--args '<JSON>']
     \\
+    \\Options:
+    \\  -a, --args <JSON>  JSON argument object. Defaults to {}.
+    \\  -h, --help         Show help.
+    \\
     \\Invoke the generic SmithersClient ABI surface.
+    \\
+    \\Examples:
+    \\  smithers-cli client call listWorkflows
+    \\  smithers-cli client stream streamDevTools --args '{"runId":"x"}'
 ;
 
+var stream_interrupted = std.atomic.Value(bool).init(false);
+
+fn handleSigInt(_: i32) callconv(.c) void {
+    stream_interrupted.store(true, .seq_cst);
+}
+
+const SignalGuard = struct {
+    old: ?std.posix.Sigaction = null,
+
+    fn install() SignalGuard {
+        if (builtin.os.tag == .windows) return .{};
+        stream_interrupted.store(false, .seq_cst);
+        const act: std.posix.Sigaction = .{
+            .handler = .{ .handler = handleSigInt },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+        var old: std.posix.Sigaction = undefined;
+        std.posix.sigaction(std.posix.SIG.INT, &act, &old);
+        return .{ .old = old };
+    }
+
+    fn deinit(self: *SignalGuard) void {
+        if (builtin.os.tag == .windows) return;
+        if (self.old) |old| std.posix.sigaction(std.posix.SIG.INT, &old, null);
+    }
+};
+
 pub fn run(ctx: *Context, args: []const []const u8) !void {
-    if (args.len == 0 or args_pkg.isHelp(args[0])) {
+    if (args_pkg.containsHelp(args)) {
         try ctx.stdout.writeAll(usage ++ "\n");
         return;
     }
 
-    const subcommand = args[0];
-    if (std.mem.eql(u8, subcommand, "call")) return call(ctx, args[1..]);
-    if (std.mem.eql(u8, subcommand, "stream")) return stream(ctx, args[1..]);
+    var parser = args_pkg.Parser.init(args);
+    const subcommand = parser.nextNonGlobal() orelse {
+        try ctx.stdout.writeAll(usage ++ "\n");
+        return;
+    };
+    if (std.mem.eql(u8, subcommand, "call")) return call(ctx, parser.remaining());
+    if (std.mem.eql(u8, subcommand, "stream")) return stream(ctx, parser.remaining());
     return ctx.fail("unknown client subcommand: {s}", .{subcommand});
 }
 
@@ -34,14 +75,11 @@ fn parseMethodArgs(ctx: *Context, raw_args: []const []const u8, verb: []const u8
     var args_json: []const u8 = "{}";
 
     while (parser.next()) |arg| {
-        if (args_pkg.isHelp(arg)) {
-            try ctx.stdout.writeAll(usage ++ "\n");
-            return error.CliFailure;
-        }
-        if (try parser.optionValue(arg, "args")) |value| {
+        if (try parser.optionValueAny(arg, "args", 'a')) |value| {
             args_json = value;
             continue;
         }
+        if (args_pkg.isGlobalFlag(arg)) continue;
         if (std.mem.startsWith(u8, arg, "-")) {
             try args_pkg.rejectUnexpected(ctx, arg);
             unreachable;
@@ -109,7 +147,14 @@ fn stream(ctx: *Context, raw_args: []const []const u8) !void {
     if (event_stream == null) return ctx.fail("client stream returned no stream", .{});
     defer lib.smithers_event_stream_free(event_stream);
 
+    var signal_guard = SignalGuard.install();
+    defer signal_guard.deinit();
+
     while (true) {
+        if (stream_interrupted.load(.seq_cst)) {
+            try ctx.stderr.writeAll("interrupted\n");
+            return error.CliInterrupted;
+        }
         lib.smithers_app_tick(app);
         const ev = lib.smithers_event_stream_next(event_stream);
         defer lib.smithers_event_free(ev);
@@ -117,6 +162,7 @@ fn stream(ctx: *Context, raw_args: []const []const u8) !void {
             .json => {
                 try ctx.stdout.writeAll(lib.stringSlice(ev.payload));
                 try ctx.stdout.writeByte('\n');
+                try ctx.stdout.flush();
             },
             .err => return ctx.fail("stream event error: {s}", .{lib.stringSlice(ev.payload)}),
             .end => return,

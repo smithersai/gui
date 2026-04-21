@@ -6,6 +6,7 @@ pub const ClientOpaque = opaque {};
 pub const WorkspaceOpaque = opaque {};
 pub const PaletteOpaque = opaque {};
 pub const PersistenceOpaque = opaque {};
+pub const WorkflowOpaque = opaque {};
 pub const EventStreamOpaque = opaque {};
 
 pub const App = ?*AppOpaque;
@@ -14,6 +15,7 @@ pub const Client = ?*ClientOpaque;
 pub const Workspace = ?*WorkspaceOpaque;
 pub const Palette = ?*PaletteOpaque;
 pub const Persistence = ?*PersistenceOpaque;
+pub const Workflow = ?*WorkflowOpaque;
 pub const EventStream = ?*EventStreamOpaque;
 pub const Userdata = ?*anyopaque;
 

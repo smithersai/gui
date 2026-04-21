@@ -17,6 +17,22 @@ test "binary info" {
     try std.testing.expect(std.mem.indexOf(u8, result.stdout, "platform:") != null);
 }
 
+test "binary command help exits successfully" {
+    const result = try run(&.{ "client", "call", "--help" });
+    defer result.deinit();
+    try result.expectExit(0);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "Usage:") != null);
+}
+
+test "binary global json after command" {
+    const result = try run(&.{ "info", "--json" });
+    defer result.deinit();
+    try result.expectExit(0);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, result.stdout, .{});
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value == .object);
+}
+
 test "binary cwd resolve" {
     const result = try run(&.{ "cwd", "resolve" });
     defer result.deinit();
@@ -33,6 +49,15 @@ test "binary slash parse" {
     var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, result.stdout, .{});
     defer parsed.deinit();
     try std.testing.expect(parsed.value == .object);
+}
+
+test "binary short value flag" {
+    const result = try run(&.{ "session", "new", "-k", "chat", "--json" });
+    defer result.deinit();
+    try result.expectExit(0);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, result.stdout, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("chat", parsed.value.object.get("kind").?.string);
 }
 
 const RunResult = struct {

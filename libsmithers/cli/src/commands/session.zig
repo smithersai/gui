@@ -5,23 +5,37 @@ const lib = @import("../libsmithers.zig");
 
 pub const usage =
     \\Usage:
-    \\  smithers-cli session new --kind <terminal|chat|run-inspect|workflow|memory|dashboard> [--workspace PATH] [--target ID]
+    \\  smithers-cli session new --kind KIND [--workspace PATH] [--target ID]
     \\  smithers-cli session title <SESSION_ID>
     \\
+    \\Options:
+    \\  -k, --kind <KIND>       terminal|chat|run-inspect|workflow|memory|dashboard
+    \\  -w, --workspace <PATH>  Workspace path for the transient session.
+    \\  -t, --target <ID>       Kind-specific target id.
+    \\  -h, --help              Show help.
+    \\
     \\Create a transient libsmithers session or resolve a transient session title.
+    \\
+    \\Examples:
+    \\  smithers-cli session new --kind chat
+    \\  smithers-cli session new -k run-inspect -t run_123
 ;
 
 const id_prefix = "transient:";
 
 pub fn run(ctx: *Context, args: []const []const u8) !void {
-    if (args.len == 0 or args_pkg.isHelp(args[0])) {
+    if (args_pkg.containsHelp(args)) {
         try ctx.stdout.writeAll(usage ++ "\n");
         return;
     }
 
-    const subcommand = args[0];
-    if (std.mem.eql(u8, subcommand, "new")) return new(ctx, args[1..]);
-    if (std.mem.eql(u8, subcommand, "title")) return title(ctx, args[1..]);
+    var parser = args_pkg.Parser.init(args);
+    const subcommand = parser.nextNonGlobal() orelse {
+        try ctx.stdout.writeAll(usage ++ "\n");
+        return;
+    };
+    if (std.mem.eql(u8, subcommand, "new")) return new(ctx, parser.remaining());
+    if (std.mem.eql(u8, subcommand, "title")) return title(ctx, parser.remaining());
     return ctx.fail("unknown session subcommand: {s}", .{subcommand});
 }
 
@@ -32,22 +46,19 @@ fn new(ctx: *Context, raw_args: []const []const u8) !void {
     var target: ?[]const u8 = null;
 
     while (parser.next()) |arg| {
-        if (args_pkg.isHelp(arg)) {
-            try ctx.stdout.writeAll(usage ++ "\n");
-            return;
-        }
-        if (try parser.optionValue(arg, "kind")) |value| {
+        if (try parser.optionValueAny(arg, "kind", 'k')) |value| {
             kind = parseKind(value) orelse return ctx.fail("invalid session kind: {s}", .{value});
             continue;
         }
-        if (try parser.optionValue(arg, "workspace")) |value| {
+        if (try parser.optionValueAny(arg, "workspace", 'w')) |value| {
             workspace = value;
             continue;
         }
-        if (try parser.optionValue(arg, "target")) |value| {
+        if (try parser.optionValueAny(arg, "target", 't')) |value| {
             target = value;
             continue;
         }
+        if (args_pkg.isGlobalFlag(arg)) continue;
         return args_pkg.rejectUnexpected(ctx, arg);
     }
 
@@ -56,8 +67,14 @@ fn new(ctx: *Context, raw_args: []const []const u8) !void {
 }
 
 fn title(ctx: *Context, raw_args: []const []const u8) !void {
-    if (raw_args.len != 1) return ctx.fail("session title requires exactly one session id", .{});
-    var descriptor = try decodeDescriptor(ctx, raw_args[0]);
+    var parser = args_pkg.Parser.init(raw_args);
+    var id: ?[]const u8 = null;
+    while (parser.nextNonGlobal()) |arg| {
+        if (id != null) return ctx.fail("session title requires exactly one session id", .{});
+        id = arg;
+    }
+    const session_id = id orelse return ctx.fail("session title requires exactly one session id", .{});
+    var descriptor = try decodeDescriptor(ctx, session_id);
     defer descriptor.deinit(ctx.allocator);
     try createAndPrint(ctx, descriptor.kind, descriptor.workspace, descriptor.target, false);
 }

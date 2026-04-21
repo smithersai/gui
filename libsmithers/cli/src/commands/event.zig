@@ -6,19 +6,32 @@ const lib = @import("../libsmithers.zig");
 pub const usage =
     \\Usage: smithers-cli event drain
     \\
+    \\Options:
+    \\  -h, --help   Show help.
+    \\
     \\Internal dev command: initialize an app with default callbacks and drain one tick.
+    \\
+    \\Examples:
+    \\  smithers-cli event drain --verbose
 ;
 
 pub fn run(ctx: *Context, args: []const []const u8) !void {
-    if (args.len == 0 or args_pkg.isHelp(args[0])) {
+    if (args_pkg.containsHelp(args)) {
         try ctx.stdout.writeAll(usage ++ "\n");
         return;
     }
 
-    if (!std.mem.eql(u8, args[0], "drain")) {
-        return ctx.fail("unknown event subcommand: {s}", .{args[0]});
+    var parser = args_pkg.Parser.init(args);
+    const subcommand = parser.nextNonGlobal() orelse {
+        try ctx.stdout.writeAll(usage ++ "\n");
+        return;
+    };
+    if (!std.mem.eql(u8, subcommand, "drain")) {
+        return ctx.fail("unknown event subcommand: {s}", .{subcommand});
     }
-    if (args.len != 1) return ctx.fail("event drain does not accept arguments", .{});
+    while (parser.nextNonGlobal()) |arg| {
+        return args_pkg.rejectUnexpected(ctx, arg);
+    }
 
     const app = try ctx.makeApp();
     defer lib.smithers_app_free(app);

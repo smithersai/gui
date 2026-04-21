@@ -8,18 +8,32 @@ pub const usage =
     \\  smithers-cli persistence load --db <PATH> --workspace <PATH>
     \\  smithers-cli persistence save --db <PATH> --workspace <PATH> --input -
     \\
+    \\Options:
+    \\  -d, --db <PATH>         SQLite database path.
+    \\  -w, --workspace <PATH>  Workspace path key.
+    \\  -i, --input -           Read session JSON from stdin.
+    \\  -h, --help              Show help.
+    \\
     \\Load or save persisted session JSON through libsmithers.
+    \\
+    \\Examples:
+    \\  smithers-cli persistence load -d sessions.sqlite -w /repo
+    \\  printf '[]' | smithers-cli persistence save -d sessions.sqlite -w /repo -i -
 ;
 
 pub fn run(ctx: *Context, args: []const []const u8) !void {
-    if (args.len == 0 or args_pkg.isHelp(args[0])) {
+    if (args_pkg.containsHelp(args)) {
         try ctx.stdout.writeAll(usage ++ "\n");
         return;
     }
 
-    const subcommand = args[0];
-    if (std.mem.eql(u8, subcommand, "load")) return load(ctx, args[1..]);
-    if (std.mem.eql(u8, subcommand, "save")) return save(ctx, args[1..]);
+    var parser = args_pkg.Parser.init(args);
+    const subcommand = parser.nextNonGlobal() orelse {
+        try ctx.stdout.writeAll(usage ++ "\n");
+        return;
+    };
+    if (std.mem.eql(u8, subcommand, "load")) return load(ctx, parser.remaining());
+    if (std.mem.eql(u8, subcommand, "save")) return save(ctx, parser.remaining());
     return ctx.fail("unknown persistence subcommand: {s}", .{subcommand});
 }
 
@@ -34,24 +48,21 @@ fn parseOptions(ctx: *Context, raw_args: []const []const u8, allow_input: bool) 
     var options = Options{};
 
     while (parser.next()) |arg| {
-        if (args_pkg.isHelp(arg)) {
-            try ctx.stdout.writeAll(usage ++ "\n");
-            return error.CliFailure;
-        }
-        if (try parser.optionValue(arg, "db")) |value| {
+        if (try parser.optionValueAny(arg, "db", 'd')) |value| {
             options.db = value;
             continue;
         }
-        if (try parser.optionValue(arg, "workspace")) |value| {
+        if (try parser.optionValueAny(arg, "workspace", 'w')) |value| {
             options.workspace = value;
             continue;
         }
         if (allow_input) {
-            if (try parser.optionValue(arg, "input")) |value| {
+            if (try parser.optionValueAny(arg, "input", 'i')) |value| {
                 options.input = value;
                 continue;
             }
         }
+        if (args_pkg.isGlobalFlag(arg)) continue;
         try args_pkg.rejectUnexpected(ctx, arg);
         unreachable;
     }

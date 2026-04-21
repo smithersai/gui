@@ -89,9 +89,13 @@ pub fn runArgs(
         return 1;
     };
 
+    var globals = invocation.globals;
+    globals.json = globals.json or global_hints.json;
+    globals.verbose = globals.verbose or global_hints.verbose;
+
     var ctx = Context{
         .allocator = allocator,
-        .globals = invocation.globals,
+        .globals = globals,
         .stdout = stdout,
         .stderr = stderr,
     };
@@ -119,6 +123,11 @@ pub fn runArgs(
 
     dispatch(&ctx, command, invocation.rest) catch |err| {
         if (err == error.CliFailure) return 1;
+        if (err == error.CliInterrupted) return 130;
+        if (err == error.MissingOptionValue) {
+            try ctx.writeError("missing option value");
+            return 1;
+        }
         try ctx.writeError(@errorName(err));
         return 1;
     };
@@ -227,6 +236,11 @@ fn printHelp(ctx: *Context) !void {
         \\  event
         \\
         \\Use `smithers-cli <command> --help` for command-specific usage.
+        \\
+        \\Examples:
+        \\  smithers-cli info
+        \\  smithers-cli cwd resolve
+        \\  smithers-cli slash parse "/build foo"
         \\
     );
 }

@@ -22,14 +22,15 @@ pub const Context = struct {
     }
 
     pub fn writeError(self: *Context, message: []const u8) !void {
-        try self.stderr.print("error: {s}\n", .{message});
         if (self.globals.json) {
             try std.json.Stringify.value(.{
                 .ok = false,
                 .@"error" = message,
             }, .{}, self.stderr);
             try self.stderr.writeByte('\n');
+            return;
         }
+        try self.stderr.print("error: {s}\n", .{message});
     }
 
     pub fn writeJson(self: *Context, value: anytype) !void {
