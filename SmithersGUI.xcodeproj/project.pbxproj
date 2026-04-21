@@ -14,7 +14,6 @@
 		06741C9EE877614E533168AB /* WorkspacesSessionKeyboardE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 088C389083110C192B0BC0B8 /* WorkspacesSessionKeyboardE2ETests.swift */; };
 		0690945BB83921005E994C68 /* RecentWorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF4D972C90D331875885A5A4 /* RecentWorkspaceStore.swift */; };
 		06E4614DBDCBD76AC9C0F9D2 /* NodeErrorBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D837C1D456F8A694724F5E1 /* NodeErrorBanner.swift */; };
-		06F59652DDCFC0CB3A405E9F /* Smithers.Stub.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F89D5FDDF64BC754AC1167 /* Smithers.Stub.swift */; };
 		0776D3D27BE945896D0CEEE3 /* LogViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13A52186284C07DDD756A191 /* LogViewerView.swift */; };
 		0999830762A02ABB27D72FD0 /* TreeRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC4E18C3BBDB789470BEDBD /* TreeRowView.swift */; };
 		09DF088BF560280C4B74A407 /* LogViewerE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6954FC9AAE2BE71753DB61C0 /* LogViewerE2ETests.swift */; };
@@ -322,7 +321,6 @@
 		8DC87D91597FAC181A269856 /* ApprovalsE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsE2ETests.swift; sourceTree = "<group>"; };
 		8EC0C110B0BA06054D579224 /* TicketsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketsView.swift; sourceTree = "<group>"; };
 		903BABEE4FCDFCEB64EABEA2 /* RunsScoresMemoryE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsScoresMemoryE2ETests.swift; sourceTree = "<group>"; };
-		91F89D5FDDF64BC754AC1167 /* Smithers.Stub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Stub.swift; sourceTree = "<group>"; };
 		921F53ED403B4D761F7E7DE9 /* ShortcutAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutAction.swift; sourceTree = "<group>"; };
 		95DA88753D359F39A1907002 /* JJHubWorkflowsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JJHubWorkflowsView.swift; sourceTree = "<group>"; };
 		9660FBD8BEF9DAE91F3E3481 /* CoreText.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreText.framework; path = System/Library/Frameworks/CoreText.framework; sourceTree = SDKROOT; };
@@ -689,7 +687,6 @@
 				02219E60CC698AAEEFED8416 /* Smithers.Session.swift */,
 				222BBAD1B7A3D2D98EAAE607 /* Smithers.SessionStore.swift */,
 				3D04C8142FE76C32CF0EEA41 /* Smithers.SlashCommands.swift */,
-				91F89D5FDDF64BC754AC1167 /* Smithers.Stub.swift */,
 				2BC8F51D9407A4AF34C5262D /* Smithers.Workspace.swift */,
 			);
 			name = Smithers;
@@ -952,7 +949,6 @@
 				B1FC92C0C9DCE013CBF01175 /* Smithers.Session.swift in Sources */,
 				16EF2EAC9B94D9AB21CEB3CA /* Smithers.SessionStore.swift in Sources */,
 				4B018A961BC38D802230E367 /* Smithers.SlashCommands.swift in Sources */,
-				06F59652DDCFC0CB3A405E9F /* Smithers.Stub.swift in Sources */,
 				D99FBCAB28FA01FDA9D5617F /* Smithers.Workspace.swift in Sources */,
 				17FB38CE28BA917017F5F393 /* SmithersModels.swift in Sources */,
 				13F7BBFCCCD57BFC7A31E19F /* StoredShortcut.swift in Sources */,
