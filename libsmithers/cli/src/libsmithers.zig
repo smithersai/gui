@@ -68,6 +68,7 @@ pub const ActionTag = enum(c_int) {
 
 pub const ActionValue = extern union {
     open_workspace: extern struct { path: ?[*:0]const u8 },
+    new_session: extern struct { kind: SessionKind },
     close_session: extern struct { session: Session },
     toast: extern struct {
         title: ?[*:0]const u8,
@@ -256,4 +257,13 @@ pub fn modeName(mode: PaletteMode) []const u8 {
         .workspaces => "workspaces",
         .runs => "runs",
     };
+}
+
+test "new session action payload mirrors C ABI" {
+    const action = Action{
+        .tag = .new_session,
+        .u = .{ .new_session = .{ .kind = .terminal } },
+    };
+    try std.testing.expectEqual(ActionTag.new_session, action.tag);
+    try std.testing.expectEqual(SessionKind.terminal, action.u.new_session.kind);
 }
