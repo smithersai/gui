@@ -68,6 +68,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.linkLibC();
+    // macOS 26 dyld rejects binaries with duplicate LC_LOAD_DYLIB entries.
+    // Transitive pkg-config deps from gobject's gtk4/adw1 modules cause many
+    // dylibs (gtk-4, libadwaita-1, glib, pango, ...) to appear twice. Tell
+    // Apple's linker to strip unreferenced/duplicate dylibs.
+    if (target.result.os.tag == .macos) exe.dead_strip_dylibs = true;
     exe.addIncludePath(b.path("../libsmithers/include"));
     addGtkImportsAndLinks(b, exe, target, optimize);
     const check_gtk = b.step("check-gtk-deps", "Verify pkg-config can find GTK4/libadwaita");
@@ -89,6 +94,7 @@ pub fn build(b: *std.Build) void {
         exe.linkLibrary(stub);
     } else {
         exe.addObjectFile(b.path("../libsmithers/zig-out/lib/libsmithers.a"));
+        exe.linkSystemLibrary("sqlite3");
     }
 
     const install_exe = b.addInstallArtifact(exe, .{});
@@ -115,6 +121,16 @@ pub fn build(b: *std.Build) void {
     const run_unit = b.addRunArtifact(unit);
     const test_step = b.step("test", "Run non-GTK smoke/unit tests");
     test_step.dependOn(&run_unit.step);
+
+    const tree_state_unit = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/features/tree_state.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_tree_state_unit = b.addRunArtifact(tree_state_unit);
+    test_step.dependOn(&run_tree_state_unit.step);
 }
 
 fn addGtkImportsAndLinks(
@@ -142,6 +158,10 @@ fn addGtkImportsAndLinks(
         step.root_module.addImport(name, gobject_dep.module(module));
     }
 
-    step.linkSystemLibrary2("gtk4", dynamic_link_opts);
-    step.linkSystemLibrary2("libadwaita-1", dynamic_link_opts);
+    // The gobject zig dependency's gtk4/adw1 modules already call
+    // linkSystemLibrary("gtk-4") and "adwaita-1" via pkg-config. Re-linking
+    // them explicitly here produces duplicate LC_LOAD_DYLIB entries that
+    // macOS dyld rejects at runtime. Linux linkers dedupe, but it's still
+    // redundant — rely on the module imports above.
+    _ = dynamic_link_opts;
 }
