@@ -22,7 +22,7 @@ fn fuzzOne(_: void, input: []const u8) !void {
         0 => try expectTag(.none, action.Action.none),
         1 => try expectStringAction(.open_workspace, action.Action{ .open_workspace = payload }, payload),
         2 => try expectTag(.close_workspace, action.Action.close_workspace),
-        3 => try expectTag(.new_session, action.Action.new_session),
+        3 => try expectTag(.new_session, action.Action{ .new_session = .terminal }),
         4 => try expectTag(.focus_session, action.Action.focus_session),
         5 => try expectTag(.present_command_palette, action.Action.present_command_palette),
         6 => try expectToast(payload),
