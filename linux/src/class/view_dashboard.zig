@@ -25,9 +25,20 @@ pub const DashboardView = extern struct {
     const Private = struct {
         window: *MainWindow = undefined,
         body: *gtk.Box = undefined,
+        tab: DashboardTab = .overview,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
+    };
+
+    const DashboardTab = enum {
+        overview,
+        runs,
+        workflows,
+        approvals,
+        landings,
+        issues,
+        workspaces,
     };
 
     pub fn new(window: *MainWindow) !*Self {
@@ -63,6 +74,15 @@ pub const DashboardView = extern struct {
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
         box.append(header.as(gtk.Widget));
+
+        const tabs = gtk.Box.new(.horizontal, 0);
+        inline for (.{ .overview, .runs, .workflows, .approvals, .landings, .issues, .workspaces }) |tab| {
+            const button = ui.textButton(tabTitle(tab), false);
+            button.as(gobject.Object).setData("smithers-dashboard-tab", @ptrFromInt(tabIndex(tab) + 1));
+            _ = gtk.Button.signals.clicked.connect(button, *Self, tabClicked, self, .{});
+            tabs.append(button.as(gtk.Widget));
+        }
+        box.append(tabs.as(gtk.Widget));
 
         const body = gtk.Box.new(.vertical, 16);
         ui.margin(body.as(gtk.Widget), 20);
@@ -150,6 +170,11 @@ pub const DashboardView = extern struct {
             body.append(ui.dim(warning).as(gtk.Widget));
         }
 
+        if (self.private().tab != .overview) {
+            try self.appendSelectedTab(body, runs.items, workflows.items, approvals.items, landings.items, issues.items, workspaces.items);
+            return;
+        }
+
         const quick = gtk.Box.new(.horizontal, 8);
         const workflows_button = ui.textButton("Workflows", true);
         _ = gtk.Button.signals.clicked.connect(workflows_button, *Self, workflowsClicked, self, .{});
@@ -216,6 +241,110 @@ pub const DashboardView = extern struct {
             }
         }
         body.append(workflow_list.as(gtk.Widget));
+    }
+
+    fn appendSelectedTab(
+        self: *Self,
+        body: *gtk.Box,
+        runs: []const models.RunSummary,
+        workflows: []const models.Workflow,
+        approvals: []const models.Approval,
+        landings: []const vh.Item,
+        issues: []const vh.Item,
+        workspaces: []const models.Workspace,
+    ) !void {
+        switch (self.private().tab) {
+            .overview => {},
+            .runs => try self.appendRunsTab(body, runs),
+            .workflows => try self.appendWorkflowsTab(body, workflows),
+            .approvals => try self.appendApprovalsTab(body, approvals),
+            .landings => try self.appendItemsTab(body, "Landings", landings, "arrow-up-symbolic", "No landings found"),
+            .issues => try self.appendItemsTab(body, "Issues", issues, "dialog-question-symbolic", "No issues found"),
+            .workspaces => try self.appendWorkspacesTab(body, workspaces),
+        }
+    }
+
+    fn appendRunsTab(self: *Self, body: *gtk.Box, runs: []const models.RunSummary) !void {
+        const alloc = self.allocator();
+        body.append(ui.heading("Runs").as(gtk.Widget));
+        const list = vh.listBox();
+        if (runs.len == 0) {
+            list.append((try ui.row(alloc, "view-list-symbolic", "No runs found", "Launch a workflow to see execution state here.")).as(gtk.Widget));
+        } else {
+            for (runs[0..@min(runs.len, 50)], 0..) |run, index| {
+                const title = run.workflow_name orelse run.run_id;
+                const subtitle = try std.fmt.allocPrint(alloc, "{s} - {s} - {d}/{d} nodes", .{ run.run_id, run.status, run.finished + run.failed, run.total });
+                defer alloc.free(subtitle);
+                const row = try ui.row(alloc, runIcon(run.status), title, subtitle);
+                vh.setIndex(row.as(gobject.Object), index);
+                list.append(row.as(gtk.Widget));
+            }
+            _ = gtk.ListBox.signals.row_activated.connect(list, *Self, runActivated, self, .{});
+        }
+        body.append(list.as(gtk.Widget));
+    }
+
+    fn appendWorkflowsTab(self: *Self, body: *gtk.Box, workflows: []const models.Workflow) !void {
+        const alloc = self.allocator();
+        body.append(ui.heading("Workflows").as(gtk.Widget));
+        const list = vh.listBox();
+        if (workflows.len == 0) {
+            list.append((try ui.row(alloc, "emblem-documents-symbolic", "No workflows found", ".smithers/workflows entries appear here.")).as(gtk.Widget));
+        } else {
+            for (workflows[0..@min(workflows.len, 50)]) |workflow| {
+                const path = workflow.relative_path orelse workflow.id;
+                const subtitle = try std.fmt.allocPrint(alloc, "{s} - {s}", .{ path, workflow.status });
+                defer alloc.free(subtitle);
+                list.append((try ui.row(alloc, "media-playlist-shuffle-symbolic", workflow.name, subtitle)).as(gtk.Widget));
+            }
+        }
+        body.append(list.as(gtk.Widget));
+    }
+
+    fn appendApprovalsTab(self: *Self, body: *gtk.Box, approvals: []const models.Approval) !void {
+        const alloc = self.allocator();
+        body.append(ui.heading("Approvals").as(gtk.Widget));
+        const list = vh.listBox();
+        var visible: usize = 0;
+        for (approvals[0..@min(approvals.len, 50)]) |approval| {
+            const title = approval.gate orelse approval.node_id;
+            const subtitle = try std.fmt.allocPrint(alloc, "Run {s} - {s}", .{ approval.run_id, approval.status });
+            defer alloc.free(subtitle);
+            list.append((try ui.row(alloc, "security-high-symbolic", title, subtitle)).as(gtk.Widget));
+            visible += 1;
+        }
+        if (visible == 0) {
+            list.append((try ui.row(alloc, "emblem-ok-symbolic", "No pending approvals", "Waiting gates appear here.")).as(gtk.Widget));
+        }
+        body.append(list.as(gtk.Widget));
+    }
+
+    fn appendItemsTab(self: *Self, body: *gtk.Box, title: [:0]const u8, items: []const vh.Item, icon: [:0]const u8, empty: []const u8) !void {
+        const alloc = self.allocator();
+        body.append(ui.heading(title).as(gtk.Widget));
+        const list = vh.listBox();
+        if (items.len == 0) {
+            list.append((try ui.row(alloc, icon, empty, "No items returned.")).as(gtk.Widget));
+        } else {
+            for (items[0..@min(items.len, 50)]) |item| {
+                list.append((try vh.itemRow(alloc, item, icon)).as(gtk.Widget));
+            }
+        }
+        body.append(list.as(gtk.Widget));
+    }
+
+    fn appendWorkspacesTab(self: *Self, body: *gtk.Box, workspaces: []const models.Workspace) !void {
+        const alloc = self.allocator();
+        body.append(ui.heading("Workspaces").as(gtk.Widget));
+        const list = vh.listBox();
+        if (workspaces.len == 0) {
+            list.append((try ui.row(alloc, "computer-symbolic", "No workspaces found", "Cloud workspaces appear here.")).as(gtk.Widget));
+        } else {
+            for (workspaces[0..@min(workspaces.len, 50)]) |workspace| {
+                list.append((try ui.row(alloc, "computer-symbolic", workspace.name, workspace.status orelse workspace.id)).as(gtk.Widget));
+            }
+        }
+        body.append(list.as(gtk.Widget));
     }
 
     fn callOrError(self: *Self, method: []const u8, fields: []const vh.JsonField, errors: *usize) ?[]u8 {
@@ -295,6 +424,12 @@ pub const DashboardView = extern struct {
         self.private().window.showNav(.triggers);
     }
 
+    fn tabClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const raw = button.as(gobject.Object).getData("smithers-dashboard-tab") orelse return;
+        self.private().tab = tabFromIndex(@intFromPtr(raw) - 1);
+        self.refresh();
+    }
+
     fn shortcutRefresh(self: *Self) void {
         self.refresh();
     }
@@ -302,6 +437,42 @@ pub const DashboardView = extern struct {
     fn runActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         _ = vh.getIndex(row.as(gobject.Object)) orelse return;
         self.private().window.showNav(.runs);
+    }
+
+    fn tabTitle(tab: DashboardTab) [:0]const u8 {
+        return switch (tab) {
+            .overview => "Overview",
+            .runs => "Runs",
+            .workflows => "Workflows",
+            .approvals => "Approvals",
+            .landings => "Landings",
+            .issues => "Issues",
+            .workspaces => "Workspaces",
+        };
+    }
+
+    fn tabIndex(tab: DashboardTab) usize {
+        return switch (tab) {
+            .overview => 0,
+            .runs => 1,
+            .workflows => 2,
+            .approvals => 3,
+            .landings => 4,
+            .issues => 5,
+            .workspaces => 6,
+        };
+    }
+
+    fn tabFromIndex(index: usize) DashboardTab {
+        return switch (index) {
+            1 => .runs,
+            2 => .workflows,
+            3 => .approvals,
+            4 => .landings,
+            5 => .issues,
+            6 => .workspaces,
+            else => .overview,
+        };
     }
 
     fn dispose(self: *Self) callconv(.c) void {
