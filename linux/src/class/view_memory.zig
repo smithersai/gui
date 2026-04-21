@@ -1,4 +1,5 @@
 const std = @import("std");
+const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -24,9 +25,12 @@ pub const MemoryView = extern struct {
         window: *MainWindow = undefined,
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
+        namespace_entry: *gtk.Entry = undefined,
         query_entry: *gtk.Entry = undefined,
+        topk_scale: *gtk.Scale = undefined,
         facts: std.ArrayList(vh.Item) = .empty,
         recall: std.ArrayList(vh.Item) = .empty,
+        selected_index: ?usize = null,
         recall_mode: bool = false,
         did_dispose: bool = false,
 
@@ -56,10 +60,16 @@ pub const MemoryView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
         const header = vh.makeHeader("Memory", null);
         const mode = ui.textButton("Recall", false);
         _ = gtk.Button.signals.clicked.connect(mode, *Self, modeClicked, self, .{});
         header.append(mode.as(gtk.Widget));
+        self.private().namespace_entry = gtk.Entry.new();
+        self.private().namespace_entry.setPlaceholderText("Namespace");
+        self.private().namespace_entry.as(gtk.Widget).setSizeRequest(160, -1);
+        _ = gtk.Entry.signals.activate.connect(self.private().namespace_entry, *Self, namespaceActivated, self, .{});
+        header.append(self.private().namespace_entry.as(gtk.Widget));
         self.private().query_entry = gtk.Entry.new();
         self.private().query_entry.setPlaceholderText("Recall query");
         self.private().query_entry.as(gtk.Widget).setSizeRequest(240, -1);
@@ -69,6 +79,15 @@ pub const MemoryView = extern struct {
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
         root.append(header.as(gtk.Widget));
+
+        const controls = gtk.Box.new(.horizontal, 8);
+        ui.margin4(controls.as(gtk.Widget), 0, 16, 8, 16);
+        controls.append(ui.dim("Top-K").as(gtk.Widget));
+        self.private().topk_scale = gtk.Scale.newWithRange(.horizontal, 1, 50, 1);
+        self.private().topk_scale.as(gtk.Range).setValue(10);
+        self.private().topk_scale.as(gtk.Widget).setHexpand(1);
+        controls.append(self.private().topk_scale.as(gtk.Widget));
+        root.append(controls.as(gtk.Widget));
 
         const split = vh.splitPane(360);
         self.private().list = vh.listBox();
@@ -114,7 +133,8 @@ pub const MemoryView = extern struct {
         const alloc = self.allocator();
         const json = vh.callJson(alloc, self.client(), "recallMemory", &.{
             .{ .key = "query", .value = .{ .string = query } },
-            .{ .key = "topK", .value = .{ .integer = 10 } },
+            .{ .key = "namespace", .value = .{ .optional_string = namespaceFilter(self) } },
+            .{ .key = "topK", .value = .{ .integer = @intFromFloat(self.private().topk_scale.as(gtk.Range).getValue()) } },
         }) catch |err| {
             vh.setStatus(alloc, self.private().detail, "dialog-error-symbolic", "Recall failed", @errorName(err));
             return;
@@ -136,15 +156,26 @@ pub const MemoryView = extern struct {
         const alloc = self.allocator();
         ui.clearList(self.private().list);
         ui.clearBox(self.private().detail);
+        self.private().selected_index = null;
         if (items.len == 0) {
             self.private().list.append((try ui.row(alloc, "view-list-symbolic", empty_title, empty_detail)).as(gtk.Widget));
             vh.setStatus(alloc, self.private().detail, "document-open-recent-symbolic", empty_title, empty_detail);
             return;
         }
+        var visible: usize = 0;
         for (items, 0..) |item, index| {
+            if (!self.private().recall_mode) {
+                if (namespaceFilter(self)) |namespace| {
+                    if (item.subtitle == null or !std.ascii.eqlIgnoreCase(item.subtitle.?, namespace)) continue;
+                }
+            }
             const row = try vh.itemRow(alloc, item, "document-open-recent-symbolic");
             vh.setIndex(row.as(gobject.Object), index);
             self.private().list.append(row.as(gtk.Widget));
+            visible += 1;
+        }
+        if (visible == 0) {
+            self.private().list.append((try ui.row(alloc, "system-search-symbolic", "No memory items match filters", "Adjust namespace or recall query.")).as(gtk.Widget));
         }
         vh.setStatus(alloc, self.private().detail, "document-open-recent-symbolic", "Select a memory item", "Full value and metadata appear here.");
     }
@@ -160,11 +191,67 @@ pub const MemoryView = extern struct {
         self.private().detail.append(ui.heading(title_z).as(gtk.Widget));
         try vh.detailRow(alloc, self.private().detail, if (self.private().recall_mode) "Score" else "Namespace", item.subtitle);
         try vh.detailRow(alloc, self.private().detail, "Schema", item.status);
+        const actions = vh.actionBar();
+        const open = ui.textButton("Open Detail", true);
+        _ = gtk.Button.signals.clicked.connect(open, *Self, openDetailClicked, self, .{});
+        actions.append(open.as(gtk.Widget));
+        if (!self.private().recall_mode) {
+            const delete = ui.textButton("Delete", false);
+            delete.as(gtk.Widget).addCssClass("destructive-action");
+            _ = gtk.Button.signals.clicked.connect(delete, *Self, deleteClicked, self, .{});
+            actions.append(delete.as(gtk.Widget));
+        }
+        self.private().detail.append(actions.as(gtk.Widget));
         const view = vh.textView(false);
         try vh.setTextViewText(alloc, view, item.body orelse item.title);
         const scroll = ui.scrolled(view.as(gtk.Widget));
         scroll.as(gtk.Widget).setSizeRequest(-1, 360);
         self.private().detail.append(scroll.as(gtk.Widget));
+    }
+
+    fn namespaceFilter(self: *Self) ?[]const u8 {
+        const value = vh.trimEntryText(self.private().namespace_entry);
+        return if (value.len == 0) null else value;
+    }
+
+    fn selectedItem(self: *Self) ?vh.Item {
+        const index = self.private().selected_index orelse return null;
+        const source = if (self.private().recall_mode) self.private().recall.items else self.private().facts.items;
+        if (index >= source.len) return null;
+        return source[index];
+    }
+
+    fn showDetailDialog(self: *Self) void {
+        const item = self.selectedItem() orelse return;
+        const alloc = self.allocator();
+        const dialog = adw.Dialog.new();
+        dialog.setTitle("Memory Detail");
+        dialog.setContentWidth(680);
+        dialog.setContentHeight(520);
+        const box = gtk.Box.new(.vertical, 12);
+        ui.margin(box.as(gtk.Widget), 18);
+        const title_z = alloc.dupeZ(u8, item.title) catch return;
+        defer alloc.free(title_z);
+        box.append(ui.heading(title_z).as(gtk.Widget));
+        vh.detailRow(alloc, box, "ID", item.id) catch {};
+        vh.detailRow(alloc, box, "Namespace", item.subtitle) catch {};
+        vh.detailRow(alloc, box, "Schema", item.status) catch {};
+        vh.appendJsonViewer(alloc, box, "Value", item.body orelse item.title, 360) catch {};
+        dialog.setChild(box.as(gtk.Widget));
+        dialog.present(self.as(gtk.Widget));
+    }
+
+    fn deleteSelectedFact(self: *Self) void {
+        if (self.private().recall_mode) return;
+        const item = self.selectedItem() orelse return;
+        const alloc = self.allocator();
+        const json = vh.callJson(alloc, self.client(), "deleteMemoryFact", &.{.{ .key = "id", .value = .{ .string = item.id } }}) catch |err| {
+            self.private().window.showToastFmt("Delete failed: {}", .{err});
+            return;
+        };
+        defer alloc.free(json);
+        self.private().window.showToastFmt("Deleted memory fact {s}", .{item.id});
+        self.loadFacts();
     }
 
     fn modeClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -176,6 +263,10 @@ pub const MemoryView = extern struct {
         self.refresh();
     }
 
+    fn namespaceActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
+        if (self.private().recall_mode) self.doRecall() else self.renderItems(self.private().facts.items, "No memory facts", "Facts written by workflows appear here.") catch {};
+    }
+
     fn queryActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
         self.private().recall_mode = true;
         self.doRecall();
@@ -183,7 +274,20 @@ pub const MemoryView = extern struct {
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const index = vh.getIndex(row.as(gobject.Object)) orelse return;
+        self.private().selected_index = index;
         self.renderDetail(index) catch {};
+    }
+
+    fn openDetailClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.showDetailDialog();
+    }
+
+    fn deleteClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.deleteSelectedFact();
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

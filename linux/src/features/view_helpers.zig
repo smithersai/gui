@@ -453,6 +453,81 @@ pub fn getTextViewText(alloc: std.mem.Allocator, view: *gtk.TextView) ![]u8 {
     return alloc.dupe(u8, std.mem.span(ptr));
 }
 
+pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    var index: usize = 0;
+    while (index + needle.len <= haystack.len) : (index += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[index .. index + needle.len], needle)) return true;
+    }
+    return false;
+}
+
+pub fn trimEntryText(entry: *gtk.Entry) []const u8 {
+    return std.mem.trim(u8, std.mem.span(entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+}
+
+pub fn addSectionTitle(parent: *gtk.Box, title: [:0]const u8) void {
+    const label = ui.heading(title);
+    ui.margin4(label.as(gtk.Widget), 12, 0, 2, 0);
+    parent.append(label.as(gtk.Widget));
+}
+
+pub fn actionBar() *gtk.Box {
+    const box = gtk.Box.new(.horizontal, 8);
+    box.as(gtk.Widget).setHalign(.start);
+    return box;
+}
+
+pub fn installShortcut(
+    comptime T: type,
+    widget: *gtk.Widget,
+    accelerator: [:0]const u8,
+    target: *T,
+    comptime handler: fn (*T) void,
+) void {
+    const Wrapper = struct {
+        fn activate(_: *gtk.Widget, _: ?*glib.Variant, data: ?*anyopaque) callconv(.c) c_int {
+            const ptr = data orelse return 0;
+            const self: *T = @ptrCast(@alignCast(ptr));
+            handler(self);
+            return 1;
+        }
+    };
+
+    const trigger = gtk.ShortcutTrigger.parseString(accelerator.ptr) orelse return;
+    const action = gtk.CallbackAction.new(Wrapper.activate, @ptrCast(target), null);
+    const shortcut = gtk.Shortcut.new(trigger, action.as(gtk.ShortcutAction));
+    const controller = gtk.ShortcutController.new();
+    controller.setScope(.local);
+    controller.addShortcut(shortcut);
+    widget.addController(controller.as(gtk.EventController));
+}
+
+pub fn findTextView(widget: *gtk.Widget) ?*gtk.TextView {
+    if (gobject.ext.cast(gtk.TextView, widget.as(gobject.Object))) |text_view| return text_view;
+    var child = widget.getFirstChild();
+    while (child) |current| {
+        if (findTextView(current)) |found| return found;
+        child = current.getNextSibling();
+    }
+    return null;
+}
+
+pub fn markdownEditorText(alloc: std.mem.Allocator, widget: *gtk.Widget) ![]u8 {
+    const text_view = findTextView(widget) orelse return alloc.dupe(u8, "");
+    return getTextViewText(alloc, text_view);
+}
+
+pub fn appendJsonViewer(alloc: std.mem.Allocator, parent: *gtk.Box, title: [:0]const u8, text: []const u8, height: c_int) !void {
+    addSectionTitle(parent, title);
+    const view = textView(false);
+    try setTextViewText(alloc, view, text);
+    const scroll = ui.scrolled(view.as(gtk.Widget));
+    scroll.as(gtk.Widget).setSizeRequest(-1, height);
+    parent.append(scroll.as(gtk.Widget));
+}
+
 pub fn setIndex(obj: *gobject.Object, index: usize) void {
     ui.setIndex(obj, index);
 }

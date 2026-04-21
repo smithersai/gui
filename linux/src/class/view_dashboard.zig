@@ -56,6 +56,7 @@ pub const DashboardView = extern struct {
         const box = self.as(gtk.Box);
         box.as(gtk.Orientable).setOrientation(.vertical);
         box.setSpacing(0);
+        vh.installShortcut(Self, box.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
 
         const header = vh.makeHeader("Dashboard", null);
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh dashboard");
@@ -149,6 +150,21 @@ pub const DashboardView = extern struct {
             body.append(ui.dim(warning).as(gtk.Widget));
         }
 
+        const quick = gtk.Box.new(.horizontal, 8);
+        const workflows_button = ui.textButton("Workflows", true);
+        _ = gtk.Button.signals.clicked.connect(workflows_button, *Self, workflowsClicked, self, .{});
+        quick.append(workflows_button.as(gtk.Widget));
+        const runs_button = ui.textButton("Runs", false);
+        _ = gtk.Button.signals.clicked.connect(runs_button, *Self, runsClicked, self, .{});
+        quick.append(runs_button.as(gtk.Widget));
+        const approvals_button = ui.textButton("Approvals", false);
+        _ = gtk.Button.signals.clicked.connect(approvals_button, *Self, approvalsClicked, self, .{});
+        quick.append(approvals_button.as(gtk.Widget));
+        const triggers_button = ui.textButton("Triggers", false);
+        _ = gtk.Button.signals.clicked.connect(triggers_button, *Self, triggersClicked, self, .{});
+        quick.append(triggers_button.as(gtk.Widget));
+        body.append(quick.as(gtk.Widget));
+
         const metrics = gtk.Box.new(.horizontal, 12);
         metrics.as(gtk.Widget).setHexpand(1);
         try vh.appendMetric(alloc, metrics, "Active Runs", countActiveRuns(runs.items), "running or waiting");
@@ -163,6 +179,14 @@ pub const DashboardView = extern struct {
         try vh.appendMetric(alloc, second, "Workspaces", workspaces.items.len, "known workspaces");
         try vh.appendMetric(alloc, second, "Recent Runs", runs.items.len, "execution history");
         body.append(second.as(gtk.Widget));
+
+        const run_status = gtk.Box.new(.horizontal, 12);
+        run_status.as(gtk.Widget).setHexpand(1);
+        try vh.appendMetric(alloc, run_status, "Running", countRunStatus(runs.items, "running"), "active agents");
+        try vh.appendMetric(alloc, run_status, "Waiting", countRunStatus(runs.items, "waiting-approval"), "approval blocked");
+        try vh.appendMetric(alloc, run_status, "Finished", countRunStatus(runs.items, "finished"), "completed");
+        try vh.appendMetric(alloc, run_status, "Failed", countRunStatus(runs.items, "failed"), "needs attention");
+        body.append(run_status.as(gtk.Widget));
 
         body.append(ui.heading("Recent Runs").as(gtk.Widget));
         const run_list = vh.listBox();
@@ -234,6 +258,15 @@ pub const DashboardView = extern struct {
         return count;
     }
 
+    fn countRunStatus(runs: []const models.RunSummary, status: []const u8) usize {
+        var count: usize = 0;
+        for (runs) |run| {
+            if (std.ascii.eqlIgnoreCase(run.status, status) or
+                (std.ascii.eqlIgnoreCase(status, "waiting-approval") and std.ascii.eqlIgnoreCase(run.status, "blocked"))) count += 1;
+        }
+        return count;
+    }
+
     fn runIcon(status: []const u8) [:0]const u8 {
         if (std.ascii.eqlIgnoreCase(status, "running")) return "media-playback-start-symbolic";
         if (std.ascii.eqlIgnoreCase(status, "waiting-approval") or std.ascii.eqlIgnoreCase(status, "blocked")) return "security-high-symbolic";
@@ -243,6 +276,26 @@ pub const DashboardView = extern struct {
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.refresh();
+    }
+
+    fn workflowsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.workflows);
+    }
+
+    fn runsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.runs);
+    }
+
+    fn approvalsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.approvals);
+    }
+
+    fn triggersClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.triggers);
+    }
+
+    fn shortcutRefresh(self: *Self) void {
         self.refresh();
     }
 

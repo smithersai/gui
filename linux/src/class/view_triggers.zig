@@ -57,6 +57,7 @@ pub const TriggersView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
         const header = vh.makeHeader("Triggers", null);
         const add = ui.iconButton("list-add-symbolic", "New trigger");
         _ = gtk.Button.signals.clicked.connect(add, *Self, newClicked, self, .{});
@@ -141,6 +142,9 @@ pub const TriggersView = extern struct {
         const toggle = ui.textButton("Toggle", true);
         _ = gtk.Button.signals.clicked.connect(toggle, *Self, toggleClicked, self, .{});
         actions.append(toggle.as(gtk.Widget));
+        const run_now = ui.textButton("Run Now", false);
+        _ = gtk.Button.signals.clicked.connect(run_now, *Self, runNowClicked, self, .{});
+        actions.append(run_now.as(gtk.Widget));
         const delete = ui.textButton("Delete", false);
         delete.as(gtk.Widget).addCssClass("destructive-action");
         _ = gtk.Button.signals.clicked.connect(delete, *Self, deleteClicked, self, .{});
@@ -153,6 +157,10 @@ pub const TriggersView = extern struct {
         const workflow = std.mem.trim(u8, std.mem.span(self.private().workflow_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
         if (pattern.len == 0 or workflow.len == 0) {
             self.private().window.showToast("Pattern and workflow path are required");
+            return;
+        }
+        if (!isValidCronPattern(pattern)) {
+            self.private().window.showToast("Cron pattern must have 5 fields");
             return;
         }
         const alloc = self.allocator();
@@ -190,6 +198,16 @@ pub const TriggersView = extern struct {
         self.refresh();
     }
 
+    fn isValidCronPattern(pattern: []const u8) bool {
+        var parts = std.mem.tokenizeAny(u8, pattern, " \t");
+        var count: usize = 0;
+        while (parts.next()) |part| {
+            if (part.len == 0) continue;
+            count += 1;
+        }
+        return count == 5;
+    }
+
     fn newClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.private().create_visible = !self.private().create_visible;
         if (self.private().create_visible) self.renderCreate() catch {} else self.refresh();
@@ -216,6 +234,14 @@ pub const TriggersView = extern struct {
 
     fn deleteClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.triggerAction("deleteCron", "Deleted");
+    }
+
+    fn runNowClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.triggerAction("runCronNow", "Started");
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

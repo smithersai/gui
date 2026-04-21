@@ -24,8 +24,10 @@ pub const IssuesView = extern struct {
         window: *MainWindow = undefined,
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
+        search_entry: *gtk.Entry = undefined,
         title_entry: *gtk.Entry = undefined,
         body_view: *gtk.TextView = undefined,
+        close_comment: *gtk.TextView = undefined,
         items: std.ArrayList(vh.Item) = .empty,
         selected_index: ?usize = null,
         state_filter: ?[]const u8 = "open",
@@ -58,7 +60,14 @@ pub const IssuesView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
         const header = vh.makeHeader("Issues", null);
+        self.private().search_entry = gtk.Entry.new();
+        self.private().search_entry.setPlaceholderText("Search issues");
+        self.private().search_entry.as(gtk.Widget).setSizeRequest(220, -1);
+        _ = gtk.Editable.signals.changed.connect(self.private().search_entry.as(gtk.Editable), *Self, searchChanged, self, .{});
+        header.append(self.private().search_entry.as(gtk.Widget));
         inline for (.{ "Open", "Closed", "All" }) |label| {
             const button = ui.textButton(label, false);
             _ = gtk.Button.signals.clicked.connect(button, *Self, filterClicked, self, .{});
@@ -113,10 +122,20 @@ pub const IssuesView = extern struct {
             self.private().list.append((try ui.row(alloc, "emblem-documents-symbolic", "No issues found", "Create or change the state filter.")).as(gtk.Widget));
             return;
         }
+        const query = std.mem.trim(u8, std.mem.span(self.private().search_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        var visible: usize = 0;
         for (self.private().items.items, 0..) |item, index| {
+            if (query.len > 0 and
+                !vh.containsIgnoreCase(item.title, query) and
+                !vh.containsIgnoreCase(item.id, query) and
+                !(item.body != null and vh.containsIgnoreCase(item.body.?, query))) continue;
             const row = try vh.itemRow(alloc, item, if (item.status != null and std.ascii.eqlIgnoreCase(item.status.?, "open")) "radio-symbolic" else "emblem-ok-symbolic");
             vh.setIndex(row.as(gobject.Object), index);
             self.private().list.append(row.as(gtk.Widget));
+            visible += 1;
+        }
+        if (visible == 0) {
+            self.private().list.append((try ui.row(alloc, "system-search-symbolic", "No issues match filters", "Adjust search or state filter.")).as(gtk.Widget));
         }
     }
 
@@ -149,7 +168,13 @@ pub const IssuesView = extern struct {
         try vh.detailRow(alloc, self.private().detail, "State", item.status);
         try vh.detailRow(alloc, self.private().detail, "Labels", item.subtitle);
         try vh.detailRow(alloc, self.private().detail, "Body", item.body);
-        const actions = gtk.Box.new(.horizontal, 8);
+        vh.addSectionTitle(self.private().detail, "Close Comment");
+        self.private().close_comment = vh.textView(true);
+        try vh.setTextViewText(alloc, self.private().close_comment, "");
+        const comment_scroll = ui.scrolled(self.private().close_comment.as(gtk.Widget));
+        comment_scroll.as(gtk.Widget).setSizeRequest(-1, 110);
+        self.private().detail.append(comment_scroll.as(gtk.Widget));
+        const actions = vh.actionBar();
         const close = ui.textButton("Close", false);
         _ = gtk.Button.signals.clicked.connect(close, *Self, closeClicked, self, .{});
         actions.append(close.as(gtk.Widget));
@@ -178,6 +203,7 @@ pub const IssuesView = extern struct {
         defer alloc.free(json);
         self.private().window.showToastFmt("Created issue {s}", .{title});
         self.private().create_visible = false;
+        self.private().state_filter = "open";
         self.refresh();
     }
 
@@ -189,13 +215,49 @@ pub const IssuesView = extern struct {
             return;
         };
         const alloc = self.allocator();
-        const json = vh.callJson(alloc, self.client(), method, &.{.{ .key = "number", .value = .{ .integer = number } }}) catch |err| {
+        const comment = if (std.mem.eql(u8, method, "closeIssue"))
+            vh.getTextViewText(alloc, self.private().close_comment) catch return
+        else
+            alloc.dupe(u8, "") catch return;
+        defer alloc.free(comment);
+        const json = if (std.mem.eql(u8, method, "closeIssue"))
+            vh.callJson(alloc, self.client(), method, &.{
+                .{ .key = "number", .value = .{ .integer = number } },
+                .{ .key = "comment", .value = .{ .optional_string = if (std.mem.trim(u8, comment, &std.ascii.whitespace).len == 0) null else std.mem.trim(u8, comment, &std.ascii.whitespace) } },
+            })
+        else
+            vh.callJson(alloc, self.client(), method, &.{.{ .key = "number", .value = .{ .integer = number } }});
+        const result = json catch |err| {
             self.private().window.showToastFmt("{s} failed: {}", .{ label, err });
             return;
         };
-        defer alloc.free(json);
+        defer alloc.free(result);
         self.private().window.showToastFmt("{s} #{d}", .{ label, number });
         self.refresh();
+    }
+
+    fn refreshIssueDetail(self: *Self, index: usize) void {
+        if (index >= self.private().items.items.len) return;
+        const number = self.private().items.items[index].number orelse return;
+        const alloc = self.allocator();
+        const json = vh.callJson(alloc, self.client(), "getIssue", &.{.{ .key = "number", .value = .{ .integer = number } }}) catch return;
+        defer alloc.free(json);
+        var parsed = vh.parseItems(alloc, json, &.{ "issue", "issues", "items", "data" }, .{
+            .id = &.{ "id", "number", "title" },
+            .title = &.{"title"},
+            .subtitle = &.{ "labels", "assignees" },
+            .status = &.{ "state", "status" },
+            .body = &.{ "body", "description" },
+            .number = &.{"number"},
+        }) catch return;
+        defer {
+            vh.clearItems(alloc, &parsed);
+            parsed.deinit(alloc);
+        }
+        if (parsed.items.len == 0) return;
+        self.private().items.items[index].deinit(alloc);
+        self.private().items.items[index] = parsed.items[0];
+        _ = parsed.orderedRemove(0);
     }
 
     fn filterClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
@@ -214,10 +276,15 @@ pub const IssuesView = extern struct {
         self.refresh();
     }
 
+    fn searchChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        self.renderList() catch {};
+    }
+
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const index = vh.getIndex(row.as(gobject.Object)) orelse return;
         self.private().selected_index = index;
         self.private().create_visible = false;
+        self.refreshIssueDetail(index);
         self.renderDetail(index) catch {};
     }
 
@@ -231,6 +298,14 @@ pub const IssuesView = extern struct {
 
     fn reopenClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.issueAction("reopenIssue", "Reopened");
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
+    }
+
+    fn shortcutSearch(self: *Self) void {
+        _ = self.private().search_entry.as(gtk.Widget).grabFocus();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

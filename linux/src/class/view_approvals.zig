@@ -25,8 +25,10 @@ pub const ApprovalsView = extern struct {
         window: *MainWindow = undefined,
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
+        deny_note: *gtk.TextView = undefined,
         approvals: std.ArrayList(models.Approval) = .empty,
         decisions: std.ArrayList(vh.Item) = .empty,
+        selected: std.ArrayList(bool) = .empty,
         selected_index: ?usize = null,
         show_history: bool = false,
         did_dispose: bool = false,
@@ -59,7 +61,11 @@ pub const ApprovalsView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
         const header = vh.makeHeader("Approvals", null);
+        const batch = ui.textButton("Approve Selected", true);
+        _ = gtk.Button.signals.clicked.connect(batch, *Self, batchApproveClicked, self, .{});
+        header.append(batch.as(gtk.Widget));
         const history = ui.textButton("History", false);
         _ = gtk.Button.signals.clicked.connect(history, *Self, historyClicked, self, .{});
         header.append(history.as(gtk.Widget));
@@ -105,6 +111,8 @@ pub const ApprovalsView = extern struct {
             const parsed = try models.parseApprovals(alloc, json);
             models.clearList(models.Approval, alloc, &self.private().approvals);
             self.private().approvals = parsed;
+            self.private().selected.clearRetainingCapacity();
+            try self.private().selected.appendNTimes(alloc, false, self.private().approvals.items.len);
         }
         self.private().selected_index = null;
         try self.renderList();
@@ -135,7 +143,30 @@ pub const ApprovalsView = extern struct {
             const title = approval.gate orelse approval.node_id;
             const subtitle = try std.fmt.allocPrint(alloc, "Run {s} - {s}", .{ approval.run_id, approval.status });
             defer alloc.free(subtitle);
-            const row = try ui.row(alloc, "security-high-symbolic", title, subtitle);
+            const row = gtk.ListBoxRow.new();
+            row.setActivatable(1);
+            const row_box = gtk.Box.new(.horizontal, 10);
+            ui.margin(row_box.as(gtk.Widget), 10);
+
+            const check = gtk.CheckButton.new();
+            check.setActive(if (index < self.private().selected.items.len and self.private().selected.items[index]) 1 else 0);
+            vh.setIndex(check.as(gobject.Object), index);
+            _ = gtk.CheckButton.signals.toggled.connect(check, *Self, selectionToggled, self, .{});
+            row_box.append(check.as(gtk.Widget));
+
+            const text_box = gtk.Box.new(.vertical, 2);
+            text_box.as(gtk.Widget).setHexpand(1);
+            const title_z = try alloc.dupeZ(u8, title);
+            defer alloc.free(title_z);
+            const title_label = ui.label(title_z, "heading");
+            title_label.setWrap(0);
+            title_label.setEllipsize(.end);
+            text_box.append(title_label.as(gtk.Widget));
+            const subtitle_z = try alloc.dupeZ(u8, subtitle);
+            defer alloc.free(subtitle_z);
+            text_box.append(ui.dim(subtitle_z).as(gtk.Widget));
+            row_box.append(text_box.as(gtk.Widget));
+            row.setChild(row_box.as(gtk.Widget));
             vh.setIndex(row.as(gobject.Object), index);
             list.append(row.as(gtk.Widget));
         }
@@ -167,7 +198,13 @@ pub const ApprovalsView = extern struct {
         try vh.detailRow(alloc, detail, "Node", approval.node_id);
         try vh.detailRow(alloc, detail, "Status", approval.status);
         try vh.detailRow(alloc, detail, "Source", approval.source);
-        const actions = gtk.Box.new(.horizontal, 8);
+        vh.addSectionTitle(detail, "Decision Note");
+        self.private().deny_note = vh.textView(true);
+        try vh.setTextViewText(alloc, self.private().deny_note, "");
+        const note_scroll = ui.scrolled(self.private().deny_note.as(gtk.Widget));
+        note_scroll.as(gtk.Widget).setSizeRequest(-1, 110);
+        detail.append(note_scroll.as(gtk.Widget));
+        const actions = vh.actionBar();
         const approve = ui.textButton("Approve", true);
         _ = gtk.Button.signals.clicked.connect(approve, *Self, approveClicked, self, .{});
         actions.append(approve.as(gtk.Widget));
@@ -183,10 +220,21 @@ pub const ApprovalsView = extern struct {
         if (index >= self.private().approvals.items.len) return;
         const approval = self.private().approvals.items[index];
         const alloc = self.allocator();
+        const note = if (std.mem.eql(u8, method, "denyNode"))
+            vh.getTextViewText(alloc, self.private().deny_note) catch return
+        else
+            alloc.dupe(u8, "") catch return;
+        defer alloc.free(note);
+        const trimmed_note = std.mem.trim(u8, note, &std.ascii.whitespace);
+        if (std.mem.eql(u8, method, "denyNode") and trimmed_note.len == 0) {
+            self.private().window.showToast("A deny note is required");
+            return;
+        }
         const args = vh.jsonObject(alloc, &.{
             .{ .key = "runId", .value = .{ .string = approval.run_id } },
             .{ .key = "nodeId", .value = .{ .string = approval.node_id } },
             .{ .key = "iteration", .value = if (approval.iteration) |iteration| .{ .integer = iteration } else .null },
+            .{ .key = if (std.mem.eql(u8, method, "denyNode")) "reason" else "note", .value = .{ .string = trimmed_note } },
         }) catch return;
         defer alloc.free(args);
         const json = smithers.callJson(alloc, self.client(), method, args) catch |err| {
@@ -195,6 +243,34 @@ pub const ApprovalsView = extern struct {
         };
         defer alloc.free(json);
         self.private().window.showToastFmt("{s} {s}", .{ label, approval.gate orelse approval.node_id });
+        self.refresh();
+    }
+
+    fn approveSelected(self: *Self) void {
+        if (self.private().show_history) {
+            self.private().window.showToast("Switch to pending approvals for batch actions");
+            return;
+        }
+        const alloc = self.allocator();
+        var approved: usize = 0;
+        for (self.private().approvals.items, 0..) |approval, index| {
+            if (index >= self.private().selected.items.len or !self.private().selected.items[index]) continue;
+            const args = vh.jsonObject(alloc, &.{
+                .{ .key = "runId", .value = .{ .string = approval.run_id } },
+                .{ .key = "nodeId", .value = .{ .string = approval.node_id } },
+                .{ .key = "iteration", .value = if (approval.iteration) |iteration| .{ .integer = iteration } else .null },
+                .{ .key = "note", .value = .{ .string = "Batch approved from GTK approvals view" } },
+            }) catch continue;
+            defer alloc.free(args);
+            const json = smithers.callJson(alloc, self.client(), "approveNode", args) catch continue;
+            alloc.free(json);
+            approved += 1;
+        }
+        if (approved == 0) {
+            self.private().window.showToast("Select approvals to batch approve");
+            return;
+        }
+        self.private().window.showToastFmt("Approved {d} approval(s)", .{approved});
         self.refresh();
     }
 
@@ -213,12 +289,26 @@ pub const ApprovalsView = extern struct {
         self.renderDetail(index) catch {};
     }
 
+    fn selectionToggled(button: *gtk.CheckButton, self: *Self) callconv(.c) void {
+        const index = vh.getIndex(button.as(gobject.Object)) orelse return;
+        if (index >= self.private().selected.items.len) return;
+        self.private().selected.items[index] = button.getActive() != 0;
+    }
+
     fn approveClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.complete("approveNode", "Approved");
     }
 
     fn denyClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.complete("denyNode", "Denied");
+    }
+
+    fn batchApproveClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.approveSelected();
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
     }
 
     fn dispose(self: *Self) callconv(.c) void {
@@ -229,6 +319,7 @@ pub const ApprovalsView = extern struct {
             priv.approvals.deinit(self.allocator());
             vh.clearItems(self.allocator(), &priv.decisions);
             priv.decisions.deinit(self.allocator());
+            priv.selected.deinit(self.allocator());
             ui.clearBox(self.as(gtk.Box));
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));

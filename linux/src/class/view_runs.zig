@@ -1,4 +1,5 @@
 const std = @import("std");
+const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -27,6 +28,8 @@ pub const RunsView = extern struct {
         detail: *gtk.Box = undefined,
         search_entry: *gtk.Entry = undefined,
         status_filter: ?[]const u8 = null,
+        sort_desc: bool = true,
+        pending_cancel_index: ?usize = null,
         runs: std.ArrayList(models.RunSummary) = .empty,
         inspection: ?models.RunInspection = null,
         selected_index: ?usize = null,
@@ -61,13 +64,19 @@ pub const RunsView = extern struct {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
         root.setSpacing(0);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
 
         const header = vh.makeHeader("Runs", null);
         self.private().search_entry = gtk.Entry.new();
         self.private().search_entry.setPlaceholderText("Search runs");
         self.private().search_entry.as(gtk.Widget).setSizeRequest(220, -1);
+        _ = gtk.Editable.signals.changed.connect(self.private().search_entry.as(gtk.Editable), *Self, searchChanged, self, .{});
         _ = gtk.Entry.signals.activate.connect(self.private().search_entry, *Self, searchActivated, self, .{});
         header.append(self.private().search_entry.as(gtk.Widget));
+        const sort_button = ui.textButton("Newest First", false);
+        _ = gtk.Button.signals.clicked.connect(sort_button, *Self, sortClicked, self, .{});
+        header.append(sort_button.as(gtk.Widget));
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh runs");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
@@ -108,6 +117,7 @@ pub const RunsView = extern struct {
         const parsed = try models.parseRuns(alloc, json);
         models.clearList(models.RunSummary, alloc, &self.private().runs);
         self.private().runs = parsed;
+        self.sortRuns();
         self.private().selected_index = null;
         self.clearInspection();
         try self.renderList();
@@ -137,6 +147,26 @@ pub const RunsView = extern struct {
         if (visible == 0) {
             list.append((try ui.row(alloc, "view-list-symbolic", "No runs found", "Adjust filters or launch a workflow.")).as(gtk.Widget));
         }
+    }
+
+    fn sortRuns(self: *Self) void {
+        if (self.private().sort_desc) {
+            std.mem.sort(models.RunSummary, self.private().runs.items, {}, newerRunFirst);
+        } else {
+            std.mem.sort(models.RunSummary, self.private().runs.items, {}, olderRunFirst);
+        }
+    }
+
+    fn runTimestamp(run: models.RunSummary) i64 {
+        return run.started_at_ms orelse run.finished_at_ms orelse 0;
+    }
+
+    fn newerRunFirst(_: void, lhs: models.RunSummary, rhs: models.RunSummary) bool {
+        return runTimestamp(lhs) > runTimestamp(rhs);
+    }
+
+    fn olderRunFirst(_: void, lhs: models.RunSummary, rhs: models.RunSummary) bool {
+        return runTimestamp(lhs) < runTimestamp(rhs);
     }
 
     fn matchesFilters(self: *Self, run: models.RunSummary) bool {
@@ -196,6 +226,18 @@ pub const RunsView = extern struct {
         const inspect = ui.textButton("Open Inspector", true);
         _ = gtk.Button.signals.clicked.connect(inspect, *Self, openInspectorClicked, self, .{});
         actions.append(inspect.as(gtk.Widget));
+        const refresh_status = ui.textButton("Refresh Status", false);
+        _ = gtk.Button.signals.clicked.connect(refresh_status, *Self, refreshStatusClicked, self, .{});
+        actions.append(refresh_status.as(gtk.Widget));
+        const rerun = ui.textButton("Rerun", false);
+        _ = gtk.Button.signals.clicked.connect(rerun, *Self, rerunClicked, self, .{});
+        actions.append(rerun.as(gtk.Widget));
+        const fork = ui.textButton("Fork", false);
+        _ = gtk.Button.signals.clicked.connect(fork, *Self, forkClicked, self, .{});
+        actions.append(fork.as(gtk.Widget));
+        const replay = ui.textButton("Replay", false);
+        _ = gtk.Button.signals.clicked.connect(replay, *Self, replayClicked, self, .{});
+        actions.append(replay.as(gtk.Widget));
         const cancel = ui.textButton("Cancel", false);
         cancel.as(gtk.Widget).addCssClass("destructive-action");
         _ = gtk.Button.signals.clicked.connect(cancel, *Self, cancelClicked, self, .{});
@@ -263,6 +305,74 @@ pub const RunsView = extern struct {
         self.refresh();
     }
 
+    fn confirmCancelSelectedRun(self: *Self) void {
+        const index = self.private().selected_index orelse return;
+        if (index >= self.private().runs.items.len) return;
+        self.private().pending_cancel_index = index;
+        const run = self.private().runs.items[index];
+        const alloc = self.allocator();
+        const body = std.fmt.allocPrintSentinel(alloc, "Cancel run {s}? This stops active agents for the run.", .{run.run_id}, 0) catch return;
+        defer alloc.free(body);
+        const dialog = adw.AlertDialog.new("Cancel Run", body.ptr);
+        dialog.addResponse("keep", "Keep Running");
+        dialog.addResponse("cancel", "Cancel Run");
+        dialog.setCloseResponse("keep");
+        dialog.setDefaultResponse("keep");
+        dialog.setResponseAppearance("cancel", .destructive);
+        _ = adw.AlertDialog.signals.response.connect(dialog, *Self, cancelDialogResponse, self, .{});
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
+    }
+
+    fn simpleRunAction(self: *Self, method: []const u8, label: []const u8) void {
+        const index = self.private().selected_index orelse return;
+        if (index >= self.private().runs.items.len) return;
+        const run = self.private().runs.items[index];
+        const alloc = self.allocator();
+        const args = vh.jsonObject(alloc, &.{.{ .key = "runId", .value = .{ .string = run.run_id } }}) catch return;
+        defer alloc.free(args);
+        const json = smithers.callJson(alloc, self.client(), method, args) catch |err| {
+            self.private().window.showToastFmt("{s} failed: {}", .{ label, err });
+            return;
+        };
+        defer alloc.free(json);
+        self.private().window.showToastFmt("{s} {s}", .{ label, run.run_id });
+        if (self.private().selected_index) |selected| self.loadInspection(selected) catch self.refresh();
+    }
+
+    fn snapshotRunAction(self: *Self, method: []const u8, label: []const u8) void {
+        const index = self.private().selected_index orelse return;
+        if (index >= self.private().runs.items.len) return;
+        const run = self.private().runs.items[index];
+        const alloc = self.allocator();
+        const snapshots_json = vh.callJson(alloc, self.client(), "listSnapshots", &.{.{ .key = "runId", .value = .{ .string = run.run_id } }}) catch |err| {
+            self.private().window.showToastFmt("{s} failed: {}", .{ label, err });
+            return;
+        };
+        defer alloc.free(snapshots_json);
+        var snapshots = vh.parseItems(alloc, snapshots_json, &.{ "snapshots", "items", "data" }, .{
+            .id = &.{"id"},
+            .title = &.{ "label", "id" },
+            .subtitle = &.{ "nodeId", "node_id", "createdAtMs", "created_at_ms" },
+        }) catch std.ArrayList(vh.Item).empty;
+        defer {
+            vh.clearItems(alloc, &snapshots);
+            snapshots.deinit(alloc);
+        }
+        if (snapshots.items.len == 0) {
+            self.private().window.showToast("No snapshots available for this run");
+            return;
+        }
+        const args = vh.jsonObject(alloc, &.{.{ .key = "snapshotId", .value = .{ .string = snapshots.items[0].id } }}) catch return;
+        defer alloc.free(args);
+        const json = smithers.callJson(alloc, self.client(), method, args) catch |err| {
+            self.private().window.showToastFmt("{s} failed: {}", .{ label, err });
+            return;
+        };
+        defer alloc.free(json);
+        self.private().window.showToastFmt("{s} from {s}", .{ label, snapshots.items[0].id });
+        self.private().window.showNav(.runs);
+    }
+
     fn clearInspection(self: *Self) void {
         if (self.private().inspection) |*inspection| {
             inspection.deinit(self.allocator());
@@ -317,6 +427,17 @@ pub const RunsView = extern struct {
         self.renderList() catch {};
     }
 
+    fn searchChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        self.renderList() catch {};
+    }
+
+    fn sortClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().sort_desc = !self.private().sort_desc;
+        self.sortRuns();
+        self.renderList() catch {};
+        self.private().window.showToast(if (self.private().sort_desc) "Sorted newest first" else "Sorted oldest first");
+    }
+
     fn statusFilterClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
         const raw = button.as(gobject.Object).getData("smithers-status-filter") orelse return;
         const label: [*:0]const u8 = @ptrCast(raw);
@@ -336,7 +457,33 @@ pub const RunsView = extern struct {
     }
 
     fn cancelClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.confirmCancelSelectedRun();
+    }
+
+    fn cancelDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
+        if (std.mem.orderZ(u8, response, "cancel") != .eq) {
+            self.private().pending_cancel_index = null;
+            return;
+        }
+        self.private().selected_index = self.private().pending_cancel_index;
+        self.private().pending_cancel_index = null;
         self.cancelSelectedRun();
+    }
+
+    fn refreshStatusClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        if (self.private().selected_index) |index| self.loadInspection(index) catch self.refresh();
+    }
+
+    fn rerunClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.simpleRunAction("rerunRun", "Reran");
+    }
+
+    fn forkClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.snapshotRunAction("forkRun", "Forked");
+    }
+
+    fn replayClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.snapshotRunAction("replayRun", "Replayed");
     }
 
     fn approveClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -345,6 +492,14 @@ pub const RunsView = extern struct {
 
     fn denyClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.completeApproval("denyNode", "Denied");
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
+    }
+
+    fn shortcutSearch(self: *Self) void {
+        _ = self.private().search_entry.as(gtk.Widget).grabFocus();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

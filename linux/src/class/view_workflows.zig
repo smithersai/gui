@@ -25,7 +25,9 @@ pub const WorkflowsView = extern struct {
         window: *MainWindow = undefined,
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
+        search_entry: *gtk.Entry = undefined,
         source_view: *gtk.TextView = undefined,
+        input_view: *gtk.TextView = undefined,
         workflows: std.ArrayList(models.Workflow) = .empty,
         selected_index: ?usize = null,
         did_dispose: bool = false,
@@ -59,8 +61,15 @@ pub const WorkflowsView = extern struct {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
         root.setSpacing(0);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
 
         const header = vh.makeHeader("Workflows", null);
+        self.private().search_entry = gtk.Entry.new();
+        self.private().search_entry.setPlaceholderText("Search workflows");
+        self.private().search_entry.as(gtk.Widget).setSizeRequest(220, -1);
+        _ = gtk.Editable.signals.changed.connect(self.private().search_entry.as(gtk.Editable), *Self, searchChanged, self, .{});
+        header.append(self.private().search_entry.as(gtk.Widget));
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh workflows");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
@@ -103,13 +112,23 @@ pub const WorkflowsView = extern struct {
             list.append((try ui.row(alloc, "emblem-documents-symbolic", "No workflows found", "Create .smithers/workflows entries to launch them here.")).as(gtk.Widget));
             return;
         }
+        const query = std.mem.trim(u8, std.mem.span(self.private().search_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        var visible: usize = 0;
         for (self.private().workflows.items, 0..) |workflow, index| {
+            if (query.len > 0 and
+                !vh.containsIgnoreCase(workflow.name, query) and
+                !vh.containsIgnoreCase(workflow.id, query) and
+                !(workflow.relative_path != null and vh.containsIgnoreCase(workflow.relative_path.?, query))) continue;
             const path = workflow.relative_path orelse workflow.id;
             const subtitle = try std.fmt.allocPrint(alloc, "{s} - {s}", .{ path, workflow.status });
             defer alloc.free(subtitle);
             const row = try ui.row(alloc, "media-playlist-shuffle-symbolic", workflow.name, subtitle);
             vh.setIndex(row.as(gobject.Object), index);
             list.append(row.as(gtk.Widget));
+            visible += 1;
+        }
+        if (visible == 0) {
+            list.append((try ui.row(alloc, "system-search-symbolic", "No matching workflows", "Adjust the workflow search.")).as(gtk.Widget));
         }
     }
 
@@ -150,6 +169,20 @@ pub const WorkflowsView = extern struct {
         actions.append(graph.as(gtk.Widget));
         detail.append(actions.as(gtk.Widget));
 
+        vh.addSectionTitle(detail, "Launch Inputs");
+        const dag_text = self.workflowCallText("getWorkflowDAG", workflow) catch null;
+        if (dag_text) |text| {
+            defer alloc.free(text);
+            try self.appendLaunchFields(text);
+        } else {
+            detail.append(ui.dim("Launch-field analysis is unavailable. Provide raw JSON inputs or run without inputs.").as(gtk.Widget));
+        }
+        self.private().input_view = vh.textView(true);
+        try vh.setTextViewText(alloc, self.private().input_view, "{}");
+        const input_scroll = ui.scrolled(self.private().input_view.as(gtk.Widget));
+        input_scroll.as(gtk.Widget).setSizeRequest(-1, 120);
+        detail.append(input_scroll.as(gtk.Widget));
+
         const source_title = ui.heading("Source");
         detail.append(source_title.as(gtk.Widget));
         self.private().source_view = vh.textView(true);
@@ -168,6 +201,8 @@ pub const WorkflowsView = extern struct {
         const source_scroll = ui.scrolled(self.private().source_view.as(gtk.Widget));
         source_scroll.as(gtk.Widget).setSizeRequest(-1, 320);
         detail.append(source_scroll.as(gtk.Widget));
+
+        try self.appendRecentRuns(workflow);
     }
 
     fn selectedWorkflow(self: *Self) ?models.Workflow {
@@ -176,11 +211,89 @@ pub const WorkflowsView = extern struct {
         return self.private().workflows.items[index];
     }
 
+    fn workflowCallText(self: *Self, method: []const u8, workflow: models.Workflow) ![]u8 {
+        const alloc = self.allocator();
+        const path = workflow.relative_path orelse workflow.id;
+        const args = try vh.jsonObject(alloc, &.{.{ .key = "workflowPath", .value = .{ .string = path } }});
+        defer alloc.free(args);
+        const json = try smithers.callJson(alloc, self.client(), method, args);
+        defer alloc.free(json);
+        return vh.parseStringResult(alloc, json) catch try alloc.dupe(u8, json);
+    }
+
+    fn appendLaunchFields(self: *Self, dag_json: []const u8) !void {
+        const alloc = self.allocator();
+        var parsed = std.json.parseFromSlice(std.json.Value, alloc, dag_json, .{}) catch {
+            try vh.detailRow(alloc, self.private().detail, "Fields", "No structured launch fields returned.");
+            return;
+        };
+        defer parsed.deinit();
+        const root = vh.object(&parsed.value) orelse return;
+        const fields_value = root.get("fields") orelse root.get("launchFields") orelse root.get("inputs") orelse return;
+        var fields_copy = fields_value;
+        const fields = vh.arrayFromRoot(&fields_copy, &.{ "fields", "items", "data" }) orelse return;
+        if (fields.len == 0) {
+            try vh.detailRow(alloc, self.private().detail, "Fields", "No dynamic input fields detected.");
+            return;
+        }
+        const list = vh.listBox();
+        for (fields) |field_value| {
+            var copy = field_value;
+            const obj = vh.object(&copy) orelse continue;
+            const key = try vh.stringField(alloc, obj, &.{ "key", "name", "id" }) orelse continue;
+            defer alloc.free(key);
+            const kind = try vh.stringField(alloc, obj, &.{ "type", "kind" }) orelse try alloc.dupe(u8, "string");
+            defer alloc.free(kind);
+            const required = vh.boolField(obj, &.{"required"}) orelse false;
+            const subtitle = try std.fmt.allocPrint(alloc, "{s}{s}", .{ kind, if (required) " - required" else "" });
+            defer alloc.free(subtitle);
+            list.append((try ui.row(alloc, "insert-text-symbolic", key, subtitle)).as(gtk.Widget));
+        }
+        self.private().detail.append(list.as(gtk.Widget));
+    }
+
+    fn appendRecentRuns(self: *Self, workflow: models.Workflow) !void {
+        const alloc = self.allocator();
+        const json = smithers.callJson(alloc, self.client(), "listRuns", "{}") catch return;
+        defer alloc.free(json);
+        var runs = models.parseRuns(alloc, json) catch std.ArrayList(models.RunSummary).empty;
+        defer {
+            models.clearList(models.RunSummary, alloc, &runs);
+            runs.deinit(alloc);
+        }
+        vh.addSectionTitle(self.private().detail, "Recent Runs");
+        const list = vh.listBox();
+        var visible: usize = 0;
+        const workflow_path = workflow.relative_path orelse workflow.id;
+        for (runs.items) |run| {
+            const matches_path = run.workflow_path != null and std.mem.eql(u8, run.workflow_path.?, workflow_path);
+            const matches_name = run.workflow_name != null and (std.mem.eql(u8, run.workflow_name.?, workflow.name) or std.mem.eql(u8, run.workflow_name.?, workflow.id));
+            if (!matches_path and !matches_name) continue;
+            const subtitle = try std.fmt.allocPrint(alloc, "{s} - {s}", .{ run.run_id, run.status });
+            defer alloc.free(subtitle);
+            list.append((try ui.row(alloc, "media-playback-start-symbolic", run.workflow_name orelse run.run_id, subtitle)).as(gtk.Widget));
+            visible += 1;
+            if (visible >= 5) break;
+        }
+        if (visible == 0) {
+            list.append((try ui.row(alloc, "view-list-symbolic", "No runs for this workflow", "Launch it to populate this list.")).as(gtk.Widget));
+        }
+        self.private().detail.append(list.as(gtk.Widget));
+    }
+
     fn runSelected(self: *Self) void {
         const workflow = self.selectedWorkflow() orelse return;
         const alloc = self.allocator();
         const path = workflow.relative_path orelse workflow.id;
-        const args = vh.jsonObject(alloc, &.{.{ .key = "workflowPath", .value = .{ .string = path } }}) catch return;
+        const inputs = vh.getTextViewText(alloc, self.private().input_view) catch alloc.dupe(u8, "{}") catch return;
+        defer alloc.free(inputs);
+        const args = vh.jsonObject(alloc, &.{
+            .{ .key = "workflowPath", .value = .{ .string = path } },
+            .{ .key = "inputs", .value = .{ .raw = if (std.mem.trim(u8, inputs, &std.ascii.whitespace).len == 0) "{}" else inputs } },
+        }) catch {
+            self.private().window.showToast("Launch inputs must be valid JSON");
+            return;
+        };
         defer alloc.free(args);
         const json = smithers.callJson(alloc, self.client(), "runWorkflow", args) catch |err| {
             self.private().window.showToastFmt("Workflow launch failed: {}", .{err});
@@ -213,15 +326,10 @@ pub const WorkflowsView = extern struct {
     fn showWorkflowCall(self: *Self, method: []const u8, title: []const u8) void {
         const workflow = self.selectedWorkflow() orelse return;
         const alloc = self.allocator();
-        const path = workflow.relative_path orelse workflow.id;
-        const args = vh.jsonObject(alloc, &.{.{ .key = "workflowPath", .value = .{ .string = path } }}) catch return;
-        defer alloc.free(args);
-        const json = smithers.callJson(alloc, self.client(), method, args) catch |err| {
+        const text = self.workflowCallText(method, workflow) catch |err| {
             self.private().window.showToastFmt("{s} failed: {}", .{ title, err });
             return;
         };
-        defer alloc.free(json);
-        const text = vh.parseStringResult(alloc, json) catch alloc.dupe(u8, json) catch return;
         defer alloc.free(text);
         const detail = self.private().detail;
         const heading_z = std.fmt.allocPrintSentinel(alloc, "{s} Result", .{title}, 0) catch return;
@@ -236,6 +344,10 @@ pub const WorkflowsView = extern struct {
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.refresh();
+    }
+
+    fn searchChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        self.renderList() catch {};
     }
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
@@ -257,6 +369,14 @@ pub const WorkflowsView = extern struct {
 
     fn graphClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.showWorkflowCall("getWorkflowDAG", "Graph");
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
+    }
+
+    fn shortcutSearch(self: *Self) void {
+        _ = self.private().search_entry.as(gtk.Widget).grabFocus();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

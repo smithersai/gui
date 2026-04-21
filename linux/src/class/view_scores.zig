@@ -25,9 +25,12 @@ pub const ScoresView = extern struct {
         window: *MainWindow = undefined,
         runs_list: *gtk.ListBox = undefined,
         body: *gtk.Box = undefined,
+        min_entry: *gtk.Entry = undefined,
+        max_entry: *gtk.Entry = undefined,
         runs: std.ArrayList(models.RunSummary) = .empty,
         scores: std.ArrayList(vh.Item) = .empty,
         selected_index: ?usize = null,
+        sort_desc: bool = true,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -56,7 +59,21 @@ pub const ScoresView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
         const header = vh.makeHeader("Scores", null);
+        self.private().min_entry = gtk.Entry.new();
+        self.private().min_entry.setPlaceholderText("Min");
+        self.private().min_entry.as(gtk.Widget).setSizeRequest(70, -1);
+        _ = gtk.Entry.signals.activate.connect(self.private().min_entry, *Self, scoreFilterActivated, self, .{});
+        header.append(self.private().min_entry.as(gtk.Widget));
+        self.private().max_entry = gtk.Entry.new();
+        self.private().max_entry.setPlaceholderText("Max");
+        self.private().max_entry.as(gtk.Widget).setSizeRequest(70, -1);
+        _ = gtk.Entry.signals.activate.connect(self.private().max_entry, *Self, scoreFilterActivated, self, .{});
+        header.append(self.private().max_entry.as(gtk.Widget));
+        const sort = ui.textButton("High First", false);
+        _ = gtk.Button.signals.clicked.connect(sort, *Self, sortClicked, self, .{});
+        header.append(sort.as(gtk.Widget));
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh scores");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
@@ -125,6 +142,7 @@ pub const ScoresView = extern struct {
         }) catch std.ArrayList(vh.Item).empty;
         vh.clearItems(alloc, &self.private().scores);
         self.private().scores = parsed;
+        self.sortScores();
         self.renderScores(run) catch {};
     }
 
@@ -133,9 +151,12 @@ pub const ScoresView = extern struct {
         const body = self.private().body;
         ui.clearBox(body);
         body.append(ui.heading("Score Summary").as(gtk.Widget));
+        const visible = self.visibleScoreStats();
         const metrics = gtk.Box.new(.horizontal, 12);
-        try vh.appendMetric(alloc, metrics, "Evaluations", self.private().scores.items.len, run.run_id);
-        try vh.appendMetric(alloc, metrics, "Mean Score", meanScorePercent(self.private().scores.items), "average score");
+        try vh.appendMetric(alloc, metrics, "Evaluations", visible.count, run.run_id);
+        try vh.appendMetric(alloc, metrics, "Mean Score", visible.mean, "visible average");
+        try vh.appendMetric(alloc, metrics, "Min Score", visible.min, "visible minimum");
+        try vh.appendMetric(alloc, metrics, "Max Score", visible.max, "visible maximum");
         body.append(metrics.as(gtk.Widget));
         const token_json = vh.callJson(alloc, self.client(), "getTokenUsageMetrics", &.{.{ .key = "filters", .value = .{ .raw = "{}" } }}) catch null;
         if (token_json) |json| {
@@ -147,13 +168,77 @@ pub const ScoresView = extern struct {
         if (self.private().scores.items.len == 0) {
             list.append((try ui.row(alloc, "view-list-symbolic", "No scores", "Scorer output appears here.")).as(gtk.Widget));
         } else {
+            var visible_count: usize = 0;
             for (self.private().scores.items) |score| {
+                if (!self.scoreMatchesRange(score)) continue;
                 const score_text = if (score.score) |value| try std.fmt.allocPrint(alloc, "{d:.2} - {s}", .{ value, score.body orelse "" }) else try alloc.dupe(u8, score.body orelse "");
                 defer alloc.free(score_text);
                 list.append((try ui.row(alloc, "emblem-ok-symbolic", score.title, score_text)).as(gtk.Widget));
+                visible_count += 1;
+            }
+            if (visible_count == 0) {
+                list.append((try ui.row(alloc, "system-search-symbolic", "No scores in range", "Adjust min/max score filters.")).as(gtk.Widget));
             }
         }
         body.append(list.as(gtk.Widget));
+    }
+
+    const ScoreStats = struct { count: usize, mean: usize, min: usize, max: usize };
+
+    fn visibleScoreStats(self: *Self) ScoreStats {
+        var count: usize = 0;
+        var sum: f64 = 0;
+        var min_value: f64 = 1;
+        var max_value: f64 = 0;
+        for (self.private().scores.items) |score| {
+            if (!self.scoreMatchesRange(score)) continue;
+            const value = score.score orelse 0;
+            count += 1;
+            sum += value;
+            min_value = @min(min_value, value);
+            max_value = @max(max_value, value);
+        }
+        if (count == 0) return .{ .count = 0, .mean = 0, .min = 0, .max = 0 };
+        return .{
+            .count = count,
+            .mean = @intFromFloat((sum / @as(f64, @floatFromInt(count))) * 100.0),
+            .min = @intFromFloat(min_value * 100.0),
+            .max = @intFromFloat(max_value * 100.0),
+        };
+    }
+
+    fn scoreMatchesRange(self: *Self, score: vh.Item) bool {
+        const value = score.score orelse 0;
+        if (parseScoreEntry(self.private().min_entry)) |min| {
+            if (value < min) return false;
+        }
+        if (parseScoreEntry(self.private().max_entry)) |max| {
+            if (value > max) return false;
+        }
+        return true;
+    }
+
+    fn parseScoreEntry(entry: *gtk.Entry) ?f64 {
+        const text = vh.trimEntryText(entry);
+        if (text.len == 0) return null;
+        const raw = std.fmt.parseFloat(f64, text) catch return null;
+        return if (raw > 1.0) raw / 100.0 else raw;
+    }
+
+    fn sortScores(self: *Self) void {
+        if (self.private().sort_desc) {
+            std.mem.sort(vh.Item, self.private().scores.items, {}, scoreHighFirst);
+        } else {
+            std.mem.sort(vh.Item, self.private().scores.items, {}, scoreLowFirst);
+        }
+    }
+
+    fn scoreHighFirst(_: void, lhs: vh.Item, rhs: vh.Item) bool {
+        return (lhs.score orelse 0) > (rhs.score orelse 0);
+    }
+
+    fn scoreLowFirst(_: void, lhs: vh.Item, rhs: vh.Item) bool {
+        return (lhs.score orelse 0) < (rhs.score orelse 0);
     }
 
     fn meanScorePercent(scores: []const vh.Item) usize {
@@ -167,10 +252,29 @@ pub const ScoresView = extern struct {
         self.refresh();
     }
 
+    fn scoreFilterActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
+        if (self.private().selected_index) |index| {
+            if (index < self.private().runs.items.len) self.renderScores(self.private().runs.items[index]) catch {};
+        }
+    }
+
+    fn sortClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().sort_desc = !self.private().sort_desc;
+        self.sortScores();
+        if (self.private().selected_index) |index| {
+            if (index < self.private().runs.items.len) self.renderScores(self.private().runs.items[index]) catch {};
+        }
+        self.private().window.showToast(if (self.private().sort_desc) "Scores sorted high first" else "Scores sorted low first");
+    }
+
     fn runActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const index = vh.getIndex(row.as(gobject.Object)) orelse return;
         self.private().selected_index = index;
         self.loadScores(index);
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

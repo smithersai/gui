@@ -7,6 +7,7 @@ const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const vh = @import("../features/view_helpers.zig");
 const MainWindow = @import("main_window.zig").MainWindow;
+const UnifiedDiffView = @import("diff.zig").UnifiedDiffView;
 
 pub const ChangesView = extern struct {
     const Self = @This();
@@ -24,10 +25,12 @@ pub const ChangesView = extern struct {
         window: *MainWindow = undefined,
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
+        search_entry: *gtk.Entry = undefined,
         bookmark_entry: *gtk.Entry = undefined,
         changes: std.ArrayList(vh.Item) = .empty,
         selected_index: ?usize = null,
         status_mode: bool = false,
+        working_copy_only: bool = false,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -56,10 +59,20 @@ pub const ChangesView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
         const header = vh.makeHeader("Changes", null);
+        self.private().search_entry = gtk.Entry.new();
+        self.private().search_entry.setPlaceholderText("Search changes");
+        self.private().search_entry.as(gtk.Widget).setSizeRequest(220, -1);
+        _ = gtk.Editable.signals.changed.connect(self.private().search_entry.as(gtk.Editable), *Self, searchChanged, self, .{});
+        header.append(self.private().search_entry.as(gtk.Widget));
         const mode = ui.textButton("Status", false);
         _ = gtk.Button.signals.clicked.connect(mode, *Self, modeClicked, self, .{});
         header.append(mode.as(gtk.Widget));
+        const wc = ui.textButton("Working Copy", false);
+        _ = gtk.Button.signals.clicked.connect(wc, *Self, workingCopyClicked, self, .{});
+        header.append(wc.as(gtk.Widget));
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh changes");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
@@ -110,10 +123,18 @@ pub const ChangesView = extern struct {
             self.private().list.append((try ui.row(alloc, "view-list-symbolic", "No changes found", "JJHub changes appear here.")).as(gtk.Widget));
             return;
         }
+        const query = std.mem.trim(u8, std.mem.span(self.private().search_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        var visible: usize = 0;
         for (self.private().changes.items, 0..) |change, index| {
+            if (self.private().working_copy_only and !(change.status != null and (std.ascii.eqlIgnoreCase(change.status.?, "true") or std.mem.eql(u8, change.status.?, "1")))) continue;
+            if (query.len > 0 and !vh.containsIgnoreCase(change.title, query) and !vh.containsIgnoreCase(change.id, query) and !(change.subtitle != null and vh.containsIgnoreCase(change.subtitle.?, query))) continue;
             const row = try vh.itemRow(alloc, change, "view-list-symbolic");
             vh.setIndex(row.as(gobject.Object), index);
             self.private().list.append(row.as(gtk.Widget));
+            visible += 1;
+        }
+        if (visible == 0) {
+            self.private().list.append((try ui.row(alloc, "system-search-symbolic", "No changes match filters", "Adjust search or working-copy filter.")).as(gtk.Widget));
         }
     }
 
@@ -160,13 +181,15 @@ pub const ChangesView = extern struct {
         const diff = smithers.callJson(alloc, self.client(), "workingCopyDiff", "{}") catch alloc.dupe(u8, "") catch return;
         defer alloc.free(diff);
         self.private().detail.append(ui.heading("Working Copy").as(gtk.Widget));
-        const view = vh.textView(false);
         const text = std.fmt.allocPrint(alloc, "{s}\n\n{s}", .{ status, diff }) catch return;
         defer alloc.free(text);
-        vh.setTextViewText(alloc, view, text) catch return;
-        const scroll = ui.scrolled(view.as(gtk.Widget));
-        scroll.as(gtk.Widget).setVexpand(1);
-        self.private().detail.append(scroll.as(gtk.Widget));
+        vh.appendJsonViewer(alloc, self.private().detail, "Status", status, 180) catch return;
+        const diff_view = UnifiedDiffView.new(alloc, diff, "working-copy.diff") catch {
+            vh.appendJsonViewer(alloc, self.private().detail, "Diff", text, 360) catch return;
+            return;
+        };
+        diff_view.as(gtk.Widget).setSizeRequest(-1, 360);
+        self.private().detail.append(diff_view.as(gtk.Widget));
     }
 
     fn showDiff(self: *Self) void {
@@ -181,11 +204,9 @@ pub const ChangesView = extern struct {
         defer alloc.free(json);
         const text = vh.parseStringResult(alloc, json) catch alloc.dupe(u8, json) catch return;
         defer alloc.free(text);
-        const view = vh.textView(false);
-        vh.setTextViewText(alloc, view, text) catch return;
-        const scroll = ui.scrolled(view.as(gtk.Widget));
-        scroll.as(gtk.Widget).setSizeRequest(-1, 360);
-        self.private().detail.append(scroll.as(gtk.Widget));
+        const diff = UnifiedDiffView.new(alloc, text, change.id) catch return;
+        diff.as(gtk.Widget).setSizeRequest(-1, 360);
+        self.private().detail.append(diff.as(gtk.Widget));
     }
 
     fn bookmarkAction(self: *Self, method: []const u8, label: []const u8) void {
@@ -222,9 +243,19 @@ pub const ChangesView = extern struct {
         self.refresh();
     }
 
+    fn searchChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        self.renderList() catch {};
+    }
+
     fn modeClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.private().status_mode = !self.private().status_mode;
         self.refresh();
+    }
+
+    fn workingCopyClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().working_copy_only = !self.private().working_copy_only;
+        self.renderList() catch {};
+        self.private().window.showToast(if (self.private().working_copy_only) "Showing working-copy changes" else "Showing all changes");
     }
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
@@ -243,6 +274,14 @@ pub const ChangesView = extern struct {
 
     fn deleteBookmarkClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.bookmarkAction("deleteBookmark", "Deleted bookmark");
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
+    }
+
+    fn shortcutSearch(self: *Self) void {
+        _ = self.private().search_entry.as(gtk.Widget).grabFocus();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

@@ -24,6 +24,7 @@ pub const PromptsView = extern struct {
         window: *MainWindow = undefined,
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
+        search_entry: *gtk.Entry = undefined,
         source_view: *gtk.TextView = undefined,
         input_view: *gtk.TextView = undefined,
         prompts: std.ArrayList(vh.Item) = .empty,
@@ -56,7 +57,14 @@ pub const PromptsView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
         const header = vh.makeHeader("Prompts", null);
+        self.private().search_entry = gtk.Entry.new();
+        self.private().search_entry.setPlaceholderText("Search prompts");
+        self.private().search_entry.as(gtk.Widget).setSizeRequest(220, -1);
+        _ = gtk.Editable.signals.changed.connect(self.private().search_entry.as(gtk.Editable), *Self, searchChanged, self, .{});
+        header.append(self.private().search_entry.as(gtk.Widget));
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh prompts");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
@@ -100,10 +108,17 @@ pub const PromptsView = extern struct {
             self.private().list.append((try ui.row(alloc, "text-x-generic-symbolic", "No prompts found", "Smithers prompts appear here.")).as(gtk.Widget));
             return;
         }
+        const query = std.mem.trim(u8, std.mem.span(self.private().search_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        var visible: usize = 0;
         for (self.private().prompts.items, 0..) |prompt, index| {
+            if (query.len > 0 and !vh.containsIgnoreCase(prompt.title, query) and !vh.containsIgnoreCase(prompt.id, query) and !(prompt.path != null and vh.containsIgnoreCase(prompt.path.?, query))) continue;
             const row = try vh.itemRow(alloc, prompt, "text-x-generic-symbolic");
             vh.setIndex(row.as(gobject.Object), index);
             self.private().list.append(row.as(gtk.Widget));
+            visible += 1;
+        }
+        if (visible == 0) {
+            self.private().list.append((try ui.row(alloc, "system-search-symbolic", "No prompts match search", "Adjust the prompt query.")).as(gtk.Widget));
         }
     }
 
@@ -155,6 +170,7 @@ pub const PromptsView = extern struct {
         const input_scroll = ui.scrolled(self.private().input_view.as(gtk.Widget));
         input_scroll.as(gtk.Widget).setSizeRequest(-1, 100);
         self.private().detail.append(input_scroll.as(gtk.Widget));
+        try self.appendDiscoveredProps(prompt.id);
     }
 
     fn selectedPrompt(self: *Self) ?vh.Item {
@@ -204,8 +220,38 @@ pub const PromptsView = extern struct {
         self.private().detail.append(scroll.as(gtk.Widget));
     }
 
+    fn appendDiscoveredProps(self: *Self, prompt_id: []const u8) !void {
+        const alloc = self.allocator();
+        const json = vh.callJson(alloc, self.client(), "discoverPromptProps", &.{.{ .key = "promptId", .value = .{ .string = prompt_id } }}) catch return;
+        defer alloc.free(json);
+        var props = vh.parseItems(alloc, json, &.{ "props", "inputs", "items", "data" }, .{
+            .id = &.{ "key", "name", "id" },
+            .title = &.{ "key", "name", "id" },
+            .subtitle = &.{ "type", "kind", "default", "defaultValue" },
+            .body = &.{ "description", "help" },
+        }) catch std.ArrayList(vh.Item).empty;
+        defer {
+            vh.clearItems(alloc, &props);
+            props.deinit(alloc);
+        }
+        vh.addSectionTitle(self.private().detail, "Discovered Props");
+        const list = vh.listBox();
+        if (props.items.len == 0) {
+            list.append((try ui.row(alloc, "insert-text-symbolic", "No props discovered", "Use JSON test input for ad-hoc values.")).as(gtk.Widget));
+        } else {
+            for (props.items) |prop| {
+                list.append((try vh.itemRow(alloc, prop, "insert-text-symbolic")).as(gtk.Widget));
+            }
+        }
+        self.private().detail.append(list.as(gtk.Widget));
+    }
+
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.refresh();
+    }
+
+    fn searchChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        self.renderList() catch {};
     }
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
@@ -220,6 +266,14 @@ pub const PromptsView = extern struct {
 
     fn previewClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.previewPrompt();
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
+    }
+
+    fn shortcutSearch(self: *Self) void {
+        _ = self.private().search_entry.as(gtk.Widget).grabFocus();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

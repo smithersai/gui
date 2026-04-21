@@ -1,4 +1,5 @@
 const std = @import("std");
+const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -7,6 +8,7 @@ const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const vh = @import("../features/view_helpers.zig");
 const MainWindow = @import("main_window.zig").MainWindow;
+const UnifiedDiffView = @import("diff.zig").UnifiedDiffView;
 
 pub const LandingsView = extern struct {
     const Self = @This();
@@ -30,6 +32,8 @@ pub const LandingsView = extern struct {
         review_view: *gtk.TextView = undefined,
         items: std.ArrayList(vh.Item) = .empty,
         selected_index: ?usize = null,
+        state_filter: ?[]const u8 = null,
+        pending_land_number: ?i64 = null,
         create_visible: bool = false,
         did_dispose: bool = false,
 
@@ -59,7 +63,14 @@ pub const LandingsView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
         const header = vh.makeHeader("Landings", null);
+        inline for (.{ "All", "Open", "Draft", "Merged", "Closed" }) |label| {
+            const button = ui.textButton(label, false);
+            button.as(gobject.Object).setData("smithers-landing-filter", @constCast(label.ptr));
+            _ = gtk.Button.signals.clicked.connect(button, *Self, filterClicked, self, .{});
+            header.append(button.as(gtk.Widget));
+        }
         const add = ui.iconButton("list-add-symbolic", "New landing");
         _ = gtk.Button.signals.clicked.connect(add, *Self, newClicked, self, .{});
         header.append(add.as(gtk.Widget));
@@ -84,7 +95,7 @@ pub const LandingsView = extern struct {
 
     fn load(self: *Self) !void {
         const alloc = self.allocator();
-        const json = try vh.callJson(alloc, self.client(), "listLandings", &.{.{ .key = "state", .value = .null }});
+        const json = try vh.callJson(alloc, self.client(), "listLandings", &.{.{ .key = "state", .value = .{ .optional_string = self.private().state_filter } }});
         defer alloc.free(json);
         const parsed = try vh.parseItems(alloc, json, &.{ "landings", "items", "data" }, .{
             .id = &.{ "id", "number", "title" },
@@ -206,21 +217,17 @@ pub const LandingsView = extern struct {
             defer alloc.free(json);
             const text = vh.parseStringResult(alloc, json) catch alloc.dupe(u8, json) catch return;
             defer alloc.free(text);
-            const view = vh.textView(false);
-            vh.setTextViewText(alloc, view, text) catch return;
-            const scroll = ui.scrolled(view.as(gtk.Widget));
-            scroll.as(gtk.Widget).setSizeRequest(-1, 300);
-            self.private().detail.append(scroll.as(gtk.Widget));
+            if (std.mem.eql(u8, label, "Diff")) {
+                const diff = UnifiedDiffView.new(alloc, text, "landing.diff") catch return;
+                diff.as(gtk.Widget).setSizeRequest(-1, 360);
+                self.private().detail.append(diff.as(gtk.Widget));
+            } else {
+                vh.appendJsonViewer(alloc, self.private().detail, "Checks", text, 300) catch return;
+            }
             return;
         }
         if (std.mem.eql(u8, label, "Land")) {
-            const json = vh.callJson(alloc, self.client(), "landLanding", &.{.{ .key = "number", .value = .{ .integer = number } }}) catch |err| {
-                self.private().window.showToastFmt("Land failed: {}", .{err});
-                return;
-            };
-            defer alloc.free(json);
-            self.private().window.showToastFmt("Landed #{d}", .{number});
-            self.refresh();
+            self.confirmLand(number);
             return;
         }
         const body = vh.getTextViewText(alloc, self.private().review_view) catch return;
@@ -239,9 +246,44 @@ pub const LandingsView = extern struct {
         self.refresh();
     }
 
+    fn confirmLand(self: *Self, number: i64) void {
+        self.private().pending_land_number = number;
+        const alloc = self.allocator();
+        const body = std.fmt.allocPrintSentinel(alloc, "Land request #{d}? This will merge the landing request.", .{number}, 0) catch return;
+        defer alloc.free(body);
+        const dialog = adw.AlertDialog.new("Land Request", body.ptr);
+        dialog.addResponse("cancel", "Cancel");
+        dialog.addResponse("land", "Land");
+        dialog.setCloseResponse("cancel");
+        dialog.setDefaultResponse("cancel");
+        dialog.setResponseAppearance("land", .destructive);
+        _ = adw.AlertDialog.signals.response.connect(dialog, *Self, landDialogResponse, self, .{});
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
+    }
+
+    fn landPending(self: *Self) void {
+        const number = self.private().pending_land_number orelse return;
+        self.private().pending_land_number = null;
+        const alloc = self.allocator();
+        const json = vh.callJson(alloc, self.client(), "landLanding", &.{.{ .key = "number", .value = .{ .integer = number } }}) catch |err| {
+            self.private().window.showToastFmt("Land failed: {}", .{err});
+            return;
+        };
+        defer alloc.free(json);
+        self.private().window.showToastFmt("Landed #{d}", .{number});
+        self.refresh();
+    }
+
     fn newClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.private().create_visible = !self.private().create_visible;
         if (self.private().create_visible) self.renderCreate() catch {} else self.refresh();
+    }
+
+    fn filterClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const raw = button.as(gobject.Object).getData("smithers-landing-filter") orelse return;
+        const text = std.mem.span(@as([*:0]const u8, @ptrCast(raw)));
+        self.private().state_filter = if (std.mem.eql(u8, text, "All")) null else if (std.mem.eql(u8, text, "Open")) "open" else if (std.mem.eql(u8, text, "Draft")) "draft" else if (std.mem.eql(u8, text, "Merged")) "merged" else "closed";
+        self.refresh();
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -262,6 +304,18 @@ pub const LandingsView = extern struct {
     fn actionClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
         const raw = button.as(gobject.Object).getData("smithers-landing-action") orelse return;
         self.landingAction(std.mem.span(@as([*:0]const u8, @ptrCast(raw))));
+    }
+
+    fn landDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
+        if (std.mem.orderZ(u8, response, "land") != .eq) {
+            self.private().pending_land_number = null;
+            return;
+        }
+        self.landPending();
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -7,6 +8,7 @@ const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const vh = @import("../features/view_helpers.zig");
 const MainWindow = @import("main_window.zig").MainWindow;
+const MarkdownEditor = @import("markdown_editor.zig").MarkdownEditor;
 
 pub const TicketsView = extern struct {
     const Self = @This();
@@ -26,10 +28,12 @@ pub const TicketsView = extern struct {
         detail: *gtk.Box = undefined,
         search: *gtk.Entry = undefined,
         id_entry: *gtk.Entry = undefined,
-        create_text: *gtk.TextView = undefined,
-        editor: *gtk.TextView = undefined,
+        create_editor: *MarkdownEditor = undefined,
+        editor: *MarkdownEditor = undefined,
         tickets: std.ArrayList(vh.Item) = .empty,
         selected_index: ?usize = null,
+        status_filter: ?[]const u8 = null,
+        pending_delete_index: ?usize = null,
         create_visible: bool = false,
         did_dispose: bool = false,
 
@@ -61,12 +65,21 @@ pub const TicketsView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
         const header = vh.makeHeader("Tickets", null);
         self.private().search = gtk.Entry.new();
         self.private().search.setPlaceholderText("Search tickets");
         self.private().search.as(gtk.Widget).setSizeRequest(220, -1);
+        _ = gtk.Editable.signals.changed.connect(self.private().search.as(gtk.Editable), *Self, searchChanged, self, .{});
         _ = gtk.Entry.signals.activate.connect(self.private().search, *Self, searchActivated, self, .{});
         header.append(self.private().search.as(gtk.Widget));
+        inline for (.{ "All", "Open", "Closed" }) |label| {
+            const button = ui.textButton(label, false);
+            button.as(gobject.Object).setData("smithers-ticket-filter", @constCast(label.ptr));
+            _ = gtk.Button.signals.clicked.connect(button, *Self, filterClicked, self, .{});
+            header.append(button.as(gtk.Widget));
+        }
         const add = ui.iconButton("list-add-symbolic", "New ticket");
         _ = gtk.Button.signals.clicked.connect(add, *Self, newClicked, self, .{});
         header.append(add.as(gtk.Widget));
@@ -121,10 +134,18 @@ pub const TicketsView = extern struct {
             self.private().list.append((try ui.row(alloc, "text-x-generic-symbolic", "No tickets found", "Create a ticket with the plus button.")).as(gtk.Widget));
             return;
         }
+        var visible: usize = 0;
         for (self.private().tickets.items, 0..) |ticket, index| {
+            if (self.private().status_filter) |status| {
+                if (ticket.status == null or !std.ascii.eqlIgnoreCase(ticket.status.?, status)) continue;
+            }
             const row = try vh.itemRow(alloc, ticket, "text-x-generic-symbolic");
             vh.setIndex(row.as(gobject.Object), index);
             self.private().list.append(row.as(gtk.Widget));
+            visible += 1;
+        }
+        if (visible == 0) {
+            self.private().list.append((try ui.row(alloc, "system-search-symbolic", "No tickets match filters", "Adjust search or status filter.")).as(gtk.Widget));
         }
     }
 
@@ -136,14 +157,12 @@ pub const TicketsView = extern struct {
         self.private().id_entry = gtk.Entry.new();
         self.private().id_entry.setPlaceholderText("ticket-id");
         detail.append(self.private().id_entry.as(gtk.Widget));
-        self.private().create_text = vh.textView(true);
-        const scroll = ui.scrolled(self.private().create_text.as(gtk.Widget));
-        scroll.as(gtk.Widget).setSizeRequest(-1, 240);
-        detail.append(scroll.as(gtk.Widget));
+        self.private().create_editor = try MarkdownEditor.new(alloc, "");
+        self.private().create_editor.as(gtk.Widget).setSizeRequest(-1, 300);
+        detail.append(self.private().create_editor.as(gtk.Widget));
         const create = ui.textButton("Create", true);
         _ = gtk.Button.signals.clicked.connect(create, *Self, createClicked, self, .{});
         detail.append(create.as(gtk.Widget));
-        _ = alloc;
     }
 
     fn renderDetail(self: *Self, index: usize) !void {
@@ -156,12 +175,10 @@ pub const TicketsView = extern struct {
         defer alloc.free(title_z);
         detail.append(ui.heading(title_z).as(gtk.Widget));
         try vh.detailRow(alloc, detail, "Status", ticket.status);
-        self.private().editor = vh.textView(true);
-        try vh.setTextViewText(alloc, self.private().editor, ticket.body orelse "");
-        const scroll = ui.scrolled(self.private().editor.as(gtk.Widget));
-        scroll.as(gtk.Widget).setSizeRequest(-1, 360);
-        detail.append(scroll.as(gtk.Widget));
-        const actions = gtk.Box.new(.horizontal, 8);
+        self.private().editor = try MarkdownEditor.new(alloc, ticket.body orelse "");
+        self.private().editor.as(gtk.Widget).setSizeRequest(-1, 380);
+        detail.append(self.private().editor.as(gtk.Widget));
+        const actions = vh.actionBar();
         const save = ui.textButton("Save", true);
         _ = gtk.Button.signals.clicked.connect(save, *Self, saveClicked, self, .{});
         actions.append(save.as(gtk.Widget));
@@ -179,7 +196,7 @@ pub const TicketsView = extern struct {
             self.private().window.showToast("Ticket ID is required");
             return;
         }
-        const content = vh.getTextViewText(alloc, self.private().create_text) catch return;
+        const content = vh.markdownEditorText(alloc, self.private().create_editor.as(gtk.Widget)) catch return;
         defer alloc.free(content);
         const json = vh.callJson(alloc, self.client(), "createTicket", &.{
             .{ .key = "ticketId", .value = .{ .string = id } },
@@ -199,7 +216,7 @@ pub const TicketsView = extern struct {
         if (index >= self.private().tickets.items.len) return;
         const ticket = self.private().tickets.items[index];
         const alloc = self.allocator();
-        const content = vh.getTextViewText(alloc, self.private().editor) catch return;
+        const content = vh.markdownEditorText(alloc, self.private().editor.as(gtk.Widget)) catch return;
         defer alloc.free(content);
         const json = vh.callJson(alloc, self.client(), "updateTicket", &.{
             .{ .key = "ticketId", .value = .{ .string = ticket.id } },
@@ -227,12 +244,41 @@ pub const TicketsView = extern struct {
         self.refresh();
     }
 
+    fn confirmDeleteTicket(self: *Self) void {
+        const index = self.private().selected_index orelse return;
+        if (index >= self.private().tickets.items.len) return;
+        self.private().pending_delete_index = index;
+        const ticket = self.private().tickets.items[index];
+        const alloc = self.allocator();
+        const body = std.fmt.allocPrintSentinel(alloc, "Delete ticket {s}? This cannot be undone.", .{ticket.id}, 0) catch return;
+        defer alloc.free(body);
+        const dialog = adw.AlertDialog.new("Delete Ticket", body.ptr);
+        dialog.addResponse("cancel", "Cancel");
+        dialog.addResponse("delete", "Delete");
+        dialog.setCloseResponse("cancel");
+        dialog.setDefaultResponse("cancel");
+        dialog.setResponseAppearance("delete", .destructive);
+        _ = adw.AlertDialog.signals.response.connect(dialog, *Self, deleteDialogResponse, self, .{});
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
+    }
+
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.refresh();
     }
 
     fn searchActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
         self.refresh();
+    }
+
+    fn searchChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        self.refresh();
+    }
+
+    fn filterClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const raw = button.as(gobject.Object).getData("smithers-ticket-filter") orelse return;
+        const text = std.mem.span(@as([*:0]const u8, @ptrCast(raw)));
+        self.private().status_filter = if (std.mem.eql(u8, text, "All")) null else if (std.mem.eql(u8, text, "Open")) "open" else "closed";
+        self.renderList() catch {};
     }
 
     fn newClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -256,7 +302,25 @@ pub const TicketsView = extern struct {
     }
 
     fn deleteClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.confirmDeleteTicket();
+    }
+
+    fn deleteDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
+        if (std.mem.orderZ(u8, response, "delete") != .eq) {
+            self.private().pending_delete_index = null;
+            return;
+        }
+        self.private().selected_index = self.private().pending_delete_index;
+        self.private().pending_delete_index = null;
         self.deleteTicket();
+    }
+
+    fn shortcutRefresh(self: *Self) void {
+        self.refresh();
+    }
+
+    fn shortcutSearch(self: *Self) void {
+        _ = self.private().search.as(gtk.Widget).grabFocus();
     }
 
     fn dispose(self: *Self) callconv(.c) void {

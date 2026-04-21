@@ -7,6 +7,7 @@ const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const vh = @import("../features/view_helpers.zig");
 const MainWindow = @import("main_window.zig").MainWindow;
+const UnifiedDiffView = @import("diff.zig").UnifiedDiffView;
 
 pub const VCSDashboardView = extern struct {
     const Self = @This();
@@ -51,7 +52,20 @@ pub const VCSDashboardView = extern struct {
     fn build(self: *Self) !void {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
         const header = vh.makeHeader("VCS Dashboard", null);
+        const changes_button = ui.textButton("Changes", true);
+        _ = gtk.Button.signals.clicked.connect(changes_button, *Self, changesClicked, self, .{});
+        header.append(changes_button.as(gtk.Widget));
+        const landings_button = ui.textButton("Landings", false);
+        _ = gtk.Button.signals.clicked.connect(landings_button, *Self, landingsClicked, self, .{});
+        header.append(landings_button.as(gtk.Widget));
+        const issues_button = ui.textButton("Issues", false);
+        _ = gtk.Button.signals.clicked.connect(issues_button, *Self, issuesClicked, self, .{});
+        header.append(issues_button.as(gtk.Widget));
+        const tickets_button = ui.textButton("Tickets", false);
+        _ = gtk.Button.signals.clicked.connect(tickets_button, *Self, ticketsClicked, self, .{});
+        header.append(tickets_button.as(gtk.Widget));
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh VCS dashboard");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
@@ -122,6 +136,20 @@ pub const VCSDashboardView = extern struct {
 
         const body = self.private().body;
         ui.clearBox(body);
+        const status = smithers.callJson(alloc, self.client(), "status", "{}") catch null;
+        if (status) |text| {
+            defer alloc.free(text);
+            try vh.appendJsonViewer(alloc, body, "JJ Status", text, 150);
+        }
+        const diff = smithers.callJson(alloc, self.client(), "workingCopyDiff", "{}") catch null;
+        if (diff) |text| {
+            defer alloc.free(text);
+            const diff_view = UnifiedDiffView.new(alloc, text, "working-copy.diff") catch null;
+            if (diff_view) |view| {
+                view.as(gtk.Widget).setSizeRequest(-1, 320);
+                body.append(view.as(gtk.Widget));
+            }
+        }
         const metrics = gtk.Box.new(.horizontal, 12);
         try vh.appendMetric(alloc, metrics, "Changes", changes.items.len, "recent JJHub changes");
         try vh.appendMetric(alloc, metrics, "Landings", countOpen(landings.items), "open or ready");
@@ -166,6 +194,26 @@ pub const VCSDashboardView = extern struct {
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.refresh();
+    }
+
+    fn changesClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.changes);
+    }
+
+    fn landingsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.landings);
+    }
+
+    fn issuesClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.issues);
+    }
+
+    fn ticketsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.tickets);
+    }
+
+    fn shortcutRefresh(self: *Self) void {
         self.refresh();
     }
 
