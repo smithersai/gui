@@ -26,6 +26,13 @@ pub const JJHubWorkflowsView = extern struct {
         detail: *gtk.Box = undefined,
         search_entry: *gtk.Entry = undefined,
         ref_entry: *gtk.Entry = undefined,
+        repo_label: *gtk.Label = undefined,
+        repo_name: ?[]u8 = null,
+        default_ref: ?[]u8 = null,
+        action_message: ?[]u8 = null,
+        action_error: ?[]u8 = null,
+        prompt_error: ?[]u8 = null,
+        show_run_prompt: bool = false,
         trigger_result: ?[]u8 = null,
         workflows: std.ArrayList(vh.Item) = .empty,
         selected_index: ?usize = null,
@@ -61,6 +68,8 @@ pub const JJHubWorkflowsView = extern struct {
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
         const header = vh.makeHeader("JJHub Workflows", null);
+        self.private().repo_label = ui.dim("");
+        header.append(self.private().repo_label.as(gtk.Widget));
         self.private().search_entry = gtk.Entry.new();
         self.private().search_entry.setPlaceholderText("Search workflows");
         self.private().search_entry.as(gtk.Widget).setSizeRequest(220, -1);
@@ -89,6 +98,7 @@ pub const JJHubWorkflowsView = extern struct {
 
     fn load(self: *Self) !void {
         const alloc = self.allocator();
+        self.loadRepoMetadata();
         const json = try vh.callJson(alloc, self.client(), "listJJHubWorkflows", &.{.{ .key = "limit", .value = .{ .integer = 100 } }});
         defer alloc.free(json);
         const parsed = try vh.parseItems(alloc, json, &.{ "workflows", "items", "data" }, .{
@@ -102,9 +112,44 @@ pub const JJHubWorkflowsView = extern struct {
         });
         vh.clearItems(alloc, &self.private().workflows);
         self.private().workflows = parsed;
-        self.private().selected_index = null;
+        if (self.private().workflows.items.len == 0) {
+            self.private().selected_index = null;
+            self.private().show_run_prompt = false;
+        } else if (self.private().selected_index) |selected| {
+            if (selected >= self.private().workflows.items.len) self.private().selected_index = 0;
+        } else {
+            self.private().selected_index = 0;
+        }
         try self.renderList();
-        vh.setStatus(alloc, self.private().detail, "media-playlist-shuffle-symbolic", "Select a workflow", "Trigger a JJHub workflow by ref.");
+        if (self.private().selected_index) |selected| {
+            try self.renderDetail(selected);
+        } else {
+            vh.setStatus(alloc, self.private().detail, "media-playlist-shuffle-symbolic", "Select a workflow", "Trigger a JJHub workflow by ref.");
+        }
+    }
+
+    fn loadRepoMetadata(self: *Self) void {
+        const alloc = self.allocator();
+        const json = smithers.callJson(alloc, self.client(), "getCurrentRepo", "{}") catch {
+            self.setOwned(&self.private().repo_name, null);
+            self.setOwned(&self.private().default_ref, null);
+            self.private().repo_label.setText("");
+            return;
+        };
+        defer alloc.free(json);
+        const name = vh.rawJsonFieldString(alloc, json, &.{ "fullName", "full_name", "name" }) catch null;
+        defer if (name) |value| alloc.free(value);
+        const default_ref = vh.rawJsonFieldString(alloc, json, &.{ "defaultBookmark", "default_bookmark", "defaultBranch", "default_branch" }) catch null;
+        defer if (default_ref) |value| alloc.free(value);
+        self.setOwned(&self.private().repo_name, name);
+        self.setOwned(&self.private().default_ref, default_ref);
+        if (self.private().repo_name) |repo| {
+            const repo_z = alloc.dupeZ(u8, repo) catch return;
+            defer alloc.free(repo_z);
+            self.private().repo_label.setText(repo_z.ptr);
+        } else {
+            self.private().repo_label.setText("");
+        }
     }
 
     fn renderList(self: *Self) !void {
@@ -134,16 +179,49 @@ pub const JJHubWorkflowsView = extern struct {
         const alloc = self.allocator();
         const workflow = self.private().workflows.items[index];
         ui.clearBox(self.private().detail);
+        if (self.private().action_message) |message| {
+            const z = try alloc.dupeZ(u8, message);
+            defer alloc.free(z);
+            self.private().detail.append(ui.dim(z).as(gtk.Widget));
+        }
+        if (self.private().action_error) |message| {
+            const z = try alloc.dupeZ(u8, message);
+            defer alloc.free(z);
+            const label = ui.label(z, "error");
+            self.private().detail.append(label.as(gtk.Widget));
+        }
         const title_z = try alloc.dupeZ(u8, workflow.title);
         defer alloc.free(title_z);
         self.private().detail.append(ui.heading(title_z).as(gtk.Widget));
         try vh.detailRow(alloc, self.private().detail, "ID", workflow.id);
         try vh.detailRow(alloc, self.private().detail, "Path", workflow.path);
         try vh.detailRow(alloc, self.private().detail, "Active", if (workflow.enabled orelse false) "true" else "false");
+        if (self.private().show_run_prompt) {
+            self.appendRunPrompt(workflow);
+        } else {
+            const run = ui.textButton("Run Workflow", true);
+            _ = gtk.Button.signals.clicked.connect(run, *Self, openRunPromptClicked, self, .{});
+            self.private().detail.append(run.as(gtk.Widget));
+        }
+        if (self.private().trigger_result) |result| {
+            try vh.appendJsonViewer(alloc, self.private().detail, "Last Trigger", result, 180);
+        }
+    }
+
+    fn appendRunPrompt(self: *Self, workflow: vh.Item) void {
+        const detail = self.private().detail;
+        detail.append(ui.heading("Run workflow").as(gtk.Widget));
+        const alloc = self.allocator();
+        const workflow_text = std.fmt.allocPrintSentinel(alloc, "Workflow: {s}", .{workflow.title}, 0) catch return;
+        defer alloc.free(workflow_text);
+        detail.append(ui.dim(workflow_text).as(gtk.Widget));
         self.private().ref_entry = gtk.Entry.new();
-        self.private().ref_entry.setPlaceholderText("main");
-        self.private().ref_entry.as(gtk.Editable).setText("main");
-        self.private().detail.append(self.private().ref_entry.as(gtk.Widget));
+        self.private().ref_entry.setPlaceholderText("Git ref");
+        const initial_ref = self.private().default_ref orelse "main";
+        const initial_z = alloc.dupeZ(u8, initial_ref) catch return;
+        defer alloc.free(initial_z);
+        self.private().ref_entry.as(gtk.Editable).setText(initial_z.ptr);
+        detail.append(self.private().ref_entry.as(gtk.Widget));
         const refs = vh.actionBar();
         inline for (.{ "main", "develop", "HEAD" }) |ref_name| {
             const button = ui.textButton(ref_name, false);
@@ -151,12 +229,19 @@ pub const JJHubWorkflowsView = extern struct {
             _ = gtk.Button.signals.clicked.connect(button, *Self, refClicked, self, .{});
             refs.append(button.as(gtk.Widget));
         }
-        self.private().detail.append(refs.as(gtk.Widget));
-        const run = ui.textButton("Run Workflow", true);
+        detail.append(refs.as(gtk.Widget));
+        const actions = vh.actionBar();
+        const run = ui.textButton("Run", true);
         _ = gtk.Button.signals.clicked.connect(run, *Self, triggerClicked, self, .{});
-        self.private().detail.append(run.as(gtk.Widget));
-        if (self.private().trigger_result) |result| {
-            try vh.appendJsonViewer(alloc, self.private().detail, "Last Trigger", result, 180);
+        actions.append(run.as(gtk.Widget));
+        const cancel = ui.textButton("Cancel", false);
+        _ = gtk.Button.signals.clicked.connect(cancel, *Self, closeRunPromptClicked, self, .{});
+        actions.append(cancel.as(gtk.Widget));
+        detail.append(actions.as(gtk.Widget));
+        if (self.private().prompt_error) |message| {
+            const z = alloc.dupeZ(u8, message) catch return;
+            defer alloc.free(z);
+            detail.append(ui.dim(z).as(gtk.Widget));
         }
     }
 
@@ -174,14 +259,30 @@ pub const JJHubWorkflowsView = extern struct {
             .{ .key = "workflowID", .value = .{ .integer = id } },
             .{ .key = "ref", .value = .{ .string = if (run_ref.len == 0) "main" else run_ref } },
         }) catch |err| {
-            self.private().window.showToastFmt("Trigger failed: {}", .{err});
+            const msg = std.fmt.allocPrint(alloc, "Trigger failed: {}", .{err}) catch return;
+            defer alloc.free(msg);
+            self.setOwned(&self.private().prompt_error, msg);
+            if (self.private().selected_index) |selected| self.renderDetail(selected) catch {};
             return;
         };
         if (self.private().trigger_result) |old| alloc.free(old);
         self.private().trigger_result = alloc.dupe(u8, json) catch null;
         defer alloc.free(json);
+        const ref_used = if (run_ref.len == 0) "main" else run_ref;
+        const message = std.fmt.allocPrint(alloc, "Triggered {s} on {s}", .{ workflow.title, ref_used }) catch null;
+        defer if (message) |owned| alloc.free(owned);
+        self.setOwned(&self.private().action_message, message);
+        self.setOwned(&self.private().action_error, null);
+        self.setOwned(&self.private().prompt_error, null);
+        self.private().show_run_prompt = false;
         self.private().window.showToastFmt("Triggered {s}", .{workflow.title});
         if (self.private().selected_index) |selected| self.renderDetail(selected) catch {};
+    }
+
+    fn setOwned(self: *Self, slot: *?[]u8, value: ?[]const u8) void {
+        const alloc = self.allocator();
+        if (slot.*) |old| alloc.free(old);
+        slot.* = if (value) |text| alloc.dupe(u8, text) catch null else null;
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -205,7 +306,23 @@ pub const JJHubWorkflowsView = extern struct {
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const index = vh.getIndex(row.as(gobject.Object)) orelse return;
         self.private().selected_index = index;
+        self.private().show_run_prompt = false;
+        self.setOwned(&self.private().prompt_error, null);
         self.renderDetail(index) catch {};
+    }
+
+    fn openRunPromptClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().show_run_prompt = true;
+        self.setOwned(&self.private().action_message, null);
+        self.setOwned(&self.private().action_error, null);
+        self.setOwned(&self.private().prompt_error, null);
+        if (self.private().selected_index) |selected| self.renderDetail(selected) catch {};
+    }
+
+    fn closeRunPromptClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().show_run_prompt = false;
+        self.setOwned(&self.private().prompt_error, null);
+        if (self.private().selected_index) |selected| self.renderDetail(selected) catch {};
     }
 
     fn triggerClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -230,6 +347,11 @@ pub const JJHubWorkflowsView = extern struct {
                 self.allocator().free(result);
                 priv.trigger_result = null;
             }
+            if (priv.repo_name) |value| self.allocator().free(value);
+            if (priv.default_ref) |value| self.allocator().free(value);
+            if (priv.action_message) |value| self.allocator().free(value);
+            if (priv.action_error) |value| self.allocator().free(value);
+            if (priv.prompt_error) |value| self.allocator().free(value);
             ui.clearBox(self.as(gtk.Box));
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
