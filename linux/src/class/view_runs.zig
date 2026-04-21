@@ -1,5 +1,6 @@
 const std = @import("std");
 const adw = @import("adw");
+const glib = @import("glib");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -27,15 +28,38 @@ pub const RunsView = extern struct {
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
         search_entry: *gtk.Entry = undefined,
+        workflow_entry: *gtk.Entry = undefined,
+        count_label: *gtk.Label = undefined,
         status_filter: ?[]const u8 = null,
+        date_filter: DateFilter = .all,
         sort_desc: bool = true,
         pending_cancel_index: ?usize = null,
+        pending_deny: ?PendingDeny = null,
+        poll_source: c_uint = 0,
         runs: std.ArrayList(models.RunSummary) = .empty,
         inspection: ?models.RunInspection = null,
         selected_index: ?usize = null,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
+    };
+
+    const DateFilter = enum {
+        all,
+        today,
+        week,
+        month,
+    };
+
+    const PendingDeny = struct {
+        run_id: []u8,
+        node_id: []u8,
+        iteration: ?i64 = null,
+
+        fn deinit(self: *PendingDeny, alloc: std.mem.Allocator) void {
+            alloc.free(self.run_id);
+            alloc.free(self.node_id);
+        }
     };
 
     pub fn new(window: *MainWindow) !*Self {
@@ -68,6 +92,8 @@ pub const RunsView = extern struct {
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
 
         const header = vh.makeHeader("Runs", null);
+        self.private().count_label = ui.dim("0 runs");
+        header.append(self.private().count_label.as(gtk.Widget));
         self.private().search_entry = gtk.Entry.new();
         self.private().search_entry.setPlaceholderText("Search runs");
         self.private().search_entry.as(gtk.Widget).setSizeRequest(220, -1);
@@ -84,13 +110,29 @@ pub const RunsView = extern struct {
 
         const filters = gtk.Box.new(.horizontal, 8);
         ui.margin4(filters.as(gtk.Widget), 8, 16, 8, 16);
-        inline for (.{ "All", "running", "waiting-approval", "finished", "failed" }) |label| {
+        inline for (.{ "All", "running", "waiting-approval", "finished", "failed", "cancelled" }) |label| {
             const button = ui.textButton(label, false);
             button.as(gtk.Widget).setTooltipText(label);
             _ = gtk.Button.signals.clicked.connect(button, *Self, statusFilterClicked, self, .{});
             button.as(gobject.Object).setData("smithers-status-filter", @constCast(label.ptr));
             filters.append(button.as(gtk.Widget));
         }
+        self.private().workflow_entry = gtk.Entry.new();
+        self.private().workflow_entry.setPlaceholderText("Workflow");
+        self.private().workflow_entry.as(gtk.Widget).setSizeRequest(180, -1);
+        _ = gtk.Editable.signals.changed.connect(self.private().workflow_entry.as(gtk.Editable), *Self, workflowChanged, self, .{});
+        filters.append(self.private().workflow_entry.as(gtk.Widget));
+        inline for (.{ "All Time", "Today", "This Week", "This Month" }, 0..) |label, index| {
+            const button = ui.textButton(label, false);
+            button.as(gtk.Widget).setTooltipText(label);
+            _ = gtk.Button.signals.clicked.connect(button, *Self, dateFilterClicked, self, .{});
+            button.as(gobject.Object).setData("smithers-date-filter", @ptrFromInt(index + 1));
+            filters.append(button.as(gtk.Widget));
+        }
+        const clear = ui.textButton("Clear", false);
+        clear.as(gtk.Widget).setTooltipText("Clear filters");
+        _ = gtk.Button.signals.clicked.connect(clear, *Self, clearFiltersClicked, self, .{});
+        filters.append(clear.as(gtk.Widget));
         root.append(filters.as(gtk.Widget));
 
         const split = vh.splitPane(360);
@@ -108,19 +150,34 @@ pub const RunsView = extern struct {
         root.append(split.root.as(gtk.Widget));
 
         vh.setStatus(self.allocator(), self.private().detail, "view-list-symbolic", "Select a run", "Run tasks and actions appear here.");
+        self.private().poll_source = glib.timeoutAdd(5000, pollRuns, self);
     }
 
     fn loadRuns(self: *Self) !void {
         const alloc = self.allocator();
+        const selected_run_id = if (self.private().selected_index) |index|
+            if (index < self.private().runs.items.len) try alloc.dupe(u8, self.private().runs.items[index].run_id) else null
+        else
+            null;
+        defer if (selected_run_id) |run_id| alloc.free(run_id);
         const json = try smithers.callJson(alloc, self.client(), "listRuns", "{}");
         defer alloc.free(json);
         const parsed = try models.parseRuns(alloc, json);
         models.clearList(models.RunSummary, alloc, &self.private().runs);
         self.private().runs = parsed;
         self.sortRuns();
-        self.private().selected_index = null;
         self.clearInspection();
         try self.renderList();
+        self.private().selected_index = null;
+        if (selected_run_id) |run_id| {
+            for (self.private().runs.items, 0..) |run, index| {
+                if (std.mem.eql(u8, run.run_id, run_id)) {
+                    self.private().selected_index = index;
+                    self.loadInspection(index) catch {};
+                    return;
+                }
+            }
+        }
         vh.setStatus(alloc, self.private().detail, "view-list-symbolic", "Select a run", "Run tasks and actions appear here.");
     }
 
@@ -129,24 +186,59 @@ pub const RunsView = extern struct {
         const list = self.private().list;
         ui.clearList(list);
         var visible: usize = 0;
+        const sections = [_]struct { title: []const u8, status: []const []const u8 }{
+            .{ .title = "ACTIVE", .status = &.{ "running", "waiting-approval", "blocked" } },
+            .{ .title = "COMPLETED", .status = &.{"finished"} },
+            .{ .title = "FAILED", .status = &.{"failed"} },
+            .{ .title = "CANCELLED", .status = &.{"cancelled"} },
+            .{ .title = "OTHER", .status = &.{} },
+        };
+        var emitted = [_]bool{false} ** sections.len;
         for (self.private().runs.items, 0..) |run, index| {
             if (!self.matchesFilters(run)) continue;
-            const title = run.workflow_name orelse run.run_id;
-            const detail = try std.fmt.allocPrint(alloc, "{s} - {s} - {d}/{d} nodes", .{
-                run.run_id,
-                run.status,
-                run.finished + run.failed,
-                run.total,
-            });
-            defer alloc.free(detail);
-            const row = try ui.row(alloc, runIcon(run.status), title, detail);
-            vh.setIndex(row.as(gobject.Object), index);
-            list.append(row.as(gtk.Widget));
+            const section_index = sectionIndex(run.status);
+            if (!emitted[section_index]) {
+                emitted[section_index] = true;
+                const title_z = try alloc.dupeZ(u8, sections[section_index].title);
+                defer alloc.free(title_z);
+                const row = gtk.ListBoxRow.new();
+                row.setActivatable(0);
+                const label = ui.dim(title_z);
+                ui.margin4(label.as(gtk.Widget), 10, 10, 4, 10);
+                row.setChild(label.as(gtk.Widget));
+                list.append(row.as(gtk.Widget));
+            }
+            try self.appendRunRow(index);
             visible += 1;
         }
+        const count_text = try std.fmt.allocPrintSentinel(alloc, "{d} run{s}", .{ visible, if (visible == 1) "" else "s" }, 0);
+        defer alloc.free(count_text);
+        self.private().count_label.setText(count_text.ptr);
         if (visible == 0) {
             list.append((try ui.row(alloc, "view-list-symbolic", "No runs found", "Adjust filters or launch a workflow.")).as(gtk.Widget));
         }
+    }
+
+    fn appendRunRow(self: *Self, index: usize) !void {
+        const alloc = self.allocator();
+        const run = self.private().runs.items[index];
+        const title = run.workflow_name orelse "Unnamed workflow";
+        const elapsed = elapsedText(alloc, run) catch try alloc.dupe(u8, "-");
+        defer alloc.free(elapsed);
+        const detail = try std.fmt.allocPrint(alloc, "{s} - {s} - {d}/{d} nodes - {s}", .{
+            run.run_id,
+            run.status,
+            run.finished + run.failed,
+            run.total,
+            elapsed,
+        });
+        defer alloc.free(detail);
+        const row = try ui.row(alloc, runIcon(run.status), title, detail);
+        vh.setIndex(row.as(gobject.Object), index);
+        const tooltip = try alloc.dupeZ(u8, run.run_id);
+        defer alloc.free(tooltip);
+        row.as(gtk.Widget).setTooltipText(tooltip.ptr);
+        self.private().list.append(row.as(gtk.Widget));
     }
 
     fn sortRuns(self: *Self) void {
@@ -174,6 +266,10 @@ pub const RunsView = extern struct {
             if (!std.ascii.eqlIgnoreCase(run.status, status)) return false;
         }
         const search = std.mem.trim(u8, std.mem.span(self.private().search_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        const workflow_filter = std.mem.trim(u8, std.mem.span(self.private().workflow_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        if (workflow_filter.len > 0 and !(run.workflow_name != null and containsIgnoreCase(run.workflow_name.?, workflow_filter)) and
+            !(run.workflow_path != null and containsIgnoreCase(run.workflow_path.?, workflow_filter))) return false;
+        if (!matchesDate(self.private().date_filter, run)) return false;
         if (search.len == 0) return true;
         return containsIgnoreCase(run.run_id, search) or
             (run.workflow_name != null and containsIgnoreCase(run.workflow_name.?, search)) or
@@ -223,9 +319,19 @@ pub const RunsView = extern struct {
         detail.append(ui.dim(summary_z).as(gtk.Widget));
 
         const actions = gtk.Box.new(.horizontal, 8);
+        const live = ui.textButton("Live Chat", false);
+        live.as(gtk.Widget).setTooltipText("Open the live run inspector for this run");
+        _ = gtk.Button.signals.clicked.connect(live, *Self, liveChatClicked, self, .{});
+        actions.append(live.as(gtk.Widget));
         const inspect = ui.textButton("Open Inspector", true);
         _ = gtk.Button.signals.clicked.connect(inspect, *Self, openInspectorClicked, self, .{});
         actions.append(inspect.as(gtk.Widget));
+        const snapshots = ui.textButton("Snapshots", false);
+        _ = gtk.Button.signals.clicked.connect(snapshots, *Self, snapshotsClicked, self, .{});
+        actions.append(snapshots.as(gtk.Widget));
+        const hijack = ui.textButton("Hijack", false);
+        _ = gtk.Button.signals.clicked.connect(hijack, *Self, hijackClicked, self, .{});
+        actions.append(hijack.as(gtk.Widget));
         const refresh_status = ui.textButton("Refresh Status", false);
         _ = gtk.Button.signals.clicked.connect(refresh_status, *Self, refreshStatusClicked, self, .{});
         actions.append(refresh_status.as(gtk.Widget));
@@ -238,10 +344,12 @@ pub const RunsView = extern struct {
         const replay = ui.textButton("Replay", false);
         _ = gtk.Button.signals.clicked.connect(replay, *Self, replayClicked, self, .{});
         actions.append(replay.as(gtk.Widget));
-        const cancel = ui.textButton("Cancel", false);
-        cancel.as(gtk.Widget).addCssClass("destructive-action");
-        _ = gtk.Button.signals.clicked.connect(cancel, *Self, cancelClicked, self, .{});
-        actions.append(cancel.as(gtk.Widget));
+        if (!isTerminalStatus(inspection.run.status)) {
+            const cancel = ui.textButton("Cancel", false);
+            cancel.as(gtk.Widget).addCssClass("destructive-action");
+            _ = gtk.Button.signals.clicked.connect(cancel, *Self, cancelClicked, self, .{});
+            actions.append(cancel.as(gtk.Widget));
+        }
         if (blockedTask(inspection.*)) |_| {
             const approve = ui.textButton("Approve", true);
             _ = gtk.Button.signals.clicked.connect(approve, *Self, approveClicked, self, .{});
@@ -268,6 +376,9 @@ pub const RunsView = extern struct {
             }
         }
         detail.append(list.as(gtk.Widget));
+        if (inspection.run.error_json) |err| {
+            try vh.appendJsonViewer(alloc, detail, "ERROR", err, 120);
+        }
     }
 
     fn completeApproval(self: *Self, method: []const u8, toast_prefix: []const u8) void {
@@ -311,7 +422,7 @@ pub const RunsView = extern struct {
         self.private().pending_cancel_index = index;
         const run = self.private().runs.items[index];
         const alloc = self.allocator();
-        const body = std.fmt.allocPrintSentinel(alloc, "Cancel run {s}? This stops active agents for the run.", .{run.run_id}, 0) catch return;
+        const body = std.fmt.allocPrintSentinel(alloc, "Cancel run {s}? This run is still active and will stop immediately.", .{run.run_id}, 0) catch return;
         defer alloc.free(body);
         const dialog = adw.AlertDialog.new("Cancel Run", body.ptr);
         dialog.addResponse("keep", "Keep Running");
@@ -320,6 +431,28 @@ pub const RunsView = extern struct {
         dialog.setDefaultResponse("keep");
         dialog.setResponseAppearance("cancel", .destructive);
         _ = adw.AlertDialog.signals.response.connect(dialog, *Self, cancelDialogResponse, self, .{});
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
+    }
+
+    fn confirmDenySelectedNode(self: *Self) void {
+        const inspection = self.private().inspection orelse return;
+        const task = blockedTask(inspection) orelse return;
+        const alloc = self.allocator();
+        if (self.private().pending_deny) |*pending| pending.deinit(alloc);
+        self.private().pending_deny = .{
+            .run_id = alloc.dupe(u8, inspection.run.run_id) catch return,
+            .node_id = alloc.dupe(u8, task.node_id) catch return,
+            .iteration = task.iteration,
+        };
+        const body = std.fmt.allocPrintSentinel(alloc, "Deny approval for {s} on run {s}? This will fail the waiting gate.", .{ task.node_id, inspection.run.run_id }, 0) catch return;
+        defer alloc.free(body);
+        const dialog = adw.AlertDialog.new("Deny Approval", body.ptr);
+        dialog.addResponse("keep", "Cancel");
+        dialog.addResponse("deny", "Deny Approval");
+        dialog.setCloseResponse("keep");
+        dialog.setDefaultResponse("keep");
+        dialog.setResponseAppearance("deny", .destructive);
+        _ = adw.AlertDialog.signals.response.connect(dialog, *Self, denyDialogResponse, self, .{});
         dialog.as(adw.Dialog).present(self.as(gtk.Widget));
     }
 
@@ -373,6 +506,33 @@ pub const RunsView = extern struct {
         self.private().window.showNav(.runs);
     }
 
+    fn showSnapshots(self: *Self) void {
+        const index = self.private().selected_index orelse return;
+        if (index >= self.private().runs.items.len) return;
+        const run = self.private().runs.items[index];
+        const alloc = self.allocator();
+        const snapshots_json = vh.callJson(alloc, self.client(), "listSnapshots", &.{.{ .key = "runId", .value = .{ .string = run.run_id } }}) catch |err| {
+            self.private().window.showToastFmt("Snapshots failed: {}", .{err});
+            return;
+        };
+        defer alloc.free(snapshots_json);
+        var snapshots = vh.parseItems(alloc, snapshots_json, &.{ "snapshots", "items", "data" }, .{
+            .id = &.{"id"},
+            .title = &.{ "label", "id" },
+            .subtitle = &.{ "nodeId", "node_id", "createdAtMs", "created_at_ms" },
+        }) catch std.ArrayList(vh.Item).empty;
+        defer {
+            vh.clearItems(alloc, &snapshots);
+            snapshots.deinit(alloc);
+        }
+        const message = std.fmt.allocPrintSentinel(alloc, "{d} snapshot(s) are available for run {s}. Use Fork or Replay to branch from the newest snapshot.", .{ snapshots.items.len, run.run_id }, 0) catch return;
+        defer alloc.free(message);
+        const dialog = adw.AlertDialog.new("Run Snapshots", message.ptr);
+        dialog.addResponse("close", "Close");
+        dialog.setCloseResponse("close");
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
+    }
+
     fn clearInspection(self: *Self) void {
         if (self.private().inspection) |*inspection| {
             inspection.deinit(self.allocator());
@@ -400,6 +560,43 @@ pub const RunsView = extern struct {
             if (std.ascii.eqlIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
         }
         return false;
+    }
+
+    fn sectionIndex(status: []const u8) usize {
+        if (std.ascii.eqlIgnoreCase(status, "running") or std.ascii.eqlIgnoreCase(status, "waiting-approval") or std.ascii.eqlIgnoreCase(status, "blocked")) return 0;
+        if (std.ascii.eqlIgnoreCase(status, "finished")) return 1;
+        if (std.ascii.eqlIgnoreCase(status, "failed")) return 2;
+        if (std.ascii.eqlIgnoreCase(status, "cancelled")) return 3;
+        return 4;
+    }
+
+    fn matchesDate(filter: DateFilter, run: models.RunSummary) bool {
+        if (filter == .all) return true;
+        const timestamp = run.started_at_ms orelse run.finished_at_ms orelse return false;
+        const now = std.time.milliTimestamp();
+        const day_ms: i64 = 86_400_000;
+        const cutoff: i64 = switch (filter) {
+            .all => 0,
+            .today => now - day_ms,
+            .week => now - 7 * day_ms,
+            .month => now - 31 * day_ms,
+        };
+        return timestamp >= cutoff;
+    }
+
+    fn isTerminalStatus(status: []const u8) bool {
+        return std.ascii.eqlIgnoreCase(status, "finished") or
+            std.ascii.eqlIgnoreCase(status, "failed") or
+            std.ascii.eqlIgnoreCase(status, "cancelled");
+    }
+
+    fn elapsedText(alloc: std.mem.Allocator, run: models.RunSummary) ![]u8 {
+        const start = run.started_at_ms orelse return alloc.dupe(u8, "-");
+        const end = run.finished_at_ms orelse std.time.milliTimestamp();
+        const seconds = @max(@as(i64, 0), @divTrunc(end - start, 1000));
+        if (seconds < 60) return std.fmt.allocPrint(alloc, "{d}s", .{seconds});
+        if (seconds < 3600) return std.fmt.allocPrint(alloc, "{d}m", .{@divTrunc(seconds, 60)});
+        return std.fmt.allocPrint(alloc, "{d}h {d}m", .{ @divTrunc(seconds, 3600), @mod(@divTrunc(seconds, 60), 60) });
     }
 
     fn runIcon(status: []const u8) [:0]const u8 {
@@ -431,6 +628,10 @@ pub const RunsView = extern struct {
         self.renderList() catch {};
     }
 
+    fn workflowChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        self.renderList() catch {};
+    }
+
     fn sortClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.private().sort_desc = !self.private().sort_desc;
         self.sortRuns();
@@ -446,6 +647,25 @@ pub const RunsView = extern struct {
         self.renderList() catch {};
     }
 
+    fn dateFilterClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const raw = button.as(gobject.Object).getData("smithers-date-filter") orelse return;
+        self.private().date_filter = switch (@intFromPtr(raw)) {
+            2 => .today,
+            3 => .week,
+            4 => .month,
+            else => .all,
+        };
+        self.renderList() catch {};
+    }
+
+    fn clearFiltersClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().status_filter = null;
+        self.private().date_filter = .all;
+        self.private().search_entry.as(gtk.Editable).setText("");
+        self.private().workflow_entry.as(gtk.Editable).setText("");
+        self.renderList() catch {};
+    }
+
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const index = vh.getIndex(row.as(gobject.Object)) orelse return;
         self.selectRun(index);
@@ -454,6 +674,19 @@ pub const RunsView = extern struct {
     fn openInspectorClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         const inspection = self.private().inspection orelse return;
         self.private().window.inspectRun(inspection.run.run_id);
+    }
+
+    fn liveChatClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        const inspection = self.private().inspection orelse return;
+        self.private().window.inspectRun(inspection.run.run_id);
+    }
+
+    fn snapshotsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.showSnapshots();
+    }
+
+    fn hijackClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.simpleRunAction("hijackRun", "Hijacked");
     }
 
     fn cancelClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -468,6 +701,35 @@ pub const RunsView = extern struct {
         self.private().selected_index = self.private().pending_cancel_index;
         self.private().pending_cancel_index = null;
         self.cancelSelectedRun();
+    }
+
+    fn denyDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
+        if (std.mem.orderZ(u8, response, "deny") != .eq) {
+            if (self.private().pending_deny) |*pending| {
+                pending.deinit(self.allocator());
+                self.private().pending_deny = null;
+            }
+            return;
+        }
+        const pending = self.private().pending_deny orelse return;
+        const alloc = self.allocator();
+        const args = vh.jsonObject(alloc, &.{
+            .{ .key = "runId", .value = .{ .string = pending.run_id } },
+            .{ .key = "nodeId", .value = .{ .string = pending.node_id } },
+            .{ .key = "iteration", .value = if (pending.iteration) |iteration| .{ .integer = iteration } else .null },
+        }) catch return;
+        defer alloc.free(args);
+        const json = smithers.callJson(alloc, self.client(), "denyNode", args) catch |err| {
+            self.private().window.showToastFmt("Deny failed: {}", .{err});
+            return;
+        };
+        defer alloc.free(json);
+        self.private().window.showToastFmt("Denied {s}", .{pending.node_id});
+        if (self.private().selected_index) |index| self.loadInspection(index) catch self.refresh();
+        if (self.private().pending_deny) |*cleanup| {
+            cleanup.deinit(alloc);
+            self.private().pending_deny = null;
+        }
     }
 
     fn refreshStatusClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -491,7 +753,14 @@ pub const RunsView = extern struct {
     }
 
     fn denyClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.completeApproval("denyNode", "Denied");
+        self.confirmDenySelectedNode();
+    }
+
+    fn pollRuns(data: ?*anyopaque) callconv(.c) c_int {
+        const ptr = data orelse return 0;
+        const self: *Self = @ptrCast(@alignCast(ptr));
+        self.loadRuns() catch {};
+        return 1;
     }
 
     fn shortcutRefresh(self: *Self) void {
@@ -506,6 +775,14 @@ pub const RunsView = extern struct {
         const priv = self.private();
         if (!priv.did_dispose) {
             priv.did_dispose = true;
+            if (priv.poll_source != 0) {
+                _ = glib.Source.remove(priv.poll_source);
+                priv.poll_source = 0;
+            }
+            if (priv.pending_deny) |*pending| {
+                pending.deinit(self.allocator());
+                priv.pending_deny = null;
+            }
             self.clearInspection();
             models.clearList(models.RunSummary, self.allocator(), &priv.runs);
             priv.runs.deinit(self.allocator());
