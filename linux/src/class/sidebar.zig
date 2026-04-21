@@ -36,10 +36,21 @@ pub const Sidebar = extern struct {
 
     const nav_entries = [_]NavEntry{
         .{ .nav = .dashboard, .title = "Dashboard", .icon = "view-grid-symbolic" },
+        .{ .nav = .vcs_dashboard, .title = "VCS Dashboard", .icon = "view-list-symbolic" },
         .{ .nav = .workflows, .title = "Workflows", .icon = "media-playlist-shuffle-symbolic" },
+        .{ .nav = .jjhub_workflows, .title = "JJHub Workflows", .icon = "media-playlist-repeat-symbolic" },
         .{ .nav = .runs, .title = "Runs", .icon = "media-playback-start-symbolic" },
+        .{ .nav = .run_inspect, .title = "Run Inspector", .icon = "view-dual-symbolic" },
         .{ .nav = .approvals, .title = "Approvals", .icon = "security-high-symbolic" },
+        .{ .nav = .tickets, .title = "Tickets", .icon = "text-x-generic-symbolic" },
+        .{ .nav = .changes, .title = "Changes", .icon = "document-edit-symbolic" },
+        .{ .nav = .issues, .title = "Issues", .icon = "emblem-documents-symbolic" },
+        .{ .nav = .landings, .title = "Landings", .icon = "emblem-system-symbolic" },
         .{ .nav = .agents, .title = "Agents", .icon = "system-users-symbolic" },
+        .{ .nav = .prompts, .title = "Prompts", .icon = "text-x-generic-symbolic" },
+        .{ .nav = .scores, .title = "Scores", .icon = "emblem-ok-symbolic" },
+        .{ .nav = .memory, .title = "Memory", .icon = "document-open-recent-symbolic" },
+        .{ .nav = .triggers, .title = "Triggers", .icon = "appointment-new-symbolic" },
         .{ .nav = .workspaces, .title = "Workspaces", .icon = "folder-symbolic" },
         .{ .nav = .settings, .title = "Settings", .icon = "emblem-system-symbolic" },
     };

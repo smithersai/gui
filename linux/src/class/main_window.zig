@@ -12,6 +12,22 @@ const Sidebar = @import("sidebar.zig").Sidebar;
 const CommandPalette = @import("command_palette.zig").CommandPalette;
 const NewTabPicker = @import("new_tab_picker.zig").NewTabPicker;
 const SessionWidget = @import("session.zig").SessionWidget;
+const DashboardView = @import("view_dashboard.zig").DashboardView;
+const RunsView = @import("view_runs.zig").RunsView;
+const RunInspectView = @import("view_run_inspect.zig").RunInspectView;
+const WorkflowsView = @import("view_workflows.zig").WorkflowsView;
+const JJHubWorkflowsView = @import("view_jjhub_workflows.zig").JJHubWorkflowsView;
+const ApprovalsView = @import("view_approvals.zig").ApprovalsView;
+const TicketsView = @import("view_tickets.zig").TicketsView;
+const ChangesView = @import("view_changes.zig").ChangesView;
+const IssuesView = @import("view_issues.zig").IssuesView;
+const LandingsView = @import("view_landings.zig").LandingsView;
+const AgentsView = @import("view_agents.zig").AgentsView;
+const PromptsView = @import("view_prompts.zig").PromptsView;
+const ScoresView = @import("view_scores.zig").ScoresView;
+const MemoryView = @import("view_memory.zig").MemoryView;
+const TriggersView = @import("view_triggers.zig").TriggersView;
+const VCSDashboardView = @import("view_vcs_dashboard.zig").VCSDashboardView;
 
 const log = std.log.scoped(.smithers_gtk_window);
 
@@ -30,10 +46,21 @@ pub const MainWindow = extern struct {
     pub const Nav = enum {
         welcome,
         dashboard,
+        vcs_dashboard,
         workflows,
+        jjhub_workflows,
         runs,
+        run_inspect,
         approvals,
+        tickets,
+        changes,
+        issues,
+        landings,
         agents,
+        prompts,
+        scores,
+        memory,
+        triggers,
         workspaces,
         settings,
         inspector,
@@ -57,6 +84,23 @@ pub const MainWindow = extern struct {
         workspaces_box: *gtk.Box = undefined,
         inspector_box: *gtk.Box = undefined,
         settings_box: *gtk.Box = undefined,
+
+        dashboard_view: *DashboardView = undefined,
+        runs_view: *RunsView = undefined,
+        run_inspect_view: *RunInspectView = undefined,
+        workflows_view: *WorkflowsView = undefined,
+        jjhub_workflows_view: *JJHubWorkflowsView = undefined,
+        approvals_view: *ApprovalsView = undefined,
+        tickets_view: *TicketsView = undefined,
+        changes_view: *ChangesView = undefined,
+        issues_view: *IssuesView = undefined,
+        landings_view: *LandingsView = undefined,
+        agents_view: *AgentsView = undefined,
+        prompts_view: *PromptsView = undefined,
+        scores_view: *ScoresView = undefined,
+        memory_view: *MemoryView = undefined,
+        triggers_view: *TriggersView = undefined,
+        vcs_dashboard_view: *VCSDashboardView = undefined,
 
         command_palette: ?*CommandPalette = null,
         new_tab_picker: ?*NewTabPicker = null,
@@ -244,29 +288,84 @@ pub const MainWindow = extern struct {
                 priv.stack.setVisibleChildName("welcome");
             },
             .dashboard => {
-                self.refreshDashboard() catch |err| self.showToastFmt("Dashboard refresh failed: {}", .{err});
+                priv.dashboard_view.refresh();
                 self.setTitle("Dashboard");
                 priv.stack.setVisibleChildName("dashboard");
             },
+            .vcs_dashboard => {
+                priv.vcs_dashboard_view.refresh();
+                self.setTitle("VCS Dashboard");
+                priv.stack.setVisibleChildName("vcs-dashboard");
+            },
             .workflows => {
-                self.refreshWorkflows() catch |err| self.showToastFmt("Workflow refresh failed: {}", .{err});
+                priv.workflows_view.refresh();
                 self.setTitle("Workflows");
                 priv.stack.setVisibleChildName("workflows");
             },
+            .jjhub_workflows => {
+                priv.jjhub_workflows_view.refresh();
+                self.setTitle("JJHub Workflows");
+                priv.stack.setVisibleChildName("jjhub-workflows");
+            },
             .runs => {
-                self.refreshRuns() catch |err| self.showToastFmt("Run refresh failed: {}", .{err});
+                priv.runs_view.refresh();
                 self.setTitle("Runs");
                 priv.stack.setVisibleChildName("runs");
             },
+            .run_inspect => {
+                priv.run_inspect_view.refresh();
+                self.setTitle("Run Inspector");
+                priv.stack.setVisibleChildName("run-inspect");
+            },
             .approvals => {
-                self.refreshApprovals() catch |err| self.showToastFmt("Approvals refresh failed: {}", .{err});
+                priv.approvals_view.refresh();
                 self.setTitle("Approvals");
                 priv.stack.setVisibleChildName("approvals");
             },
+            .tickets => {
+                priv.tickets_view.refresh();
+                self.setTitle("Tickets");
+                priv.stack.setVisibleChildName("tickets");
+            },
+            .changes => {
+                priv.changes_view.refresh();
+                self.setTitle("Changes");
+                priv.stack.setVisibleChildName("changes");
+            },
+            .issues => {
+                priv.issues_view.refresh();
+                self.setTitle("Issues");
+                priv.stack.setVisibleChildName("issues");
+            },
+            .landings => {
+                priv.landings_view.refresh();
+                self.setTitle("Landings");
+                priv.stack.setVisibleChildName("landings");
+            },
             .agents => {
-                self.refreshAgents() catch |err| self.showToastFmt("Agents refresh failed: {}", .{err});
+                priv.agents_view.refresh();
                 self.setTitle("Agents");
                 priv.stack.setVisibleChildName("agents");
+            },
+            .prompts => {
+                priv.prompts_view.refresh();
+                self.setTitle("Prompts");
+                priv.stack.setVisibleChildName("prompts");
+            },
+            .scores => {
+                priv.scores_view.refresh();
+                self.setTitle("Scores");
+                priv.stack.setVisibleChildName("scores");
+            },
+            .memory => {
+                priv.memory_view.refresh();
+                self.setTitle("Memory");
+                priv.stack.setVisibleChildName("memory");
+            },
+            .triggers => {
+                priv.triggers_view.refresh();
+                self.setTitle("Triggers");
+                priv.stack.setVisibleChildName("triggers");
             },
             .workspaces => {
                 self.refreshWorkspacesPage() catch |err| self.showToastFmt("Workspace refresh failed: {}", .{err});
@@ -278,8 +377,9 @@ pub const MainWindow = extern struct {
                 priv.stack.setVisibleChildName("settings");
             },
             .inspector => {
+                priv.run_inspect_view.refresh();
                 self.setTitle("Run Inspector");
-                priv.stack.setVisibleChildName("inspector");
+                priv.stack.setVisibleChildName("run-inspect");
             },
             .session => {},
         }
@@ -410,11 +510,8 @@ pub const MainWindow = extern struct {
     }
 
     pub fn inspectRun(self: *Self, run_id: []const u8) void {
-        self.populateInspector(run_id) catch |err| {
-            self.showToastFmt("Unable to inspect run: {}", .{err});
-            return;
-        };
-        self.showNav(.inspector);
+        self.private().run_inspect_view.setRun(run_id);
+        self.showNav(.run_inspect);
     }
 
     fn buildShell(self: *Self) !void {
@@ -469,26 +566,57 @@ pub const MainWindow = extern struct {
         const priv = self.private();
         _ = priv.stack.addTitled(try self.buildWelcome(), "welcome", "Welcome");
 
-        priv.dashboard_box = gtk.Box.new(.vertical, 18);
-        ui.margin(priv.dashboard_box.as(gtk.Widget), 24);
-        _ = priv.stack.addTitled(ui.scrolled(priv.dashboard_box.as(gtk.Widget)).as(gtk.Widget), "dashboard", "Dashboard");
+        priv.dashboard_view = try DashboardView.new(self);
+        _ = priv.stack.addTitled(priv.dashboard_view.as(gtk.Widget), "dashboard", "Dashboard");
 
-        priv.workflows_list = listPage(self, "workflows", "Workflows");
-        _ = gtk.ListBox.signals.row_activated.connect(priv.workflows_list, *Self, workflowRowActivated, self, .{});
+        priv.vcs_dashboard_view = try VCSDashboardView.new(self);
+        _ = priv.stack.addTitled(priv.vcs_dashboard_view.as(gtk.Widget), "vcs-dashboard", "VCS Dashboard");
 
-        priv.runs_list = listPage(self, "runs", "Runs");
-        _ = gtk.ListBox.signals.row_activated.connect(priv.runs_list, *Self, runRowActivated, self, .{});
+        priv.workflows_view = try WorkflowsView.new(self);
+        _ = priv.stack.addTitled(priv.workflows_view.as(gtk.Widget), "workflows", "Workflows");
 
-        priv.approvals_list = listPage(self, "approvals", "Approvals");
-        priv.agents_list = listPage(self, "agents", "Agents");
+        priv.jjhub_workflows_view = try JJHubWorkflowsView.new(self);
+        _ = priv.stack.addTitled(priv.jjhub_workflows_view.as(gtk.Widget), "jjhub-workflows", "JJHub Workflows");
+
+        priv.runs_view = try RunsView.new(self);
+        _ = priv.stack.addTitled(priv.runs_view.as(gtk.Widget), "runs", "Runs");
+
+        priv.run_inspect_view = try RunInspectView.new(self);
+        _ = priv.stack.addTitled(priv.run_inspect_view.as(gtk.Widget), "run-inspect", "Run Inspector");
+
+        priv.approvals_view = try ApprovalsView.new(self);
+        _ = priv.stack.addTitled(priv.approvals_view.as(gtk.Widget), "approvals", "Approvals");
+
+        priv.tickets_view = try TicketsView.new(self);
+        _ = priv.stack.addTitled(priv.tickets_view.as(gtk.Widget), "tickets", "Tickets");
+
+        priv.changes_view = try ChangesView.new(self);
+        _ = priv.stack.addTitled(priv.changes_view.as(gtk.Widget), "changes", "Changes");
+
+        priv.issues_view = try IssuesView.new(self);
+        _ = priv.stack.addTitled(priv.issues_view.as(gtk.Widget), "issues", "Issues");
+
+        priv.landings_view = try LandingsView.new(self);
+        _ = priv.stack.addTitled(priv.landings_view.as(gtk.Widget), "landings", "Landings");
+
+        priv.agents_view = try AgentsView.new(self);
+        _ = priv.stack.addTitled(priv.agents_view.as(gtk.Widget), "agents", "Agents");
+
+        priv.prompts_view = try PromptsView.new(self);
+        _ = priv.stack.addTitled(priv.prompts_view.as(gtk.Widget), "prompts", "Prompts");
+
+        priv.scores_view = try ScoresView.new(self);
+        _ = priv.stack.addTitled(priv.scores_view.as(gtk.Widget), "scores", "Scores");
+
+        priv.memory_view = try MemoryView.new(self);
+        _ = priv.stack.addTitled(priv.memory_view.as(gtk.Widget), "memory", "Memory");
+
+        priv.triggers_view = try TriggersView.new(self);
+        _ = priv.stack.addTitled(priv.triggers_view.as(gtk.Widget), "triggers", "Triggers");
 
         priv.workspaces_box = gtk.Box.new(.vertical, 16);
         ui.margin(priv.workspaces_box.as(gtk.Widget), 24);
         _ = priv.stack.addTitled(ui.scrolled(priv.workspaces_box.as(gtk.Widget)).as(gtk.Widget), "workspaces", "Workspaces");
-
-        priv.inspector_box = gtk.Box.new(.vertical, 12);
-        ui.margin(priv.inspector_box.as(gtk.Widget), 24);
-        _ = priv.stack.addTitled(ui.scrolled(priv.inspector_box.as(gtk.Widget)).as(gtk.Widget), "inspector", "Run Inspector");
 
         priv.settings_box = gtk.Box.new(.vertical, 16);
         ui.margin(priv.settings_box.as(gtk.Widget), 24);
