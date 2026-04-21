@@ -1,0 +1,13 @@
+.{
+    .name = .smithers_gtk,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.2",
+    .fingerprint = 0x5e21dbdd4b7971cf,
+    .paths = .{""},
+    .dependencies = .{
+        .gobject = .{
+            .url = "https://deps.files.ghostty.org/gobject-2025-11-08-23-1.tar.zst",
+            .hash = "gobject-0.3.0-Skun7ANLnwDvEfIpVmohcppXgOvg_I6YOJFmPIsKfXk-",
+        },
+    },
+}
