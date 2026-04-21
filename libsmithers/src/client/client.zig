@@ -69,6 +69,10 @@ fn callImpl(self: *Client, method: []const u8, args_json: []const u8) !structs.S
         return ffi.stringDup(json);
     }
 
+    if (try dynamicFallback(self.allocator, method, parsed.value)) |json| {
+        defer self.allocator.free(json);
+        return ffi.stringDup(json);
+    }
     if (staticFallback(method)) |json| return ffi.stringDup(json);
     return error.UnsupportedMethod;
 }
@@ -122,6 +126,30 @@ fn maybeMockResult(allocator: std.mem.Allocator, value: std.json.Value) !?[]u8 {
     return null;
 }
 
+fn dynamicFallback(allocator: std.mem.Allocator, method: []const u8, args: std.json.Value) !?[]u8 {
+    if (std.mem.eql(u8, method, "inspectRun")) {
+        const run_id = nonEmptyJsonString(args, "runId") orelse "unknown";
+        return try std.fmt.allocPrint(
+            allocator,
+            "{{\"run\":{{\"runId\":{f},\"workflowName\":null,\"workflowPath\":null,\"status\":\"unknown\",\"startedAtMs\":null,\"finishedAtMs\":null,\"summary\":null,\"errorJson\":null}},\"tasks\":[]}}",
+            .{std.json.fmt(run_id, .{})},
+        );
+    }
+    if (std.mem.eql(u8, method, "getSQLTableSchema")) {
+        const table_name = nonEmptyJsonString(args, "tableName") orelse "";
+        return try std.fmt.allocPrint(allocator, "{{\"tableName\":{f},\"columns\":[]}}", .{std.json.fmt(table_name, .{})});
+    }
+    return null;
+}
+
+fn nonEmptyJsonString(value: std.json.Value, key: []const u8) ?[]const u8 {
+    const found = ffi.jsonObjectString(value, key) orelse return null;
+    return if (found.len > 0) found else null;
+}
+
+// TODO(libsmithers-client-transport-parity): replace these typed compatibility
+// fallbacks with real Smithers/JJHub daemon methods as the transport surface
+// lands. Unknown methods intentionally error instead of silently echoing.
 fn staticFallback(method: []const u8) ?[]const u8 {
     const methods = [_][]const u8{
         "listWorkflows",
@@ -146,6 +174,7 @@ fn staticFallback(method: []const u8) ?[]const u8 {
         "listCrons",
         "listPendingApprovals",
         "listRecentDecisions",
+        "runWorkflowDoctor",
         "search",
     };
     for (methods) |candidate| if (std.mem.eql(u8, method, candidate)) return "[]";
@@ -172,9 +201,6 @@ fn staticFallback(method: []const u8) ?[]const u8 {
 
     if (std.mem.eql(u8, method, "runWorkflow")) return "{\"runId\":\"\",\"status\":\"queued\"}";
     if (std.mem.eql(u8, method, "getCurrentRepo")) return "{\"name\":\"\",\"owner\":null}";
-    if (std.mem.eql(u8, method, "inspectRun")) {
-        return "{\"run\":{\"runId\":\"\",\"workflowName\":null,\"workflowPath\":null,\"status\":\"unknown\",\"startedAtMs\":null,\"finishedAtMs\":null,\"summary\":null,\"errorJson\":null},\"tasks\":[]}";
-    }
     if (std.mem.eql(u8, method, "getWorkflowDAG")) {
         return "{\"workflowID\":null,\"mode\":null,\"runId\":null,\"frameNo\":null,\"xml\":null,\"tasks\":[],\"graphEdges\":null,\"entryTask\":null,\"entryTaskID\":null,\"fields\":null,\"message\":null}";
     }
@@ -188,6 +214,20 @@ fn staticFallback(method: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, method, "getNodeDiff")) return "{\"seq\":0,\"baseRef\":\"\",\"patches\":[]}";
     if (std.mem.eql(u8, method, "hijackRun")) {
         return "{\"runId\":\"\",\"agentEngine\":\"smithers\",\"agentBinary\":\"smithers\",\"resumeToken\":\"\",\"cwd\":\"\",\"supportsResume\":false,\"launchCommand\":null,\"launchArgs\":[],\"mode\":null,\"resumeCommand\":null}";
+    }
+    if (std.mem.eql(u8, method, "runQuickLaunchParser")) return "{\"inputs\":{},\"notes\":\"\",\"parseRunId\":\"\"}";
+    if (std.mem.eql(u8, method, "getTokenUsageMetrics")) {
+        return "{\"totalInputTokens\":0,\"totalOutputTokens\":0,\"totalTokens\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"byPeriod\":[]}";
+    }
+    if (std.mem.eql(u8, method, "getLatencyMetrics")) {
+        return "{\"count\":0,\"meanMs\":0,\"minMs\":0,\"maxMs\":0,\"p50Ms\":0,\"p95Ms\":0,\"byPeriod\":[]}";
+    }
+    if (std.mem.eql(u8, method, "getCostTracking")) {
+        return "{\"totalCostUsd\":0,\"inputCostUsd\":0,\"outputCostUsd\":0,\"runCount\":0,\"byPeriod\":[]}";
+    }
+    if (std.mem.eql(u8, method, "executeSQL")) return "{\"columns\":[],\"rows\":[]}";
+    if (std.mem.eql(u8, method, "codexAuthState")) {
+        return "{\"authenticated\":false,\"account\":null,\"expiresAt\":null,\"hasCodexCLI\":false,\"codexCLIPath\":null,\"hasAuthFile\":false,\"hasAPIKey\":false,\"authFilePath\":\"\"}";
     }
     if (std.mem.eql(u8, method, "getOrchestratorVersion")) return "\"0.0.0\"";
     if (std.mem.eql(u8, method, "status") or
