@@ -106,7 +106,7 @@ pub fn activate(self: *Palette, item_id: []const u8) structs.Error {
         return ffi.errorSuccess();
     }
     if (std.mem.eql(u8, item_id, "command.new-terminal")) {
-        _ = self.app.performAction(.{ .app = self.app }, .new_session);
+        _ = self.app.performAction(.{ .app = self.app }, .{ .new_session = .terminal });
         return ffi.errorSuccess();
     }
     if (std.mem.eql(u8, item_id, "command.palette.dismiss")) {

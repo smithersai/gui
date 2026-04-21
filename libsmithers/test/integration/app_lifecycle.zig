@@ -32,6 +32,7 @@ const LifecycleState = struct {
                 state.new_session += 1;
                 std.testing.expect(target.tag == .session) catch unreachable;
                 std.testing.expect(target.u.session != null) catch unreachable;
+                std.testing.expectEqual(structs.SessionKind.chat, act.u.new_session.kind) catch unreachable;
             },
             .close_session => {
                 state.close_session += 1;

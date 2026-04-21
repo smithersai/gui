@@ -16,6 +16,7 @@ const PaletteState = struct {
             .new_session => {
                 state.new_session_actions += 1;
                 std.testing.expectEqual(h.structs.ActionTargetTag.app, target.tag) catch unreachable;
+                std.testing.expectEqual(h.structs.SessionKind.terminal, act.u.new_session.kind) catch unreachable;
             },
             .dismiss_command_palette => {
                 state.dismiss_actions += 1;

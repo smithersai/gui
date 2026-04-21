@@ -20,9 +20,14 @@ const ActionState = struct {
         if (index < state.seen.len) state.seen[index] = true;
 
         switch (act.tag) {
-            .none, .close_workspace, .new_session, .focus_session, .present_command_palette, .dismiss_command_palette, .config_changed => {
+            .none, .close_workspace, .focus_session, .present_command_palette, .dismiss_command_palette, .config_changed => {
                 std.testing.expectEqual(h.structs.ActionTargetTag.app, target.tag) catch unreachable;
                 std.testing.expectEqual(state.app_ptr, target.u.app) catch unreachable;
+            },
+            .new_session => {
+                std.testing.expectEqual(h.structs.ActionTargetTag.app, target.tag) catch unreachable;
+                std.testing.expectEqual(state.app_ptr, target.u.app) catch unreachable;
+                std.testing.expectEqual(h.structs.SessionKind.terminal, act.u.new_session.kind) catch unreachable;
             },
             .open_workspace => {
                 std.testing.expectEqual(h.structs.ActionTargetTag.app, target.tag) catch unreachable;
@@ -72,7 +77,7 @@ test "action callback trampoline delivers every action tag and payload" {
     try std.testing.expect(app.performAction(app_target, .none));
     try std.testing.expect(app.performAction(app_target, .{ .open_workspace = "/tmp/action-workspace" }));
     try std.testing.expect(app.performAction(app_target, .close_workspace));
-    try std.testing.expect(app.performAction(app_target, .new_session));
+    try std.testing.expect(app.performAction(app_target, .{ .new_session = .terminal }));
     try std.testing.expect(app.performAction(session_target, .{ .close_session = state.session_ptr }));
     try std.testing.expect(app.performAction(app_target, .focus_session));
     try std.testing.expect(app.performAction(app_target, .present_command_palette));

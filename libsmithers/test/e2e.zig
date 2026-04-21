@@ -401,6 +401,11 @@ test "action tag union converts to C tag" {
     try std.testing.expectEqual(structs.ActionTag.open_workspace, c.action.tag);
     try std.testing.expectEqualStrings("/tmp/repo", std.mem.sliceTo(c.action.u.open_workspace.path.?, 0));
 
+    var new_session = try (lib.apprt.action.Action{ .new_session = .chat }).cvalAlloc(std.testing.allocator);
+    defer new_session.deinit();
+    try std.testing.expectEqual(structs.ActionTag.new_session, new_session.action.tag);
+    try std.testing.expectEqual(structs.SessionKind.chat, new_session.action.u.new_session.kind);
+
     const target = (lib.apprt.action.Target{ .app = @ptrFromInt(0x9999) }).cval();
     try std.testing.expectEqual(structs.ActionTargetTag.app, target.tag);
 }

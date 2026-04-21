@@ -172,7 +172,7 @@ pub fn registerSession(self: *App, session: *Session) !void {
 }
 
 pub fn sessionRegistered(self: *App, session: *Session) void {
-    _ = self.performAction(.{ .session = session }, .new_session);
+    _ = self.performAction(.{ .session = session }, .{ .new_session = session.kind() });
     self.notifyStateChanged();
 }
 
