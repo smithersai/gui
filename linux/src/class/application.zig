@@ -32,6 +32,7 @@ pub const Application = extern struct {
         client: smithers.c.smithers_client_t = null,
         palette: smithers.c.smithers_palette_t = null,
         main_window: ?*MainWindow = null,
+        clipboard: CachedClipboard = .{},
         running: bool = false,
         needs_refresh: std.atomic.Value(bool) = .init(false),
         did_deinit: bool = false,
@@ -95,6 +96,7 @@ pub const Application = extern struct {
             win.unref();
             priv.main_window = null;
         }
+        priv.clipboard.deinit(priv.alloc);
         if (priv.palette) |p| {
             smithers.c.smithers_palette_free(p);
             priv.palette = null;
@@ -300,7 +302,7 @@ pub const Application = extern struct {
                         _ = win.showSessionHandle(session);
                         return true;
                     }
-                    win.openSession(smithers.c.SMITHERS_SESSION_KIND_TERMINAL, null) catch return false;
+                    win.openSession(action.u.new_session.kind, null) catch return false;
                     return true;
                 }
                 return false;
@@ -370,14 +372,107 @@ pub const Application = extern struct {
         };
     }
 
-    fn readClipboardCallback(_: smithers.c.smithers_userdata_t, _: [*c]smithers.c.smithers_string_s) callconv(.c) bool {
-        return false;
+    fn readClipboardCallback(
+        userdata: smithers.c.smithers_userdata_t,
+        out: [*c]smithers.c.smithers_string_s,
+    ) callconv(.c) bool {
+        const self: *Self = @ptrCast(@alignCast(userdata orelse return false));
+        if (out == null) return false;
+
+        self.refreshClipboardCache();
+        const value = self.private().clipboard.borrowed() orelse return false;
+        out.* = value;
+        return true;
     }
 
-    fn writeClipboardCallback(_: smithers.c.smithers_userdata_t, text: [*c]const u8) callconv(.c) void {
+    fn writeClipboardCallback(userdata: smithers.c.smithers_userdata_t, text: [*c]const u8) callconv(.c) void {
+        if (text == null) return;
+        const self: ?*Self = if (userdata) |ptr| @ptrCast(@alignCast(ptr)) else null;
+        if (self) |app| {
+            const slice = std.mem.span(text);
+            app.private().clipboard.set(app.allocator(), slice) catch |err| {
+                log.warn("failed to cache clipboard write: {}", .{err});
+            };
+        }
+
         const display = gdk.Display.getDefault() orelse return;
         display.getClipboard().setText(text);
     }
+
+    fn refreshClipboardCache(self: *Self) void {
+        const priv = self.private();
+        if (priv.clipboard.read_pending) return;
+
+        const display = gdk.Display.getDefault() orelse return;
+        const request = priv.alloc.create(ClipboardReadRequest) catch |err| {
+            log.warn("failed to allocate clipboard read request: {}", .{err});
+            return;
+        };
+        request.* = .{ .app = self.ref() };
+        priv.clipboard.read_pending = true;
+        display.getClipboard().readTextAsync(null, clipboardReadText, request);
+    }
+
+    fn clipboardReadText(
+        source: ?*gobject.Object,
+        res: *gio.AsyncResult,
+        userdata: ?*anyopaque,
+    ) callconv(.c) void {
+        const request: *ClipboardReadRequest = @ptrCast(@alignCast(userdata orelse return));
+        const self = request.app;
+        const alloc = self.allocator();
+        const priv = self.private();
+        defer self.unref();
+        defer alloc.destroy(request);
+        defer priv.clipboard.read_pending = false;
+
+        const clipboard = gobject.ext.cast(gdk.Clipboard, source orelse return) orelse return;
+        var err: ?*glib.Error = null;
+        const cstr_ = clipboard.readTextFinish(res, &err);
+        if (err) |e| {
+            defer e.free();
+            log.warn("failed to read clipboard: {s}", .{e.f_message orelse "unknown"});
+            return;
+        }
+        const cstr = cstr_ orelse return;
+        defer glib.free(cstr);
+
+        const text = std.mem.sliceTo(cstr, 0);
+        if (priv.did_deinit) return;
+        priv.clipboard.set(alloc, text) catch |cache_err| {
+            log.warn("failed to cache clipboard read: {}", .{cache_err});
+        };
+    }
+
+    const ClipboardReadRequest = struct {
+        app: *Self,
+    };
+
+    const CachedClipboard = struct {
+        // GTK4 clipboard reads are async while libsmithers asks synchronously.
+        // We return this borrowed cache to core and refresh it in the background.
+        text: ?[:0]u8 = null,
+        read_pending: bool = false,
+
+        fn deinit(self: *CachedClipboard, alloc: std.mem.Allocator) void {
+            if (self.text) |text| alloc.free(text);
+            self.* = .{};
+        }
+
+        fn set(self: *CachedClipboard, alloc: std.mem.Allocator, text: []const u8) !void {
+            const owned = try alloc.dupeZ(u8, text);
+            if (self.text) |old| alloc.free(old);
+            self.text = owned;
+        }
+
+        fn borrowed(self: *const CachedClipboard) ?smithers.c.smithers_string_s {
+            const text = self.text orelse return null;
+            return .{
+                .ptr = text.ptr,
+                .len = text.len,
+            };
+        }
+    };
 
     fn logCallback(_: smithers.c.smithers_userdata_t, level: i32, msg: [*c]const u8) callconv(.c) void {
         const text = std.mem.span(msg);
