@@ -148,51 +148,36 @@ fn scoreValue(query: []const u8, cmd: Command) i32 {
 }
 
 pub fn score(allocator: std.mem.Allocator, cmd: Command, raw_query: []const u8) !?i32 {
-    const normalized = try normalize(allocator, raw_query);
-    defer allocator.free(normalized);
+    _ = allocator;
+    const normalized = normalizedView(raw_query);
     if (normalized.len == 0) return 100;
 
-    const name = try normalize(allocator, cmd.name);
-    defer allocator.free(name);
-    if (std.mem.eql(u8, name, normalized)) return 0;
+    const name = normalizedView(cmd.name);
+    if (eqlNormalized(name, normalized)) return 0;
     for (cmd.aliases) |alias| {
-        const n = try normalize(allocator, alias);
-        defer allocator.free(n);
-        if (std.mem.eql(u8, n, normalized)) return 1;
+        if (eqlNormalized(alias, normalized)) return 1;
     }
-    if (std.mem.startsWith(u8, name, normalized)) return 10;
+    if (startsWithNormalized(name, normalized)) return 10;
     for (cmd.aliases) |alias| {
-        const n = try normalize(allocator, alias);
-        defer allocator.free(n);
-        if (std.mem.startsWith(u8, n, normalized)) return 20;
+        if (startsWithNormalized(alias, normalized)) return 20;
     }
 
-    const title = try normalize(allocator, cmd.title);
-    defer allocator.free(title);
-    if (std.mem.startsWith(u8, title, normalized)) return 30;
+    if (startsWithNormalized(cmd.title, normalized)) return 30;
 
     const haystacks = [_][]const u8{ cmd.name, cmd.title, cmd.description };
     for (haystacks) |value| {
-        const n = try normalize(allocator, value);
-        defer allocator.free(n);
-        if (std.mem.indexOf(u8, n, normalized) != null) return 50;
+        if (containsNormalized(value, normalized)) return 50;
     }
     for (cmd.aliases) |alias| {
-        const n = try normalize(allocator, alias);
-        defer allocator.free(n);
-        if (std.mem.indexOf(u8, n, normalized) != null) return 50;
+        if (containsNormalized(alias, normalized)) return 50;
     }
 
     var best: ?i32 = null;
     for (haystacks) |value| {
-        const n = try normalize(allocator, value);
-        defer allocator.free(n);
-        if (fuzzySubsequenceScore(normalized, n)) |s| best = if (best) |b| @min(b, s) else s;
+        if (fuzzySubsequenceScore(normalized, value)) |s| best = if (best) |b| @min(b, s) else s;
     }
     for (cmd.aliases) |alias| {
-        const n = try normalize(allocator, alias);
-        defer allocator.free(n);
-        if (fuzzySubsequenceScore(normalized, n)) |s| best = if (best) |b| @min(b, s) else s;
+        if (fuzzySubsequenceScore(normalized, alias)) |s| best = if (best) |b| @min(b, s) else s;
     }
     return if (best) |b| 60 + @min(b, 1000) else null;
 }
@@ -263,6 +248,39 @@ pub fn normalize(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
     return out;
 }
 
+fn normalizedView(raw: []const u8) []const u8 {
+    return std.mem.trim(u8, raw, &std.ascii.whitespace);
+}
+
+fn eqlNormalized(a_raw: []const u8, b_raw: []const u8) bool {
+    const a = normalizedView(a_raw);
+    const b = normalizedView(b_raw);
+    if (a.len != b.len) return false;
+    for (a, b) |left, right| {
+        if (std.ascii.toLower(left) != std.ascii.toLower(right)) return false;
+    }
+    return true;
+}
+
+fn startsWithNormalized(haystack_raw: []const u8, needle_raw: []const u8) bool {
+    const haystack = normalizedView(haystack_raw);
+    const needle = normalizedView(needle_raw);
+    if (needle.len > haystack.len) return false;
+    return eqlNormalized(haystack[0..needle.len], needle);
+}
+
+fn containsNormalized(haystack_raw: []const u8, needle_raw: []const u8) bool {
+    const haystack = normalizedView(haystack_raw);
+    const needle = normalizedView(needle_raw);
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        if (eqlNormalized(haystack[i .. i + needle.len], needle)) return true;
+    }
+    return false;
+}
+
 fn fuzzySubsequenceScore(query: []const u8, candidate: []const u8) ?i32 {
     if (query.len == 0) return 0;
     var query_index: usize = 0;
@@ -271,7 +289,7 @@ fn fuzzySubsequenceScore(query: []const u8, candidate: []const u8) ?i32 {
 
     for (candidate, 0..) |ch, i| {
         if (query_index >= query.len) break;
-        if (ch != query[query_index]) continue;
+        if (std.ascii.toLower(ch) != std.ascii.toLower(query[query_index])) continue;
         if (positions_len >= positions.len) return null;
         positions[positions_len] = i;
         positions_len += 1;

@@ -104,6 +104,7 @@ pub fn sendText(self: *Session, text: []const u8) void {
                 .parsed = value.value,
             }, .{}, &out.writer) catch return;
             self.events_stream.pushJson(out.written()) catch return;
+            self.app.wakeup();
             return;
         }
     }
@@ -113,6 +114,7 @@ pub fn sendText(self: *Session, text: []const u8) void {
         .text = text,
     }, .{}, &out.writer) catch return;
     self.events_stream.pushJson(out.written()) catch return;
+    self.app.wakeup();
 }
 
 fn makeTitle(allocator: std.mem.Allocator, session_kind: structs.SessionKind, target_id: ?[]const u8) ![]u8 {

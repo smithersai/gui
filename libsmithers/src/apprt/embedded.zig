@@ -107,7 +107,7 @@ pub export fn smithers_session_events(session: ?*Session) ?*EventStream {
 }
 
 pub export fn smithers_event_stream_next(stream: ?*EventStream) structs.Event {
-    return if (stream) |ptr| ptr.next() else .{ .tag = .none, .payload = ffi.stringDup("") };
+    return if (stream) |ptr| ptr.next() else .{ .tag = .none, .payload = ffi.emptyString() };
 }
 
 pub export fn smithers_event_free(ev: structs.Event) void {

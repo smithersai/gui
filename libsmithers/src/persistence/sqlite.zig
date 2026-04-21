@@ -26,6 +26,7 @@ extern fn sqlite3_finalize(stmt: ?*sqlite3_stmt) c_int;
 extern fn sqlite3_bind_text(stmt: ?*sqlite3_stmt, idx: c_int, value: [*]const u8, n: c_int, destructor: ?*const fn (?*anyopaque) callconv(.c) void) c_int;
 extern fn sqlite3_column_text(stmt: ?*sqlite3_stmt, iCol: c_int) ?[*:0]const u8;
 extern fn sqlite3_column_bytes(stmt: ?*sqlite3_stmt, iCol: c_int) c_int;
+extern fn sqlite3_busy_timeout(db: ?*sqlite3, ms: c_int) c_int;
 
 pub const Persistence = @This();
 
@@ -43,6 +44,7 @@ pub fn open(allocator: std.mem.Allocator, db_path: []const u8) !*Persistence {
         return error.OpenFailed;
     }
     errdefer _ = sqlite3_close(db);
+    if (sqlite3_busy_timeout(db, 5000) != SQLITE_OK) return error.BusyTimeoutFailed;
 
     const p = try allocator.create(Persistence);
     errdefer allocator.destroy(p);
@@ -123,6 +125,7 @@ fn prepare(self: *Persistence, sql: [:0]const u8) !?*sqlite3_stmt {
 }
 
 fn bindText(stmt: ?*sqlite3_stmt, idx: c_int, value: []const u8) c_int {
+    if (value.len == 0) return sqlite3_bind_text(stmt, idx, "", 0, null);
     return sqlite3_bind_text(stmt, idx, value.ptr, @intCast(value.len), null);
 }
 

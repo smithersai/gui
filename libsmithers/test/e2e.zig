@@ -137,6 +137,172 @@ test "client call and stream mock daemon fixtures" {
     try std.testing.expectEqual(structs.EventTag.end, end.tag);
 }
 
+test "client reports unsupported methods as errors" {
+    const app = embedded.smithers_app_new(null).?;
+    defer embedded.smithers_app_free(app);
+    const client = embedded.smithers_client_new(app).?;
+    defer embedded.smithers_client_free(client);
+
+    var err: structs.Error = undefined;
+    const result = embedded.smithers_client_call(client, "notAMethod", "{}", &err);
+    defer embedded.smithers_string_free(result);
+    defer embedded.smithers_error_free(err);
+    try std.testing.expect(err.code != 0);
+    try std.testing.expect(err.msg != null);
+    try std.testing.expectEqualStrings("null", std.mem.sliceTo(result.ptr.?, 0));
+}
+
+test "client local project helpers read and write workspace files" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath(".smithers/workflows");
+    try tmp.dir.writeFile(.{ .sub_path = ".smithers/workflows/demo.tsx", .data = "export default null;\n" });
+
+    const root = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+    const root_z = try std.testing.allocator.dupeZ(u8, root);
+    defer std.testing.allocator.free(root_z);
+
+    const app = embedded.smithers_app_new(null).?;
+    defer embedded.smithers_app_free(app);
+    _ = embedded.smithers_app_open_workspace(app, root_z.ptr).?;
+    const client = embedded.smithers_client_new(app).?;
+    defer embedded.smithers_client_free(client);
+
+    var has_err: structs.Error = undefined;
+    const has = embedded.smithers_client_call(client, "hasSmithersProject", "{}", &has_err);
+    defer embedded.smithers_string_free(has);
+    defer embedded.smithers_error_free(has_err);
+    try std.testing.expectEqual(@as(i32, 0), has_err.code);
+    try std.testing.expectEqualStrings("true", std.mem.sliceTo(has.ptr.?, 0));
+
+    var read_err: structs.Error = undefined;
+    const read = embedded.smithers_client_call(client, "readWorkflowSource", "{\"relativePath\":\".smithers/workflows/demo.tsx\"}", &read_err);
+    defer embedded.smithers_string_free(read);
+    defer embedded.smithers_error_free(read_err);
+    try std.testing.expectEqual(@as(i32, 0), read_err.code);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.sliceTo(read.ptr.?, 0), "export default null") != null);
+
+    var save_err: structs.Error = undefined;
+    const saved = embedded.smithers_client_call(client, "saveWorkflowSource", "{\"relativePath\":\".smithers/workflows/demo.tsx\",\"source\":\"updated\"}", &save_err);
+    defer embedded.smithers_string_free(saved);
+    defer embedded.smithers_error_free(save_err);
+    try std.testing.expectEqual(@as(i32, 0), save_err.code);
+
+    const file = try tmp.dir.readFileAlloc(std.testing.allocator, ".smithers/workflows/demo.tsx", 1024);
+    defer std.testing.allocator.free(file);
+    try std.testing.expectEqualStrings("updated", file);
+
+    var imports_err: structs.Error = undefined;
+    const imports = embedded.smithers_client_call(
+        client,
+        "parseWorkflowImports",
+        "{\"source\":\"import Hero from './components/Hero.tsx';\\nimport { ReviewCard as Card } from './components/cards.tsx';\\nimport promptText from './prompts/ship.md?raw';\"}",
+        &imports_err,
+    );
+    defer embedded.smithers_string_free(imports);
+    defer embedded.smithers_error_free(imports_err);
+    try std.testing.expectEqual(@as(i32, 0), imports_err.code);
+    const imports_json = std.mem.sliceTo(imports.ptr.?, 0);
+    try std.testing.expect(std.mem.indexOf(u8, imports_json, "\"Hero\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, imports_json, "\"Card\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, imports_json, "\"promptText\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, imports_json, "./prompts/ship.md") != null);
+}
+
+test "session event stream remains valid after session free" {
+    const app = embedded.smithers_app_new(null).?;
+    defer embedded.smithers_app_free(app);
+    const session = embedded.smithers_session_new(app, .{ .kind = .chat }).?;
+    const stream = embedded.smithers_session_events(session).?;
+    defer embedded.smithers_event_stream_free(stream);
+
+    const text = "hello";
+    embedded.smithers_session_send_text(session, text.ptr, text.len);
+    embedded.smithers_session_free(session);
+
+    const first = embedded.smithers_event_stream_next(stream);
+    defer embedded.smithers_event_free(first);
+    try std.testing.expectEqual(structs.EventTag.json, first.tag);
+
+    const second = embedded.smithers_event_stream_next(stream);
+    defer embedded.smithers_event_free(second);
+    try std.testing.expectEqual(structs.EventTag.end, second.tag);
+}
+
+test "null event stream returns non-owning none event" {
+    const event = embedded.smithers_event_stream_next(null);
+    defer embedded.smithers_event_free(event);
+    try std.testing.expectEqual(structs.EventTag.none, event.tag);
+    try std.testing.expect(event.payload.ptr == null);
+    try std.testing.expectEqual(@as(usize, 0), event.payload.len);
+}
+
+test "persistence rejects invalid session JSON arrays" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "sessions.sqlite", .data = "" });
+    const db_path = try tmp.dir.realpathAlloc(std.testing.allocator, "sessions.sqlite");
+    defer std.testing.allocator.free(db_path);
+    const db_z = try std.testing.allocator.dupeZ(u8, db_path);
+    defer std.testing.allocator.free(db_z);
+
+    var open_err: structs.Error = undefined;
+    const persistence = embedded.smithers_persistence_open(db_z.ptr, &open_err).?;
+    defer embedded.smithers_persistence_close(persistence);
+    defer embedded.smithers_error_free(open_err);
+    try std.testing.expectEqual(@as(i32, 0), open_err.code);
+
+    const save_err = embedded.smithers_persistence_save_sessions(persistence, "/tmp/repo", "{\"id\":\"not-array\"}");
+    defer embedded.smithers_error_free(save_err);
+    try std.testing.expect(save_err.code != 0);
+}
+
+test "client call supports concurrent callers" {
+    const app = embedded.smithers_app_new(null).?;
+    defer embedded.smithers_app_free(app);
+    const client = embedded.smithers_client_new(app).?;
+    defer embedded.smithers_client_free(client);
+
+    const State = struct {
+        client: @TypeOf(client),
+        failures: *usize,
+        mutex: *std.Thread.Mutex,
+
+        fn worker(self: *@This()) void {
+            var i: usize = 0;
+            while (i < 25) : (i += 1) {
+                var err: structs.Error = undefined;
+                const result = embedded.smithers_client_call(self.client, "echo", "{\"ok\":true}", &err);
+                const ok = err.code == 0 and result.ptr != null and
+                    std.mem.indexOf(u8, std.mem.sliceTo(result.ptr.?, 0), "\"ok\":true") != null;
+                embedded.smithers_string_free(result);
+                embedded.smithers_error_free(err);
+                if (!ok) {
+                    self.mutex.lock();
+                    self.failures.* += 1;
+                    self.mutex.unlock();
+                }
+            }
+        }
+    };
+
+    var failures: usize = 0;
+    var mutex = std.Thread.Mutex{};
+    var states = [_]State{
+        .{ .client = client, .failures = &failures, .mutex = &mutex },
+        .{ .client = client, .failures = &failures, .mutex = &mutex },
+        .{ .client = client, .failures = &failures, .mutex = &mutex },
+        .{ .client = client, .failures = &failures, .mutex = &mutex },
+    };
+    var threads: [states.len]std.Thread = undefined;
+    for (&threads, &states) |*thread, *state| {
+        thread.* = try std.Thread.spawn(.{}, State.worker, .{state});
+    }
+    for (threads) |thread| thread.join();
+    try std.testing.expectEqual(@as(usize, 0), failures);
+}
+
 test "slash parse and palette scoring golden cases" {
     const parsed = embedded.smithers_slashcmd_parse("/workflow:ship env=\"prod west\" dry=true");
     defer embedded.smithers_string_free(parsed);
