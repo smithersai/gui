@@ -86,7 +86,7 @@
 		5765FF499504654B2D6A6881 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2DB5308B9A8B5B9B8441D086 /* CoreGraphics.framework */; };
 		58028250BBF43300F280C903 /* Smithers.Error.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C6D9A7C3644EB54DAECAEE0 /* Smithers.Error.swift */; };
 		58F179B3EE30F9EF0A846595 /* ChatBlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D71DE3FA0486E6EB69C608B /* ChatBlockRenderer.swift */; };
-		5A1B2046EBEC92741D7D0EE7 /* FeedbackReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CDDB908E913A4C95F8B1ED6 /* FeedbackReporter.swift */; };
+		5ABB22288D24FFCDE01FB4E2 /* Smithers.Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 373D944210C39D89EE83D999 /* Smithers.Models.swift */; };
 		5C4D6EE62CCAFC44BAF4CC6F /* LiveRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA94C08B9AE20EECDA056EDF /* LiveRunView.swift */; };
 		5E971C1886442B1B59977909 /* ScrubberDebounceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6271E01551F64DF581EE86ED /* ScrubberDebounceTests.swift */; };
 		602B5C57B9EE0A3EAA78F878 /* ModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CFB8CE7D8B7C4F0CBF809FE /* ModelsTests.swift */; };
@@ -166,6 +166,7 @@
 		C9106AB1F60E0639613BC28E /* InspectorTabSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30B2E8B940774D3D179A6448 /* InspectorTabSwitcher.swift */; };
 		CAC75633BBEFE99E37D8467E /* KeyboardShortcutSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A52A32703E953352D2D0AFC /* KeyboardShortcutSettings.swift */; };
 		D0263877A4BF2B1734DF689C /* DiffFileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BA1D666A3911E4BB6FF59A /* DiffFileView.swift */; };
+		D099C0E4496F8DBC1D1C63A9 /* Smithers.DevTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D15E19CB1D759D4F6004E54 /* Smithers.DevTools.swift */; };
 		D178BD6B6BAD241C69E99C0F /* LiveRunDevToolsResponsiveLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C15CA6C06444E4FA8D5BCB3E /* LiveRunDevToolsResponsiveLayoutTests.swift */; };
 		D2E2F93A2E75772CD38EE449 /* DashboardWorkflowsE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C178C4818C0F7FF44ED51830 /* DashboardWorkflowsE2ETests.swift */; };
 		D558E267156E2332DFBB1181 /* LiveRunLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 354E0E3297B6BD5ED8EB3280 /* LiveRunLayout.swift */; };
@@ -190,12 +191,12 @@
 		EDB682D1CD3D2877566F8678 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56ECA74603B6F7EEC2A4D1AC /* DashboardView.swift */; };
 		EEAF6F301C2B4FAEBFBB835C /* NewTabPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A26A91F4B685685EC909944 /* NewTabPicker.swift */; };
 		F0DD555FBE4AA4769F8C27CA /* LandingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E9879F0E36EB69E3C34575B /* LandingsView.swift */; };
+		F1BD3C24524F3FEA4A3F2349 /* Smithers.Terminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44D94BBD0E48CBCBE8F93699 /* Smithers.Terminal.swift */; };
 		F494F0E663A500B127B69886 /* FrameScrubberTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98672C5D1554EEAC2A0B1419 /* FrameScrubberTests.swift */; };
 		F72DF3F7E7AEEF647ED4F51E /* LogsTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81708C8F351548996C60CA6 /* LogsTabTests.swift */; };
 		F742B759992C5DCE1278E1E2 /* OutputTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C0D1D16B0D589031300F30 /* OutputTabTests.swift */; };
 		F8907CA3F2B945D6C12F4E6D /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 17F017DCB3D690AAEC40A72C /* SystemConfiguration.framework */; };
 		FB2AA3B6AA630AFC24868EF2 /* ChatBlockRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C57F4D5216AAC8AE0F989981 /* ChatBlockRendererTests.swift */; };
-		FC3848388F3217B1A0771814 /* FeedbackReporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2447E0FF77FFB0047A63FE00 /* FeedbackReporterTests.swift */; };
 		FD6CF3EEBBC617553FA30DBA /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DCC2CE3160AC54559D9346 /* CommandPaletteView.swift */; };
 		FDCDEEB4AB0A568717DA7821 /* WorkspacesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1B5A62ACE4611C314CF4F1 /* WorkspacesView.swift */; };
 		FE5F9307CB66A5C7B11A7583 /* Smithers.Event.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C470087F57451E902BD6305 /* Smithers.Event.swift */; };
@@ -246,11 +247,11 @@
 		1C623D964FEC77EE1C56A29E /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		1C7C3EA5BF715F0A3CC2629C /* UnifiedDiffParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDiffParser.swift; sourceTree = "<group>"; };
 		1CEA9D8755141E850C0A0D21 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		1D15E19CB1D759D4F6004E54 /* Smithers.DevTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.DevTools.swift; sourceTree = "<group>"; };
 		1D71DE3FA0486E6EB69C608B /* ChatBlockRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatBlockRenderer.swift; sourceTree = "<group>"; };
 		1E9879F0E36EB69E3C34575B /* LandingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingsView.swift; sourceTree = "<group>"; };
 		21E09F47B97A3312134C4629 /* ApprovalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsView.swift; sourceTree = "<group>"; };
 		222BBAD1B7A3D2D98EAAE607 /* Smithers.SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.SessionStore.swift; sourceTree = "<group>"; };
-		2447E0FF77FFB0047A63FE00 /* FeedbackReporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackReporterTests.swift; sourceTree = "<group>"; };
 		2BC8F51D9407A4AF34C5262D /* Smithers.Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Workspace.swift; sourceTree = "<group>"; };
 		2C6D9A7C3644EB54DAECAEE0 /* Smithers.Error.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Error.swift; sourceTree = "<group>"; };
 		2DB5308B9A8B5B9B8441D086 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
@@ -261,6 +262,7 @@
 		34FBCE6095A7B7A659B2B257 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		354E0E3297B6BD5ED8EB3280 /* LiveRunLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunLayout.swift; sourceTree = "<group>"; };
 		35CB600F2FE86DF62C468E7E /* SidebarE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarE2ETests.swift; sourceTree = "<group>"; };
+		373D944210C39D89EE83D999 /* Smithers.Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Models.swift; sourceTree = "<group>"; };
 		38F004EBDF146316C0E71859 /* DiffTabE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffTabE2ETests.swift; sourceTree = "<group>"; };
 		39A701BE26A2D3529816FB38 /* SmithersModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersModels.swift; sourceTree = "<group>"; };
 		3D04C8142FE76C32CF0EEA41 /* Smithers.SlashCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.SlashCommands.swift; sourceTree = "<group>"; };
@@ -272,6 +274,7 @@
 		44338B1B1002218C169AFD31 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		44A7C3FA9E8838034A9AC4BF /* ElapsedTimeFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElapsedTimeFormatTests.swift; sourceTree = "<group>"; };
 		44BA1D666A3911E4BB6FF59A /* DiffFileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffFileView.swift; sourceTree = "<group>"; };
+		44D94BBD0E48CBCBE8F93699 /* Smithers.Terminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Terminal.swift; sourceTree = "<group>"; };
 		44DC1E3F85E3D2ED4A7CE953 /* GhostBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhostBanner.swift; sourceTree = "<group>"; };
 		44DCC2CE3160AC54559D9346 /* CommandPaletteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPaletteView.swift; sourceTree = "<group>"; };
 		459E2100516EF1B85006DE88 /* ChangesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangesView.swift; sourceTree = "<group>"; };
@@ -317,7 +320,6 @@
 		8481B9D7213A4EC9BC818A6D /* LiveRunTreePerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunTreePerformanceTests.swift; sourceTree = "<group>"; };
 		86860F7DE886872C26CD5EC7 /* RunsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsView.swift; sourceTree = "<group>"; };
 		8C4D46692DA9D65B30F93FAA /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
-		8CDDB908E913A4C95F8B1ED6 /* FeedbackReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackReporter.swift; sourceTree = "<group>"; };
 		8DC87D91597FAC181A269856 /* ApprovalsE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsE2ETests.swift; sourceTree = "<group>"; };
 		8EC0C110B0BA06054D579224 /* TicketsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TicketsView.swift; sourceTree = "<group>"; };
 		903BABEE4FCDFCEB64EABEA2 /* RunsScoresMemoryE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsScoresMemoryE2ETests.swift; sourceTree = "<group>"; };
@@ -540,7 +542,6 @@
 				B6EC33AA500D6EEC5742A3C4 /* DiffHunkView.swift */,
 				D885BAC6E72964E2D2A081FE /* DiffTab.swift */,
 				BBF16A70921BB722E8920421 /* ElapsedTimeView.swift */,
-				8CDDB908E913A4C95F8B1ED6 /* FeedbackReporter.swift */,
 				5F4227C1F0056998020E51A9 /* FrameScrubberView.swift */,
 				44DC1E3F85E3D2ED4A7CE953 /* GhostBanner.swift */,
 				1BC1C3EAEB701A17835900E0 /* GUIControlSidebar.swift */,
@@ -640,7 +641,6 @@
 				5F5084BE3905D9C430F47B37 /* DiffParserTests.swift */,
 				9D77B9B353FE42EF04A6B523 /* DiffTabTests.swift */,
 				44A7C3FA9E8838034A9AC4BF /* ElapsedTimeFormatTests.swift */,
-				2447E0FF77FFB0047A63FE00 /* FeedbackReporterTests.swift */,
 				98672C5D1554EEAC2A0B1419 /* FrameScrubberTests.swift */,
 				79DA76644A2887A32D103FFA /* GUINotificationsTests.swift */,
 				5FED589B5455608DF3A2AB30 /* HeartbeatStateTests.swift */,
@@ -681,12 +681,15 @@
 				AF4E8F605DBC419D2A624428 /* Smithers.App.swift */,
 				F0143EC17D00CE6555654949 /* Smithers.Client.swift */,
 				BFEA889882C9F896DE3CAA5A /* Smithers.Config.swift */,
+				1D15E19CB1D759D4F6004E54 /* Smithers.DevTools.swift */,
 				2C6D9A7C3644EB54DAECAEE0 /* Smithers.Error.swift */,
 				4C470087F57451E902BD6305 /* Smithers.Event.swift */,
+				373D944210C39D89EE83D999 /* Smithers.Models.swift */,
 				16292EFDD24FFD9D4B7E65A4 /* Smithers.Palette.swift */,
 				02219E60CC698AAEEFED8416 /* Smithers.Session.swift */,
 				222BBAD1B7A3D2D98EAAE607 /* Smithers.SessionStore.swift */,
 				3D04C8142FE76C32CF0EEA41 /* Smithers.SlashCommands.swift */,
+				44D94BBD0E48CBCBE8F93699 /* Smithers.Terminal.swift */,
 				2BC8F51D9407A4AF34C5262D /* Smithers.Workspace.swift */,
 			);
 			name = Smithers;
@@ -828,7 +831,6 @@
 				D5A33D5DC6FE40B2C4BD385A /* DiffParserTests.swift in Sources */,
 				547306A83485963A17B6690D /* DiffTabTests.swift in Sources */,
 				C82D0E7CEDEF9176450F381E /* ElapsedTimeFormatTests.swift in Sources */,
-				FC3848388F3217B1A0771814 /* FeedbackReporterTests.swift in Sources */,
 				F494F0E663A500B127B69886 /* FrameScrubberTests.swift in Sources */,
 				3833139E83AD73C0168B5AF1 /* GUINotificationsTests.swift in Sources */,
 				27D677ED3BE858ED0F708CA6 /* HeartbeatStateTests.swift in Sources */,
@@ -886,7 +888,6 @@
 				46985FE0CFBD08A8CBA7DA13 /* DiffHunkView.swift in Sources */,
 				4BF92AA13FCEC6668ECF6EC5 /* DiffTab.swift in Sources */,
 				E15B97C22F2011D400FABCF3 /* ElapsedTimeView.swift in Sources */,
-				5A1B2046EBEC92741D7D0EE7 /* FeedbackReporter.swift in Sources */,
 				80EC3607D5A77491B892D850 /* FrameScrubberView.swift in Sources */,
 				9E493791E532DA0DB2FB5F95 /* GUIControlSidebar.swift in Sources */,
 				2824589DD104A48F8D888A7F /* GUINotifications.swift in Sources */,
@@ -943,12 +944,15 @@
 				5680905B32956671597F08BD /* Smithers.App.swift in Sources */,
 				B37A1429A2614150F6F2D144 /* Smithers.Client.swift in Sources */,
 				0CC4609EB1C15DE6D76B95D3 /* Smithers.Config.swift in Sources */,
+				D099C0E4496F8DBC1D1C63A9 /* Smithers.DevTools.swift in Sources */,
 				58028250BBF43300F280C903 /* Smithers.Error.swift in Sources */,
 				FE5F9307CB66A5C7B11A7583 /* Smithers.Event.swift in Sources */,
+				5ABB22288D24FFCDE01FB4E2 /* Smithers.Models.swift in Sources */,
 				3871683AA0C30170BCA07CDB /* Smithers.Palette.swift in Sources */,
 				B1FC92C0C9DCE013CBF01175 /* Smithers.Session.swift in Sources */,
 				16EF2EAC9B94D9AB21CEB3CA /* Smithers.SessionStore.swift in Sources */,
 				4B018A961BC38D802230E367 /* Smithers.SlashCommands.swift in Sources */,
+				F1BD3C24524F3FEA4A3F2349 /* Smithers.Terminal.swift in Sources */,
 				D99FBCAB28FA01FDA9D5617F /* Smithers.Workspace.swift in Sources */,
 				17FB38CE28BA917017F5F393 /* SmithersModels.swift in Sources */,
 				13F7BBFCCCD57BFC7A31E19F /* StoredShortcut.swift in Sources */,

@@ -51,7 +51,6 @@ targets:
       - ContentView.swift
       - DashboardView.swift
       - IssuesView.swift
-      - FeedbackReporter.swift
       - JJHubWorkflowsView.swift
       - LandingsView.swift
       - LogViewerView.swift
