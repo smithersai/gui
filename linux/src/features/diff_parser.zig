@@ -124,6 +124,15 @@ pub const Result = struct {
     }
 };
 
+pub const FileList = struct {
+    files: std.ArrayList(File) = .empty,
+
+    pub fn deinit(self: *FileList, alloc: std.mem.Allocator) void {
+        for (self.files.items) |*file| file.deinit(alloc);
+        self.files.deinit(alloc);
+    }
+};
+
 pub const Options = struct {
     path: []const u8 = "unknown",
     operation: Operation = .modify,
@@ -132,6 +141,36 @@ pub const Options = struct {
     binary_size_bytes: ?usize = null,
     strict: bool = true,
 };
+
+pub fn parseFiles(alloc: std.mem.Allocator, diff: []const u8, options: Options) !FileList {
+    var starts = std.ArrayList(usize).empty;
+    defer starts.deinit(alloc);
+    try starts.append(alloc, 0);
+
+    var search_from: usize = 0;
+    while (std.mem.indexOfPos(u8, diff, search_from, "\ndiff --git ")) |pos| {
+        try starts.append(alloc, pos + 1);
+        search_from = pos + 1;
+    }
+
+    var list = FileList{};
+    errdefer list.deinit(alloc);
+
+    for (starts.items, 0..) |start, index| {
+        const end = if (index + 1 < starts.items.len) starts.items[index + 1] else diff.len;
+        const chunk = std.mem.trim(u8, diff[start..end], &std.ascii.whitespace);
+        if (chunk.len == 0) continue;
+        var chunk_options = options;
+        if (pathFromDiffGit(chunk)) |path| chunk_options.path = path;
+        var parsed = try parse(alloc, chunk, chunk_options);
+        errdefer parsed.file.deinit(alloc);
+        try list.files.append(alloc, parsed.file);
+        for (parsed.warnings.items) |*warning| warning.deinit(alloc);
+        parsed.warnings.deinit(alloc);
+    }
+
+    return list;
+}
 
 const HunkMeta = struct {
     old_start: usize,
@@ -378,6 +417,14 @@ fn parsePathHeader(line: []const u8, prefix: []const u8) []const u8 {
     return raw;
 }
 
+fn pathFromDiffGit(chunk: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, chunk, '\n');
+    const first = lines.next() orelse return null;
+    if (!std.mem.startsWith(u8, first, "diff --git ")) return null;
+    if (std.mem.lastIndexOf(u8, first, " b/")) |b_index| return first[b_index + 3 ..];
+    return null;
+}
+
 fn parseHunkHeader(line: []const u8) ?ParsedHeader {
     if (!std.mem.startsWith(u8, line, "@@ -")) return null;
     var index: usize = 4;
@@ -449,6 +496,27 @@ test "headers infer status and paths" {
     try std.testing.expectEqualStrings("old-name.txt", parsed.file.old_path.?);
     try std.testing.expectEqualStrings("new-name.txt", parsed.file.path);
     try std.testing.expectEqual(@as(usize, 2), parsed.file.mode_changes.items.len);
+}
+
+test "parseFiles splits multi-file unified diff" {
+    var files = try parseFiles(std.testing.allocator,
+        \\diff --git a/a.txt b/a.txt
+        \\--- a/a.txt
+        \\+++ b/a.txt
+        \\@@ -1 +1 @@
+        \\-a
+        \\+b
+        \\diff --git a/b.txt b/b.txt
+        \\--- a/b.txt
+        \\+++ b/b.txt
+        \\@@ -1 +1 @@
+        \\-c
+        \\+d
+    , .{ .path = "unknown", .strict = false });
+    defer files.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), files.files.items.len);
+    try std.testing.expectEqualStrings("a.txt", files.files.items[0].path);
+    try std.testing.expectEqualStrings("b.txt", files.files.items[1].path);
 }
 
 test "crlf and no-newline markers are normalized" {

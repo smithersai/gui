@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
@@ -24,6 +25,8 @@ pub const DeveloperDebugView = extern struct {
     const Private = struct {
         alloc: std.mem.Allocator = undefined,
         list: *gtk.ListBox = undefined,
+        event_buffer: *gtk.TextBuffer = undefined,
+        client: smithers.c.smithers_client_t = null,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -38,10 +41,20 @@ pub const DeveloperDebugView = extern struct {
         return self;
     }
 
+    pub fn newWithClient(alloc: std.mem.Allocator, client: smithers.c.smithers_client_t) !*Self {
+        const self = try new(alloc);
+        self.private().client = client;
+        try self.refresh();
+        return self;
+    }
+
     pub fn refresh(self: *Self) !void {
         const priv = self.private();
         ui.clearList(priv.list);
         const info = smithers.c.smithers_info();
+        try self.addRow("build mode", @tagName(builtin.mode));
+        try self.addRow("target arch", @tagName(builtin.target.cpu.arch));
+        try self.addRow("target os", @tagName(builtin.target.os.tag));
         try self.addRow("libsmithers version", std.mem.span(info.version));
         try self.addRow("libsmithers commit", std.mem.span(info.commit));
         try self.addRow("platform", switch (info.platform) {
@@ -51,6 +64,7 @@ pub const DeveloperDebugView = extern struct {
         });
         try self.addRow("terminal backend", if (terminal.have_vte) "vte-gtk4" else terminal.dependency_status);
         try self.addRow("browser backend", if (browser_surface.have_webkit) "webkitgtk-6.0" else browser_surface.dependency_status);
+        try self.refreshEventDump();
     }
 
     fn build(self: *Self) !void {
@@ -61,6 +75,9 @@ pub const DeveloperDebugView = extern struct {
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh diagnostics");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
+        const clear_button = ui.iconButton("edit-clear-all-symbolic", "Clear caches");
+        _ = gtk.Button.signals.clicked.connect(clear_button, *Self, clearCachesClicked, self, .{});
+        header.append(clear_button.as(gtk.Widget));
         root.append(header.as(gtk.Widget));
 
         self.private().list = gtk.ListBox.new();
@@ -68,6 +85,18 @@ pub const DeveloperDebugView = extern struct {
         self.private().list.setSelectionMode(.none);
         self.private().list.setShowSeparators(1);
         root.append(self.private().list.as(gtk.Widget));
+
+        root.append(ui.label("Event stream dump", "heading").as(gtk.Widget));
+        self.private().event_buffer = gtk.TextBuffer.new(null);
+        const event_view = gtk.TextView.new();
+        event_view.setBuffer(self.private().event_buffer);
+        event_view.setEditable(0);
+        event_view.setMonospace(1);
+        event_view.setWrapMode(.word_char);
+        event_view.as(gtk.Widget).addCssClass("monospace");
+        const event_scroll = ui.scrolled(event_view.as(gtk.Widget));
+        event_scroll.as(gtk.Widget).setVexpand(1);
+        root.append(event_scroll.as(gtk.Widget));
         self.as(adw.Bin).setChild(root.as(gtk.Widget));
     }
 
@@ -95,11 +124,41 @@ pub const DeveloperDebugView = extern struct {
         self.refresh() catch {};
     }
 
+    fn clearCachesClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        if (self.private().client) |client| {
+            const json = smithers.callJson(self.private().alloc, client, "clearCaches", "{}") catch {
+                self.private().event_buffer.setText("clearCaches unavailable", -1);
+                return;
+            };
+            defer self.private().alloc.free(json);
+            self.private().event_buffer.setText("caches cleared", -1);
+        } else {
+            self.private().event_buffer.setText("clearCaches requires a libsmithers client", -1);
+        }
+    }
+
+    fn refreshEventDump(self: *Self) !void {
+        const priv = self.private();
+        if (priv.client == null) {
+            priv.event_buffer.setText("No client attached.", -1);
+            return;
+        }
+        const json = smithers.callJson(priv.alloc, priv.client, "debugEventDump", "{}") catch {
+            priv.event_buffer.setText("debugEventDump unavailable.", -1);
+            return;
+        };
+        defer priv.alloc.free(json);
+        const z = try priv.alloc.dupeZ(u8, json);
+        defer priv.alloc.free(z);
+        priv.event_buffer.setText(z.ptr, @intCast(json.len));
+    }
+
     fn dispose(self: *Self) callconv(.c) void {
         const priv = self.private();
         if (!priv.did_dispose) {
             priv.did_dispose = true;
             self.as(adw.Bin).setChild(null);
+            priv.event_buffer.unref();
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
     }

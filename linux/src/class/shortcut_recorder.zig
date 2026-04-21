@@ -21,9 +21,12 @@ pub const ShortcutRecorder = extern struct {
 
     const Private = struct {
         alloc: std.mem.Allocator = undefined,
+        root: *gtk.Box = undefined,
         button: *gtk.Button = undefined,
         label: *gtk.Label = undefined,
+        status: *gtk.Label = undefined,
         shortcut: ?[]u8 = null,
+        existing: std.ArrayList([]u8) = .empty,
         recording: bool = false,
         did_dispose: bool = false,
 
@@ -37,6 +40,7 @@ pub const ShortcutRecorder = extern struct {
             .alloc = alloc,
             .shortcut = if (current) |shortcut_value| try alloc.dupe(u8, shortcut_value) else null,
         };
+        try self.seedFallbackConflicts();
         try self.build();
         self.refreshLabel();
         return self;
@@ -46,31 +50,72 @@ pub const ShortcutRecorder = extern struct {
         return self.private().shortcut;
     }
 
+    pub fn setExistingShortcuts(self: *Self, shortcuts: []const []const u8) !void {
+        const priv = self.private();
+        for (priv.existing.items) |shortcut| priv.alloc.free(shortcut);
+        priv.existing.clearRetainingCapacity();
+        for (shortcuts) |shortcut| try priv.existing.append(priv.alloc, try priv.alloc.dupe(u8, shortcut));
+        self.refreshLabel();
+    }
+
+    pub fn saveAndApply(self: *Self) bool {
+        return !self.hasConflict();
+    }
+
     fn build(self: *Self) !void {
+        self.private().root = gtk.Box.new(.vertical, 4);
         self.private().button = gtk.Button.new();
         self.private().button.as(gtk.Widget).addCssClass("flat");
         _ = gtk.Button.signals.clicked.connect(self.private().button, *Self, clicked, self, .{});
 
         self.private().label = ui.label("Record shortcut", "monospace");
         self.private().button.setChild(self.private().label.as(gtk.Widget));
+        self.private().root.append(self.private().button.as(gtk.Widget));
+
+        self.private().status = ui.dim("No conflict");
+        self.private().root.append(self.private().status.as(gtk.Widget));
 
         const controller = gtk.EventControllerKey.new();
         _ = gtk.EventControllerKey.signals.key_pressed.connect(controller, *Self, keyPressed, self, .{});
         self.private().button.as(gtk.Widget).addController(controller.as(gtk.EventController));
-        self.as(adw.Bin).setChild(self.private().button.as(gtk.Widget));
+        self.as(adw.Bin).setChild(self.private().root.as(gtk.Widget));
     }
 
     fn refreshLabel(self: *Self) void {
         const priv = self.private();
         if (priv.recording) {
             priv.label.setText("Press shortcut...");
+            priv.status.setText("Recording");
         } else if (priv.shortcut) |shortcut| {
             const z = priv.alloc.dupeZ(u8, shortcut) catch return;
             defer priv.alloc.free(z);
             priv.label.setText(z.ptr);
+            priv.status.setText(if (self.hasConflict()) "Conflict with existing binding" else "Ready");
         } else {
             priv.label.setText("None");
+            priv.status.setText("No shortcut set");
         }
+    }
+
+    fn seedFallbackConflicts(self: *Self) !void {
+        const defaults = [_][]const u8{
+            "Ctrl+K",
+            "Ctrl+Q",
+            "Ctrl+W",
+            "Ctrl+Shift+C",
+            "Ctrl+Shift+V",
+            "Alt+N",
+            "Alt+P",
+        };
+        for (defaults) |shortcut| try self.private().existing.append(self.private().alloc, try self.private().alloc.dupe(u8, shortcut));
+    }
+
+    fn hasConflict(self: *Self) bool {
+        const shortcut = self.private().shortcut orelse return false;
+        for (self.private().existing.items) |existing| {
+            if (std.ascii.eqlIgnoreCase(existing, shortcut)) return true;
+        }
+        return false;
     }
 
     fn clicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -108,6 +153,8 @@ pub const ShortcutRecorder = extern struct {
             priv.did_dispose = true;
             self.as(adw.Bin).setChild(null);
             if (priv.shortcut) |shortcut| priv.alloc.free(shortcut);
+            for (priv.existing.items) |shortcut| priv.alloc.free(shortcut);
+            priv.existing.deinit(priv.alloc);
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
     }

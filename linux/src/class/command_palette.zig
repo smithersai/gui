@@ -1,5 +1,6 @@
 const std = @import("std");
 const adw = @import("adw");
+const gdk = @import("gdk");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -43,10 +44,12 @@ pub const CommandPalette = extern struct {
         window: *MainWindow = undefined,
         dialog: *adw.Dialog = undefined,
         search: *gtk.SearchEntry = undefined,
+        modes: *gtk.Box = undefined,
         list: *gtk.ListBox = undefined,
         items: std.ArrayList(models.PaletteItem) = .empty,
         recent_ids: std.ArrayList([]u8) = .empty,
         mode: smithers.c.smithers_palette_mode_e = smithers.c.SMITHERS_PALETTE_MODE_ALL,
+        selected_index: usize = 0,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -89,23 +92,10 @@ pub const CommandPalette = extern struct {
         _ = gtk.SearchEntry.signals.stop_search.connect(priv.search, *Self, stopSearch, self, .{});
         box.append(priv.search.as(gtk.Widget));
 
-        const modes = gtk.Box.new(.horizontal, 6);
-        ui.margin4(modes.as(gtk.Widget), 0, 0, 0, 0);
-        const mode_defs = [_]struct { label: [:0]const u8, mode: smithers.c.smithers_palette_mode_e }{
-            .{ .label = "All", .mode = smithers.c.SMITHERS_PALETTE_MODE_ALL },
-            .{ .label = "Commands", .mode = smithers.c.SMITHERS_PALETTE_MODE_COMMANDS },
-            .{ .label = "Files", .mode = smithers.c.SMITHERS_PALETTE_MODE_FILES },
-            .{ .label = "Workflows", .mode = smithers.c.SMITHERS_PALETTE_MODE_WORKFLOWS },
-            .{ .label = "Runs", .mode = smithers.c.SMITHERS_PALETTE_MODE_RUNS },
-        };
-        inline for (mode_defs, 0..) |def, index| {
-            const button = ui.textButton(def.label, def.mode == priv.mode);
-            button.as(gtk.Widget).addCssClass("flat");
-            ui.setIndex(button.as(gobject.Object), index);
-            _ = gtk.Button.signals.clicked.connect(button, *Self, modeClicked, self, .{});
-            modes.append(button.as(gtk.Widget));
-        }
-        box.append(modes.as(gtk.Widget));
+        priv.modes = gtk.Box.new(.horizontal, 6);
+        ui.margin4(priv.modes.as(gtk.Widget), 0, 0, 0, 0);
+        try self.rebuildModes();
+        box.append(priv.modes.as(gtk.Widget));
 
         priv.list = gtk.ListBox.new();
         priv.list.as(gtk.Widget).addCssClass("boxed-list");
@@ -114,7 +104,31 @@ pub const CommandPalette = extern struct {
         _ = gtk.ListBox.signals.row_activated.connect(priv.list, *Self, rowActivated, self, .{});
         box.append(priv.list.as(gtk.Widget));
 
+        const controller = gtk.EventControllerKey.new();
+        _ = gtk.EventControllerKey.signals.key_pressed.connect(controller, *Self, keyPressed, self, .{});
+        box.as(gtk.Widget).addController(controller.as(gtk.EventController));
+
         priv.dialog.setChild(box.as(gtk.Widget));
+    }
+
+    fn rebuildModes(self: *Self) !void {
+        const priv = self.private();
+        ui.clearBox(priv.modes);
+        const mode_defs = [_]struct { label: [:0]const u8, mode: smithers.c.smithers_palette_mode_e }{
+            .{ .label = "All", .mode = smithers.c.SMITHERS_PALETTE_MODE_ALL },
+            .{ .label = "Commands", .mode = smithers.c.SMITHERS_PALETTE_MODE_COMMANDS },
+            .{ .label = "Files", .mode = smithers.c.SMITHERS_PALETTE_MODE_FILES },
+            .{ .label = "Workflows", .mode = smithers.c.SMITHERS_PALETTE_MODE_WORKFLOWS },
+            .{ .label = "Workspaces", .mode = smithers.c.SMITHERS_PALETTE_MODE_WORKSPACES },
+            .{ .label = "Runs", .mode = smithers.c.SMITHERS_PALETTE_MODE_RUNS },
+        };
+        inline for (mode_defs, 0..) |def, index| {
+            const button = ui.textButton(def.label, def.mode == priv.mode);
+            button.as(gtk.Widget).addCssClass("flat");
+            ui.setIndex(button.as(gobject.Object), index);
+            _ = gtk.Button.signals.clicked.connect(button, *Self, modeClicked, self, .{});
+            priv.modes.append(button.as(gtk.Widget));
+        }
     }
 
     fn refresh(self: *Self) !void {
@@ -144,13 +158,21 @@ pub const CommandPalette = extern struct {
 
         for (priv.items.items, 0..) |item, index| {
             const icon = paletteIcon(item.kind, item.id);
-            const row = try ui.row(alloc, icon, item.title, item.subtitle);
+            const subtitle = try paletteSubtitle(alloc, item, recentRank(priv.recent_ids.items, item.id) > 0);
+            defer alloc.free(subtitle);
+            const row = try ui.row(alloc, icon, item.title, subtitle);
             ui.setIndex(row.as(gobject.Object), index);
             priv.list.append(row.as(gtk.Widget));
         }
+        priv.selected_index = 0;
+        self.selectIndex(0);
     }
 
     fn addFallbackItems(self: *Self, query: []const u8) !void {
+        if (self.private().mode == smithers.c.SMITHERS_PALETTE_MODE_WORKSPACES) {
+            try self.addFallback("nav:workspaces", "Workspaces", "Open recent workspaces", "workspace", query);
+            return;
+        }
         if (self.private().mode != smithers.c.SMITHERS_PALETTE_MODE_ALL and
             self.private().mode != smithers.c.SMITHERS_PALETTE_MODE_COMMANDS)
         {
@@ -223,6 +245,8 @@ pub const CommandPalette = extern struct {
         if (std.mem.startsWith(u8, id, "workflow:") or std.ascii.eqlIgnoreCase(kind, "workflow")) return "media-playlist-shuffle-symbolic";
         if (std.mem.startsWith(u8, id, "file:") or std.ascii.eqlIgnoreCase(kind, "file")) return "text-x-generic-symbolic";
         if (std.ascii.eqlIgnoreCase(kind, "workspace")) return "folder-symbolic";
+        if (std.ascii.eqlIgnoreCase(kind, "run")) return "media-playback-start-symbolic";
+        if (std.ascii.eqlIgnoreCase(kind, "session")) return "utilities-terminal-symbolic";
         return "system-search-symbolic";
     }
 
@@ -231,7 +255,7 @@ pub const CommandPalette = extern struct {
     }
 
     fn searchActivated(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
-        self.activateIndex(0);
+        self.activateIndex(self.private().selected_index);
     }
 
     fn stopSearch(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
@@ -244,14 +268,113 @@ pub const CommandPalette = extern struct {
             1 => smithers.c.SMITHERS_PALETTE_MODE_COMMANDS,
             2 => smithers.c.SMITHERS_PALETTE_MODE_FILES,
             3 => smithers.c.SMITHERS_PALETTE_MODE_WORKFLOWS,
-            4 => smithers.c.SMITHERS_PALETTE_MODE_RUNS,
+            4 => smithers.c.SMITHERS_PALETTE_MODE_WORKSPACES,
+            5 => smithers.c.SMITHERS_PALETTE_MODE_RUNS,
             else => smithers.c.SMITHERS_PALETTE_MODE_ALL,
         };
+        self.rebuildModes() catch {};
         self.refresh() catch |err| log.warn("palette mode refresh failed: {}", .{err});
     }
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         self.activateIndex(ui.getIndex(row.as(gobject.Object)) orelse return);
+    }
+
+    fn selectIndex(self: *Self, index: usize) void {
+        const priv = self.private();
+        if (index >= priv.items.items.len) return;
+        priv.selected_index = index;
+        if (priv.list.getRowAtIndex(@intCast(index))) |row| priv.list.selectRow(row);
+    }
+
+    fn moveSelection(self: *Self, delta: isize) void {
+        const priv = self.private();
+        if (priv.items.items.len == 0) return;
+        if (delta < 0) {
+            self.selectIndex(if (priv.selected_index == 0) 0 else priv.selected_index - 1);
+        } else {
+            self.selectIndex(@min(priv.items.items.len - 1, priv.selected_index + 1));
+        }
+    }
+
+    fn cycleMode(self: *Self, delta: isize) void {
+        const modes = [_]smithers.c.smithers_palette_mode_e{
+            smithers.c.SMITHERS_PALETTE_MODE_ALL,
+            smithers.c.SMITHERS_PALETTE_MODE_COMMANDS,
+            smithers.c.SMITHERS_PALETTE_MODE_FILES,
+            smithers.c.SMITHERS_PALETTE_MODE_WORKFLOWS,
+            smithers.c.SMITHERS_PALETTE_MODE_WORKSPACES,
+            smithers.c.SMITHERS_PALETTE_MODE_RUNS,
+        };
+        var current: usize = 0;
+        for (modes, 0..) |mode, index| {
+            if (mode == self.private().mode) current = index;
+        }
+        const next = if (delta < 0)
+            if (current == 0) modes.len - 1 else current - 1
+        else
+            (current + 1) % modes.len;
+        self.private().mode = modes[next];
+        self.rebuildModes() catch {};
+        self.refresh() catch |err| log.warn("palette mode refresh failed: {}", .{err});
+    }
+
+    fn keyPressed(
+        _: *gtk.EventControllerKey,
+        keyval: c_uint,
+        _: c_uint,
+        mods: gdk.ModifierType,
+        self: *Self,
+    ) callconv(.c) c_int {
+        if (mods.control_mask) {
+            const mode_index: ?usize = switch (keyval) {
+                gdk.KEY_1 => 0,
+                gdk.KEY_2 => 1,
+                gdk.KEY_3 => 2,
+                gdk.KEY_4 => 3,
+                gdk.KEY_5 => 4,
+                gdk.KEY_6 => 5,
+                else => null,
+            };
+            if (mode_index) |index| {
+                const modes = [_]smithers.c.smithers_palette_mode_e{
+                    smithers.c.SMITHERS_PALETTE_MODE_ALL,
+                    smithers.c.SMITHERS_PALETTE_MODE_COMMANDS,
+                    smithers.c.SMITHERS_PALETTE_MODE_FILES,
+                    smithers.c.SMITHERS_PALETTE_MODE_WORKFLOWS,
+                    smithers.c.SMITHERS_PALETTE_MODE_WORKSPACES,
+                    smithers.c.SMITHERS_PALETTE_MODE_RUNS,
+                };
+                self.private().mode = modes[index];
+                self.rebuildModes() catch {};
+                self.refresh() catch |err| log.warn("palette mode refresh failed: {}", .{err});
+                return 1;
+            }
+        }
+
+        switch (keyval) {
+            gdk.KEY_Escape => {
+                self.dismiss();
+                return 1;
+            },
+            gdk.KEY_Down, gdk.KEY_j, gdk.KEY_J => {
+                self.moveSelection(1);
+                return 1;
+            },
+            gdk.KEY_Up, gdk.KEY_k, gdk.KEY_K => {
+                self.moveSelection(-1);
+                return 1;
+            },
+            gdk.KEY_Return, gdk.KEY_KP_Enter => {
+                self.activateIndex(self.private().selected_index);
+                return 1;
+            },
+            gdk.KEY_Tab => {
+                self.cycleMode(1);
+                return 1;
+            },
+            else => return 0,
+        }
     }
 
     fn dispose(self: *Self) callconv(.c) void {
@@ -386,6 +509,14 @@ fn appendPaletteItem(
         .kind = try alloc.dupe(u8, kind),
         .score = score,
     });
+}
+
+fn paletteSubtitle(alloc: std.mem.Allocator, item: models.PaletteItem, recent: bool) ![:0]u8 {
+    const base = item.subtitle orelse item.kind;
+    if (recent) {
+        return try std.fmt.allocPrintSentinel(alloc, "{s} - recent - score {d}", .{ base, item.score }, 0);
+    }
+    return try std.fmt.allocPrintSentinel(alloc, "{s} - score {d}", .{ base, item.score }, 0);
 }
 
 fn hasPaletteItem(items: []const models.PaletteItem, id: []const u8) bool {

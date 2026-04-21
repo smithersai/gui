@@ -1,5 +1,6 @@
 const std = @import("std");
 const adw = @import("adw");
+const gdk = @import("gdk");
 const gio = @import("gio");
 const glib = @import("glib");
 const gobject = @import("gobject");
@@ -52,7 +53,13 @@ pub const BrowserSurface = extern struct {
         alloc: std.mem.Allocator = undefined,
         entry: *gtk.Entry = undefined,
         title: *gtk.Label = undefined,
+        status: *gtk.Label = undefined,
+        back_button: *gtk.Button = undefined,
+        forward_button: *gtk.Button = undefined,
         current_url: ?[]u8 = null,
+        back_stack: std.ArrayList([]u8) = .empty,
+        forward_stack: std.ArrayList([]u8) = .empty,
+        devtools_enabled: bool = false,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -68,14 +75,27 @@ pub const BrowserSurface = extern struct {
     }
 
     pub fn navigate(self: *Self, raw: []const u8) !void {
+        try self.navigateInternal(raw, true);
+    }
+
+    fn navigateInternal(self: *Self, raw: []const u8, push_history: bool) !void {
         const priv = self.private();
         const resolved = (try resolveUrl(priv.alloc, raw, .duckduckgo)) orelse return;
+        errdefer priv.alloc.free(resolved);
+
+        if (push_history) {
+            if (priv.current_url) |old| try priv.back_stack.append(priv.alloc, try priv.alloc.dupe(u8, old));
+            clearStringList(priv.alloc, &priv.forward_stack);
+        }
         if (priv.current_url) |old| priv.alloc.free(old);
         priv.current_url = resolved;
+
         const z = try priv.alloc.dupeZ(u8, resolved);
         defer priv.alloc.free(z);
         priv.entry.as(gtk.Editable).setText(z.ptr);
         priv.title.setText(z.ptr);
+        priv.status.setText(if (have_webkit) "Loaded" else "Ready to open externally");
+        self.updateButtons();
     }
 
     fn build(self: *Self) !void {
@@ -83,12 +103,18 @@ pub const BrowserSurface = extern struct {
         const toolbar = gtk.Box.new(.horizontal, 6);
         ui.margin4(toolbar.as(gtk.Widget), 7, 8, 7, 8);
 
-        const back = ui.iconButton("go-previous-symbolic", "Back");
-        back.as(gtk.Widget).setSensitive(0);
-        toolbar.append(back.as(gtk.Widget));
-        const forward = ui.iconButton("go-next-symbolic", "Forward");
-        forward.as(gtk.Widget).setSensitive(0);
-        toolbar.append(forward.as(gtk.Widget));
+        self.private().back_button = ui.iconButton("go-previous-symbolic", "Back");
+        _ = gtk.Button.signals.clicked.connect(self.private().back_button, *Self, backClicked, self, .{});
+        toolbar.append(self.private().back_button.as(gtk.Widget));
+        self.private().forward_button = ui.iconButton("go-next-symbolic", "Forward");
+        _ = gtk.Button.signals.clicked.connect(self.private().forward_button, *Self, forwardClicked, self, .{});
+        toolbar.append(self.private().forward_button.as(gtk.Widget));
+        const reload = ui.iconButton("view-refresh-symbolic", "Reload");
+        _ = gtk.Button.signals.clicked.connect(reload, *Self, reloadClicked, self, .{});
+        toolbar.append(reload.as(gtk.Widget));
+        const home = ui.iconButton("go-home-symbolic", "Home");
+        _ = gtk.Button.signals.clicked.connect(home, *Self, homeClicked, self, .{});
+        toolbar.append(home.as(gtk.Widget));
 
         self.private().entry = gtk.Entry.new();
         self.private().entry.setPlaceholderText("Search or enter URL");
@@ -99,6 +125,10 @@ pub const BrowserSurface = extern struct {
         const go = ui.iconButton("go-jump-symbolic", "Go");
         _ = gtk.Button.signals.clicked.connect(go, *Self, goClicked, self, .{});
         toolbar.append(go.as(gtk.Widget));
+
+        const devtools = ui.iconButton("applications-engineering-symbolic", "Toggle developer tools (F12)");
+        _ = gtk.Button.signals.clicked.connect(devtools, *Self, devToolsClicked, self, .{});
+        toolbar.append(devtools.as(gtk.Widget));
 
         const external = ui.iconButton("document-open-symbolic", "Open externally");
         _ = gtk.Button.signals.clicked.connect(external, *Self, externalClicked, self, .{});
@@ -113,14 +143,45 @@ pub const BrowserSurface = extern struct {
         box.append(ui.dim(dependency_status).as(gtk.Widget));
         self.private().title = ui.dim("Enter a URL to open it in the system browser.");
         box.append(self.private().title.as(gtk.Widget));
+        self.private().status = ui.dim("Developer tools off");
+        box.append(self.private().status.as(gtk.Widget));
         root.append(box.as(gtk.Widget));
 
+        const controller = gtk.EventControllerKey.new();
+        _ = gtk.EventControllerKey.signals.key_pressed.connect(controller, *Self, keyPressed, self, .{});
+        root.as(gtk.Widget).addController(controller.as(gtk.EventController));
+
         self.as(adw.Bin).setChild(root.as(gtk.Widget));
+        self.updateButtons();
+    }
+
+    fn updateButtons(self: *Self) void {
+        const priv = self.private();
+        priv.back_button.as(gtk.Widget).setSensitive(if (priv.back_stack.items.len > 0) 1 else 0);
+        priv.forward_button.as(gtk.Widget).setSensitive(if (priv.forward_stack.items.len > 0) 1 else 0);
     }
 
     fn submit(self: *Self) void {
         const text = std.mem.span(self.private().entry.as(gtk.Editable).getText());
         self.navigate(text) catch {};
+    }
+
+    fn goBack(self: *Self) void {
+        const priv = self.private();
+        if (priv.back_stack.items.len == 0) return;
+        const url = priv.back_stack.orderedRemove(priv.back_stack.items.len - 1);
+        defer priv.alloc.free(url);
+        if (priv.current_url) |current| priv.forward_stack.append(priv.alloc, priv.alloc.dupe(u8, current) catch return) catch return;
+        self.navigateInternal(url, false) catch {};
+    }
+
+    fn goForward(self: *Self) void {
+        const priv = self.private();
+        if (priv.forward_stack.items.len == 0) return;
+        const url = priv.forward_stack.orderedRemove(priv.forward_stack.items.len - 1);
+        defer priv.alloc.free(url);
+        if (priv.current_url) |current| priv.back_stack.append(priv.alloc, priv.alloc.dupe(u8, current) catch return) catch return;
+        self.navigateInternal(url, false) catch {};
     }
 
     fn openExternal(self: *Self) void {
@@ -132,6 +193,12 @@ pub const BrowserSurface = extern struct {
         if (err) |e| e.free();
     }
 
+    fn toggleDevTools(self: *Self) void {
+        const priv = self.private();
+        priv.devtools_enabled = !priv.devtools_enabled;
+        priv.status.setText(if (priv.devtools_enabled) "Developer tools requested" else "Developer tools off");
+    }
+
     fn entryActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
         self.submit();
     }
@@ -140,8 +207,42 @@ pub const BrowserSurface = extern struct {
         self.submit();
     }
 
+    fn backClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.goBack();
+    }
+
+    fn forwardClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.goForward();
+    }
+
+    fn reloadClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        if (self.private().current_url) |url| self.navigateInternal(url, false) catch {};
+    }
+
+    fn homeClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.navigate("https://smithers.sh") catch {};
+    }
+
+    fn devToolsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.toggleDevTools();
+    }
+
     fn externalClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.openExternal();
+    }
+
+    fn keyPressed(
+        _: *gtk.EventControllerKey,
+        keyval: c_uint,
+        _: c_uint,
+        _: gdk.ModifierType,
+        self: *Self,
+    ) callconv(.c) c_int {
+        if (keyval == gdk.KEY_F12) {
+            self.toggleDevTools();
+            return 1;
+        }
+        return 0;
     }
 
     fn dispose(self: *Self) callconv(.c) void {
@@ -150,6 +251,10 @@ pub const BrowserSurface = extern struct {
             priv.did_dispose = true;
             self.as(adw.Bin).setChild(null);
             if (priv.current_url) |url| priv.alloc.free(url);
+            clearStringList(priv.alloc, &priv.back_stack);
+            clearStringList(priv.alloc, &priv.forward_stack);
+            priv.back_stack.deinit(priv.alloc);
+            priv.forward_stack.deinit(priv.alloc);
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
     }
@@ -173,6 +278,11 @@ pub const BrowserSurface = extern struct {
         pub const as = C.Class.as;
     };
 };
+
+fn clearStringList(alloc: std.mem.Allocator, list: *std.ArrayList([]u8)) void {
+    for (list.items) |item| alloc.free(item);
+    list.clearRetainingCapacity();
+}
 
 fn percentEncode(alloc: std.mem.Allocator, value: []const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = try .initCapacity(alloc, value.len);

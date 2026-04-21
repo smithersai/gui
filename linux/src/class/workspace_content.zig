@@ -4,19 +4,29 @@ const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const browser_surface = @import("browser_surface.zig");
+const chat = @import("chat.zig");
 const markdown = @import("markdown.zig");
+const smithers = @import("../smithers.zig");
 const terminal = @import("terminal.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 
 pub const SurfaceKind = enum {
     terminal,
+    chat,
+    run,
+    workflow,
+    dashboard,
     browser,
     markdown,
 
     pub fn iconName(self: SurfaceKind) [:0]const u8 {
         return switch (self) {
             .terminal => "utilities-terminal-symbolic",
+            .chat => "mail-message-new-symbolic",
+            .run => "view-list-symbolic",
+            .workflow => "media-playlist-shuffle-symbolic",
+            .dashboard => "view-grid-symbolic",
             .browser => "web-browser-symbolic",
             .markdown => "text-x-generic-symbolic",
         };
@@ -25,8 +35,23 @@ pub const SurfaceKind = enum {
     pub fn defaultTitle(self: SurfaceKind) []const u8 {
         return switch (self) {
             .terminal => "Terminal",
+            .chat => "Chat",
+            .run => "Run",
+            .workflow => "Workflow",
+            .dashboard => "Dashboard",
             .browser => "Browser",
             .markdown => "Markdown",
+        };
+    }
+
+    pub fn fromSessionKind(kind: smithers.c.smithers_session_kind_e) SurfaceKind {
+        return switch (kind) {
+            smithers.c.SMITHERS_SESSION_KIND_TERMINAL => .terminal,
+            smithers.c.SMITHERS_SESSION_KIND_CHAT => .chat,
+            smithers.c.SMITHERS_SESSION_KIND_RUN_INSPECT => .run,
+            smithers.c.SMITHERS_SESSION_KIND_WORKFLOW => .workflow,
+            smithers.c.SMITHERS_SESSION_KIND_DASHBOARD => .dashboard,
+            else => .dashboard,
         };
     }
 };
@@ -107,6 +132,34 @@ pub const WorkspaceContent = extern struct {
         _ = priv.stack.addTitled(widget, name.ptr, title_z.ptr);
         try self.rebuildHeader();
         if (index == 0) self.focusSurface(0);
+    }
+
+    pub fn addSessionSurface(
+        self: *Self,
+        id: []const u8,
+        kind: smithers.c.smithers_session_kind_e,
+        session: smithers.c.smithers_session_t,
+    ) !void {
+        const surface_kind = SurfaceKind.fromSessionKind(kind);
+        var surface = try Surface.init(self.private().alloc, id, surface_kind, null, null);
+        errdefer surface.deinit(self.private().alloc);
+        const child: ?*gtk.Widget = switch (surface_kind) {
+            .terminal => (try terminal.TerminalSurface.new(self.private().alloc, session)).as(gtk.Widget),
+            .chat => (try chat.ChatView.new(self.private().alloc)).as(gtk.Widget),
+            else => null,
+        };
+        try self.addSurface(surface, child);
+    }
+
+    pub fn updateSurfaceKind(self: *Self, index: usize, kind: smithers.c.smithers_session_kind_e) void {
+        const priv = self.private();
+        if (index >= priv.surfaces.items.len) return;
+        const surface_kind = SurfaceKind.fromSessionKind(kind);
+        var surface = &priv.surfaces.items[index];
+        surface.kind = surface_kind;
+        priv.alloc.free(surface.title);
+        surface.title = priv.alloc.dupe(u8, surface_kind.defaultTitle()) catch return;
+        self.rebuildHeader() catch {};
     }
 
     pub fn focusSurface(self: *Self, index: usize) void {
@@ -201,6 +254,7 @@ fn placeholder(alloc: std.mem.Allocator, surface: Surface) !*gtk.Widget {
         box.append(ui.dim(sub_z).as(gtk.Widget));
     }
     _ = browser_surface.have_webkit;
+    _ = chat.ChatView;
     _ = markdown.MarkdownSurface;
     _ = terminal.have_vte;
     return box.as(gtk.Widget);
