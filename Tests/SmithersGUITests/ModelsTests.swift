@@ -1,56 +1,6 @@
 import XCTest
 @testable import SmithersGUI
 
-final class ChatSessionTests: XCTestCase {
-
-    // MARK: - Initialization
-
-    func testInitAllFields() {
-        let session = ChatSession(id: "s1", title: "Title", preview: "Preview text", timestamp: "2026-04-14", group: "Today")
-        XCTAssertEqual(session.id, "s1")
-        XCTAssertEqual(session.title, "Title")
-        XCTAssertEqual(session.preview, "Preview text")
-        XCTAssertEqual(session.timestamp, "2026-04-14")
-        XCTAssertEqual(session.group, "Today")
-    }
-
-    func testEmptyStrings() {
-        let session = ChatSession(id: "", title: "", preview: "", timestamp: "", group: "")
-        XCTAssertEqual(session.id, "")
-        XCTAssertEqual(session.title, "")
-    }
-
-    // MARK: - Identifiable
-
-    func testIdentifiable() {
-        let session = ChatSession(id: "abc", title: "", preview: "", timestamp: "", group: "")
-        XCTAssertEqual(session.id, "abc")
-    }
-
-    // MARK: - Hashable
-
-    func testHashableEqualSessions() {
-        let a = ChatSession(id: "1", title: "T", preview: "P", timestamp: "TS", group: "G")
-        let b = ChatSession(id: "1", title: "T", preview: "P", timestamp: "TS", group: "G")
-        XCTAssertEqual(a, b)
-        XCTAssertEqual(a.hashValue, b.hashValue)
-    }
-
-    func testHashableDifferentSessions() {
-        let a = ChatSession(id: "1", title: "T", preview: "P", timestamp: "TS", group: "G")
-        let b = ChatSession(id: "2", title: "T", preview: "P", timestamp: "TS", group: "G")
-        XCTAssertNotEqual(a, b)
-    }
-
-    func testUsableInSet() {
-        let a = ChatSession(id: "1", title: "A", preview: "", timestamp: "", group: "")
-        let b = ChatSession(id: "2", title: "B", preview: "", timestamp: "", group: "")
-        let c = ChatSession(id: "1", title: "A", preview: "", timestamp: "", group: "")
-        let set: Set<ChatSession> = [a, b, c]
-        XCTAssertEqual(set.count, 2)
-    }
-}
-
 // MARK: - ChatMessage Tests
 
 final class ChatMessageTests: XCTestCase {

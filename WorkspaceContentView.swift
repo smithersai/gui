@@ -1,5 +1,27 @@
 import SwiftUI
 
+struct TerminalTabsLayer: View {
+    @ObservedObject var store: SessionStore
+    let activeTerminalId: String?
+    var onRequestClose: (String) -> Void
+
+    var body: some View {
+        ZStack {
+            ForEach(store.terminalTabs, id: \.terminalId) { tab in
+                TerminalWorkspaceRouteView(
+                    store: store,
+                    terminalId: tab.terminalId,
+                    onClose: { onRequestClose(tab.terminalId) }
+                )
+                .id(tab.terminalId)
+                .opacity(tab.terminalId == activeTerminalId ? 1 : 0)
+                .allowsHitTesting(tab.terminalId == activeTerminalId)
+                .accessibilityHidden(tab.terminalId != activeTerminalId)
+            }
+        }
+    }
+}
+
 struct TerminalWorkspaceRouteView: View {
     @ObservedObject var store: SessionStore
     let terminalId: String

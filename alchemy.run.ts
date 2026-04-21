@@ -44,11 +44,6 @@ async function build() {
   rmSync(BUILD, { recursive: true, force: true });
   mkdirSync(BUILD, { recursive: true });
 
-  if (!has("--skip-rust")) {
-    console.log("→ codex-ffi");
-    await $`cargo build -p codex-ffi --release`.cwd(join(ROOT, "codex/codex-rs"));
-  }
-
   console.log("→ xcodegen");
   await $`xcodegen generate`.cwd(ROOT);
 

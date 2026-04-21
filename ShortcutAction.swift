@@ -4,7 +4,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Hashable {
     case commandPalette
     case commandPaletteCommandMode
     case commandPaletteAskAI
-    case newChat
     case newTerminal
     case reopenClosedTab
     case closeCurrentTab
@@ -72,8 +71,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Hashable {
             return String(localized: "shortcut.commandPaletteCommandMode.label", defaultValue: "Command Palette")
         case .commandPaletteAskAI:
             return String(localized: "shortcut.commandPaletteAskAI.label", defaultValue: "Ask AI")
-        case .newChat:
-            return String(localized: "shortcut.newChat.label", defaultValue: "New Chat")
         case .newTerminal:
             return String(localized: "shortcut.newTerminal.label", defaultValue: "New Terminal Tab")
         case .reopenClosedTab:
@@ -169,8 +166,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Hashable {
             return StoredShortcut(key: "p", command: true, shift: true)
         case .commandPaletteAskAI:
             return StoredShortcut(key: "k", command: true)
-        case .newChat:
-            return StoredShortcut(key: "n", command: true)
         case .newTerminal:
             return StoredShortcut(key: "t", command: true)
         case .reopenClosedTab:

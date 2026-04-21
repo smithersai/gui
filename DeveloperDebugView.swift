@@ -111,11 +111,6 @@ struct DeveloperDebugSnapshot: Equatable {
         logStats: LogFileStats?,
         now: Date = Date()
     ) -> DeveloperDebugSnapshot {
-        let activeSession = store.activeSession
-        let activeAgent = activeSession?.agent
-        let activeSessionPrefix = activeSession.map { idPrefix($0.id) } ?? "none"
-        let activeMessages = activeAgent?.messages ?? []
-
         let appRows = [
             DeveloperDebugStateRow(label: "Destination", value: destination.label),
             DeveloperDebugStateRow(label: "Route", value: destination.debugRouteDescription),
@@ -145,17 +140,8 @@ struct DeveloperDebugSnapshot: Equatable {
         ]
 
         let sessionRows = [
-            DeveloperDebugStateRow(label: "Active session", value: activeSessionPrefix),
-            DeveloperDebugStateRow(label: "Sessions", value: "\(store.sessions.count)"),
             DeveloperDebugStateRow(label: "Run tabs", value: "\(store.runTabs.count)"),
-            DeveloperDebugStateRow(
-                label: "Agent running",
-                value: activeAgent?.isRunning == true ? "yes" : "no",
-                tone: activeAgent?.isRunning == true ? .good : .normal
-            ),
-            DeveloperDebugStateRow(label: "Active messages", value: "\(activeMessages.count)"),
-            DeveloperDebugStateRow(label: "Active model", value: activeSession?.codexSelection.summaryLabel ?? "none"),
-            DeveloperDebugStateRow(label: "Agent working directory", value: activeAgent?.workingDirectory ?? "none"),
+            DeveloperDebugStateRow(label: "Terminal tabs", value: "\(store.terminalTabs.count)"),
         ]
 
         let logRows = [
@@ -174,17 +160,7 @@ struct DeveloperDebugSnapshot: Equatable {
             ),
         ]
 
-        let sessions = store.sessions.map { session in
-            DeveloperDebugSessionSummary(
-                id: session.id,
-                title: session.title.nilIfBlank ?? "Untitled",
-                preview: trimmedPreview(session.preview, limit: 120),
-                isActive: session.id == store.activeSessionId,
-                isRunning: session.agent.isRunning,
-                messageCount: session.agent.messages.count,
-                model: session.codexSelection.summaryLabel
-            )
-        }
+        let sessions: [DeveloperDebugSessionSummary] = []
 
         let runTabs = store.runTabs.map { tab in
             DeveloperDebugRunTabSummary(
@@ -194,14 +170,7 @@ struct DeveloperDebugSnapshot: Equatable {
             )
         }
 
-        let recentMessages = activeMessages.suffix(8).map { message in
-            DeveloperDebugMessageSummary(
-                id: message.id,
-                type: message.type.rawValue,
-                timestamp: message.timestamp,
-                preview: trimmedPreview(message.content, limit: 180)
-            )
-        }
+        let recentMessages: [DeveloperDebugMessageSummary] = []
 
         return DeveloperDebugSnapshot(
             capturedAt: now,
@@ -727,8 +696,6 @@ private extension String {
 extension NavDestination {
     var debugRouteDescription: String {
         switch self {
-        case .chat:
-            return "chat"
         case .dashboard:
             return "dashboard"
         case .vcsDashboard:

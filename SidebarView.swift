@@ -7,7 +7,6 @@ import AppKit
 // MARK: - Navigation Destination
 
 enum NavDestination: Hashable {
-    case chat
     case dashboard
     case vcsDashboard
     case agents
@@ -42,7 +41,6 @@ enum NavDestination: Hashable {
 
     var label: String {
         switch self {
-        case .chat: return "Chat"
         case .terminal: return "Terminal"
         case .terminalCommand(binary: _, workingDirectory: _, name: let name): return name
         case .liveRun: return "Live Run"
@@ -73,7 +71,6 @@ enum NavDestination: Hashable {
 
     var icon: String {
         switch self {
-        case .chat: return "message"
         case .terminal: return "terminal.fill"
         case .terminalCommand(binary: _, workingDirectory: _, name: _): return "terminal.fill"
         case .liveRun: return "dot.radiowaves.left.and.right"
@@ -114,12 +111,8 @@ struct SidebarView: View {
     @State private var smithersVersion: String?
     @AppStorage(AppPreferenceKeys.smithersFeatureEnabled) private var smithersFeatureEnabled = false
     @AppStorage(AppPreferenceKeys.vcsFeatureEnabled) private var vcsFeatureEnabled = false
-    @State private var renameSessionID: String?
-    @State private var renameSessionTitle: String = ""
     @State private var renameTerminalID: String?
     @State private var renameTerminalTitle: String = ""
-    @State private var deleteSessionID: String?
-    @State private var deleteSessionTitle: String = ""
     @State private var terminateTerminalID: String?
     @State private var terminateTerminalTitle: String = ""
     private let developerDebugAvailable: Bool
@@ -265,23 +258,6 @@ struct SidebarView: View {
                 smithersVersion = await versionProvider()
             }
         }
-        .alert("Rename thread", isPresented: renameAlertBinding) {
-            TextField("Session title", text: $renameSessionTitle)
-                .accessibilityIdentifier("sidebar.rename.field")
-            Button("Cancel", role: .cancel) {
-                renameSessionID = nil
-                renameSessionTitle = ""
-            }
-            Button("Save") {
-                if let sessionID = renameSessionID {
-                    store.renameSession(sessionID, to: renameSessionTitle)
-                }
-                renameSessionID = nil
-                renameSessionTitle = ""
-            }
-        } message: {
-            Text("Enter a new title for this thread.")
-        }
         .alert("Rename terminal", isPresented: renameTerminalAlertBinding) {
             TextField("Terminal title", text: $renameTerminalTitle)
                 .accessibilityIdentifier("sidebar.renameTerminal.field")
@@ -299,21 +275,6 @@ struct SidebarView: View {
         } message: {
             Text("Enter a new title for this terminal.")
         }
-        .alert("Delete Session?", isPresented: deleteAlertBinding) {
-            Button("Cancel", role: .cancel) {
-                deleteSessionID = nil
-                deleteSessionTitle = ""
-            }
-            Button("Delete", role: .destructive) {
-                if let sessionID = deleteSessionID {
-                    store.deleteSession(sessionID)
-                }
-                deleteSessionID = nil
-                deleteSessionTitle = ""
-            }
-        } message: {
-            Text("This permanently removes \"\(deleteSessionTitle)\" and its chat history.")
-        }
         .confirmationDialog(
             "Terminate Terminal?",
             isPresented: terminateTerminalConfirmationBinding,
@@ -330,11 +291,6 @@ struct SidebarView: View {
         }
         .background(Theme.sidebarBg)
         .accessibilityIdentifier("sidebar")
-    }
-
-    private func openCurrentChat() {
-        _ = store.ensureActiveSession()
-        destination = .chat
     }
 
     private func openCurrentTerminal() {
@@ -395,49 +351,6 @@ struct SidebarView: View {
                             selectTab(tab)
                         }
                         .contextMenu {
-                            if tab.kind == .chat, let sessionID = tab.chatSessionId {
-                                Button(tab.isPinned ? "Unpin thread" : "Pin thread") {
-                                    store.toggleSessionPinned(sessionID)
-                                }
-                                Button("Rename thread") {
-                                    beginRenameSession(sessionID: sessionID, currentTitle: tab.title)
-                                }
-                                Button("Archive thread") {
-                                    store.archiveSession(sessionID)
-                                    destination = .chat
-                                }
-                                .disabled(!store.canArchiveSession(sessionID))
-                                Button(tab.isUnread ? "Mark as read" : "Mark as unread") {
-                                    store.toggleSessionUnread(sessionID)
-                                }
-                                Divider()
-                                Button("Copy working directory") {
-                                    copyTextToClipboard(tab.workingDirectory ?? store.sessionWorkingDirectory(sessionID) ?? "")
-                                }
-                                .disabled((tab.workingDirectory ?? store.sessionWorkingDirectory(sessionID)) == nil)
-                                Button("Copy session ID") {
-                                    copyTextToClipboard(tab.sessionIdentifier ?? store.sessionIdentifier(sessionID) ?? sessionID)
-                                }
-                                Button("Copy deeplink") {
-                                    copyTextToClipboard(store.sessionDeeplink(sessionID) ?? "")
-                                }
-                                .disabled(store.sessionDeeplink(sessionID) == nil)
-                                Divider()
-                                Button("Fork into local") {
-                                    if store.forkSessionIntoLocal(sessionID) != nil {
-                                        destination = .chat
-                                        AppNotifications.shared.post(
-                                            title: "Thread forked",
-                                            message: "Created a local fork.",
-                                            level: .success
-                                        )
-                                    }
-                                }
-                                Button("Fork into new worktree") {
-                                    forkSessionIntoNewWorktree(sessionID)
-                                }
-                                .disabled(!store.canArchiveSession(sessionID))
-                            }
                             if tab.kind == .terminal, let terminalId = tab.terminalId {
                                 Button(tab.isPinned ? "Unpin terminal" : "Pin terminal") {
                                     store.toggleTerminalPinned(terminalId)
@@ -484,11 +397,6 @@ struct SidebarView: View {
 
     private func selectTab(_ tab: SidebarTab) {
         switch tab.kind {
-        case .chat:
-            if let sessionId = tab.chatSessionId {
-                store.selectSession(sessionId)
-                destination = .chat
-            }
         case .run:
             if let runId = tab.runId {
                 destination = .liveRun(runId: runId, nodeId: nil)
@@ -502,8 +410,6 @@ struct SidebarView: View {
 
     private func isSelected(_ tab: SidebarTab) -> Bool {
         switch tab.kind {
-        case .chat:
-            return destination == .chat && store.activeSessionId == tab.chatSessionId
         case .run:
             if case .liveRun(let runId, _) = destination {
                 return runId == tab.runId
@@ -517,18 +423,6 @@ struct SidebarView: View {
         }
     }
 
-    private var renameAlertBinding: Binding<Bool> {
-        Binding(
-            get: { renameSessionID != nil },
-            set: { presented in
-                if !presented {
-                    renameSessionID = nil
-                    renameSessionTitle = ""
-                }
-            }
-        )
-    }
-
     private var renameTerminalAlertBinding: Binding<Bool> {
         Binding(
             get: { renameTerminalID != nil },
@@ -536,18 +430,6 @@ struct SidebarView: View {
                 if !presented {
                     renameTerminalID = nil
                     renameTerminalTitle = ""
-                }
-            }
-        )
-    }
-
-    private var deleteAlertBinding: Binding<Bool> {
-        Binding(
-            get: { deleteSessionID != nil },
-            set: { presented in
-                if !presented {
-                    deleteSessionID = nil
-                    deleteSessionTitle = ""
                 }
             }
         )
@@ -583,41 +465,11 @@ struct SidebarView: View {
         terminateTerminalTitle = ""
     }
 
-    private func beginRenameSession(sessionID: String, currentTitle: String) {
-        renameSessionID = sessionID
-        renameSessionTitle = currentTitle
-    }
-
     private func beginRenameTerminal(terminalID: String, currentTitle: String) {
         renameTerminalID = terminalID
         renameTerminalTitle = currentTitle
     }
 
-    private func beginDeleteSession(sessionID: String, currentTitle: String) {
-        deleteSessionID = sessionID
-        deleteSessionTitle = currentTitle
-    }
-
-    private func forkSessionIntoNewWorktree(_ sessionID: String) {
-        Task {
-            let result = await store.forkSessionIntoNewWorktree(sessionID)
-            switch result {
-            case .success:
-                destination = .chat
-                AppNotifications.shared.post(
-                    title: "Thread forked",
-                    message: "Created a new git worktree.",
-                    level: .success
-                )
-            case .failure(let error):
-                AppNotifications.shared.post(
-                    title: "Worktree fork failed",
-                    message: error.localizedDescription,
-                    level: .error
-                )
-            }
-        }
-    }
 }
 
 private func copyTextToClipboard(_ text: String) {
@@ -699,41 +551,6 @@ struct NavRow: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
         .accessibilityIdentifier("nav.\(label.replacingOccurrences(of: " ", with: ""))")
-    }
-}
-
-struct SessionRow: View {
-    let session: ChatSession
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text(session.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.textPrimary)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(session.timestamp)
-                        .font(.system(size: 9))
-                        .foregroundColor(Theme.textTertiary)
-                }
-                if !session.preview.isEmpty {
-                    Text(session.preview)
-                        .font(.system(size: 10))
-                        .foregroundColor(Theme.textTertiary)
-                        .lineLimit(1)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 6)
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .accessibilityIdentifier("session.\(session.id)")
     }
 }
 

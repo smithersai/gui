@@ -33,7 +33,6 @@ private enum DashboardDataSource: CaseIterable, Hashable {
 
 struct DashboardView: View {
     @ObservedObject var smithers: SmithersClient
-    var sessionSnapshots: [ChatSession] = []
     var onAutoPopulateActiveRuns: (([RunSummary]) -> Void)? = nil
     var onOpenLiveChat: ((RunSummary, String?) -> Void)? = nil
     var onOpenWorkflow: ((Workflow) -> Void)? = nil
@@ -58,7 +57,6 @@ struct DashboardView: View {
         case runs = "Runs"
         case workflows = "Workflows"
         case approvals = "Approvals"
-        case sessions = "Sessions"
         case landings = "Landings"
         case issues = "Issues"
         case workspaces = "Workspaces"
@@ -99,7 +97,7 @@ struct DashboardView: View {
     }
 
     private var visibleTabs: [DashboardTab] {
-        var tabs: [DashboardTab] = [.overview, .runs, .workflows, .approvals, .sessions]
+        var tabs: [DashboardTab] = [.overview, .runs, .workflows, .approvals]
         if hasJJHubTransport {
             tabs += [.landings, .issues, .workspaces]
         }
@@ -136,8 +134,6 @@ struct DashboardView: View {
                         workflowsContent
                     case .approvals:
                         approvalsContent
-                    case .sessions:
-                        sessionsContent
                     case .landings:
                         landingsContent
                     case .issues:
@@ -436,28 +432,6 @@ struct DashboardView: View {
                     ForEach(pendingApprovals) { approval in
                         ApprovalRow(approval: approval)
                         if approval.id != pendingApprovals.last?.id {
-                            Divider().background(Theme.border)
-                        }
-                    }
-                }
-            }
-            .padding(20)
-        }
-        .refreshable { await loadAll() }
-    }
-
-    // MARK: - Sessions Tab
-
-    private var sessionsContent: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                if sessionSnapshots.isEmpty {
-                    emptySection("No sessions yet", icon: "message")
-                } else {
-                    ForEach(sessionSnapshots.prefix(20), id: \.id) { session in
-                        DashboardSessionRow(session: session)
-                            .accessibilityIdentifier("dashboard.session.\(session.id)")
-                        if session.id != sessionSnapshots.prefix(20).last?.id {
                             Divider().background(Theme.border)
                         }
                     }
@@ -956,34 +930,6 @@ struct WorkspaceSummaryRow: View {
         case "suspended": return Theme.warning
         default: return Theme.textTertiary
         }
-    }
-}
-
-struct DashboardSessionRow: View {
-    let session: ChatSession
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(session.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                Spacer()
-                Text(session.timestamp)
-                    .font(.system(size: 10))
-                    .foregroundColor(Theme.textTertiary)
-            }
-            if !session.preview.isEmpty {
-                Text(session.preview)
-                    .font(.system(size: 10))
-                    .foregroundColor(Theme.textTertiary)
-                    .lineLimit(1)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 8)
-        .themedRowHover()
     }
 }
 

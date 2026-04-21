@@ -416,7 +416,6 @@ final class ThemeTokenWiringTests: XCTestCase {
 
         let wiredSources = [
             try projectSource("AgentsView.swift"),
-            try projectSource("ChatView.swift"),
             try projectSource("MemoryView.swift"),
             try projectSource("WorkflowsView.swift"),
             try projectSource("PromptsView.swift"),
@@ -429,13 +428,7 @@ final class ThemeTokenWiringTests: XCTestCase {
         let theme = try projectSource("Theme.swift")
         XCTAssertTrue(theme.contains(".background(Theme.bubbleDiff)"))
 
-        let wiredSources = [
-            try projectSource("ChatView.swift"),
-            try projectSource("ChangesView.swift"),
-            try projectSource("LandingsView.swift"),
-        ].joined(separator: "\n")
-
-        XCTAssertTrue(wiredSources.contains(".themedDiffBlock"))
+        XCTAssertTrue(theme.contains("func themedDiffBlock"))
     }
 
     func testSyntaxTokensAreWiredThroughHighlightedText() throws {
@@ -445,12 +438,11 @@ final class ThemeTokenWiringTests: XCTestCase {
         }
 
         let wiredSources = [
-            try projectSource("ChatView.swift"),
-            try projectSource("ChangesView.swift"),
-            try projectSource("LandingsView.swift"),
+            try projectSource("PromptsView.swift"),
+            try projectSource("WorkflowsView.swift"),
         ].joined(separator: "\n")
 
-        XCTAssertTrue(wiredSources.contains("SyntaxHighlightedText"))
+        XCTAssertTrue(wiredSources.contains("SyntaxHighlightedTextEditor"))
     }
 }
 

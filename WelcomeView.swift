@@ -6,7 +6,7 @@ import AppKit
 struct WelcomeView: View {
     @ObservedObject var manager: WorkspaceManager
 
-    private static let githubURL = URL(string: "https://github.com/codeplaneapp/smithers-gui")!
+    private static let githubURL = URL(string: "https://github.com/smithersai/gui")!
 
     var body: some View {
         ZStack {

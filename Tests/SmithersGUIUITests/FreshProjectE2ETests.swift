@@ -78,25 +78,13 @@ final class FreshProjectE2ETests: SmithersGUIUITestCase {
         XCTAssertTrue(element("view.approvals").exists)
     }
 
-    // MARK: - Chat still works
-
-    func testChatWorksFromSidebar() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
-        chooseSmithersChatTargetIfNeeded()
-
-        XCTAssertTrue(element("chat.surface").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("chat.emptyState").waitForExistence(timeout: 5))
-
-        typeInto("chat.input", "Hello fresh project")
-        waitForElement("chat.sendButton").click()
-        XCTAssertTrue(app.staticTexts["Hello fresh project"].waitForExistence(timeout: 5))
-    }
+    // NOTE: `testChatWorksFromSidebar` was removed — the built-in chat feature
+    // (nav.Chat / view.chat) no longer exists in production.
 
     // MARK: - Navigation completeness
 
     func testAllSidebarDestinationsExist() {
         let destinations: [(label: String, view: String)] = [
-            ("Chat", "view.chat"),
             ("Terminal", "view.terminal"),
             ("Dashboard", "view.dashboard"),
             ("Runs", "view.runs"),
@@ -121,7 +109,6 @@ final class FreshProjectE2ETests: SmithersGUIUITestCase {
     func testNavigatingToEveryDestinationLoadsView() {
         let destinations: [(label: String, view: String)] = [
             ("Dashboard", "view.dashboard"),
-            ("Chat", "view.chat"),
             ("Terminal", "view.terminal"),
             ("Workflows", "view.workflows"),
             ("Runs", "view.runs"),

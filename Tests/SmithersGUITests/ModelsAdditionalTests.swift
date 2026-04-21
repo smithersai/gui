@@ -5,8 +5,8 @@ import XCTest
 
 final class SidebarTabKindTests: XCTestCase {
 
-    func testChatIcon() {
-        XCTAssertEqual(SidebarTabKind.chat.icon, "message")
+    func testTerminalIcon() {
+        XCTAssertEqual(SidebarTabKind.terminal.icon, "terminal.fill")
     }
 
     func testRunIcon() {
@@ -14,7 +14,7 @@ final class SidebarTabKindTests: XCTestCase {
     }
 
     func testHashable() {
-        let set: Set<SidebarTabKind> = [.chat, .run, .chat]
+        let set: Set<SidebarTabKind> = [.terminal, .run, .terminal]
         XCTAssertEqual(set.count, 2)
     }
 }
@@ -156,26 +156,14 @@ final class JJChangeAdditionalTests: XCTestCase {
     }
 }
 
-// MARK: - ChatSession Tests
-
-final class ChatSessionModelTests: XCTestCase {
-
-    func testHashable() {
-        let a = ChatSession(id: "s1", title: "T", preview: "P", timestamp: "now", group: "Today")
-        let b = ChatSession(id: "s2", title: "T2", preview: "P2", timestamp: "now", group: "Today")
-        let set: Set = [a, b, a]
-        XCTAssertEqual(set.count, 2)
-    }
-}
-
 // MARK: - SidebarTab Tests
 
 final class SidebarTabTests: XCTestCase {
 
     func testSidebarTabHashable() {
-        let a = SidebarTab(id: "t1", kind: .chat, chatSessionId: "c1", runId: nil, terminalId: nil,
-                           title: "Chat", preview: "Hi", timestamp: "now", group: "Today", sortDate: Date())
-        let b = SidebarTab(id: "t2", kind: .run, chatSessionId: nil, runId: "r1", terminalId: nil,
+        let a = SidebarTab(id: "t1", kind: .terminal, runId: nil, terminalId: "t-1",
+                           title: "Terminal", preview: "Hi", timestamp: "now", group: "Today", sortDate: Date())
+        let b = SidebarTab(id: "t2", kind: .run, runId: "r1", terminalId: nil,
                            title: "Run", preview: "...", timestamp: "now", group: "Today", sortDate: Date())
         let set: Set = [a, b]
         XCTAssertEqual(set.count, 2)

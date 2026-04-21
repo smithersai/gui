@@ -179,12 +179,14 @@ final class RunStatusTests: XCTestCase {
 
     func testAllCases() {
         let cases = RunStatus.allCases
-        XCTAssertEqual(cases.count, 6)
+        XCTAssertEqual(cases.count, 8)
         XCTAssertTrue(cases.contains(.running))
         XCTAssertTrue(cases.contains(.waitingApproval))
         XCTAssertTrue(cases.contains(.finished))
         XCTAssertTrue(cases.contains(.failed))
         XCTAssertTrue(cases.contains(.cancelled))
+        XCTAssertTrue(cases.contains(.stale))
+        XCTAssertTrue(cases.contains(.orphaned))
         XCTAssertTrue(cases.contains(.unknown))
     }
 
@@ -194,6 +196,8 @@ final class RunStatusTests: XCTestCase {
         XCTAssertEqual(RunStatus.finished.rawValue, "finished")
         XCTAssertEqual(RunStatus.failed.rawValue, "failed")
         XCTAssertEqual(RunStatus.cancelled.rawValue, "cancelled")
+        XCTAssertEqual(RunStatus.stale.rawValue, "stale")
+        XCTAssertEqual(RunStatus.orphaned.rawValue, "orphaned")
     }
 
     func testLabels() {
@@ -202,6 +206,8 @@ final class RunStatusTests: XCTestCase {
         XCTAssertEqual(RunStatus.finished.label, "FINISHED")
         XCTAssertEqual(RunStatus.failed.label, "FAILED")
         XCTAssertEqual(RunStatus.cancelled.label, "CANCELLED")
+        XCTAssertEqual(RunStatus.stale.label, "STALE")
+        XCTAssertEqual(RunStatus.orphaned.label, "ORPHANED")
     }
 
     func testDecodableFromJSON() throws {
@@ -838,7 +844,8 @@ final class StatusPillColorMappingTests: XCTestCase {
     ///   waitingApproval -> warning (yellow)
     ///   finished -> success (green)
     ///   failed -> danger (red)
-    ///   cancelled -> textTertiary (gray)
+        ///   stale/orphaned -> warning (yellow)
+        ///   cancelled -> textTertiary (gray)
     func testStatusColorMapping() {
         // Verify the specification matches by replicating the switch
         let mapping: [(RunStatus, String)] = [
@@ -846,6 +853,8 @@ final class StatusPillColorMappingTests: XCTestCase {
             (.waitingApproval, "warning"),
             (.finished, "success"),
             (.failed, "danger"),
+            (.stale, "warning"),
+            (.orphaned, "warning"),
             (.cancelled, "textTertiary"),
         ]
         for (status, expectedColor) in mapping {
@@ -855,8 +864,9 @@ final class StatusPillColorMappingTests: XCTestCase {
                 case .waitingApproval: return "warning"
                 case .finished: return "success"
                 case .failed: return "danger"
+                case .stale, .orphaned: return "warning"
                 case .cancelled: return "textTertiary"
-                case .unknown: return "textTertiary"
+                case .unknown: return "textSecondary"
                 }
             }()
             XCTAssertEqual(color, expectedColor,
@@ -1142,7 +1152,7 @@ final class LoadRunsErrorTests: XCTestCase {
 
     func testErrorMessageForUnauthorized() {
         let error = SmithersError.unauthorized
-        XCTAssertEqual(error.localizedDescription, "Unauthorized – check your API token")
+        XCTAssertEqual(error.localizedDescription, "Unauthorized - check your API token")
     }
 }
 

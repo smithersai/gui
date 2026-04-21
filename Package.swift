@@ -9,24 +9,21 @@ let package = Package(
     ],
     targets: [
         .systemLibrary(
-            name: "CCodexFFI",
-            path: "CCodexFFI"
-        ),
-        .systemLibrary(
             name: "CGhosttyKit",
             path: "CGhosttyKit"
         ),
+        .systemLibrary(
+            name: "CSmithersKit",
+            path: "CSmithersKit"
+        ),
         .executableTarget(
             name: "SmithersGUI",
-            dependencies: ["CCodexFFI", "CGhosttyKit"],
+            dependencies: ["CGhosttyKit", "CSmithersKit"],
             path: ".",
             exclude: [
-                "codex",
-                "codex-ffi",
                 "ghostty",
-                "CCodexFFI",
                 "CGhosttyKit",
-                "codex-ffi.h",
+                "CSmithersKit",
                 "build.zig",
                 ".zig-cache",
                 "CONTRIBUTING.md",
@@ -34,6 +31,12 @@ let package = Package(
                 "AGENTS.md",
                 "Tests",
                 "docs",
+                "libsmithers",
+                "linux",
+                "scripts",
+                "vercel",
+                "LICENSE",
+                "NOTICE",
                 "project.yml",
                 "smithers.db",
                 "smithers.db-shm",
@@ -53,16 +56,19 @@ let package = Package(
             ],
             linkerSettings: [
                 .unsafeFlags([
-                    "-Lcodex-ffi/target/release",
                     "-Lghostty/macos/GhosttyKit.xcframework/macos-arm64",
+                    "-Llibsmithers/zig-out/lib",
+                    "-Llibsmithers",
                 ]),
                 .unsafeFlags([
                     "-lghostty-fat",
+                    "-lsmithers",
                 ]),
                 .linkedLibrary("c++"),
                 .linkedLibrary("resolv"),
                 .linkedLibrary("z"),
                 .linkedLibrary("bz2"),
+                .linkedLibrary("sqlite3"),
                 .linkedFramework("Security"),
                 .linkedFramework("SystemConfiguration"),
                 .linkedFramework("Metal"),

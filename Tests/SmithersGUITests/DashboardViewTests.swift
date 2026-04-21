@@ -388,7 +388,7 @@ final class DashboardViewTabTests: XCTestCase {
         XCTAssertEqual(try overviewText.string(), "Overview")
     }
 
-    /// DASHBOARD_RUNS_TAB, DASHBOARD_WORKFLOWS_TAB, DASHBOARD_APPROVALS_TAB, DASHBOARD_SESSIONS_TAB
+    /// DASHBOARD_RUNS_TAB, DASHBOARD_WORKFLOWS_TAB, DASHBOARD_APPROVALS_TAB
     @MainActor
     func testBaseDashboardTabsArePresent() throws {
         let client = makeClient()
@@ -399,21 +399,19 @@ final class DashboardViewTabTests: XCTestCase {
         _ = try inspected.find(text: "Runs")
         _ = try inspected.find(text: "Workflows")
         _ = try inspected.find(text: "Approvals")
-        _ = try inspected.find(text: "Sessions")
     }
 
     /// UI_TAB_BAR: DashboardTab enum should include all dashboard destinations.
     func testDashboardTabEnumCases() {
         let allCases = DashboardView.DashboardTab.allCases
-        XCTAssertEqual(allCases.count, 8)
+        XCTAssertEqual(allCases.count, 7)
         XCTAssertEqual(allCases[0], .overview)
         XCTAssertEqual(allCases[1], .runs)
         XCTAssertEqual(allCases[2], .workflows)
         XCTAssertEqual(allCases[3], .approvals)
-        XCTAssertEqual(allCases[4], .sessions)
-        XCTAssertEqual(allCases[5], .landings)
-        XCTAssertEqual(allCases[6], .issues)
-        XCTAssertEqual(allCases[7], .workspaces)
+        XCTAssertEqual(allCases[4], .landings)
+        XCTAssertEqual(allCases[5], .issues)
+        XCTAssertEqual(allCases[6], .workspaces)
     }
 
     func testDashboardTabRawValues() {
@@ -421,7 +419,6 @@ final class DashboardViewTabTests: XCTestCase {
         XCTAssertEqual(DashboardView.DashboardTab.runs.rawValue, "Runs")
         XCTAssertEqual(DashboardView.DashboardTab.workflows.rawValue, "Workflows")
         XCTAssertEqual(DashboardView.DashboardTab.approvals.rawValue, "Approvals")
-        XCTAssertEqual(DashboardView.DashboardTab.sessions.rawValue, "Sessions")
         XCTAssertEqual(DashboardView.DashboardTab.landings.rawValue, "Landings")
         XCTAssertEqual(DashboardView.DashboardTab.issues.rawValue, "Issues")
         XCTAssertEqual(DashboardView.DashboardTab.workspaces.rawValue, "Workspaces")

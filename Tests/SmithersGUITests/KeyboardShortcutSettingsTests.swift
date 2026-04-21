@@ -56,19 +56,19 @@ final class KeyboardShortcutSettingsTests: XCTestCase {
     func testUserDefaultsOverrideReplacesDefaultShortcut() throws {
         let override = StoredShortcut(key: "j", command: true, option: true)
         let data = try JSONEncoder().encode(override)
-        isolatedDefaults.set(data, forKey: ShortcutAction.newChat.defaultsKey)
+        isolatedDefaults.set(data, forKey: ShortcutAction.newTerminal.defaultsKey)
 
-        XCTAssertEqual(KeyboardShortcutSettings.current(for: .newChat), override)
+        XCTAssertEqual(KeyboardShortcutSettings.current(for: .newTerminal), override)
     }
 
     func testFileOverrideReplacesUserDefaultsOverride() throws {
         let persistedOverride = StoredShortcut(key: "j", command: true, option: true)
-        isolatedDefaults.set(try JSONEncoder().encode(persistedOverride), forKey: ShortcutAction.newChat.defaultsKey)
+        isolatedDefaults.set(try JSONEncoder().encode(persistedOverride), forKey: ShortcutAction.newTerminal.defaultsKey)
 
         let managedOverride = StoredShortcut(key: "b", command: true)
         let settingsFileURL = temporaryDirectory.appendingPathComponent("settings.json")
         try writeSettingsFile(
-            shortcuts: ["newChat": managedOverride],
+            shortcuts: ["newTerminal": managedOverride],
             to: settingsFileURL
         )
 
@@ -77,8 +77,8 @@ final class KeyboardShortcutSettingsTests: XCTestCase {
             startWatching: false
         )
 
-        XCTAssertEqual(KeyboardShortcutSettings.current(for: .newChat), managedOverride)
-        XCTAssertTrue(KeyboardShortcutSettings.isManagedBySettingsFile(.newChat))
+        XCTAssertEqual(KeyboardShortcutSettings.current(for: .newTerminal), managedOverride)
+        XCTAssertTrue(KeyboardShortcutSettings.isManagedBySettingsFile(.newTerminal))
     }
 
     func testFileChangePostsDidChangeNotification() throws {

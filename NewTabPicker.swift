@@ -4,16 +4,39 @@ import SwiftUI
 import AppKit
 #endif
 
+enum ChatTargetKind: String {
+    case externalAgent
+}
+
+struct ChatTargetOption: Identifiable, Equatable {
+    let kind: ChatTargetKind
+    let id: String
+    let name: String
+    let description: String
+    let status: String
+    let roles: [String]
+    let binary: String
+    let recommended: Bool
+    let usable: Bool
+}
+
+func chatTargetStatusLabel(_ status: String) -> String {
+    switch status {
+    case "likely-subscription": return "Signed in"
+    case "api-key": return "API key"
+    case "binary-only": return "Binary only"
+    default: return "Available"
+    }
+}
+
 enum NewTabSelection: Equatable {
-    case smithersChat
     case terminal
     case browser
     case externalAgent(ChatTargetOption)
 
     static func == (lhs: NewTabSelection, rhs: NewTabSelection) -> Bool {
         switch (lhs, rhs) {
-        case (.smithersChat, .smithersChat),
-             (.terminal, .terminal),
+        case (.terminal, .terminal),
              (.browser, .browser):
             return true
         case (.externalAgent(let a), .externalAgent(let b)):
@@ -48,16 +71,6 @@ struct NewTabPicker: View {
 
     private var allOptions: [NewTabOption] {
         var options: [NewTabOption] = [
-            NewTabOption(
-                id: "chat.smithers",
-                title: "New Smithers Chat",
-                subtitle: "Use the built-in chat without leaving Smithers GUI",
-                icon: "bubble.left.and.bubble.right.fill",
-                iconTint: Theme.accent,
-                selection: .smithersChat,
-                isEnabled: true,
-                searchTokens: ["smithers", "chat", "new", "conversation"]
-            ),
             NewTabOption(
                 id: "tab.terminal",
                 title: "New Terminal",

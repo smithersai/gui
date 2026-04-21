@@ -18,8 +18,6 @@ targets:
     type: application
     platform: macOS
     sources:
-      - AgentProtocol.swift
-      - AgentService.swift
       - AppLogger.swift
       - DevToolsModels.swift
       - DevToolsClientError.swift
@@ -42,19 +40,13 @@ targets:
       - AncestorErrorIndex.swift
       - TreeKeyboardHandler.swift
       - BrowserSurfaceView.swift
-      - CWDResolver.swift
       - DateFormatters.swift
-      - CodexMCPStatus.swift
-      - CodexModelSelection.swift
       - DeveloperDebugView.swift
       - GUIControlSidebar.swift
       - GUINotifications.swift
-      - SessionPersistenceStore.swift
       - AgentsView.swift
       - ApprovalsView.swift
       - ChangesView.swift
-      - ChatView.swift
-      - CommandPaletteModel.swift
       - CommandPaletteView.swift
       - ContentView.swift
       - DashboardView.swift
@@ -99,15 +91,11 @@ targets:
       - SQLBrowserView.swift
       - ScoresView.swift
       - SearchView.swift
-      - SessionStore.swift
       - SidebarView.swift
-      - SlashCommands.swift
-      - SmithersClient.swift
       - SmithersModels.swift
       - SurfaceNotificationStore.swift
       - TerminalProcessTracker.swift
       - RecentWorkspaceStore.swift
-      - WorkspaceManager.swift
       - WelcomeView.swift
       - TerminalView.swift
       - StoredShortcut.swift
@@ -127,6 +115,7 @@ targets:
       - WorkspaceSurfaceModels.swift
       - WorkflowsView.swift
       - WorkspacesView.swift
+      - macos/Sources/Smithers
       - path: Resources/MarkdownShell
         type: folder
     settings:
@@ -135,10 +124,9 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: SmithersGUI
         INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
-        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CCodexFFI $(SRCROOT)/CGhosttyKit"
-        HEADER_SEARCH_PATHS: "$(SRCROOT)/CCodexFFI"
-        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/codex-ffi/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64"
-        OTHER_LDFLAGS: "$(inherited) -lcodex_ffi -lghostty-fat -lc++ -lresolv -lz -lbz2"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CGhosttyKit $(SRCROOT)/CSmithersKit"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64 $(SRCROOT)/libsmithers/zig-out/lib $(SRCROOT)/libsmithers"
+        OTHER_LDFLAGS: "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2 -lsqlite3"
     dependencies:
       - sdk: Security.framework
       - sdk: SystemConfiguration.framework
@@ -152,6 +140,7 @@ targets:
       - sdk: WebKit.framework
       - sdk: Carbon.framework
       - sdk: Foundation.framework
+      - sdk: libsqlite3.tbd
   SmithersGUITests:
     type: bundle.unit-test
     platform: macOS
@@ -170,9 +159,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUITests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: SmithersGUI
-        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CCodexFFI $(SRCROOT)/CGhosttyKit"
-        HEADER_SEARCH_PATHS: "$(SRCROOT)/CCodexFFI"
-        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/codex-ffi/target/release $(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CGhosttyKit $(SRCROOT)/CSmithersKit"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64 $(SRCROOT)/libsmithers/zig-out/lib $(SRCROOT)/libsmithers"
+        OTHER_LDFLAGS: "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2 -lsqlite3"
   SmithersGUIUITests:
     type: bundle.ui-testing
     platform: macOS

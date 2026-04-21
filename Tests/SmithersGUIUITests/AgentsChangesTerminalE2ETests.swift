@@ -154,16 +154,10 @@ final class TerminalE2ETests: SmithersGUIUITestCase {
 
     private func openNewTerminalFromMenu(file: StaticString = #filePath, line: UInt = #line) {
         let before = terminalTabCount()
-        waitForElement("sidebar.newChat", file: file, line: line).click()
-
-        let identifiedMenuItem = element("sidebar.newTerminal")
-        if identifiedMenuItem.waitForExistence(timeout: 2) {
-            identifiedMenuItem.click()
-        } else {
-            let menuItem = app.menuItems["Terminal"]
-            XCTAssertTrue(menuItem.waitForExistence(timeout: 2), "Missing New > Terminal menu item", file: file, line: line)
-            menuItem.click()
-        }
+        // The built-in chat "New" menu was removed; use the hidden keyboard
+        // shortcut button that production code still exposes for creating a
+        // new terminal workspace.
+        waitForElement("shortcut.newTerminal", file: file, line: line).click()
 
         let expectation = XCTNSPredicateExpectation(
             predicate: NSPredicate { [weak self] _, _ in
@@ -221,87 +215,6 @@ final class TerminalE2ETests: SmithersGUIUITestCase {
     }
 }
 
-// MARK: - Chat Edge Cases E2E Tests
-
-final class ChatEdgeCaseE2ETests: SmithersGUIUITestCase {
-
-    func testSendingEmptyMessageDoesNotCrash() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
-        chooseSmithersChatTargetIfNeeded()
-
-        // Click send without typing anything - the send button should be present
-        // but sending empty should be a no-op
-        let sendButton = element("chat.sendButton")
-        if sendButton.waitForExistence(timeout: 3) {
-            sendButton.click()
-        }
-
-        // The chat surface should still be visible
-        XCTAssertTrue(element("chat.surface").exists)
-    }
-
-    func testSlashCommandPaletteAppearsOnSlash() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
-        chooseSmithersChatTargetIfNeeded()
-
-        typeInto("chat.input", "/")
-        XCTAssertTrue(element("chat.slashPalette").waitForExistence(timeout: 3))
-    }
-
-    func testSlashPaletteDismissesWhenInputCleared() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
-        chooseSmithersChatTargetIfNeeded()
-
-        typeInto("chat.input", "/")
-        XCTAssertTrue(element("chat.slashPalette").waitForExistence(timeout: 3))
-
-        // Select all and delete to clear the input
-        app.typeKey("a", modifierFlags: .command)
-        app.typeKey(.delete, modifierFlags: [])
-
-        // Palette should dismiss
-        let palette = element("chat.slashPalette")
-        let dismissed = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in !palette.exists },
-            object: nil
-        )
-        wait(for: [dismissed], timeout: 3)
-    }
-
-    func testMultipleMessagesAppearInOrder() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
-        chooseSmithersChatTargetIfNeeded()
-
-        typeInto("chat.input", "First message")
-        waitForElement("chat.sendButton").click()
-        XCTAssertTrue(app.staticTexts["First message"].waitForExistence(timeout: 5))
-
-        // Wait for response to complete before sending next
-        XCTAssertTrue(app.staticTexts["UI test response for: First message"].waitForExistence(timeout: 5))
-        XCTAssertTrue(element("chat.sendButton").waitForExistence(timeout: 5))
-
-        typeInto("chat.input", "Second message")
-        waitForElement("chat.sendButton").click()
-        XCTAssertTrue(app.staticTexts["Second message"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["UI test response for: Second message"].waitForExistence(timeout: 5))
-    }
-
-    func testChatTargetPickerShowsRefreshButton() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
-
-        let picker = element("chat.targetPicker")
-        if picker.waitForExistence(timeout: 3) {
-            XCTAssertTrue(element("chat.target.refresh").waitForExistence(timeout: 3))
-        }
-    }
-
-    func testComposerHasAttachmentAndMentionButtons() {
-        navigate(to: "Chat", expectedViewIdentifier: "view.chat")
-        chooseSmithersChatTargetIfNeeded()
-
-        XCTAssertTrue(element("chat.composer").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("chat.attachmentButton").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("chat.mentionButton").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("chat.slashButton").waitForExistence(timeout: 5))
-    }
-}
+// NOTE: `ChatEdgeCaseE2ETests` was removed along with the built-in chat
+// feature (view.chat / chat.surface / chat.composer / chat.input /
+// chat.slashPalette / chat.targetPicker no longer exist in production code).

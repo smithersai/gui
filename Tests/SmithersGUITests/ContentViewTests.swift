@@ -3,7 +3,6 @@ import XCTest
 
 final class NavDestinationMetadataTests: XCTestCase {
     private let destinations: [NavDestination] = [
-        .chat,
         .dashboard,
         .vcsDashboard,
         .agents,
@@ -42,7 +41,6 @@ final class NavDestinationMetadataTests: XCTestCase {
         XCTAssertTrue(NavDestination.terminal().isTerminal)
         XCTAssertTrue(NavDestination.terminalCommand(binary: "codex", workingDirectory: "/tmp", name: "Codex").isTerminal)
 
-        XCTAssertFalse(NavDestination.chat.isTerminal)
         XCTAssertFalse(NavDestination.dashboard.isTerminal)
         XCTAssertFalse(NavDestination.liveRun(runId: "run-1", nodeId: nil).isTerminal)
     }

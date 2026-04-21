@@ -1,12 +1,12 @@
 //! Makefile-style entrypoint for SmithersGUI.
 //!
 //! Common commands:
-//!   zig build           build codex-ffi + SmithersGUI (default)
-//!   zig build test      run cargo tests + swift tests
-//!   zig build codex-ffi build the Rust FFI staticlib only
+//!   zig build           build SmithersGUI (default)
+//!   zig build test      run swift tests
 //!   zig build swift     build the Swift app only
 //!   zig build xcode     build via xcodebuild (release)
 //!   zig build ghostty   (re)build the Ghostty xcframework (slow)
+//!   zig build libsmithers build the libsmithers static archive
 //!   zig build xcodegen  regenerate SmithersGUI.xcodeproj from project.yml
 //!   zig build clean     remove build artifacts
 //!   zig build run       build then launch .build/debug/SmithersGUI
@@ -48,7 +48,6 @@ fn ensureGhostty(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!
 /// wasn't initialized (clone without --recursive) and every downstream step
 /// will fail with a confusing error.
 const submodule_sentinels = [_][]const u8{
-    "codex/codex-rs/Cargo.toml",
     "ghostty/build.zig",
 };
 
@@ -75,16 +74,11 @@ pub fn build(b: *std.Build) void {
     check_ghostty.makeFn = ensureGhostty;
     check_ghostty.dependOn(check_submodules);
 
-    // ---- codex-ffi (cargo) --------------------------------------------------
-    // Always built release: project.yml / Package.swift link against
-    // codex-ffi/target/release/libcodex_ffi.a, so a debug build would leave
-    // the Swift target with an unresolved `-lcodex_ffi`.
-    const cargo_build_release = b.addSystemCommand(&.{ "cargo", "build", "--release" });
-    cargo_build_release.setCwd(b.path("codex-ffi"));
-    cargo_build_release.step.dependOn(check_submodules);
-    const codex_ffi_step = b.step("codex-ffi", "Build the codex-ffi Rust staticlib (release)");
-    codex_ffi_step.dependOn(&cargo_build_release.step);
-
+    // ---- libsmithers --------------------------------------------------------
+    const libsmithers_build = b.addSystemCommand(&.{ "zig", "build" });
+    libsmithers_build.setCwd(b.path("libsmithers"));
+    const libsmithers_step = b.step("libsmithers", "Build libsmithers static library");
+    libsmithers_step.dependOn(&libsmithers_build.step);
 
     // ---- swift build --------------------------------------------------------
     // Swift links -lghostty-fat from the xcframework. It's a ~200 MB build
@@ -92,8 +86,8 @@ pub fn build(b: *std.Build) void {
     // it's missing rather than dying inside the Swift linker.
     const swift_build = b.addSystemCommand(&.{ "swift", "build" });
     if (release) swift_build.addArgs(&.{ "-c", "release" });
-    swift_build.step.dependOn(&cargo_build_release.step);
     swift_build.step.dependOn(check_ghostty);
+    swift_build.step.dependOn(libsmithers_step);
     const swift_step = b.step("swift", "Build SmithersGUI via `swift build`");
     swift_step.dependOn(&swift_build.step);
 
@@ -105,8 +99,8 @@ pub fn build(b: *std.Build) void {
         "-configuration", if (release) "Release" else "Debug",
         "build",
     });
-    xcode_build.step.dependOn(&cargo_build_release.step);
     xcode_build.step.dependOn(check_ghostty);
+    xcode_build.step.dependOn(libsmithers_step);
     const xcode_step = b.step("xcode", "Build via xcodebuild");
     xcode_step.dependOn(&xcode_build.step);
 
@@ -116,25 +110,26 @@ pub fn build(b: *std.Build) void {
     xcodegen_step.dependOn(&xcodegen.step);
 
     // ---- tests --------------------------------------------------------------
-    const cargo_test = b.addSystemCommand(&.{ "cargo", "test", "--release" });
-    cargo_test.setCwd(b.path("codex-ffi"));
-
     const swift_test = b.addSystemCommand(&.{ "swift", "test" });
-    swift_test.step.dependOn(&cargo_build_release.step);
     swift_test.step.dependOn(check_ghostty);
+    swift_test.step.dependOn(libsmithers_step);
 
-    const test_step = b.step("test", "Run cargo + swift tests");
-    test_step.dependOn(&cargo_test.step);
+    const test_step = b.step("test", "Run swift tests");
     test_step.dependOn(&swift_test.step);
 
     // ---- ghostty xcframework (opt-in, slow) ---------------------------------
     // Requires a working Zig toolchain with the macOS SDK patch. Delegates to
     // ghostty's own build system.
+    // `-Dxcframework-target=native` is required: ghostty's default is
+    // `.universal`, which emits `macos-arm64_x86_64/ghostty-internal.a`.
+    // Smithers (and `xcframework_lib` above) expects the single-arch
+    // `macos-arm64/libghostty-fat.a` layout produced by the native target.
     const ghostty_build = b.addSystemCommand(&.{
         "zig", "build",
         "-Doptimize=ReleaseFast",
         "-Dapp-runtime=none",
         "-Demit-xcframework=true",
+        "-Dxcframework-target=native",
     });
     ghostty_build.setCwd(b.path("ghostty"));
     ghostty_build.step.dependOn(check_submodules);
@@ -148,11 +143,8 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // ---- clean --------------------------------------------------------------
-    const cargo_clean = b.addSystemCommand(&.{ "cargo", "clean" });
-    cargo_clean.setCwd(b.path("codex-ffi"));
     const swift_clean = b.addSystemCommand(&.{ "swift", "package", "clean" });
     const clean_step = b.step("clean", "Remove build artifacts");
-    clean_step.dependOn(&cargo_clean.step);
     clean_step.dependOn(&swift_clean.step);
 
     // ---- default ------------------------------------------------------------

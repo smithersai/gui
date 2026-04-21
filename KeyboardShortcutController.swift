@@ -76,7 +76,6 @@ struct KeyboardChordParser {
                 }
                 switch key {
                 case "h": return .action(.navigate(.dashboard))
-                case "c": return .action(.navigate(.chat))
                 case "t": return .action(.navigate(.terminal(id: "default")))
                 case "r": return .action(.navigate(.runs))
                 case "w": return .action(.navigate(.workflows))

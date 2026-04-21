@@ -303,13 +303,9 @@ struct GUIControlSidebar: View {
         guard !text.isEmpty else { return }
         inputText = ""
         append(.user, text)
-
-        let sessionID = store.ensureActiveSession()
-        store.selectSession(sessionID)
-        store.sendMessage(text)
         append(
             .system,
-            "Forwarded to chat session \(String(sessionID.prefix(8))). Open Chat to monitor execution."
+            "Built-in chat has been removed. Open a terminal tab and launch your preferred agent CLI to run: \(text)"
         )
     }
 
@@ -319,14 +315,6 @@ struct GUIControlSidebar: View {
         lines.append("Smithers CLI: \(smithers.cliAvailable ? "available" : "missing")")
         lines.append("Smithers server: \(smithers.isConnected ? "connected" : "offline")")
 
-        if let session = store.activeSession {
-            lines.append("Active chat: \(session.title)")
-            lines.append("Chat messages: \(session.agent.messages.count)")
-        } else {
-            lines.append("Active chat: none")
-        }
-
-        lines.append("Chats: \(store.sessions.filter { !$0.isArchived }.count)")
         lines.append("Runs: \(store.runTabs.count)")
         lines.append("Terminals: \(store.terminalTabs.count)")
 
@@ -440,8 +428,7 @@ struct GUIControlSidebar: View {
     }
 
     private func openCommand(_ command: String, title: String) {
-        let cwd = store.activeAgent?.workingDirectory
-            ?? store.terminalTabs.first?.workingDirectory
+        let cwd = store.terminalTabs.first?.workingDirectory
             ?? smithers.workingDirectory
         onNavigate(.terminalCommand(binary: command, workingDirectory: cwd, name: title))
         append(.system, "Opened \(title) in a terminal.")

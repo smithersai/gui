@@ -1,5 +1,9 @@
 import XCTest
 
+// NOTE: `testNewChatCreatesSessionAndSessionSearchFindsIt` and
+// `testCommandNCreatesNewChat` were removed along with the built-in chat
+// feature (sidebar.newChat / workspace.chat: session tabs no longer exist).
+
 final class WorkspacesSessionKeyboardE2ETests: SmithersGUIUITestCase {
     func testWorkspacesTabsAndCreateWorkspaceForm() {
         navigate(to: "Workspaces", expectedViewIdentifier: "view.workspaces")
@@ -16,42 +20,5 @@ final class WorkspacesSessionKeyboardE2ETests: SmithersGUIUITestCase {
 
         app.buttons["workspaces.mode.Snapshots"].click()
         XCTAssertTrue(element("workspace.snapshot.ui-snapshot-1").waitForExistence(timeout: 5))
-    }
-
-    func testNewChatCreatesSessionAndSessionSearchFindsIt() {
-        let newChat = waitForElement("sidebar.newChat")
-        newChat.click()
-        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
-        chooseSmithersChatTargetIfNeeded()
-
-        typeInto("chat.input", "Session Search Needle")
-        waitForElement("chat.sendButton").click()
-        XCTAssertTrue(app.staticTexts["Session Search Needle"].waitForExistence(timeout: 5))
-
-        let before = sessionButtonCount()
-        waitForElement("sidebar.newChat").click()
-        XCTAssertGreaterThanOrEqual(sessionButtonCount(), before + 1)
-
-        typeInto("sidebar.workspaceSearch", "Session Search Needle")
-        XCTAssertTrue(app.staticTexts["Session Search Needle"].waitForExistence(timeout: 5))
-    }
-
-    func testCommandNCreatesNewChat() {
-        let newChat = waitForElement("sidebar.newChat")
-        newChat.click()
-        XCTAssertTrue(element("view.chat").waitForExistence(timeout: 5))
-
-        let before = sessionButtonCount()
-        app.typeKey("n", modifierFlags: .command)
-
-        let expectation = XCTNSPredicateExpectation(
-            predicate: NSPredicate { [weak self] _, _ in
-                guard let self else { return false }
-                return self.sessionButtonCount() >= before + 1
-            },
-            object: nil
-        )
-        wait(for: [expectation], timeout: 5)
-        XCTAssertTrue(element("view.chat").exists)
     }
 }

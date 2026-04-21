@@ -342,7 +342,9 @@ struct SettingsView: View {
             }
         }
         .background(Theme.surface1)
-        .onAppear(perform: refreshNeovimPath)
+        .onAppear {
+            refreshNeovimPath()
+        }
         .accessibilityIdentifier("settings.root")
     }
 
@@ -750,7 +752,7 @@ struct ContentView: View {
     @StateObject private var fileSearchIndex: WorkspaceFileSearchIndex
 
     init(workspacePath: String? = nil) {
-        let resolved = CWDResolver.resolve(workspacePath)
+        let resolved = Smithers.CWD.resolve(workspacePath)
         _store = StateObject(wrappedValue: SessionStore(workingDirectory: resolved))
         _smithers = StateObject(wrappedValue: SmithersClient(cwd: resolved))
         _fileSearchIndex = StateObject(wrappedValue: WorkspaceFileSearchIndex(rootPath: resolved))
@@ -759,8 +761,8 @@ struct ContentView: View {
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
     @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
     @AppStorage(AppPreferenceKeys.smithersFeatureEnabled) private var smithersFeatureEnabled = false
-    @State private var destination: NavDestination = UserDefaults.standard.bool(forKey: AppPreferenceKeys.smithersFeatureEnabled) ? .dashboard : .chat
-    @State private var navHistory: [NavDestination] = [UserDefaults.standard.bool(forKey: AppPreferenceKeys.smithersFeatureEnabled) ? .dashboard : .chat]
+    @State private var destination: NavDestination = .dashboard
+    @State private var navHistory: [NavDestination] = [.dashboard]
     @State private var navHistoryIndex: Int = 0
     @State private var isNavigatingThroughHistory = false
     @State private var navigationSplitVisibility: NavigationSplitViewVisibility = .all
@@ -800,7 +802,12 @@ struct ContentView: View {
     }
 
     private var defaultDestination: NavDestination {
-        smithersFeatureEnabled ? .dashboard : .chat
+        .dashboard
+    }
+
+    private var activeTerminalId: String? {
+        if case .terminal(let id) = destination { return id }
+        return nil
     }
 
     private var paletteSlashCommands: [SlashCommandItem] {
@@ -814,48 +821,6 @@ struct ContentView: View {
     @ViewBuilder
     private var detailContent: some View {
         switch destination {
-        case .chat:
-            if let agent = store.activeAgent {
-                ChatView(
-                    agent: agent,
-                    onSend: { store.sendMessage($0) },
-                    onSendRequest: { request in
-                        store.sendMessage(request.prompt, displayText: request.displayText)
-                    },
-                    smithers: smithers,
-                    onNavigate: handleNavigation,
-                    onLaunchExternalAgent: { target in
-                        let terminalId = store.launchExternalAgentTab(
-                            name: target.name,
-                            command: target.binary
-                        )
-                        destination = .terminal(id: terminalId)
-                    },
-                    onToggleDeveloperDebug: toggleDeveloperDebugPanel,
-                    developerToolsEnabled: developerToolsEnabled,
-                    onNewChat: {
-                        store.newSession(reusingEmptyPlaceholder: false)
-                        destination = .chat
-                    },
-                    onRunStarted: { runId, title in
-                        openRunTab(runId: runId, title: title, preview: "Workflow run")
-                    },
-                    codexModelSelection: store.activeCodexSelection ?? store.codexSelectionDefaults,
-                    onApplyCodexModelSelection: { selection in
-                        store.applyCodexSelection(selection)
-                    },
-                    codexApprovalSelection: store.activeCodexApprovalSelection ?? store.codexApprovalDefaults,
-                    onApplyCodexApprovalSelection: { selection in
-                        store.applyCodexApprovalSelection(selection)
-                    }
-                )
-                .id(store.activeSessionId)
-                .logLifecycle("ChatView")
-                .accessibilityIdentifier("view.chat")
-            } else {
-                emptyState("No active session", icon: "message")
-                    .accessibilityIdentifier("view.chat.empty")
-            }
         case .terminal(let id):
             TerminalWorkspaceRouteView(
                 store: store,
@@ -905,7 +870,6 @@ struct ContentView: View {
         case .dashboard:
             DashboardView(
                 smithers: smithers,
-                sessionSnapshots: store.chatSessions(),
                 onAutoPopulateActiveRuns: { runs in
                     store.autoPopulateActiveRunTabs(runs)
                 },
@@ -1083,15 +1047,28 @@ struct ContentView: View {
                     )
                     .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
                 } detail: {
-                    VStack(spacing: 0) {
-                        if smithersFeatureEnabled,
-                           let installed = smithers.orchestratorVersion,
-                           smithers.orchestratorVersionMeetsMinimum == false {
-                            SmithersVersionWarningBanner(installed: installed)
+                    ZStack(alignment: .topLeading) {
+                        TerminalTabsLayer(
+                            store: store,
+                            activeTerminalId: activeTerminalId,
+                            onRequestClose: { id in requestTerminalClose(id) }
+                        )
+                        .opacity(activeTerminalId != nil ? 1 : 0)
+                        .allowsHitTesting(activeTerminalId != nil)
+                        .accessibilityHidden(activeTerminalId == nil)
+
+                        if activeTerminalId == nil {
+                            VStack(spacing: 0) {
+                                if smithersFeatureEnabled,
+                                   let installed = smithers.orchestratorVersion,
+                                   smithers.orchestratorVersionMeetsMinimum == false {
+                                    SmithersVersionWarningBanner(installed: installed)
+                                }
+                                detailContent
+                            }
+                            .id("\(String(describing: destination)):\(detailRefreshNonce)")
                         }
-                        detailContent
                     }
-                        .id("\(String(describing: destination)):\(detailRefreshNonce)")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .toolbar {
                             ToolbarItemGroup(placement: .navigation) {
@@ -1249,14 +1226,6 @@ struct ContentView: View {
             .frame(width: 1, height: 1)
             .opacity(0.01)
 
-            Button("New Chat") {
-                startNewChat()
-            }
-            .appKeyboardShortcut(.newChat)
-            .accessibilityIdentifier("shortcut.newChat")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
-
             Button("New Terminal Workspace") {
                 createNewTerminalTab()
             }
@@ -1407,7 +1376,6 @@ struct ContentView: View {
             ("Issues", .issues),
             ("Workspaces", .workspaces),
             ("Logs", .logs),
-            ("Chat", .chat),
             ("Terminal", .terminal()),
         ]
     }
@@ -1458,8 +1426,6 @@ struct ContentView: View {
             openCommandPalette(prefill: ">")
         case .commandPaletteAskAI:
             openCommandPalette(prefill: "?")
-        case .newChat:
-            startNewChat()
         case .newTerminal:
             createNewTerminalTab()
         case .reopenClosedTab:
@@ -1734,8 +1700,6 @@ struct ContentView: View {
             navigateFromPalette(to: next)
         case .selectSidebarTab(let id):
             activateSidebarTab(withID: id)
-        case .newChat:
-            startNewChat()
         case .newTerminal:
             createNewTerminalTab()
         case .openMarkdownFilePicker:
@@ -1872,11 +1836,6 @@ struct ContentView: View {
         )
     }
 
-    private func startNewChat() {
-        store.newSession(reusingEmptyPlaceholder: true)
-        destination = .chat
-    }
-
     private func createNewTerminalTab() {
         let terminalId = store.addTerminalTab()
         destination = .terminal(id: terminalId)
@@ -1884,9 +1843,6 @@ struct ContentView: View {
 
     private func handleNewTabSelection(_ selection: NewTabSelection) {
         switch selection {
-        case .smithersChat:
-            store.newSession(reusingEmptyPlaceholder: false)
-            destination = .chat
         case .terminal:
             let terminalId = store.addTerminalTab()
             destination = .terminal(id: terminalId)
@@ -1991,18 +1947,6 @@ struct ContentView: View {
     }
 
     private func cancelCurrentOperation() {
-        if destination == .chat,
-           let agent = store.activeAgent,
-           agent.isRunning {
-            agent.cancel()
-            AppNotifications.shared.post(
-                title: "Chat",
-                message: "Stopped active chat turn.",
-                level: .info
-            )
-            return
-        }
-
         if case .liveRun(let runId, _) = destination {
             Task { @MainActor in
                 do {
@@ -2032,34 +1976,16 @@ struct ContentView: View {
 
     private func askMainAI(_ query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let _ = store.ensureActiveSession()
-        destination = .chat
-
         guard !trimmed.isEmpty else { return }
-        store.sendMessage(trimmed)
+        AppNotifications.shared.post(
+            title: "Ask AI",
+            message: "Open a terminal tab with your preferred agent CLI to ask: \(trimmed)",
+            level: .info
+        )
     }
 
     private func closeCurrentTab() {
         switch destination {
-        case .chat:
-            guard let sessionID = store.activeSessionId else { return }
-            if store.discardSessionIfEmpty(sessionID) {
-                let _ = store.ensureActiveSession()
-                destination = .chat
-                return
-            }
-
-            if store.canArchiveSession(sessionID) {
-                store.archiveSession(sessionID)
-                destination = .chat
-            } else {
-                AppNotifications.shared.post(
-                    title: "Chat",
-                    message: "The active chat is running and cannot be closed yet.",
-                    level: .warning
-                )
-            }
-
         case .terminal(let terminalID):
             requestTerminalClose(terminalID)
 
@@ -2093,8 +2019,6 @@ struct ContentView: View {
     private func activeVisibleTabIndex(in tabs: [SidebarTab]) -> Int? {
         tabs.firstIndex { tab in
             switch tab.kind {
-            case .chat:
-                return destination == .chat && store.activeSessionId == tab.chatSessionId
             case .run:
                 if case .liveRun(let runId, _) = destination {
                     return runId == tab.runId
@@ -2116,11 +2040,6 @@ struct ContentView: View {
 
     private func activateSidebarTab(_ tab: SidebarTab) {
         switch tab.kind {
-        case .chat:
-            if let sessionID = tab.chatSessionId {
-                store.selectSession(sessionID)
-                destination = .chat
-            }
         case .run:
             if let runID = tab.runId {
                 destination = .liveRun(runId: runID, nodeId: nil)
@@ -2147,79 +2066,29 @@ struct ContentView: View {
             navigateFromPalette(to: nav)
         case .toggleDeveloperDebug:
             toggleDeveloperDebugPanel()
-        case .clearChat:
-            let _ = store.ensureActiveSession()
-            destination = .chat
-            store.activeAgent?.messages.removeAll()
         case .showHelp:
             openCommandPalette(prefill: ">")
+        case .quit:
+            NSApplication.shared.terminate(nil)
         case .runWorkflow(_):
             destination = .workflows
             AppNotifications.shared.post(
                 title: "Workflow Command",
-                message: "Use /\(name) in the chat composer to run this workflow with arguments.",
+                message: "Use /\(name) from an external agent terminal to run this workflow with arguments.",
                 level: .info
             )
         case .runSmithersPrompt(_):
             destination = .prompts
             AppNotifications.shared.post(
                 title: "Prompt Command",
-                message: "Use /\(name) in the chat composer to run this prompt with arguments.",
-                level: .info
-            )
-        case .codex(let codexCommand):
-            executeCodexSlashCommandFromPalette(codexCommand, name: name)
-        }
-    }
-
-    private func executeCodexSlashCommandFromPalette(_ command: CodexSlashCommand, name: String) {
-        switch command {
-        case .new:
-            startNewChat()
-        case .review:
-            askMainAI("Review my current changes and find issues. Prioritize bugs, regressions, and missing tests.")
-        case .compact:
-            askMainAI("Summarize the important context from this conversation so we can continue with a shorter working history.")
-        case .mention:
-            openCommandPalette(prefill: "@")
-        case .status:
-            AppNotifications.shared.post(
-                title: "Session Status",
-                message: sessionStatusText(),
-                level: .info
-            )
-        case .initialize:
-            askMainAI(SlashCommandRegistry.initPrompt)
-        case .diff:
-            askMainAI("Summarize the current git diff.")
-        case .model, .approvals, .mcp, .logout, .quit, .feedback:
-            destination = .chat
-            AppNotifications.shared.post(
-                title: "Slash Command",
-                message: "/\(name) is available from the chat composer.",
+                message: "Use /\(name) from an external agent terminal to run this prompt with arguments.",
                 level: .info
             )
         }
-    }
-
-    private func sessionStatusText() -> String {
-        let sessionState = store.activeSessionId == nil ? "No active session" : "Active session ready"
-        let runningState = store.activeAgent?.isRunning == true ? "running" : "idle"
-        return "\(sessionState) · Agent is \(runningState)."
     }
 
     private func openFileFromPalette(_ path: String) {
         let fileMention = "@\(path)"
-        if destination == .chat {
-            copyTextToClipboard(fileMention)
-            AppNotifications.shared.post(
-                title: "File Mention Copied",
-                message: "Paste \(fileMention) into chat.",
-                level: .info
-            )
-            return
-        }
-
         let absolutePath = absoluteWorkspacePath(for: path)
         let fileURL = URL(fileURLWithPath: absolutePath)
         if FileManager.default.fileExists(atPath: absolutePath) {

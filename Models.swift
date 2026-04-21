@@ -43,17 +43,6 @@ enum NeovimDetector {
     }
 }
 
-struct ChatSession: Identifiable, Hashable {
-    let id: String
-    let title: String
-    let preview: String
-    let timestamp: String
-    let group: String
-    var isPinned: Bool = false
-    var isArchived: Bool = false
-    var isUnread: Bool = false
-}
-
 struct RunWorkspace: Identifiable, Hashable {
     let runId: String
     var title: String
@@ -333,13 +322,11 @@ enum TmuxControllerError: LocalizedError {
 }
 
 enum SidebarWorkspaceKind: Hashable {
-    case chat
     case run
     case terminal
 
     var icon: String {
         switch self {
-        case .chat: return "message"
         case .run: return "dot.radiowaves.left.and.right"
         case .terminal: return "terminal.fill"
         }
@@ -351,7 +338,6 @@ typealias SidebarTabKind = SidebarWorkspaceKind
 struct SidebarWorkspace: Identifiable, Hashable {
     let id: String
     let kind: SidebarWorkspaceKind
-    let chatSessionId: String?
     let runId: String?
     let terminalId: String?
     let title: String
@@ -371,9 +357,6 @@ struct SidebarWorkspace: Identifiable, Hashable {
         }
         if let runId {
             return WorkspaceID(runId)
-        }
-        if let chatSessionId {
-            return WorkspaceID(chatSessionId)
         }
         return WorkspaceID(id)
     }
