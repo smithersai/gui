@@ -152,40 +152,6 @@ final class OutputTabTests: XCTestCase {
         ])
     }
 
-    private func makeStore(nodeState: String) -> LiveRunDevToolsStore {
-        let store = LiveRunDevToolsStore()
-        let taskNode = DevToolsNode(
-            id: 5,
-            type: .task,
-            name: "Task",
-            props: ["state": .string(nodeState)],
-            task: DevToolsTaskInfo(
-                nodeId: "task:review:0",
-                kind: "agent",
-                agent: "claude-opus-4-7",
-                label: "Review",
-                outputTableName: "review",
-                iteration: 1
-            ),
-            children: [],
-            depth: 2
-        )
-
-        let root = DevToolsNode(
-            id: 1,
-            type: .workflow,
-            name: "Workflow",
-            props: ["state": .string("running")],
-            children: [taskNode],
-            depth: 0
-        )
-
-        store.runId = "run-1"
-        store.applyEvent(.snapshot(DevToolsSnapshot(runId: "run-1", frameNo: 1, seq: 1, root: root)))
-        store.selectNode(5)
-        return store
-    }
-
     private func waitUntil(
         timeout: TimeInterval = 1.5,
         condition: @escaping () -> Bool

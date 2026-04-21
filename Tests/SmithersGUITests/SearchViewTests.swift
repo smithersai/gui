@@ -22,11 +22,6 @@ private func issueResult(id: String = "i1", title: String = "Fix login bug", des
                  filePath: nil, lineNumber: nil, kind: "issue")
 }
 
-private func repoResult(id: String = "r1", title: String = "smithers-core", description: String? = "Core library for Smithers") -> SearchResult {
-    SearchResult(id: id, title: title, description: description, snippet: nil,
-                 filePath: nil, lineNumber: nil, kind: "repo")
-}
-
 @MainActor
 private func searchTabButton(
     _ title: String,

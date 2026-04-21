@@ -32,17 +32,6 @@ private func makeIssue(
     )
 }
 
-private func sampleIssues() -> [SmithersIssue] {
-    [
-        makeIssue(id: "i-1", number: 1, title: "First issue", state: "open",
-                  labels: ["bug"], assignees: ["alice"], commentCount: 2),
-        makeIssue(id: "i-2", number: 2, title: "Second issue", state: "closed",
-                  labels: ["feature", "enhancement", "ui", "extra"], assignees: ["bob", "carol"], commentCount: 0),
-        makeIssue(id: "i-3", number: 3, title: "Third issue", state: "open",
-                  labels: nil, assignees: nil, commentCount: nil),
-    ]
-}
-
 // MARK: - ISSUES_LIST
 
 final class IssuesListTests: XCTestCase {

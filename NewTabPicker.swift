@@ -1,9 +1,5 @@
 import SwiftUI
 
-#if os(macOS)
-import AppKit
-#endif
-
 enum ChatTargetKind: String {
     case externalAgent
 }

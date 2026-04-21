@@ -190,13 +190,6 @@ struct NodeInspectorView: View {
         }
     }
 
-    private func tabPlaceholder(_ label: String) -> some View {
-        Text(label)
-            .font(.system(size: 11))
-            .foregroundColor(Theme.textTertiary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
     private func updateDefaultTab() {
         guard let node else { return }
         if let defaultTab = DefaultTabPicker.pickDefault(

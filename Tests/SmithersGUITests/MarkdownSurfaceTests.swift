@@ -1,5 +1,3 @@
-import Darwin
-import WebKit
 import XCTest
 @testable import SmithersGUI
 

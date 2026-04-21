@@ -10,26 +10,6 @@ private func makeClient() -> SmithersClient {
     SmithersClient(cwd: "/tmp")
 }
 
-private func sampleLandings() -> [Landing] {
-    [
-        Landing(id: "l-1", number: 101, title: "Add login page",
-                description: "Implements the login page with OAuth support",
-                state: "draft", targetBranch: "main", author: "alice",
-                createdAt: "2026-04-10T10:00:00Z", reviewStatus: "pending"),
-        Landing(id: "l-2", number: 102, title: "Fix crash on launch",
-                description: nil, state: "ready", targetBranch: "develop",
-                author: "bob", createdAt: "2026-04-11T14:30:00Z",
-                reviewStatus: "approved"),
-        Landing(id: "l-3", number: 103, title: "Refactor database layer",
-                description: "Large refactor of the DB access pattern",
-                state: "landed", targetBranch: "main", author: "carol",
-                createdAt: "2026-04-09T08:00:00Z", reviewStatus: "changes_requested"),
-        Landing(id: "l-4", number: nil, title: "WIP: Experiment",
-                description: nil, state: "draft", targetBranch: nil,
-                author: nil, createdAt: nil, reviewStatus: nil),
-    ]
-}
-
 private func projectSource(_ filename: String) throws -> String {
     let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     let projectDirectory = testsDirectory.deletingLastPathComponent().deletingLastPathComponent()
