@@ -157,8 +157,27 @@ extension Smithers {
             out: UnsafeMutablePointer<smithers_string_s>?
         ) -> Bool {
             _ = userdata
+            #if os(macOS)
+            guard let out,
+                  let string = NSPasteboard.general.string(forType: .string)
+            else {
+                return false
+            }
+
+            var bytes = ContiguousArray(string.utf8)
+            bytes.append(0)
+            return bytes.withUnsafeBufferPointer { buffer in
+                guard let baseAddress = buffer.baseAddress else { return false }
+                out.pointee = smithers_string_s(
+                    ptr: UnsafeRawPointer(baseAddress).assumingMemoryBound(to: CChar.self),
+                    len: string.utf8.count
+                )
+                return true
+            }
+            #else
             _ = out
             return false
+            #endif
         }
 
         nonisolated static func writeClipboard(_ userdata: UnsafeMutableRawPointer?, text: UnsafePointer<CChar>?) {
