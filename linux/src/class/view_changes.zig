@@ -27,6 +27,7 @@ pub const ChangesView = extern struct {
         detail: *gtk.Box = undefined,
         search_entry: *gtk.Entry = undefined,
         bookmark_entry: *gtk.Entry = undefined,
+        remote_check: *gtk.CheckButton = undefined,
         changes: std.ArrayList(vh.Item) = .empty,
         selected_index: ?usize = null,
         status_mode: bool = false,
@@ -60,6 +61,7 @@ pub const ChangesView = extern struct {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "F5", self, shortcutRefresh);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
         const header = vh.makeHeader("Changes", null);
         self.private().search_entry = gtk.Entry.new();
@@ -161,10 +163,16 @@ pub const ChangesView = extern struct {
         delete.as(gtk.Widget).addCssClass("destructive-action");
         _ = gtk.Button.signals.clicked.connect(delete, *Self, deleteBookmarkClicked, self, .{});
         actions.append(delete.as(gtk.Widget));
+        const push = ui.textButton("Push", false);
+        _ = gtk.Button.signals.clicked.connect(push, *Self, pushClicked, self, .{});
+        actions.append(push.as(gtk.Widget));
         detail.append(actions.as(gtk.Widget));
         self.private().bookmark_entry = gtk.Entry.new();
         self.private().bookmark_entry.setPlaceholderText("bookmark name");
         detail.append(self.private().bookmark_entry.as(gtk.Widget));
+        self.private().remote_check = gtk.CheckButton.newWithLabel("Remote");
+        self.private().remote_check.setActive(1);
+        detail.append(self.private().remote_check.as(gtk.Widget));
     }
 
     fn loadStatus(self: *Self) void {
@@ -178,7 +186,9 @@ pub const ChangesView = extern struct {
             return;
         };
         defer alloc.free(status);
-        const diff = smithers.callJson(alloc, self.client(), "workingCopyDiff", "{}") catch alloc.dupe(u8, "") catch return;
+        const diff = smithers.callJson(alloc, self.client(), "workingCopyDiff", "{}") catch fallback: {
+            break :fallback vh.callJson(alloc, self.client(), "changeDiff", &.{.{ .key = "changeID", .value = .{ .string = "@" } }}) catch alloc.dupe(u8, "") catch return;
+        };
         defer alloc.free(diff);
         self.private().detail.append(ui.heading("Working Copy").as(gtk.Widget));
         const text = std.fmt.allocPrint(alloc, "{s}\n\n{s}", .{ status, diff }) catch return;
@@ -209,6 +219,34 @@ pub const ChangesView = extern struct {
         self.private().detail.append(diff.as(gtk.Widget));
     }
 
+    fn refreshChangeDetail(self: *Self, index: usize) void {
+        if (index >= self.private().changes.items.len) return;
+        const change = self.private().changes.items[index];
+        const alloc = self.allocator();
+        const json = vh.callJson(alloc, self.client(), "viewChange", &.{.{ .key = "changeID", .value = .{ .string = change.id } }}) catch return;
+        defer alloc.free(json);
+        var parsed = vh.parseItems(alloc, json, &.{ "change", "changes", "items", "data" }, .{
+            .id = &.{ "change_id", "changeID", "id" },
+            .title = &.{ "description", "change_id", "changeID" },
+            .subtitle = &.{ "commit_id", "commitID", "timestamp" },
+            .body = &.{"description"},
+            .path = &.{"bookmarks"},
+            .status = &.{ "is_working_copy", "isWorkingCopy" },
+        }) catch return;
+        defer {
+            vh.clearItems(alloc, &parsed);
+            parsed.deinit(alloc);
+        }
+        if (parsed.items.len == 0) return;
+        self.private().changes.items[index].deinit(alloc);
+        self.private().changes.items[index] = parsed.items[0];
+        _ = parsed.orderedRemove(0);
+    }
+
+    fn remoteEnabled(self: *Self) bool {
+        return self.private().remote_check.getActive() != 0;
+    }
+
     fn bookmarkAction(self: *Self, method: []const u8, label: []const u8) void {
         const index = self.private().selected_index orelse return;
         if (index >= self.private().changes.items.len) return;
@@ -223,12 +261,12 @@ pub const ChangesView = extern struct {
             vh.callJson(alloc, self.client(), method, &.{
                 .{ .key = "name", .value = .{ .string = name } },
                 .{ .key = "changeID", .value = .{ .string = change.id } },
-                .{ .key = "remote", .value = .{ .boolean = true } },
+                .{ .key = "remote", .value = .{ .boolean = self.remoteEnabled() } },
             })
         else
             vh.callJson(alloc, self.client(), method, &.{
                 .{ .key = "name", .value = .{ .string = name } },
-                .{ .key = "remote", .value = .{ .boolean = true } },
+                .{ .key = "remote", .value = .{ .boolean = self.remoteEnabled() } },
             });
         const result = json catch |err| {
             self.private().window.showToastFmt("{s} failed: {}", .{ label, err });
@@ -236,6 +274,25 @@ pub const ChangesView = extern struct {
         };
         defer alloc.free(result);
         self.private().window.showToastFmt("{s} {s}", .{ label, name });
+        self.refresh();
+    }
+
+    fn pushSelected(self: *Self) void {
+        const index = self.private().selected_index orelse return;
+        if (index >= self.private().changes.items.len) return;
+        const change = self.private().changes.items[index];
+        const bookmark = std.mem.trim(u8, std.mem.span(self.private().bookmark_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        const alloc = self.allocator();
+        const json = vh.callJson(alloc, self.client(), "push", &.{
+            .{ .key = "changeID", .value = .{ .string = change.id } },
+            .{ .key = "bookmark", .value = .{ .optional_string = if (bookmark.len == 0) null else bookmark } },
+            .{ .key = "remote", .value = .{ .boolean = self.remoteEnabled() } },
+        }) catch |err| {
+            self.private().window.showToastFmt("Push failed: {}", .{err});
+            return;
+        };
+        defer alloc.free(json);
+        self.private().window.showToast(if (bookmark.len == 0) "Pushed change" else "Pushed bookmark");
         self.refresh();
     }
 
@@ -261,6 +318,7 @@ pub const ChangesView = extern struct {
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const index = vh.getIndex(row.as(gobject.Object)) orelse return;
         self.private().selected_index = index;
+        self.refreshChangeDetail(index);
         self.renderDetail(index) catch {};
     }
 
@@ -274,6 +332,10 @@ pub const ChangesView = extern struct {
 
     fn deleteBookmarkClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.bookmarkAction("deleteBookmark", "Deleted bookmark");
+    }
+
+    fn pushClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.pushSelected();
     }
 
     fn shortcutRefresh(self: *Self) void {

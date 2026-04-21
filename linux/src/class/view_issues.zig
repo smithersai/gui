@@ -25,6 +25,7 @@ pub const IssuesView = extern struct {
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
         search_entry: *gtk.Entry = undefined,
+        label_entry: *gtk.Entry = undefined,
         title_entry: *gtk.Entry = undefined,
         body_view: *gtk.TextView = undefined,
         close_comment: *gtk.TextView = undefined,
@@ -61,6 +62,7 @@ pub const IssuesView = extern struct {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "F5", self, shortcutRefresh);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
         const header = vh.makeHeader("Issues", null);
         self.private().search_entry = gtk.Entry.new();
@@ -68,6 +70,11 @@ pub const IssuesView = extern struct {
         self.private().search_entry.as(gtk.Widget).setSizeRequest(220, -1);
         _ = gtk.Editable.signals.changed.connect(self.private().search_entry.as(gtk.Editable), *Self, searchChanged, self, .{});
         header.append(self.private().search_entry.as(gtk.Widget));
+        self.private().label_entry = gtk.Entry.new();
+        self.private().label_entry.setPlaceholderText("Label");
+        self.private().label_entry.as(gtk.Widget).setSizeRequest(140, -1);
+        _ = gtk.Editable.signals.changed.connect(self.private().label_entry.as(gtk.Editable), *Self, searchChanged, self, .{});
+        header.append(self.private().label_entry.as(gtk.Widget));
         inline for (.{ "Open", "Closed", "All" }) |label| {
             const button = ui.textButton(label, false);
             _ = gtk.Button.signals.clicked.connect(button, *Self, filterClicked, self, .{});
@@ -123,11 +130,14 @@ pub const IssuesView = extern struct {
             return;
         }
         const query = std.mem.trim(u8, std.mem.span(self.private().search_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        const label_query = std.mem.trim(u8, std.mem.span(self.private().label_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
         var visible: usize = 0;
         for (self.private().items.items, 0..) |item, index| {
+            if (label_query.len > 0 and !(item.subtitle != null and vh.containsIgnoreCase(item.subtitle.?, label_query))) continue;
             if (query.len > 0 and
                 !vh.containsIgnoreCase(item.title, query) and
                 !vh.containsIgnoreCase(item.id, query) and
+                !(item.subtitle != null and vh.containsIgnoreCase(item.subtitle.?, query)) and
                 !(item.body != null and vh.containsIgnoreCase(item.body.?, query))) continue;
             const row = try vh.itemRow(alloc, item, if (item.status != null and std.ascii.eqlIgnoreCase(item.status.?, "open")) "radio-symbolic" else "emblem-ok-symbolic");
             vh.setIndex(row.as(gobject.Object), index);
@@ -175,6 +185,9 @@ pub const IssuesView = extern struct {
         comment_scroll.as(gtk.Widget).setSizeRequest(-1, 110);
         self.private().detail.append(comment_scroll.as(gtk.Widget));
         const actions = vh.actionBar();
+        const open = ui.textButton("Open in Browser", true);
+        _ = gtk.Button.signals.clicked.connect(open, *Self, openBrowserClicked, self, .{});
+        actions.append(open.as(gtk.Widget));
         const close = ui.textButton("Close", false);
         _ = gtk.Button.signals.clicked.connect(close, *Self, closeClicked, self, .{});
         actions.append(close.as(gtk.Widget));
@@ -236,6 +249,30 @@ pub const IssuesView = extern struct {
         self.refresh();
     }
 
+    fn openIssueInBrowser(self: *Self) void {
+        const index = self.private().selected_index orelse return;
+        if (index >= self.private().items.items.len) return;
+        const item = self.private().items.items[index];
+        const alloc = self.allocator();
+        if (vh.rawJsonFieldString(alloc, item.raw_json, &.{ "url", "html_url", "web_url", "permalink", "browserUrl", "browser_url" }) catch null) |url| {
+            defer alloc.free(url);
+            vh.openUrl(alloc, url) catch |err| {
+                self.private().window.showToastFmt("Open browser failed: {}", .{err});
+            };
+            return;
+        }
+        const number = item.number orelse {
+            self.private().window.showToast("Issue URL is unavailable");
+            return;
+        };
+        const json = vh.callJson(alloc, self.client(), "openIssueInBrowser", &.{.{ .key = "number", .value = .{ .integer = number } }}) catch |err| {
+            self.private().window.showToastFmt("Open issue failed: {}", .{err});
+            return;
+        };
+        defer alloc.free(json);
+        self.private().window.showToastFmt("Opened issue #{d}", .{number});
+    }
+
     fn refreshIssueDetail(self: *Self, index: usize) void {
         if (index >= self.private().items.items.len) return;
         const number = self.private().items.items[index].number orelse return;
@@ -290,6 +327,10 @@ pub const IssuesView = extern struct {
 
     fn createClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.createIssue();
+    }
+
+    fn openBrowserClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.openIssueInBrowser();
     }
 
     fn closeClicked(_: *gtk.Button, self: *Self) callconv(.c) void {

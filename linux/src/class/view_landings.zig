@@ -64,6 +64,7 @@ pub const LandingsView = extern struct {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "F5", self, shortcutRefresh);
         const header = vh.makeHeader("Landings", null);
         inline for (.{ "All", "Open", "Draft", "Merged", "Closed" }) |label| {
             const button = ui.textButton(label, false);
@@ -158,8 +159,11 @@ pub const LandingsView = extern struct {
         try vh.detailRow(alloc, self.private().detail, "State", item.status);
         try vh.detailRow(alloc, self.private().detail, "Target", item.subtitle);
         try vh.detailRow(alloc, self.private().detail, "Description", item.body);
+        const pr_url = vh.rawJsonFieldString(alloc, item.raw_json, &.{ "pullRequestUrl", "pull_request_url", "prUrl", "pr_url", "html_url", "web_url", "url", "permalink" }) catch null;
+        defer if (pr_url) |value| alloc.free(value);
+        try vh.detailRow(alloc, self.private().detail, "PR", pr_url);
         const actions = gtk.Box.new(.horizontal, 8);
-        inline for (.{ "Diff", "Checks", "Land", "Approve", "Request Changes" }) |label| {
+        inline for (.{ "Diff", "Checks", "Open PR", "Land", "Approve", "Request Changes", "Comment" }) |label| {
             const button = ui.textButton(label, std.mem.eql(u8, label, "Approve"));
             if (std.mem.eql(u8, label, "Land") or std.mem.eql(u8, label, "Request Changes")) button.as(gtk.Widget).addCssClass("destructive-action");
             _ = gtk.Button.signals.clicked.connect(button, *Self, actionClicked, self, .{});
@@ -203,11 +207,15 @@ pub const LandingsView = extern struct {
         const index = self.private().selected_index orelse return;
         if (index >= self.private().items.items.len) return;
         const item = self.private().items.items[index];
+        const alloc = self.allocator();
+        if (std.mem.eql(u8, label, "Open PR")) {
+            self.openLandingPR(item);
+            return;
+        }
         const number = item.number orelse {
             self.private().window.showToast("Landing number is required");
             return;
         };
-        const alloc = self.allocator();
         if (std.mem.eql(u8, label, "Diff") or std.mem.eql(u8, label, "Checks")) {
             const method = if (std.mem.eql(u8, label, "Diff")) "landingDiff" else "landingChecks";
             const json = vh.callJson(alloc, self.client(), method, &.{.{ .key = "number", .value = .{ .integer = number } }}) catch |err| {
@@ -232,7 +240,7 @@ pub const LandingsView = extern struct {
         }
         const body = vh.getTextViewText(alloc, self.private().review_view) catch return;
         defer alloc.free(body);
-        const action = if (std.mem.eql(u8, label, "Approve")) "approve" else "request_changes";
+        const action = if (std.mem.eql(u8, label, "Approve")) "approve" else if (std.mem.eql(u8, label, "Request Changes")) "request_changes" else "comment";
         const json = vh.callJson(alloc, self.client(), "reviewLanding", &.{
             .{ .key = "number", .value = .{ .integer = number } },
             .{ .key = "action", .value = .{ .string = action } },
@@ -244,6 +252,51 @@ pub const LandingsView = extern struct {
         defer alloc.free(json);
         self.private().window.showToastFmt("Reviewed #{d}", .{number});
         self.refresh();
+    }
+
+    fn refreshLandingDetail(self: *Self, index: usize) void {
+        if (index >= self.private().items.items.len) return;
+        const number = self.private().items.items[index].number orelse return;
+        const alloc = self.allocator();
+        const json = vh.callJson(alloc, self.client(), "getLanding", &.{.{ .key = "number", .value = .{ .integer = number } }}) catch return;
+        defer alloc.free(json);
+        var parsed = vh.parseItems(alloc, json, &.{ "landing", "landings", "items", "data" }, .{
+            .id = &.{ "id", "number", "title" },
+            .title = &.{"title"},
+            .subtitle = &.{ "targetBranch", "target_bookmark", "targetBookmark", "author" },
+            .status = &.{ "state", "reviewStatus", "review_status" },
+            .body = &.{ "description", "body" },
+            .number = &.{"number"},
+        }) catch return;
+        defer {
+            vh.clearItems(alloc, &parsed);
+            parsed.deinit(alloc);
+        }
+        if (parsed.items.len == 0) return;
+        self.private().items.items[index].deinit(alloc);
+        self.private().items.items[index] = parsed.items[0];
+        _ = parsed.orderedRemove(0);
+    }
+
+    fn openLandingPR(self: *Self, item: vh.Item) void {
+        const alloc = self.allocator();
+        if (vh.rawJsonFieldString(alloc, item.raw_json, &.{ "pullRequestUrl", "pull_request_url", "prUrl", "pr_url", "html_url", "web_url", "url", "permalink" }) catch null) |url| {
+            defer alloc.free(url);
+            vh.openUrl(alloc, url) catch |err| {
+                self.private().window.showToastFmt("Open PR failed: {}", .{err});
+            };
+            return;
+        }
+        const number = item.number orelse {
+            self.private().window.showToast("PR link is unavailable");
+            return;
+        };
+        const json = vh.callJson(alloc, self.client(), "openLandingInBrowser", &.{.{ .key = "number", .value = .{ .integer = number } }}) catch |err| {
+            self.private().window.showToastFmt("Open landing failed: {}", .{err});
+            return;
+        };
+        defer alloc.free(json);
+        self.private().window.showToastFmt("Opened landing #{d}", .{number});
     }
 
     fn confirmLand(self: *Self, number: i64) void {
@@ -294,6 +347,7 @@ pub const LandingsView = extern struct {
         const index = vh.getIndex(row.as(gobject.Object)) orelse return;
         self.private().selected_index = index;
         self.private().create_visible = false;
+        self.refreshLandingDetail(index);
         self.renderDetail(index) catch {};
     }
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const adw = @import("adw");
+const gio = @import("gio");
 const glib = @import("glib");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
@@ -141,6 +142,58 @@ pub fn parseStringResult(alloc: std.mem.Allocator, json: []const u8) ![]u8 {
     };
     defer parsed.deinit();
     return try stringFromValue(alloc, &parsed.value);
+}
+
+pub fn rawJsonFieldString(alloc: std.mem.Allocator, raw_json: ?[]const u8, keys: []const []const u8) !?[]u8 {
+    const raw = raw_json orelse return null;
+    var parsed = try std.json.parseFromSlice(Value, alloc, raw, .{});
+    defer parsed.deinit();
+    const obj = object(&parsed.value) orelse return null;
+    return try stringField(alloc, obj, keys);
+}
+
+pub fn rawJsonFieldValueString(alloc: std.mem.Allocator, raw_json: ?[]const u8, keys: []const []const u8) !?[]u8 {
+    const raw = raw_json orelse return null;
+    var parsed = try std.json.parseFromSlice(Value, alloc, raw, .{});
+    defer parsed.deinit();
+    const obj = object(&parsed.value) orelse return null;
+    for (keys) |key| {
+        const value = obj.get(key) orelse continue;
+        var copy = value;
+        const text = try stringFromValue(alloc, &copy);
+        if (std.mem.trim(u8, text, &std.ascii.whitespace).len == 0) {
+            alloc.free(text);
+            continue;
+        }
+        return text;
+    }
+    return null;
+}
+
+pub fn rawJsonFieldJson(alloc: std.mem.Allocator, raw_json: ?[]const u8, keys: []const []const u8) !?[]u8 {
+    const raw = raw_json orelse return null;
+    var parsed = try std.json.parseFromSlice(Value, alloc, raw, .{});
+    defer parsed.deinit();
+    const obj = object(&parsed.value) orelse return null;
+    for (keys) |key| {
+        const value = obj.get(key) orelse continue;
+        return try jsonValueAlloc(alloc, value);
+    }
+    return null;
+}
+
+pub fn openUrl(alloc: std.mem.Allocator, raw_url: []const u8) !void {
+    const trimmed = std.mem.trim(u8, raw_url, &std.ascii.whitespace);
+    if (trimmed.len == 0) return error.EmptyUrl;
+    const z = try alloc.dupeZ(u8, trimmed);
+    defer alloc.free(z);
+    var err: ?*glib.Error = null;
+    const ok = gio.AppInfo.launchDefaultForUri(z.ptr, null, &err);
+    if (err) |e| {
+        defer e.free();
+        return error.OpenUrlFailed;
+    }
+    if (ok == 0) return error.OpenUrlFailed;
 }
 
 fn itemFromValue(alloc: std.mem.Allocator, value: *Value, spec: ItemSpec, index: usize) !?Item {

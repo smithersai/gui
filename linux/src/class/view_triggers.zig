@@ -1,4 +1,5 @@
 const std = @import("std");
+const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -26,8 +27,10 @@ pub const TriggersView = extern struct {
         detail: *gtk.Box = undefined,
         pattern_entry: *gtk.Entry = undefined,
         workflow_entry: *gtk.Entry = undefined,
+        preview_box: *gtk.Box = undefined,
         items: std.ArrayList(vh.Item) = .empty,
         selected_index: ?usize = null,
+        pending_delete_index: ?usize = null,
         create_visible: bool = false,
         did_dispose: bool = false,
 
@@ -58,6 +61,7 @@ pub const TriggersView = extern struct {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "F5", self, shortcutRefresh);
         const header = vh.makeHeader("Triggers", null);
         const add = ui.iconButton("list-add-symbolic", "New trigger");
         _ = gtk.Button.signals.clicked.connect(add, *Self, newClicked, self, .{});
@@ -118,10 +122,14 @@ pub const TriggersView = extern struct {
         self.private().detail.append(ui.heading("New Trigger").as(gtk.Widget));
         self.private().pattern_entry = gtk.Entry.new();
         self.private().pattern_entry.setPlaceholderText("0 9 * * 1-5");
+        _ = gtk.Editable.signals.changed.connect(self.private().pattern_entry.as(gtk.Editable), *Self, patternChanged, self, .{});
         self.private().detail.append(self.private().pattern_entry.as(gtk.Widget));
         self.private().workflow_entry = gtk.Entry.new();
         self.private().workflow_entry.setPlaceholderText(".smithers/workflows/nightly.tsx");
         self.private().detail.append(self.private().workflow_entry.as(gtk.Widget));
+        self.private().preview_box = gtk.Box.new(.vertical, 6);
+        self.private().detail.append(self.private().preview_box.as(gtk.Widget));
+        self.renderCronPreview();
         const create = ui.textButton("Create Trigger", true);
         _ = gtk.Button.signals.clicked.connect(create, *Self, createClicked, self, .{});
         self.private().detail.append(create.as(gtk.Widget));
@@ -138,6 +146,14 @@ pub const TriggersView = extern struct {
         try vh.detailRow(alloc, self.private().detail, "Workflow", item.path);
         try vh.detailRow(alloc, self.private().detail, "Enabled", if (item.enabled orelse true) "true" else "false");
         try vh.detailRow(alloc, self.private().detail, "Status", item.status);
+        if (vh.rawJsonFieldValueString(alloc, item.raw_json, &.{ "nextRunAtMs", "next_run_at_ms", "nextRunAt", "next_run_at" }) catch null) |next| {
+            defer alloc.free(next);
+            try vh.detailRow(alloc, self.private().detail, "Next", next);
+        }
+        if (vh.rawJsonFieldValueString(alloc, item.raw_json, &.{ "lastRunAtMs", "last_run_at_ms", "lastRunAt", "last_run_at" }) catch null) |last| {
+            defer alloc.free(last);
+            try vh.detailRow(alloc, self.private().detail, "Last", last);
+        }
         const actions = gtk.Box.new(.horizontal, 8);
         const toggle = ui.textButton("Toggle", true);
         _ = gtk.Button.signals.clicked.connect(toggle, *Self, toggleClicked, self, .{});
@@ -150,6 +166,7 @@ pub const TriggersView = extern struct {
         _ = gtk.Button.signals.clicked.connect(delete, *Self, deleteClicked, self, .{});
         actions.append(delete.as(gtk.Widget));
         self.private().detail.append(actions.as(gtk.Widget));
+        self.appendRecentFires(item) catch {};
     }
 
     fn createTrigger(self: *Self) void {
@@ -175,6 +192,53 @@ pub const TriggersView = extern struct {
         self.private().window.showToast("Trigger created");
         self.private().create_visible = false;
         self.refresh();
+    }
+
+    fn renderCronPreview(self: *Self) void {
+        const preview = self.private().preview_box;
+        ui.clearBox(preview);
+        const alloc = self.allocator();
+        vh.addSectionTitle(preview, "next(5)");
+        const pattern = std.mem.trim(u8, std.mem.span(self.private().pattern_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);
+        if (pattern.len == 0) {
+            preview.append(ui.dim("Enter a cron pattern to preview upcoming fires.").as(gtk.Widget));
+            return;
+        }
+        if (!isValidCronPattern(pattern)) {
+            preview.append(ui.dim("Cron pattern must have 5 fields.").as(gtk.Widget));
+            return;
+        }
+        const json = vh.callJson(alloc, self.client(), "previewCron", &.{
+            .{ .key = "pattern", .value = .{ .string = pattern } },
+            .{ .key = "count", .value = .{ .integer = 5 } },
+        }) catch {
+            preview.append(ui.dim("Pattern shape is valid; preview is unavailable from the backend.").as(gtk.Widget));
+            return;
+        };
+        defer alloc.free(json);
+        const text = vh.parseStringResult(alloc, json) catch alloc.dupe(u8, json) catch return;
+        defer alloc.free(text);
+        const text_z = alloc.dupeZ(u8, text) catch return;
+        defer alloc.free(text_z);
+        const label = ui.label(text_z, null);
+        label.as(gtk.Widget).addCssClass("monospace");
+        label.setSelectable(1);
+        preview.append(label.as(gtk.Widget));
+    }
+
+    fn appendRecentFires(self: *Self, item: vh.Item) !void {
+        const alloc = self.allocator();
+        if (vh.rawJsonFieldJson(alloc, item.raw_json, &.{ "recentFires", "recent_fires", "fires", "history", "recentRuns", "recent_runs" }) catch null) |fires| {
+            defer alloc.free(fires);
+            try vh.appendJsonViewer(alloc, self.private().detail, "Recent Fires", fires, 180);
+            return;
+        }
+        const json = vh.callJson(alloc, self.client(), "listCronFires", &.{
+            .{ .key = "cronID", .value = .{ .string = item.id } },
+            .{ .key = "limit", .value = .{ .integer = 5 } },
+        }) catch return;
+        defer alloc.free(json);
+        try vh.appendJsonViewer(alloc, self.private().detail, "Recent Fires", json, 180);
     }
 
     fn triggerAction(self: *Self, method: []const u8, label: []const u8) void {
@@ -203,9 +267,30 @@ pub const TriggersView = extern struct {
         var count: usize = 0;
         while (parts.next()) |part| {
             if (part.len == 0) continue;
+            for (part) |ch| {
+                if (!(std.ascii.isAlphanumeric(ch) or ch == '*' or ch == '/' or ch == ',' or ch == '-' or ch == '?' or ch == '#')) return false;
+            }
             count += 1;
         }
         return count == 5;
+    }
+
+    fn confirmDeleteTrigger(self: *Self) void {
+        const index = self.private().selected_index orelse return;
+        if (index >= self.private().items.items.len) return;
+        self.private().pending_delete_index = index;
+        const item = self.private().items.items[index];
+        const alloc = self.allocator();
+        const body = std.fmt.allocPrintSentinel(alloc, "Delete trigger {s}? This cannot be undone.", .{item.id}, 0) catch return;
+        defer alloc.free(body);
+        const dialog = adw.AlertDialog.new("Delete Trigger", body.ptr);
+        dialog.addResponse("cancel", "Cancel");
+        dialog.addResponse("delete", "Delete");
+        dialog.setCloseResponse("cancel");
+        dialog.setDefaultResponse("cancel");
+        dialog.setResponseAppearance("delete", .destructive);
+        _ = adw.AlertDialog.signals.response.connect(dialog, *Self, deleteDialogResponse, self, .{});
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
     }
 
     fn newClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -228,16 +313,30 @@ pub const TriggersView = extern struct {
         self.createTrigger();
     }
 
+    fn patternChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
+        self.renderCronPreview();
+    }
+
     fn toggleClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.triggerAction("toggleCron", "Updated");
     }
 
     fn deleteClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.triggerAction("deleteCron", "Deleted");
+        self.confirmDeleteTrigger();
     }
 
     fn runNowClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.triggerAction("runCronNow", "Started");
+    }
+
+    fn deleteDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
+        if (std.mem.orderZ(u8, response, "delete") != .eq) {
+            self.private().pending_delete_index = null;
+            return;
+        }
+        self.private().selected_index = self.private().pending_delete_index;
+        self.private().pending_delete_index = null;
+        self.triggerAction("deleteCron", "Deleted");
     }
 
     fn shortcutRefresh(self: *Self) void {

@@ -133,22 +133,42 @@ pub const VCSDashboardView = extern struct {
             vh.clearItems(alloc, &mutable);
             mutable.deinit(alloc);
         }
+        var recent_commits = self.loadItems("recentCommits", &.{.{ .key = "limit", .value = .{ .integer = 10 } }}, &.{ "commits", "changes", "items", "data" }, .{
+            .id = &.{ "commit_id", "commitID", "id", "change_id", "changeID" },
+            .title = &.{ "description", "message", "summary", "commit_id", "commitID" },
+            .subtitle = &.{ "author", "timestamp", "created_at", "createdAt" },
+            .status = &.{ "bookmark", "bookmarks" },
+        }) catch std.ArrayList(vh.Item).empty;
+        defer {
+            vh.clearItems(alloc, &recent_commits);
+            recent_commits.deinit(alloc);
+        }
 
         const body = self.private().body;
         ui.clearBox(body);
+        const repo = smithers.callJson(alloc, self.client(), "getCurrentRepo", "{}") catch null;
+        defer if (repo) |text| alloc.free(text);
         const status = smithers.callJson(alloc, self.client(), "status", "{}") catch null;
+        defer if (status) |text| alloc.free(text);
+        const sync_status = smithers.callJson(alloc, self.client(), "syncStatus", "{}") catch null;
+        defer if (sync_status) |text| alloc.free(text);
+        const diff = smithers.callJson(alloc, self.client(), "workingCopyDiff", "{}") catch null;
+        defer if (diff) |text| alloc.free(text);
+
+        try self.appendSyncSummary(repo, status, sync_status, changes.items);
+        try self.appendChangesIndicator(changes.items, diff);
         if (status) |text| {
-            defer alloc.free(text);
             try vh.appendJsonViewer(alloc, body, "JJ Status", text, 150);
         }
-        const diff = smithers.callJson(alloc, self.client(), "workingCopyDiff", "{}") catch null;
         if (diff) |text| {
-            defer alloc.free(text);
             const diff_view = UnifiedDiffView.new(alloc, text, "working-copy.diff") catch null;
             if (diff_view) |view| {
                 view.as(gtk.Widget).setSizeRequest(-1, 320);
                 body.append(view.as(gtk.Widget));
             }
+        }
+        if (sync_status) |text| {
+            try vh.appendJsonViewer(alloc, body, "Sync Status", text, 130);
         }
         const metrics = gtk.Box.new(.horizontal, 12);
         try vh.appendMetric(alloc, metrics, "Changes", changes.items.len, "recent JJHub changes");
@@ -158,6 +178,7 @@ pub const VCSDashboardView = extern struct {
         body.append(metrics.as(gtk.Widget));
 
         try self.appendSection("Recent Changes", changes.items, "view-list-symbolic");
+        try self.appendRecentCommits(recent_commits.items, changes.items);
         try self.appendSection("Open Landings", landings.items, "emblem-documents-symbolic");
         try self.appendSection("Open Issues", issues.items, "emblem-documents-symbolic");
         try self.appendSection("JJHub Workflows", workflows.items, "media-playlist-shuffle-symbolic");
@@ -183,6 +204,72 @@ pub const VCSDashboardView = extern struct {
         self.private().body.append(list.as(gtk.Widget));
     }
 
+    fn appendSyncSummary(self: *Self, repo_json: ?[]const u8, status_json: ?[]const u8, sync_json: ?[]const u8, changes: []const vh.Item) !void {
+        const alloc = self.allocator();
+        const row = gtk.Box.new(.horizontal, 12);
+        const repo_label = if (vh.rawJsonFieldString(alloc, repo_json, &.{ "full_name", "fullName", "name" }) catch null) |repo| repo else try alloc.dupe(u8, "Repository");
+        defer alloc.free(repo_label);
+        const sync_label = if (sync_json) |sync| try vh.parseStringResult(alloc, sync) else try alloc.dupe(u8, "Sync status unavailable");
+        defer alloc.free(sync_label);
+        const status_label = if (status_json) |status| try vh.parseStringResult(alloc, status) else try alloc.dupe(u8, "jj status unavailable");
+        defer alloc.free(status_label);
+        try self.appendTextCard(row, "Repository", repo_label);
+        try self.appendTextCard(row, "Sync", sync_label);
+        const change_detail = try std.fmt.allocPrint(alloc, "{d} working copy / {d} total", .{ workingCopyCount(changes), changes.len });
+        defer alloc.free(change_detail);
+        try self.appendTextCard(row, "Changes", change_detail);
+        try self.appendTextCard(row, "JJ Status", status_label);
+        self.private().body.append(row.as(gtk.Widget));
+    }
+
+    fn appendChangesIndicator(self: *Self, changes: []const vh.Item, diff: ?[]const u8) !void {
+        const alloc = self.allocator();
+        const row = gtk.Box.new(.horizontal, 12);
+        try vh.appendMetric(alloc, row, "Working Copy", workingCopyCount(changes), "changes marked WC");
+        try vh.appendMetric(alloc, row, "Committed", committedCount(changes), "recent committed changes");
+        try vh.appendMetric(alloc, row, "Uncommitted Diff", if (hasContent(diff)) 1 else 0, "working tree indicator");
+        self.private().body.append(row.as(gtk.Widget));
+    }
+
+    fn appendTextCard(self: *Self, parent: *gtk.Box, title: []const u8, detail: []const u8) !void {
+        const alloc = self.allocator();
+        const card = gtk.Box.new(.vertical, 4);
+        card.as(gtk.Widget).setHexpand(1);
+        card.as(gtk.Widget).addCssClass("card");
+        ui.margin(card.as(gtk.Widget), 12);
+        const title_z = try alloc.dupeZ(u8, title);
+        defer alloc.free(title_z);
+        const detail_z = try alloc.dupeZ(u8, detail);
+        defer alloc.free(detail_z);
+        card.append(ui.heading(title_z).as(gtk.Widget));
+        const label = ui.dim(detail_z);
+        label.setLines(3);
+        label.setEllipsize(.end);
+        card.append(label.as(gtk.Widget));
+        parent.append(card.as(gtk.Widget));
+    }
+
+    fn appendRecentCommits(self: *Self, recent_commits: []const vh.Item, changes: []const vh.Item) !void {
+        if (recent_commits.len > 0) {
+            try self.appendSection("Recent Commits", recent_commits, "emblem-documents-symbolic");
+            return;
+        }
+        const alloc = self.allocator();
+        self.private().body.append(ui.heading("Recent Commits").as(gtk.Widget));
+        const list = vh.listBox();
+        var visible: usize = 0;
+        for (changes) |change| {
+            if (isWorkingCopy(change)) continue;
+            list.append((try vh.itemRow(alloc, change, "emblem-documents-symbolic")).as(gtk.Widget));
+            visible += 1;
+            if (visible >= 6) break;
+        }
+        if (visible == 0) {
+            list.append((try ui.row(alloc, "emblem-documents-symbolic", "No recent commits", "Committed change summaries appear here.")).as(gtk.Widget));
+        }
+        self.private().body.append(list.as(gtk.Widget));
+    }
+
     fn countOpen(items: []const vh.Item) usize {
         var count: usize = 0;
         for (items) |item| {
@@ -191,6 +278,33 @@ pub const VCSDashboardView = extern struct {
             }
         }
         return count;
+    }
+
+    fn workingCopyCount(items: []const vh.Item) usize {
+        var count: usize = 0;
+        for (items) |item| {
+            if (isWorkingCopy(item)) count += 1;
+        }
+        return count;
+    }
+
+    fn committedCount(items: []const vh.Item) usize {
+        return items.len - workingCopyCount(items);
+    }
+
+    fn isWorkingCopy(item: vh.Item) bool {
+        if (item.status) |status| {
+            return std.ascii.eqlIgnoreCase(status, "true") or
+                std.ascii.eqlIgnoreCase(status, "1") or
+                std.ascii.eqlIgnoreCase(status, "wc") or
+                std.ascii.eqlIgnoreCase(status, "working-copy");
+        }
+        return false;
+    }
+
+    fn hasContent(value: ?[]const u8) bool {
+        const text = value orelse return false;
+        return std.mem.trim(u8, text, &std.ascii.whitespace).len > 0;
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
