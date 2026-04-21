@@ -30,6 +30,7 @@ extern fn sqlite3_column_bytes(stmt: ?*sqlite3_stmt, iCol: c_int) c_int;
 pub const Persistence = @This();
 
 allocator: std.mem.Allocator,
+mutex: std.Thread.Mutex = .{},
 db: ?*sqlite3,
 
 pub fn open(allocator: std.mem.Allocator, db_path: []const u8) !*Persistence {
@@ -41,22 +42,28 @@ pub fn open(allocator: std.mem.Allocator, db_path: []const u8) !*Persistence {
         defer _ = sqlite3_close(db);
         return error.OpenFailed;
     }
+    errdefer _ = sqlite3_close(db);
 
     const p = try allocator.create(Persistence);
     errdefer allocator.destroy(p);
     p.* = .{ .allocator = allocator, .db = db };
-    errdefer _ = sqlite3_close(db);
 
     try p.ensureSchema();
     return p;
 }
 
 pub fn close(self: *Persistence) void {
-    _ = sqlite3_close(self.db);
+    self.mutex.lock();
+    const db = self.db;
+    self.db = null;
+    _ = sqlite3_close(db);
+    self.mutex.unlock();
     self.allocator.destroy(self);
 }
 
 pub fn loadSessions(self: *Persistence, workspace_path: []const u8) structs.String {
+    self.mutex.lock();
+    defer self.mutex.unlock();
     const sql =
         \\SELECT sessions_json
         \\FROM workspace_sessions
@@ -74,6 +81,8 @@ pub fn loadSessions(self: *Persistence, workspace_path: []const u8) structs.Stri
 }
 
 pub fn saveSessions(self: *Persistence, workspace_path: []const u8, sessions_json: []const u8) structs.Error {
+    self.mutex.lock();
+    defer self.mutex.unlock();
     if (!isValidJsonArray(sessions_json)) return ffi.errorMessage(2, "sessions_json must be a JSON array");
     const sql =
         \\INSERT INTO workspace_sessions (workspace_path, sessions_json, updated_at)
@@ -132,10 +141,8 @@ test "sqlite sessions round trip" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const rel = "sessions.sqlite";
-    const db_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel) catch blk: {
-        try tmp.dir.writeFile(.{ .sub_path = rel, .data = "" });
-        break :blk try tmp.dir.realpathAlloc(std.testing.allocator, rel);
-    };
+    try tmp.dir.writeFile(.{ .sub_path = rel, .data = "" });
+    const db_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel);
     defer std.testing.allocator.free(db_path);
 
     var p = try Persistence.open(std.testing.allocator, db_path);

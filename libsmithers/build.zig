@@ -51,6 +51,18 @@ pub fn build(b: *std.Build) void {
     tests.root_module.linkSystemLibrary("sqlite3", .{});
 
     const run_tests = b.addRunArtifact(tests);
+    const unit_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    unit_tests.root_module.link_libc = true;
+    unit_tests.root_module.linkSystemLibrary("sqlite3", .{});
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+
     const test_step = b.step("test", "Run libsmithers e2e tests");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_unit_tests.step);
 }

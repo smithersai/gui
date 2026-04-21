@@ -9,6 +9,7 @@ pub const Palette = @This();
 
 allocator: std.mem.Allocator,
 app: *App,
+mutex: std.Thread.Mutex = .{},
 mode: structs.PaletteMode = .all,
 query: []u8,
 
@@ -29,10 +30,12 @@ const Candidate = struct {
 
 pub fn create(app: *App) !*Palette {
     const p = try app.allocator.create(Palette);
+    errdefer app.allocator.destroy(p);
+    const query = try app.allocator.dupe(u8, "");
     p.* = .{
         .allocator = app.allocator,
         .app = app,
-        .query = try app.allocator.dupe(u8, ""),
+        .query = query,
     };
     return p;
 }
@@ -43,23 +46,36 @@ pub fn destroy(self: *Palette) void {
 }
 
 pub fn setMode(self: *Palette, mode: structs.PaletteMode) void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
     self.mode = mode;
 }
 
 pub fn setQuery(self: *Palette, query: []const u8) void {
     const owned = self.allocator.dupe(u8, query) catch return;
+    self.mutex.lock();
+    defer self.mutex.unlock();
     self.allocator.free(self.query);
     self.query = owned;
 }
 
 pub fn itemsJson(self: *Palette) structs.String {
+    self.mutex.lock();
+    const mode = self.mode;
+    const query = self.allocator.dupe(u8, self.query) catch {
+        self.mutex.unlock();
+        return ffi.stringDup("[]");
+    };
+    self.mutex.unlock();
+    defer self.allocator.free(query);
+
     var items = std.ArrayList(Candidate).empty;
     defer {
         for (items.items) |item| item.deinit(self.allocator);
         items.deinit(self.allocator);
     }
 
-    self.collect(&items) catch return ffi.stringDup("[]");
+    self.collect(mode, query, &items) catch return ffi.stringDup("[]");
     std.mem.sort(Candidate, items.items, {}, lessThan);
 
     const JsonItem = struct {
@@ -103,53 +119,57 @@ pub fn activate(self: *Palette, item_id: []const u8) structs.Error {
     return ffi.errorMessage(404, "palette item not found");
 }
 
-fn collect(self: *Palette, items: *std.ArrayList(Candidate)) !void {
-    const include_commands = self.mode == .all or self.mode == .commands;
-    const include_workspaces = self.mode == .all or self.mode == .workspaces;
-    const include_files = self.mode == .all or self.mode == .files;
-    const include_runs = self.mode == .all or self.mode == .runs;
-    const include_workflows = self.mode == .all or self.mode == .workflows;
+fn collect(self: *Palette, mode: structs.PaletteMode, query: []const u8, items: *std.ArrayList(Candidate)) !void {
+    const include_commands = mode == .all or mode == .commands;
+    const include_workspaces = mode == .all or mode == .workspaces;
+    const include_files = mode == .all or mode == .files;
+    const include_runs = mode == .all or mode == .runs;
+    const include_workflows = mode == .all or mode == .workflows;
 
     if (include_commands) {
-        try add(items, self.allocator, "command.ask-ai", "Ask AI", "Open the launcher in Ask AI mode.", "command", 10, self.query);
-        try add(items, self.allocator, "command.new-terminal", "New Terminal Workspace", "Create a new terminal workspace and make it active.", "command", 10, self.query);
-        try add(items, self.allocator, "command.close-workspace", "Close Current Workspace", "Close the active chat/run/terminal workspace when applicable.", "command", 10, self.query);
-        try add(items, self.allocator, "command.global-search", "Global Search", "Open the global search route.", "command", 10, self.query);
-        try add(items, self.allocator, "command.refresh", "Refresh Current View", "Reload the active route view.", "command", 10, self.query);
-        try add(items, self.allocator, "command.cancel", "Cancel Current Operation", "Stop an active chat turn or running workflow action.", "command", 10, self.query);
+        try add(items, self.allocator, "command.ask-ai", "Ask AI", "Open the launcher in Ask AI mode.", "command", 10, query);
+        try add(items, self.allocator, "command.new-terminal", "New Terminal Workspace", "Create a new terminal workspace and make it active.", "command", 10, query);
+        try add(items, self.allocator, "command.close-workspace", "Close Current Workspace", "Close the active chat/run/terminal workspace when applicable.", "command", 10, query);
+        try add(items, self.allocator, "command.global-search", "Global Search", "Open the global search route.", "command", 10, query);
+        try add(items, self.allocator, "command.refresh", "Refresh Current View", "Reload the active route view.", "command", 10, query);
+        try add(items, self.allocator, "command.cancel", "Cancel Current Operation", "Stop an active chat turn or running workflow action.", "command", 10, query);
 
         var slash_matches = std.ArrayList(slash.Command).empty;
         defer slash_matches.deinit(self.allocator);
-        try slash.matches(self.allocator, self.query, &slash_matches);
+        try slash.matches(self.allocator, query, &slash_matches);
         for (slash_matches.items) |cmd| {
             const id = try std.fmt.allocPrint(self.allocator, "slash:{s}", .{cmd.name});
             defer self.allocator.free(id);
             const title = try std.fmt.allocPrint(self.allocator, "/{s}", .{cmd.name});
             defer self.allocator.free(title);
-            try add(items, self.allocator, id, title, cmd.description, "slash", 20, self.query);
+            try add(items, self.allocator, id, title, cmd.description, "slash", 20, query);
         }
     }
 
     if (include_workspaces) {
-        for (self.app.recents.items) |recent| {
+        const recents = try self.app.recentWorkspacesSnapshot(self.allocator);
+        defer App.freeRecentWorkspacesSnapshot(self.allocator, recents);
+        for (recents) |recent| {
             const id = try std.fmt.allocPrint(self.allocator, "workspace:{s}", .{recent.path});
             defer self.allocator.free(id);
-            try add(items, self.allocator, id, recent.display_name, recent.path, "workspace", 30, self.query);
+            try add(items, self.allocator, id, recent.display_name, recent.path, "workspace", 30, query);
         }
     }
 
-    if (include_files) try self.collectFiles(items);
+    if (include_files) try self.collectFiles(query, items);
 
     if (include_runs) {
-        try add(items, self.allocator, "runs.active", "Active Runs", "Browse running and waiting Smithers runs.", "runs", 60, self.query);
+        try add(items, self.allocator, "runs.active", "Active Runs", "Browse running and waiting Smithers runs.", "runs", 60, query);
     }
     if (include_workflows) {
-        try add(items, self.allocator, "workflows.local", "Local Workflows", "Browse registered Smithers workflows.", "workflow", 50, self.query);
+        try add(items, self.allocator, "workflows.local", "Local Workflows", "Browse registered Smithers workflows.", "workflow", 50, query);
     }
 }
 
-fn collectFiles(self: *Palette, items: *std.ArrayList(Candidate)) !void {
-    const root = self.app.activeWorkspacePath() orelse return;
+fn collectFiles(self: *Palette, query: []const u8, items: *std.ArrayList(Candidate)) !void {
+    const maybe_root = try self.app.activeWorkspacePathDup(self.allocator);
+    const root = maybe_root orelse return;
+    defer self.allocator.free(root);
     var dir = std.fs.openDirAbsolute(root, .{ .iterate = true }) catch return;
     defer dir.close();
     var iter = dir.iterate();
@@ -159,7 +179,7 @@ fn collectFiles(self: *Palette, items: *std.ArrayList(Candidate)) !void {
         if (entry.kind == .directory and std.mem.startsWith(u8, entry.name, ".")) continue;
         const id = try std.fmt.allocPrint(self.allocator, "file:{s}/{s}", .{ root, entry.name });
         defer self.allocator.free(id);
-        try add(items, self.allocator, id, entry.name, root, "file", 40, self.query);
+        try add(items, self.allocator, id, entry.name, root, "file", 40, query);
         count += 1;
     }
 }
@@ -176,13 +196,21 @@ fn add(
 ) !void {
     const maybe_score = try score(allocator, title, subtitle, query, base);
     const final_score = maybe_score orelse return;
-    try items.append(allocator, .{
+    var candidate = Candidate{
         .id = try allocator.dupe(u8, id),
-        .title = try allocator.dupe(u8, title),
-        .subtitle = try allocator.dupe(u8, subtitle),
-        .kind = try allocator.dupe(u8, kind),
+        .title = undefined,
+        .subtitle = undefined,
+        .kind = undefined,
         .score = final_score,
-    });
+    };
+    errdefer allocator.free(candidate.id);
+    candidate.title = try allocator.dupe(u8, title);
+    errdefer allocator.free(candidate.title);
+    candidate.subtitle = try allocator.dupe(u8, subtitle);
+    errdefer allocator.free(candidate.subtitle);
+    candidate.kind = try allocator.dupe(u8, kind);
+    errdefer allocator.free(candidate.kind);
+    try items.append(allocator, candidate);
 }
 
 fn score(

@@ -12,6 +12,8 @@ pub const QueuedEvent = struct {
 pub const EventStream = @This();
 
 allocator: Allocator,
+mutex: std.Thread.Mutex = .{},
+ref_count: usize = 1,
 events: std.ArrayList(QueuedEvent) = .empty,
 closed: bool = false,
 end_emitted: bool = false,
@@ -23,6 +25,26 @@ pub fn create(allocator: Allocator) !*EventStream {
 }
 
 pub fn destroy(self: *EventStream) void {
+    self.release();
+}
+
+pub fn retain(self: *EventStream) *EventStream {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    std.debug.assert(self.ref_count > 0);
+    self.ref_count += 1;
+    return self;
+}
+
+pub fn release(self: *EventStream) void {
+    var should_destroy = false;
+    self.mutex.lock();
+    std.debug.assert(self.ref_count > 0);
+    self.ref_count -= 1;
+    if (self.ref_count == 0) should_destroy = true;
+    self.mutex.unlock();
+
+    if (!should_destroy) return;
     for (self.events.items) |event| self.allocator.free(event.payload);
     self.events.deinit(self.allocator);
     self.allocator.destroy(self);
@@ -37,6 +59,8 @@ pub fn pushError(self: *EventStream, payload: []const u8) !void {
 }
 
 pub fn push(self: *EventStream, tag: structs.EventTag, payload: []const u8) !void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
     if (self.closed) return;
     try self.events.append(self.allocator, .{
         .tag = tag,
@@ -45,29 +69,31 @@ pub fn push(self: *EventStream, tag: structs.EventTag, payload: []const u8) !voi
 }
 
 pub fn close(self: *EventStream) void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
     self.closed = true;
 }
 
 pub fn next(self: *EventStream) structs.Event {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+
     if (self.events.items.len > 0) {
         const queued = self.events.orderedRemove(0);
-        const owned = self.allocator.dupeZ(u8, queued.payload) catch {
-            self.allocator.free(queued.payload);
-            return .{ .tag = .err, .payload = ffi.stringDup("{\"error\":\"out of memory\"}") };
-        };
+        const payload = ffi.stringDup(queued.payload);
         self.allocator.free(queued.payload);
         return .{
             .tag = queued.tag,
-            .payload = .{ .ptr = owned.ptr, .len = owned.len },
+            .payload = payload,
         };
     }
 
     if (self.closed and !self.end_emitted) {
         self.end_emitted = true;
-        return .{ .tag = .end, .payload = ffi.stringDup("") };
+        return .{ .tag = .end, .payload = ffi.emptyString() };
     }
 
-    return .{ .tag = .none, .payload = ffi.stringDup("") };
+    return .{ .tag = .none, .payload = ffi.emptyString() };
 }
 
 pub fn fromJsonArray(allocator: Allocator, value: std.json.Value) !*EventStream {

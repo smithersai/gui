@@ -15,6 +15,10 @@ pub fn stringFromOwnedZ(s: [:0]u8) structs.String {
     return .{ .ptr = s.ptr, .len = s.len };
 }
 
+pub fn emptyString() structs.String {
+    return .{ .ptr = null, .len = 0 };
+}
+
 pub fn stringDup(bytes: []const u8) structs.String {
     const owned = dupZ(bytes) catch return .{ .ptr = null, .len = 0 };
     return stringFromOwnedZ(owned);

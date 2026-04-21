@@ -102,6 +102,7 @@ test "session lifecycle send text and events" {
     const text = "/runs status=active";
     embedded.smithers_session_send_text(session, text.ptr, text.len);
     const stream = embedded.smithers_session_events(session).?;
+    defer embedded.smithers_event_stream_free(stream);
     const ev = embedded.smithers_event_stream_next(stream);
     defer embedded.smithers_event_free(ev);
     try std.testing.expectEqual(structs.EventTag.json, ev.tag);
@@ -214,9 +215,10 @@ test "SmithersModels and app Models samples round trip as JSON" {
 }
 
 test "action tag union converts to C tag" {
-    const c = (lib.apprt.action.Action{ .open_workspace = "/tmp/repo" }).cval();
-    try std.testing.expectEqual(structs.ActionTag.open_workspace, c.tag);
-    try std.testing.expectEqualStrings("/tmp/repo", std.mem.sliceTo(c.u.open_workspace.path.?, 0));
+    var c = try (lib.apprt.action.Action{ .open_workspace = "/tmp/repo" }).cvalAlloc(std.testing.allocator);
+    defer c.deinit();
+    try std.testing.expectEqual(structs.ActionTag.open_workspace, c.action.tag);
+    try std.testing.expectEqualStrings("/tmp/repo", std.mem.sliceTo(c.action.u.open_workspace.path.?, 0));
 
     const target = (lib.apprt.action.Target{ .app = @ptrFromInt(0x9999) }).cval();
     try std.testing.expectEqual(structs.ActionTargetTag.app, target.tag);

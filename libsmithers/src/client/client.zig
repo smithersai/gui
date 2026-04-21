@@ -8,6 +8,7 @@ pub const Client = @This();
 
 allocator: std.mem.Allocator,
 app: *App,
+mutex: std.Thread.Mutex = .{},
 
 pub fn create(app: *App) !*Client {
     const c = try app.allocator.create(Client);
@@ -16,10 +17,14 @@ pub fn create(app: *App) !*Client {
 }
 
 pub fn destroy(self: *Client) void {
+    self.mutex.lock();
+    self.mutex.unlock();
     self.allocator.destroy(self);
 }
 
 pub fn call(self: *Client, method: []const u8, args_json: []const u8, out_err: ?*structs.Error) structs.String {
+    self.mutex.lock();
+    defer self.mutex.unlock();
     if (out_err) |err| err.* = ffi.errorSuccess();
     return self.callImpl(method, args_json) catch |err| {
         if (out_err) |out| out.* = ffi.errorFrom("client call", err);
@@ -28,6 +33,8 @@ pub fn call(self: *Client, method: []const u8, args_json: []const u8, out_err: ?
 }
 
 pub fn stream(self: *Client, method: []const u8, args_json: []const u8, out_err: ?*structs.Error) ?*EventStream {
+    self.mutex.lock();
+    defer self.mutex.unlock();
     if (out_err) |err| err.* = ffi.errorSuccess();
     return self.streamImpl(method, args_json) catch |err| {
         if (out_err) |out| out.* = ffi.errorFrom("client stream", err);
@@ -53,17 +60,17 @@ fn callImpl(self: *Client, method: []const u8, args_json: []const u8) !structs.S
         return ffi.stringJson(.{ .path = resolved });
     }
 
+    if (try cliFallback(self, method, parsed.value)) |json| {
+        defer self.allocator.free(json);
+        return ffi.stringDup(json);
+    }
+
     if (knownEmptyArrayMethod(method)) return ffi.stringDup("[]");
     if (knownOkMethod(method)) return ffi.stringDup("{\"ok\":true}");
     if (std.mem.eql(u8, method, "runWorkflow")) return ffi.stringDup("{\"runId\":\"\",\"status\":\"queued\"}");
     if (std.mem.eql(u8, method, "getCurrentRepo")) return ffi.stringDup("{\"name\":\"\",\"owner\":null}");
     if (std.mem.eql(u8, method, "inspectRun")) return ffi.stringDup("{\"run\":null,\"tasks\":[]}");
     if (std.mem.eql(u8, method, "getWorkflowDAG")) return ffi.stringDup("{\"tasks\":[],\"edges\":[]}");
-
-    if (try cliFallback(self, method, parsed.value)) |json| {
-        defer self.allocator.free(json);
-        return ffi.stringDup(json);
-    }
 
     return ffi.stringJson(.{
         .method = method,
@@ -171,10 +178,13 @@ fn cliFallback(self: *Client, method: []const u8, args: std.json.Value) !?[]u8 {
     }
     const actual = argv orelse return null;
 
+    const cwd = try self.app.activeWorkspacePathDup(self.allocator);
+    defer if (cwd) |path| self.allocator.free(path);
+
     const result = std.process.Child.run(.{
         .allocator = self.allocator,
         .argv = actual,
-        .cwd = self.app.activeWorkspacePath(),
+        .cwd = cwd,
         .max_output_bytes = 2 * 1024 * 1024,
     }) catch return null;
     defer self.allocator.free(result.stdout);
