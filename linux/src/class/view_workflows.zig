@@ -1,4 +1,5 @@
 const std = @import("std");
+const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -30,9 +31,21 @@ pub const WorkflowsView = extern struct {
         input_view: *gtk.TextView = undefined,
         workflows: std.ArrayList(models.Workflow) = .empty,
         selected_index: ?usize = null,
+        pending_index: ?usize = null,
+        tab: DetailTab = .source,
+        source_dirty: bool = false,
+        source_text: ?[]u8 = null,
+        suppress_source_changed: bool = false,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
+    };
+
+    const DetailTab = enum {
+        source,
+        imports,
+        runs,
+        launch,
     };
 
     pub fn new(window: *MainWindow) !*Self {
@@ -134,7 +147,18 @@ pub const WorkflowsView = extern struct {
 
     fn selectWorkflow(self: *Self, index: usize) void {
         if (index >= self.private().workflows.items.len) return;
+        if (self.private().source_dirty and self.private().selected_index != null and self.private().selected_index.? != index) {
+            self.private().pending_index = index;
+            self.confirmDiscardChanges();
+            return;
+        }
         self.private().selected_index = index;
+        self.private().tab = .source;
+        self.private().source_dirty = false;
+        if (self.private().source_text) |text| {
+            self.allocator().free(text);
+            self.private().source_text = null;
+        }
         self.renderDetail(index) catch |err| {
             vh.setStatus(self.allocator(), self.private().detail, "dialog-error-symbolic", "Workflow detail failed", @errorName(err));
         };
@@ -154,21 +178,50 @@ pub const WorkflowsView = extern struct {
         try vh.detailRow(alloc, detail, "Status", workflow.status);
         try vh.detailRow(alloc, detail, "Updated", workflow.updated_at);
 
-        const actions = gtk.Box.new(.horizontal, 8);
+        try self.appendTabBar();
+
+        switch (self.private().tab) {
+            .source => try self.appendSourceTab(workflow),
+            .imports => try self.appendImportsTab(workflow),
+            .runs => try self.appendRecentRuns(workflow),
+            .launch => try self.appendLaunchTab(workflow),
+        }
+    }
+
+    fn appendTabBar(self: *Self) !void {
+        const detail = self.private().detail;
+        const tabs = gtk.Box.new(.horizontal, 6);
+        inline for (.{ .source, .imports, .runs, .launch }) |tab_value| {
+            const button = ui.textButton(tabTitle(tab_value), self.private().tab == tab_value);
+            button.as(gobject.Object).setData("smithers-tab", @ptrFromInt(tabIndex(tab_value) + 1));
+            _ = gtk.Button.signals.clicked.connect(button, *Self, tabClicked, self, .{});
+            tabs.append(button.as(gtk.Widget));
+        }
         const run = ui.textButton("Run", true);
         _ = gtk.Button.signals.clicked.connect(run, *Self, runClicked, self, .{});
-        actions.append(run.as(gtk.Widget));
-        const save = ui.textButton("Save Source", false);
-        _ = gtk.Button.signals.clicked.connect(save, *Self, saveClicked, self, .{});
-        actions.append(save.as(gtk.Widget));
-        const doctor = ui.textButton("Doctor", false);
+        tabs.append(run.as(gtk.Widget));
+        if (self.private().source_dirty) {
+            if (self.private().tab == .source) {
+                const save = ui.textButton("Save All", false);
+                _ = gtk.Button.signals.clicked.connect(save, *Self, saveClicked, self, .{});
+                tabs.append(save.as(gtk.Widget));
+            }
+            tabs.append(ui.dim("1 unsaved").as(gtk.Widget));
+        }
+        detail.append(tabs.as(gtk.Widget));
+    }
+
+    fn appendLaunchTab(self: *Self, workflow: models.Workflow) !void {
+        const alloc = self.allocator();
+        const detail = self.private().detail;
+        const actions = gtk.Box.new(.horizontal, 8);
+        const doctor = ui.textButton("Run Doctor", false);
         _ = gtk.Button.signals.clicked.connect(doctor, *Self, doctorClicked, self, .{});
         actions.append(doctor.as(gtk.Widget));
         const graph = ui.textButton("Graph", false);
         _ = gtk.Button.signals.clicked.connect(graph, *Self, graphClicked, self, .{});
         actions.append(graph.as(gtk.Widget));
         detail.append(actions.as(gtk.Widget));
-
         vh.addSectionTitle(detail, "Launch Inputs");
         const dag_text = self.workflowCallText("getWorkflowDAG", workflow) catch null;
         if (dag_text) |text| {
@@ -182,10 +235,40 @@ pub const WorkflowsView = extern struct {
         const input_scroll = ui.scrolled(self.private().input_view.as(gtk.Widget));
         input_scroll.as(gtk.Widget).setSizeRequest(-1, 120);
         detail.append(input_scroll.as(gtk.Widget));
+    }
 
+    fn appendSourceTab(self: *Self, workflow: models.Workflow) !void {
+        const alloc = self.allocator();
+        const detail = self.private().detail;
         const source_title = ui.heading("Source");
         detail.append(source_title.as(gtk.Widget));
         self.private().source_view = vh.textView(true);
+        const path = workflow.relative_path orelse workflow.id;
+        const args = try vh.jsonObject(alloc, &.{.{ .key = "relativePath", .value = .{ .string = path } }});
+        defer alloc.free(args);
+        const source = if (self.private().source_dirty and self.private().source_text != null)
+            try alloc.dupe(u8, self.private().source_text.?)
+        else source: {
+            const raw = smithers.callJson(alloc, self.client(), "readWorkflowSource", args) catch {
+                break :source try alloc.dupe(u8, "");
+            };
+            defer alloc.free(raw);
+            break :source vh.parseStringResult(alloc, raw) catch try alloc.dupe(u8, "");
+        };
+        defer alloc.free(source);
+        self.private().suppress_source_changed = true;
+        try vh.setTextViewText(alloc, self.private().source_view, source);
+        self.private().suppress_source_changed = false;
+        _ = gtk.TextBuffer.signals.changed.connect(self.private().source_view.getBuffer(), *Self, sourceChanged, self, .{});
+        const source_scroll = ui.scrolled(self.private().source_view.as(gtk.Widget));
+        source_scroll.as(gtk.Widget).setVexpand(1);
+        source_scroll.as(gtk.Widget).setSizeRequest(-1, 420);
+        detail.append(source_scroll.as(gtk.Widget));
+    }
+
+    fn appendImportsTab(self: *Self, workflow: models.Workflow) !void {
+        const alloc = self.allocator();
+        const detail = self.private().detail;
         const path = workflow.relative_path orelse workflow.id;
         const args = try vh.jsonObject(alloc, &.{.{ .key = "relativePath", .value = .{ .string = path } }});
         defer alloc.free(args);
@@ -197,12 +280,21 @@ pub const WorkflowsView = extern struct {
             break :source vh.parseStringResult(alloc, raw) catch try alloc.dupe(u8, "");
         };
         defer alloc.free(source);
-        try vh.setTextViewText(alloc, self.private().source_view, source);
-        const source_scroll = ui.scrolled(self.private().source_view.as(gtk.Widget));
-        source_scroll.as(gtk.Widget).setSizeRequest(-1, 320);
-        detail.append(source_scroll.as(gtk.Widget));
-
-        try self.appendRecentRuns(workflow);
+        vh.addSectionTitle(detail, "Imports");
+        const list = vh.listBox();
+        var count: usize = 0;
+        var it = std.mem.splitScalar(u8, source, '\n');
+        while (it.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
+            if (!std.mem.startsWith(u8, trimmed, "import ")) continue;
+            const row = try ui.row(alloc, "text-x-generic-symbolic", trimmed, "Imported workflow dependency");
+            list.append(row.as(gtk.Widget));
+            count += 1;
+        }
+        if (count == 0) {
+            list.append((try ui.row(alloc, "tray-symbolic", "No imports found", "This workflow source did not contain static import lines.")).as(gtk.Widget));
+        }
+        detail.append(list.as(gtk.Widget));
     }
 
     fn selectedWorkflow(self: *Self) ?models.Workflow {
@@ -261,7 +353,7 @@ pub const WorkflowsView = extern struct {
             models.clearList(models.RunSummary, alloc, &runs);
             runs.deinit(alloc);
         }
-        vh.addSectionTitle(self.private().detail, "Recent Runs");
+        vh.addSectionTitle(self.private().detail, "Runs");
         const list = vh.listBox();
         var visible: usize = 0;
         const workflow_path = workflow.relative_path orelse workflow.id;
@@ -285,7 +377,10 @@ pub const WorkflowsView = extern struct {
         const workflow = self.selectedWorkflow() orelse return;
         const alloc = self.allocator();
         const path = workflow.relative_path orelse workflow.id;
-        const inputs = vh.getTextViewText(alloc, self.private().input_view) catch alloc.dupe(u8, "{}") catch return;
+        const inputs = if (self.private().tab == .launch)
+            vh.getTextViewText(alloc, self.private().input_view) catch alloc.dupe(u8, "{}") catch return
+        else
+            alloc.dupe(u8, "{}") catch return;
         defer alloc.free(inputs);
         const args = vh.jsonObject(alloc, &.{
             .{ .key = "workflowPath", .value = .{ .string = path } },
@@ -304,11 +399,28 @@ pub const WorkflowsView = extern struct {
         self.private().window.showNav(.runs);
     }
 
+    fn confirmRunSelected(self: *Self) void {
+        const workflow = self.selectedWorkflow() orelse return;
+        const alloc = self.allocator();
+        const body = std.fmt.allocPrintSentinel(alloc, "Run \"{s}\" with no input form?", .{workflow.name}, 0) catch return;
+        defer alloc.free(body);
+        const dialog = adw.AlertDialog.new("Run Workflow", body.ptr);
+        dialog.addResponse("cancel", "Cancel");
+        dialog.addResponse("run", "Run");
+        dialog.setCloseResponse("cancel");
+        dialog.setDefaultResponse("run");
+        _ = adw.AlertDialog.signals.response.connect(dialog, *Self, runDialogResponse, self, .{});
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
+    }
+
     fn saveSelected(self: *Self) void {
         const workflow = self.selectedWorkflow() orelse return;
         const alloc = self.allocator();
         const path = workflow.relative_path orelse workflow.id;
-        const source = vh.getTextViewText(alloc, self.private().source_view) catch return;
+        const source = if (self.private().source_text) |cached|
+            alloc.dupe(u8, cached) catch return
+        else
+            vh.getTextViewText(alloc, self.private().source_view) catch return;
         defer alloc.free(source);
         const args = vh.jsonObject(alloc, &.{
             .{ .key = "relativePath", .value = .{ .string = path } },
@@ -321,6 +433,23 @@ pub const WorkflowsView = extern struct {
         };
         defer alloc.free(json);
         self.private().window.showToastFmt("Saved {s}", .{workflow.name});
+        self.private().source_dirty = false;
+        if (self.private().source_text) |text| {
+            alloc.free(text);
+            self.private().source_text = null;
+        }
+        if (self.private().selected_index) |selected| self.renderDetail(selected) catch {};
+    }
+
+    fn confirmDiscardChanges(self: *Self) void {
+        const dialog = adw.AlertDialog.new("Unsaved Changes", "You have unsaved workflow source changes. Discard them?");
+        dialog.addResponse("cancel", "Cancel");
+        dialog.addResponse("discard", "Discard");
+        dialog.setCloseResponse("cancel");
+        dialog.setDefaultResponse("cancel");
+        dialog.setResponseAppearance("discard", .destructive);
+        _ = adw.AlertDialog.signals.response.connect(dialog, *Self, discardDialogResponse, self, .{});
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
     }
 
     fn showWorkflowCall(self: *Self, method: []const u8, title: []const u8) void {
@@ -350,13 +479,26 @@ pub const WorkflowsView = extern struct {
         self.renderList() catch {};
     }
 
+    fn sourceChanged(_: *gtk.TextBuffer, self: *Self) callconv(.c) void {
+        if (self.private().suppress_source_changed) return;
+        const alloc = self.allocator();
+        const text = vh.getTextViewText(alloc, self.private().source_view) catch return;
+        if (self.private().source_text) |old| alloc.free(old);
+        self.private().source_text = text;
+        self.private().source_dirty = true;
+    }
+
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const index = vh.getIndex(row.as(gobject.Object)) orelse return;
         self.selectWorkflow(index);
     }
 
     fn runClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.runSelected();
+        if (self.private().tab == .launch) {
+            self.runSelected();
+        } else {
+            self.confirmRunSelected();
+        }
     }
 
     fn saveClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -369,6 +511,62 @@ pub const WorkflowsView = extern struct {
 
     fn graphClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.showWorkflowCall("getWorkflowDAG", "Graph");
+    }
+
+    fn tabClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const raw = button.as(gobject.Object).getData("smithers-tab") orelse return;
+        self.private().tab = tabFromIndex(@intFromPtr(raw) - 1);
+        if (self.private().selected_index) |selected| self.renderDetail(selected) catch {};
+    }
+
+    fn runDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
+        if (std.mem.orderZ(u8, response, "run") == .eq) self.runSelected();
+    }
+
+    fn discardDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
+        if (std.mem.orderZ(u8, response, "discard") != .eq) {
+            self.private().pending_index = null;
+            return;
+        }
+        const pending = self.private().pending_index orelse return;
+        self.private().pending_index = null;
+        self.private().source_dirty = false;
+        if (self.private().source_text) |text| {
+            self.allocator().free(text);
+            self.private().source_text = null;
+        }
+        self.private().selected_index = pending;
+        self.private().tab = .source;
+        self.renderDetail(pending) catch |err| {
+            vh.setStatus(self.allocator(), self.private().detail, "dialog-error-symbolic", "Workflow detail failed", @errorName(err));
+        };
+    }
+
+    fn tabTitle(tab: DetailTab) [:0]const u8 {
+        return switch (tab) {
+            .source => "Workflow",
+            .imports => "Imports",
+            .runs => "Runs",
+            .launch => "Launch",
+        };
+    }
+
+    fn tabIndex(tab: DetailTab) usize {
+        return switch (tab) {
+            .source => 0,
+            .imports => 1,
+            .runs => 2,
+            .launch => 3,
+        };
+    }
+
+    fn tabFromIndex(index: usize) DetailTab {
+        return switch (index) {
+            1 => .imports,
+            2 => .runs,
+            3 => .launch,
+            else => .source,
+        };
     }
 
     fn shortcutRefresh(self: *Self) void {
@@ -385,6 +583,10 @@ pub const WorkflowsView = extern struct {
             priv.did_dispose = true;
             models.clearList(models.Workflow, self.allocator(), &priv.workflows);
             priv.workflows.deinit(self.allocator());
+            if (priv.source_text) |text| {
+                self.allocator().free(text);
+                priv.source_text = null;
+            }
             ui.clearBox(self.as(gtk.Box));
         }
         gobject.Object.virtual_methods.dispose.call(Class.parent, self.as(Parent));
