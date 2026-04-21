@@ -1,4 +1,5 @@
 const std = @import("std");
+const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -27,9 +28,28 @@ pub const RunInspectView = extern struct {
         deny_note: *gtk.TextView = undefined,
         run_id: ?[]u8 = null,
         inspection: ?models.RunInspection = null,
+        mode: InspectMode = .list,
+        selected_task_index: usize = 0,
+        pending_deny: ?PendingDeny = null,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
+    };
+
+    const InspectMode = enum {
+        list,
+        dag,
+    };
+
+    const PendingDeny = struct {
+        run_id: []u8,
+        node_id: []u8,
+        iteration: ?i64 = null,
+
+        fn deinit(self: *PendingDeny, alloc: std.mem.Allocator) void {
+            alloc.free(self.run_id);
+            alloc.free(self.node_id);
+        }
     };
 
     pub fn new(window: *MainWindow) !*Self {
@@ -66,6 +86,8 @@ pub const RunInspectView = extern struct {
         root.as(gtk.Orientable).setOrientation(.vertical);
         root.setSpacing(0);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Alt>1", self, shortcutListMode);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Alt>2", self, shortcutDagMode);
 
         const header = vh.makeHeader("Run Inspector", null);
         const back = ui.iconButton("go-previous-symbolic", "Back to runs");
@@ -99,6 +121,7 @@ pub const RunInspectView = extern struct {
         defer alloc.free(json);
         self.clearInspection();
         self.private().inspection = try models.parseRunInspection(alloc, json);
+        self.clampSelection();
         try self.render();
     }
 
@@ -125,6 +148,16 @@ pub const RunInspectView = extern struct {
         body.append(ui.dim(meta_z).as(gtk.Widget));
 
         const actions = gtk.Box.new(.horizontal, 8);
+        const live = ui.textButton("Live Chat", false);
+        live.as(gtk.Widget).setTooltipText("Open live run output");
+        _ = gtk.Button.signals.clicked.connect(live, *Self, liveChatClicked, self, .{});
+        actions.append(live.as(gtk.Widget));
+        const snapshots = ui.textButton("Snapshots", false);
+        _ = gtk.Button.signals.clicked.connect(snapshots, *Self, snapshotsClicked, self, .{});
+        actions.append(snapshots.as(gtk.Widget));
+        const watch = ui.textButton("Watch", false);
+        _ = gtk.Button.signals.clicked.connect(watch, *Self, watchClicked, self, .{});
+        actions.append(watch.as(gtk.Widget));
         const cancel = ui.textButton("Cancel", false);
         cancel.as(gtk.Widget).addCssClass("destructive-action");
         _ = gtk.Button.signals.clicked.connect(cancel, *Self, cancelClicked, self, .{});
@@ -155,13 +188,14 @@ pub const RunInspectView = extern struct {
             banner.append(ui.heading("Approval Required").as(gtk.Widget));
             try vh.detailRow(alloc, banner, "Node", blocked.label orelse blocked.node_id);
             try vh.detailRow(alloc, banner, "State", blocked.state);
-            self.private().deny_note = vh.textView(true);
-            try vh.setTextViewText(alloc, self.private().deny_note, "");
-            const note_scroll = ui.scrolled(self.private().deny_note.as(gtk.Widget));
-            note_scroll.as(gtk.Widget).setSizeRequest(-1, 100);
-            banner.append(note_scroll.as(gtk.Widget));
             body.append(banner.as(gtk.Widget));
         }
+        const list_mode = ui.textButton("List", self.private().mode == .list);
+        _ = gtk.Button.signals.clicked.connect(list_mode, *Self, listModeClicked, self, .{});
+        actions.append(list_mode.as(gtk.Widget));
+        const dag_mode = ui.textButton("DAG", self.private().mode == .dag);
+        _ = gtk.Button.signals.clicked.connect(dag_mode, *Self, dagModeClicked, self, .{});
+        actions.append(dag_mode.as(gtk.Widget));
         body.append(actions.as(gtk.Widget));
 
         const group = gtk.Box.new(.vertical, 4);
@@ -183,60 +217,87 @@ pub const RunInspectView = extern struct {
             body.append(current.as(gtk.Widget));
         }
 
-        body.append(ui.heading("Timeline").as(gtk.Widget));
-        const timeline = vh.listBox();
         if (inspection.tasks.items.len == 0) {
-            timeline.append((try ui.row(alloc, "view-list-symbolic", "No timeline events", "Run nodes have not been reported yet.")).as(gtk.Widget));
-        } else {
-            for (inspection.tasks.items, 0..) |task, index| {
-                const label = task.label orelse task.node_id;
-                const subtitle = if (task.iteration) |iteration|
-                    try std.fmt.allocPrint(alloc, "#{d} - {s} - iteration {d}", .{ index + 1, task.state, iteration })
-                else
-                    try std.fmt.allocPrint(alloc, "#{d} - {s}", .{ index + 1, task.state });
-                defer alloc.free(subtitle);
-                timeline.append((try ui.row(alloc, taskIcon(task.state), label, subtitle)).as(gtk.Widget));
-            }
+            const page = try vh.statusPage(alloc, "view-list-symbolic", "No nodes found", "The run inspector returned no nodes.");
+            body.append(page.as(gtk.Widget));
+            return;
         }
-        body.append(timeline.as(gtk.Widget));
 
-        body.append(ui.heading("Tasks").as(gtk.Widget));
-        const list = vh.listBox();
-        if (inspection.tasks.items.len == 0) {
-            list.append((try ui.row(alloc, "view-list-symbolic", "No tasks", "The run inspector returned no nodes.")).as(gtk.Widget));
+        if (self.private().mode == .list) {
+            try self.appendListMode(inspection);
         } else {
-            for (inspection.tasks.items) |task| {
-                const title_task = task.label orelse task.node_id;
-                const subtitle = if (task.iteration) |iteration|
-                    try std.fmt.allocPrint(alloc, "{s} - iteration {d}", .{ task.state, iteration })
-                else
-                    try alloc.dupe(u8, task.state);
-                defer alloc.free(subtitle);
-                list.append((try ui.row(alloc, taskIcon(task.state), title_task, subtitle)).as(gtk.Widget));
-            }
+            try self.appendDagMode(inspection);
+        }
+    }
+
+    fn appendListMode(self: *Self, inspection: *models.RunInspection) !void {
+        const alloc = self.allocator();
+        const body = self.private().body;
+        body.append(ui.heading("Nodes").as(gtk.Widget));
+        const list = vh.listBox();
+        _ = gtk.ListBox.signals.row_activated.connect(list, *Self, taskRowActivated, self, .{});
+        for (inspection.tasks.items, 0..) |task, index| {
+            const title_task = task.label orelse task.node_id;
+            const subtitle = if (task.iteration) |iteration|
+                try std.fmt.allocPrint(alloc, "{s} - iteration {d}", .{ task.state, iteration })
+            else
+                try alloc.dupe(u8, task.state);
+            defer alloc.free(subtitle);
+            const row = try ui.row(alloc, taskIcon(task.state), title_task, subtitle);
+            vh.setIndex(row.as(gobject.Object), index);
+            list.append(row.as(gtk.Widget));
         }
         body.append(list.as(gtk.Widget));
+    }
+
+    fn appendDagMode(self: *Self, inspection: *models.RunInspection) !void {
+        const alloc = self.allocator();
+        const body = self.private().body;
+        body.append(ui.heading("DAG").as(gtk.Widget));
+        const root_title = inspection.run.workflow_name orelse inspection.run.run_id;
+        const root_row = try ui.row(alloc, "pointing-hand-symbolic", root_title, "Run root");
+        root_row.setActivatable(0);
+        body.append(root_row.as(gtk.Widget));
+        const list = vh.listBox();
+        _ = gtk.ListBox.signals.row_activated.connect(list, *Self, taskRowActivated, self, .{});
+        for (inspection.tasks.items, 0..) |task, index| {
+            const title_task = task.label orelse task.node_id;
+            const prefix: []const u8 = if (index + 1 == inspection.tasks.items.len) "`-" else "|-";
+            const subtitle = if (task.iteration) |iteration|
+                try std.fmt.allocPrint(alloc, "{s} {s} - iteration {d}", .{ prefix, task.state, iteration })
+            else
+                try std.fmt.allocPrint(alloc, "{s} {s}", .{ prefix, task.state });
+            defer alloc.free(subtitle);
+            const row = try ui.row(alloc, taskIcon(task.state), title_task, subtitle);
+            vh.setIndex(row.as(gobject.Object), index);
+            list.append(row.as(gtk.Widget));
+        }
+        body.append(list.as(gtk.Widget));
+        if (self.selectedTask(inspection.*)) |task| {
+            const card = gtk.Box.new(.vertical, 4);
+            card.as(gtk.Widget).addCssClass("card");
+            ui.margin(card.as(gtk.Widget), 12);
+            card.append(ui.heading("Selected Node").as(gtk.Widget));
+            try vh.detailRow(alloc, card, "Label", task.label orelse task.node_id);
+            try vh.detailRow(alloc, card, "ID", task.node_id);
+            try vh.detailRow(alloc, card, "State", task.state);
+            if (task.iteration) |iteration| {
+                const text = try std.fmt.allocPrint(alloc, "{d}", .{iteration});
+                defer alloc.free(text);
+                try vh.detailRow(alloc, card, "Iteration", text);
+            }
+            body.append(card.as(gtk.Widget));
+        }
     }
 
     fn completeApproval(self: *Self, method: []const u8, label: []const u8) void {
         const inspection = self.private().inspection orelse return;
         const task = blockedTask(inspection) orelse return;
         const alloc = self.allocator();
-        const note = if (std.mem.eql(u8, method, "denyNode"))
-            vh.getTextViewText(alloc, self.private().deny_note) catch return
-        else
-            alloc.dupe(u8, "") catch return;
-        defer alloc.free(note);
-        const trimmed_note = std.mem.trim(u8, note, &std.ascii.whitespace);
-        if (std.mem.eql(u8, method, "denyNode") and trimmed_note.len == 0) {
-            self.private().window.showToast("A deny note is required");
-            return;
-        }
         const args = vh.jsonObject(alloc, &.{
             .{ .key = "runId", .value = .{ .string = inspection.run.run_id } },
             .{ .key = "nodeId", .value = .{ .string = task.node_id } },
             .{ .key = "iteration", .value = if (task.iteration) |iteration| .{ .integer = iteration } else .null },
-            .{ .key = if (std.mem.eql(u8, method, "denyNode")) "reason" else "note", .value = .{ .string = trimmed_note } },
         }) catch return;
         defer alloc.free(args);
         const json = smithers.callJson(alloc, self.client(), method, args) catch |err| {
@@ -246,6 +307,28 @@ pub const RunInspectView = extern struct {
         defer alloc.free(json);
         self.private().window.showToastFmt("{s} {s}", .{ label, task.node_id });
         self.refresh();
+    }
+
+    fn confirmDenySelectedNode(self: *Self) void {
+        const inspection = self.private().inspection orelse return;
+        const task = blockedTask(inspection) orelse return;
+        const alloc = self.allocator();
+        if (self.private().pending_deny) |*pending| pending.deinit(alloc);
+        self.private().pending_deny = .{
+            .run_id = alloc.dupe(u8, inspection.run.run_id) catch return,
+            .node_id = alloc.dupe(u8, task.node_id) catch return,
+            .iteration = task.iteration,
+        };
+        const body = std.fmt.allocPrintSentinel(alloc, "Deny approval for {s} on run {s}? This will fail the waiting gate.", .{ task.node_id, inspection.run.run_id }, 0) catch return;
+        defer alloc.free(body);
+        const dialog = adw.AlertDialog.new("Deny Approval", body.ptr);
+        dialog.addResponse("cancel", "Cancel");
+        dialog.addResponse("deny", "Deny Approval");
+        dialog.setCloseResponse("cancel");
+        dialog.setDefaultResponse("cancel");
+        dialog.setResponseAppearance("deny", .destructive);
+        _ = adw.AlertDialog.signals.response.connect(dialog, *Self, denyDialogResponse, self, .{});
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
     }
 
     fn simpleRunAction(self: *Self, method: []const u8, label: []const u8) void {
@@ -293,6 +376,31 @@ pub const RunInspectView = extern struct {
         self.private().window.showToastFmt("{s} from {s}", .{ label, snapshots.items[0].id });
     }
 
+    fn showSnapshots(self: *Self) void {
+        const run_id = self.private().run_id orelse return;
+        const alloc = self.allocator();
+        const snapshots_json = vh.callJson(alloc, self.client(), "listSnapshots", &.{.{ .key = "runId", .value = .{ .string = run_id } }}) catch |err| {
+            self.private().window.showToastFmt("Snapshots failed: {}", .{err});
+            return;
+        };
+        defer alloc.free(snapshots_json);
+        var snapshots = vh.parseItems(alloc, snapshots_json, &.{ "snapshots", "items", "data" }, .{
+            .id = &.{"id"},
+            .title = &.{ "label", "id" },
+            .subtitle = &.{ "nodeId", "node_id", "createdAtMs", "created_at_ms" },
+        }) catch std.ArrayList(vh.Item).empty;
+        defer {
+            vh.clearItems(alloc, &snapshots);
+            snapshots.deinit(alloc);
+        }
+        const body = std.fmt.allocPrintSentinel(alloc, "{d} snapshot(s) are available for run {s}. Fork Latest and Replay Latest use the newest snapshot.", .{ snapshots.items.len, run_id }, 0) catch return;
+        defer alloc.free(body);
+        const dialog = adw.AlertDialog.new("Run Snapshots", body.ptr);
+        dialog.addResponse("close", "Close");
+        dialog.setCloseResponse("close");
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
+    }
+
     fn clearInspection(self: *Self) void {
         if (self.private().inspection) |*inspection| {
             inspection.deinit(self.allocator());
@@ -326,6 +434,42 @@ pub const RunInspectView = extern struct {
         return inspection.tasks.items[inspection.tasks.items.len - 1];
     }
 
+    fn selectedTask(self: *Self, inspection: models.RunInspection) ?models.RunTask {
+        if (inspection.tasks.items.len == 0) return null;
+        const index = @min(self.private().selected_task_index, inspection.tasks.items.len - 1);
+        return inspection.tasks.items[index];
+    }
+
+    fn clampSelection(self: *Self) void {
+        const inspection = self.private().inspection orelse {
+            self.private().selected_task_index = 0;
+            return;
+        };
+        if (inspection.tasks.items.len == 0) {
+            self.private().selected_task_index = 0;
+            return;
+        }
+        if (self.private().selected_task_index >= inspection.tasks.items.len) {
+            self.private().selected_task_index = inspection.tasks.items.len - 1;
+        }
+    }
+
+    fn showTaskDialog(self: *Self, task: models.RunTask) void {
+        const alloc = self.allocator();
+        const body = if (task.iteration) |iteration|
+            std.fmt.allocPrintSentinel(alloc, "Node: {s}\nState: {s}\nIteration: {d}", .{ task.node_id, task.state, iteration }, 0) catch return
+        else
+            std.fmt.allocPrintSentinel(alloc, "Node: {s}\nState: {s}", .{ task.node_id, task.state }, 0) catch return;
+        defer alloc.free(body);
+        const title = task.label orelse task.node_id;
+        const title_z = alloc.dupeZ(u8, title) catch return;
+        defer alloc.free(title_z);
+        const dialog = adw.AlertDialog.new(title_z.ptr, body.ptr);
+        dialog.addResponse("close", "Close");
+        dialog.setCloseResponse("close");
+        dialog.as(adw.Dialog).present(self.as(gtk.Widget));
+    }
+
     fn taskIcon(status: []const u8) [:0]const u8 {
         if (std.ascii.eqlIgnoreCase(status, "running")) return "media-playback-start-symbolic";
         if (std.ascii.eqlIgnoreCase(status, "finished")) return "emblem-ok-symbolic";
@@ -340,6 +484,20 @@ pub const RunInspectView = extern struct {
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.refresh();
+    }
+
+    fn liveChatClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        const run_id = self.private().run_id orelse return;
+        self.private().window.inspectRun(run_id);
+    }
+
+    fn snapshotsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.showSnapshots();
+    }
+
+    fn watchClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        const run_id = self.private().run_id orelse return;
+        self.private().window.showToastFmt("Watch command: jjhub run watch {s}", .{run_id});
     }
 
     fn cancelClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -367,11 +525,55 @@ pub const RunInspectView = extern struct {
     }
 
     fn denyClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.confirmDenySelectedNode();
+    }
+
+    fn denyDialogResponse(_: *adw.AlertDialog, response: [*:0]u8, self: *Self) callconv(.c) void {
+        if (std.mem.orderZ(u8, response, "deny") != .eq) {
+            if (self.private().pending_deny) |*pending| {
+                pending.deinit(self.allocator());
+                self.private().pending_deny = null;
+            }
+            return;
+        }
         self.completeApproval("denyNode", "Denied");
+        if (self.private().pending_deny) |*pending| {
+            pending.deinit(self.allocator());
+            self.private().pending_deny = null;
+        }
+    }
+
+    fn listModeClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().mode = .list;
+        self.render() catch {};
+    }
+
+    fn dagModeClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().mode = .dag;
+        self.render() catch {};
+    }
+
+    fn taskRowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
+        const index = vh.getIndex(row.as(gobject.Object)) orelse return;
+        const inspection = self.private().inspection orelse return;
+        if (index >= inspection.tasks.items.len) return;
+        self.private().selected_task_index = index;
+        self.showTaskDialog(inspection.tasks.items[index]);
+        self.render() catch {};
     }
 
     fn shortcutRefresh(self: *Self) void {
         self.refresh();
+    }
+
+    fn shortcutListMode(self: *Self) void {
+        self.private().mode = .list;
+        self.render() catch {};
+    }
+
+    fn shortcutDagMode(self: *Self) void {
+        self.private().mode = .dag;
+        self.render() catch {};
     }
 
     fn dispose(self: *Self) callconv(.c) void {
@@ -382,6 +584,10 @@ pub const RunInspectView = extern struct {
             if (priv.run_id) |run_id| {
                 self.allocator().free(run_id);
                 priv.run_id = null;
+            }
+            if (priv.pending_deny) |*pending| {
+                pending.deinit(self.allocator());
+                priv.pending_deny = null;
             }
             ui.clearBox(self.as(gtk.Box));
         }
