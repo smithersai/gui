@@ -11,6 +11,9 @@ const MainWindow = @import("main_window.zig").MainWindow;
 
 pub const ApprovalsView = extern struct {
     const Self = @This();
+    const ApprovalFilter = enum { pending, resolved, all };
+    const ApprovalRowKind = enum { pending, decision };
+    const ApprovalRowRef = struct { kind: ApprovalRowKind, index: usize };
 
     parent_instance: Parent,
     pub const Parent = gtk.Box;
@@ -25,12 +28,16 @@ pub const ApprovalsView = extern struct {
         window: *MainWindow = undefined,
         list: *gtk.ListBox = undefined,
         detail: *gtk.Box = undefined,
-        deny_note: *gtk.TextView = undefined,
+        reason_entry: *gtk.Entry = undefined,
+        deny_note: ?*gtk.TextView = null,
         approvals: std.ArrayList(models.Approval) = .empty,
         decisions: std.ArrayList(vh.Item) = .empty,
+        visible_rows: std.ArrayList(ApprovalRowRef) = .empty,
         selected: std.ArrayList(bool) = .empty,
         selected_index: ?usize = null,
-        show_history: bool = false,
+        filter: ApprovalFilter = .pending,
+        sort_oldest: bool = true,
+        group_by_run: bool = false,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
@@ -62,13 +69,33 @@ pub const ApprovalsView = extern struct {
         const root = self.as(gtk.Box);
         root.as(gtk.Orientable).setOrientation(.vertical);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
+        vh.installShortcut(Self, root.as(gtk.Widget), "a", self, shortcutApprove);
+        vh.installShortcut(Self, root.as(gtk.Widget), "d", self, shortcutDeny);
+        vh.installShortcut(Self, root.as(gtk.Widget), "<Shift>a", self, shortcutBatchApprove);
         const header = vh.makeHeader("Approvals", null);
-        const batch = ui.textButton("Approve Selected", true);
-        _ = gtk.Button.signals.clicked.connect(batch, *Self, batchApproveClicked, self, .{});
-        header.append(batch.as(gtk.Widget));
-        const history = ui.textButton("History", false);
-        _ = gtk.Button.signals.clicked.connect(history, *Self, historyClicked, self, .{});
-        header.append(history.as(gtk.Widget));
+        inline for (.{ "Pending", "Resolved", "All" }) |label| {
+            const button = ui.textButton(label, std.mem.eql(u8, label, "Pending"));
+            button.as(gobject.Object).setData("smithers-approval-filter", @constCast(label.ptr));
+            _ = gtk.Button.signals.clicked.connect(button, *Self, filterClicked, self, .{});
+            header.append(button.as(gtk.Widget));
+        }
+        const sort = ui.textButton("Oldest First", false);
+        _ = gtk.Button.signals.clicked.connect(sort, *Self, sortClicked, self, .{});
+        header.append(sort.as(gtk.Widget));
+        const group = ui.textButton("Group by Run", false);
+        _ = gtk.Button.signals.clicked.connect(group, *Self, groupClicked, self, .{});
+        header.append(group.as(gtk.Widget));
+        self.private().reason_entry = gtk.Entry.new();
+        self.private().reason_entry.setPlaceholderText("Shared reason/note");
+        self.private().reason_entry.as(gtk.Widget).setSizeRequest(180, -1);
+        header.append(self.private().reason_entry.as(gtk.Widget));
+        const batch_approve = ui.textButton("Approve Selected", true);
+        _ = gtk.Button.signals.clicked.connect(batch_approve, *Self, batchApproveClicked, self, .{});
+        header.append(batch_approve.as(gtk.Widget));
+        const batch_deny = ui.textButton("Deny Selected", false);
+        batch_deny.as(gtk.Widget).addCssClass("destructive-action");
+        _ = gtk.Button.signals.clicked.connect(batch_deny, *Self, batchDenyClicked, self, .{});
+        header.append(batch_deny.as(gtk.Widget));
         const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh approvals");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
@@ -91,29 +118,28 @@ pub const ApprovalsView = extern struct {
 
     fn load(self: *Self) !void {
         const alloc = self.allocator();
-        if (self.private().show_history) {
-            const json = try vh.callJson(alloc, self.client(), "listRecentDecisions", &.{.{ .key = "limit", .value = .{ .integer = 50 } }});
-            defer alloc.free(json);
-            const parsed = try vh.parseItems(alloc, json, &.{ "decisions", "items", "data" }, .{
-                .id = &.{"id"},
-                .title = &.{ "gate", "nodeId", "node_id" },
-                .subtitle = &.{ "runId", "run_id" },
-                .status = &.{ "action", "decision", "status" },
-                .body = &.{ "payload", "note", "reason" },
-                .run_id = &.{ "runId", "run_id" },
-                .node_id = &.{ "nodeId", "node_id" },
-            });
-            vh.clearItems(alloc, &self.private().decisions);
-            self.private().decisions = parsed;
-        } else {
-            const json = try smithers.callJson(alloc, self.client(), "listPendingApprovals", "{}");
-            defer alloc.free(json);
-            const parsed = try models.parseApprovals(alloc, json);
-            models.clearList(models.Approval, alloc, &self.private().approvals);
-            self.private().approvals = parsed;
-            self.private().selected.clearRetainingCapacity();
-            try self.private().selected.appendNTimes(alloc, false, self.private().approvals.items.len);
-        }
+        const approvals_json = try smithers.callJson(alloc, self.client(), "listPendingApprovals", "{}");
+        defer alloc.free(approvals_json);
+        const approvals = try models.parseApprovals(alloc, approvals_json);
+        models.clearList(models.Approval, alloc, &self.private().approvals);
+        self.private().approvals = approvals;
+        self.private().selected.clearRetainingCapacity();
+        try self.private().selected.appendNTimes(alloc, false, self.private().approvals.items.len);
+
+        const decisions_json = try vh.callJson(alloc, self.client(), "listRecentDecisions", &.{.{ .key = "limit", .value = .{ .integer = 100 } }});
+        defer alloc.free(decisions_json);
+        const decisions = try vh.parseItems(alloc, decisions_json, &.{ "decisions", "items", "data" }, .{
+            .id = &.{"id"},
+            .title = &.{ "gate", "nodeId", "node_id" },
+            .subtitle = &.{ "runId", "run_id" },
+            .status = &.{ "action", "decision", "status" },
+            .body = &.{ "payload", "note", "reason" },
+            .run_id = &.{ "runId", "run_id" },
+            .node_id = &.{ "nodeId", "node_id" },
+            .number = &.{ "resolvedAt", "resolvedAtMs", "resolved_at", "resolved_at_ms", "decidedAt", "decidedAtMs", "decided_at", "decided_at_ms", "requestedAt", "requestedAtMs", "requested_at", "requested_at_ms" },
+        });
+        vh.clearItems(alloc, &self.private().decisions);
+        self.private().decisions = decisions;
         self.private().selected_index = null;
         try self.renderList();
         vh.setStatus(alloc, self.private().detail, "security-high-symbolic", "Select an approval", "Approval payload and actions appear here.");
@@ -123,62 +149,89 @@ pub const ApprovalsView = extern struct {
         const alloc = self.allocator();
         const list = self.private().list;
         ui.clearList(list);
-        if (self.private().show_history) {
-            if (self.private().decisions.items.len == 0) {
-                list.append((try ui.row(alloc, "document-open-recent-symbolic", "No recent decisions", "Approved and denied gates appear here.")).as(gtk.Widget));
-                return;
+        self.private().visible_rows.clearRetainingCapacity();
+        if (self.private().filter == .pending or self.private().filter == .all) {
+            for (self.private().approvals.items, 0..) |_, index| {
+                try self.private().visible_rows.append(alloc, .{ .kind = .pending, .index = index });
             }
-            for (self.private().decisions.items, 0..) |item, index| {
-                const row = try vh.itemRow(alloc, item, if (item.status != null and std.ascii.eqlIgnoreCase(item.status.?, "denied")) "dialog-error-symbolic" else "emblem-ok-symbolic");
-                vh.setIndex(row.as(gobject.Object), index);
-                list.append(row.as(gtk.Widget));
+        }
+        if (self.private().filter == .resolved or self.private().filter == .all) {
+            for (self.private().decisions.items, 0..) |_, index| {
+                try self.private().visible_rows.append(alloc, .{ .kind = .decision, .index = index });
             }
+        }
+        std.mem.sort(ApprovalRowRef, self.private().visible_rows.items, self, approvalRowLess);
+
+        if (self.private().visible_rows.items.len == 0) {
+            const title = switch (self.private().filter) {
+                .pending => "No pending approvals",
+                .resolved => "No recent decisions",
+                .all => "No approvals",
+            };
+            list.append((try ui.row(alloc, "emblem-ok-symbolic", title, "Approval gates appear here.")).as(gtk.Widget));
             return;
         }
-        if (self.private().approvals.items.len == 0) {
-            list.append((try ui.row(alloc, "emblem-ok-symbolic", "No pending approvals", "Paused approval gates appear here.")).as(gtk.Widget));
-            return;
-        }
-        for (self.private().approvals.items, 0..) |approval, index| {
-            const title = approval.gate orelse approval.node_id;
-            const subtitle = try std.fmt.allocPrint(alloc, "Run {s} - {s}", .{ approval.run_id, approval.status });
-            defer alloc.free(subtitle);
-            const row = gtk.ListBoxRow.new();
-            row.setActivatable(1);
-            const row_box = gtk.Box.new(.horizontal, 10);
-            ui.margin(row_box.as(gtk.Widget), 10);
 
-            const check = gtk.CheckButton.new();
-            check.setActive(if (index < self.private().selected.items.len and self.private().selected.items[index]) 1 else 0);
-            vh.setIndex(check.as(gobject.Object), index);
-            _ = gtk.CheckButton.signals.toggled.connect(check, *Self, selectionToggled, self, .{});
-            row_box.append(check.as(gtk.Widget));
+        var last_run: ?[]const u8 = null;
+        for (self.private().visible_rows.items, 0..) |row_ref, visible_index| {
+            const run = self.rowRun(row_ref);
+            if (self.private().group_by_run and (last_run == null or !std.mem.eql(u8, last_run.?, run))) {
+                list.append((try groupRow(alloc, run)).as(gtk.Widget));
+                last_run = run;
+            }
+            switch (row_ref.kind) {
+                .pending => {
+                    const approval = self.private().approvals.items[row_ref.index];
+                    const title = approval.gate orelse approval.node_id;
+                    const subtitle = try std.fmt.allocPrint(alloc, "Run {s} - {s}", .{ approval.run_id, approval.status });
+                    defer alloc.free(subtitle);
+                    const row = gtk.ListBoxRow.new();
+                    row.setActivatable(1);
+                    const row_box = gtk.Box.new(.horizontal, 10);
+                    ui.margin(row_box.as(gtk.Widget), 10);
 
-            const text_box = gtk.Box.new(.vertical, 2);
-            text_box.as(gtk.Widget).setHexpand(1);
-            const title_z = try alloc.dupeZ(u8, title);
-            defer alloc.free(title_z);
-            const title_label = ui.label(title_z, "heading");
-            title_label.setWrap(0);
-            title_label.setEllipsize(.end);
-            text_box.append(title_label.as(gtk.Widget));
-            const subtitle_z = try alloc.dupeZ(u8, subtitle);
-            defer alloc.free(subtitle_z);
-            text_box.append(ui.dim(subtitle_z).as(gtk.Widget));
-            row_box.append(text_box.as(gtk.Widget));
-            row.setChild(row_box.as(gtk.Widget));
-            vh.setIndex(row.as(gobject.Object), index);
-            list.append(row.as(gtk.Widget));
+                    const check = gtk.CheckButton.new();
+                    check.setActive(if (row_ref.index < self.private().selected.items.len and self.private().selected.items[row_ref.index]) 1 else 0);
+                    vh.setIndex(check.as(gobject.Object), row_ref.index);
+                    _ = gtk.CheckButton.signals.toggled.connect(check, *Self, selectionToggled, self, .{});
+                    row_box.append(check.as(gtk.Widget));
+
+                    const text_box = gtk.Box.new(.vertical, 2);
+                    text_box.as(gtk.Widget).setHexpand(1);
+                    const title_z = try alloc.dupeZ(u8, title);
+                    defer alloc.free(title_z);
+                    const title_label = ui.label(title_z, "heading");
+                    title_label.setWrap(0);
+                    title_label.setEllipsize(.end);
+                    text_box.append(title_label.as(gtk.Widget));
+                    const subtitle_z = try alloc.dupeZ(u8, subtitle);
+                    defer alloc.free(subtitle_z);
+                    text_box.append(ui.dim(subtitle_z).as(gtk.Widget));
+                    row_box.append(text_box.as(gtk.Widget));
+                    row.setChild(row_box.as(gtk.Widget));
+                    vh.setIndex(row.as(gobject.Object), visible_index);
+                    list.append(row.as(gtk.Widget));
+                },
+                .decision => {
+                    const item = self.private().decisions.items[row_ref.index];
+                    const row = try vh.itemRow(alloc, item, if (item.status != null and std.ascii.eqlIgnoreCase(item.status.?, "denied")) "dialog-error-symbolic" else "emblem-ok-symbolic");
+                    vh.setIndex(row.as(gobject.Object), visible_index);
+                    list.append(row.as(gtk.Widget));
+                },
+            }
         }
     }
 
-    fn renderDetail(self: *Self, index: usize) !void {
+    fn renderDetail(self: *Self, visible_index: usize) !void {
         const alloc = self.allocator();
         const detail = self.private().detail;
         ui.clearBox(detail);
-        if (self.private().show_history) {
-            if (index >= self.private().decisions.items.len) return;
-            const item = self.private().decisions.items[index];
+        self.private().deny_note = null;
+        if (visible_index >= self.private().visible_rows.items.len) return;
+        const row_ref = self.private().visible_rows.items[visible_index];
+        if (row_ref.kind == .decision) {
+            if (row_ref.index >= self.private().decisions.items.len) return;
+            const item = self.private().decisions.items[row_ref.index];
             const title_z = try alloc.dupeZ(u8, item.title);
             defer alloc.free(title_z);
             detail.append(ui.heading(title_z).as(gtk.Widget));
@@ -186,8 +239,10 @@ pub const ApprovalsView = extern struct {
             try vh.detailRow(alloc, detail, "Node", item.node_id);
             try vh.detailRow(alloc, detail, "Decision", item.status);
             try vh.detailRow(alloc, detail, "Payload", item.body);
+            try vh.detailRow(alloc, detail, "Raw", item.raw_json);
             return;
         }
+        const index = row_ref.index;
         if (index >= self.private().approvals.items.len) return;
         const approval = self.private().approvals.items[index];
         const title = approval.gate orelse approval.node_id;
@@ -198,10 +253,11 @@ pub const ApprovalsView = extern struct {
         try vh.detailRow(alloc, detail, "Node", approval.node_id);
         try vh.detailRow(alloc, detail, "Status", approval.status);
         try vh.detailRow(alloc, detail, "Source", approval.source);
-        vh.addSectionTitle(detail, "Decision Note");
-        self.private().deny_note = vh.textView(true);
-        try vh.setTextViewText(alloc, self.private().deny_note, "");
-        const note_scroll = ui.scrolled(self.private().deny_note.as(gtk.Widget));
+        vh.addSectionTitle(detail, "Decision Reason");
+        const deny_note = vh.textView(true);
+        self.private().deny_note = deny_note;
+        try vh.setTextViewText(alloc, deny_note, "");
+        const note_scroll = ui.scrolled(deny_note.as(gtk.Widget));
         note_scroll.as(gtk.Widget).setSizeRequest(-1, 110);
         detail.append(note_scroll.as(gtk.Widget));
         const actions = vh.actionBar();
@@ -216,18 +272,30 @@ pub const ApprovalsView = extern struct {
     }
 
     fn complete(self: *Self, method: []const u8, label: []const u8) void {
-        const index = self.private().selected_index orelse return;
+        const visible_index = self.private().selected_index orelse return;
+        if (visible_index >= self.private().visible_rows.items.len) return;
+        const row_ref = self.private().visible_rows.items[visible_index];
+        if (row_ref.kind != .pending) {
+            self.private().window.showToast("Select a pending approval");
+            return;
+        }
+        const index = row_ref.index;
         if (index >= self.private().approvals.items.len) return;
         const approval = self.private().approvals.items[index];
         const alloc = self.allocator();
-        const note = if (std.mem.eql(u8, method, "denyNode"))
-            vh.getTextViewText(alloc, self.private().deny_note) catch return
-        else
-            alloc.dupe(u8, "") catch return;
-        defer alloc.free(note);
-        const trimmed_note = std.mem.trim(u8, note, &std.ascii.whitespace);
+        const shared_note = alloc.dupe(u8, vh.trimEntryText(self.private().reason_entry)) catch return;
+        defer alloc.free(shared_note);
+        var detail_note: ?[]u8 = null;
+        defer if (detail_note) |note| alloc.free(note);
+        if (std.mem.eql(u8, method, "denyNode") and std.mem.trim(u8, shared_note, &std.ascii.whitespace).len == 0) {
+            if (self.private().deny_note) |view| {
+                detail_note = vh.getTextViewText(alloc, view) catch return;
+            }
+        }
+        const candidate_note = if (std.mem.trim(u8, shared_note, &std.ascii.whitespace).len > 0) shared_note else (detail_note orelse shared_note);
+        const trimmed_note = std.mem.trim(u8, candidate_note, &std.ascii.whitespace);
         if (std.mem.eql(u8, method, "denyNode") and trimmed_note.len == 0) {
-            self.private().window.showToast("A deny note is required");
+            self.private().window.showToast("A deny reason is required");
             return;
         }
         const args = vh.jsonObject(alloc, &.{
@@ -246,41 +314,103 @@ pub const ApprovalsView = extern struct {
         self.refresh();
     }
 
-    fn approveSelected(self: *Self) void {
-        if (self.private().show_history) {
-            self.private().window.showToast("Switch to pending approvals for batch actions");
+    fn completeSelected(self: *Self, method: []const u8, label: []const u8, requires_reason: bool) void {
+        const alloc = self.allocator();
+        const reason = alloc.dupe(u8, vh.trimEntryText(self.private().reason_entry)) catch return;
+        defer alloc.free(reason);
+        const trimmed_reason = std.mem.trim(u8, reason, &std.ascii.whitespace);
+        if (requires_reason and trimmed_reason.len == 0) {
+            self.private().window.showToast("A shared deny reason is required");
             return;
         }
-        const alloc = self.allocator();
-        var approved: usize = 0;
+        var completed: usize = 0;
         for (self.private().approvals.items, 0..) |approval, index| {
             if (index >= self.private().selected.items.len or !self.private().selected.items[index]) continue;
             const args = vh.jsonObject(alloc, &.{
                 .{ .key = "runId", .value = .{ .string = approval.run_id } },
                 .{ .key = "nodeId", .value = .{ .string = approval.node_id } },
                 .{ .key = "iteration", .value = if (approval.iteration) |iteration| .{ .integer = iteration } else .null },
-                .{ .key = "note", .value = .{ .string = "Batch approved from GTK approvals view" } },
+                .{ .key = if (std.mem.eql(u8, method, "denyNode")) "reason" else "note", .value = .{ .string = trimmed_reason } },
             }) catch continue;
             defer alloc.free(args);
-            const json = smithers.callJson(alloc, self.client(), "approveNode", args) catch continue;
+            const json = smithers.callJson(alloc, self.client(), method, args) catch continue;
             alloc.free(json);
-            approved += 1;
+            completed += 1;
         }
-        if (approved == 0) {
-            self.private().window.showToast("Select approvals to batch approve");
+        if (completed == 0) {
+            self.private().window.showToast("Select pending approvals first");
             return;
         }
-        self.private().window.showToastFmt("Approved {d} approval(s)", .{approved});
+        self.private().window.showToastFmt("{s} {d} approval(s)", .{ label, completed });
         self.refresh();
+    }
+
+    fn approvalRowLess(self: *Self, lhs: ApprovalRowRef, rhs: ApprovalRowRef) bool {
+        if (self.private().group_by_run) {
+            const run_order = std.mem.order(u8, self.rowRun(lhs), self.rowRun(rhs));
+            if (run_order != .eq) return run_order == .lt;
+        }
+        const lhs_time = self.rowTime(lhs);
+        const rhs_time = self.rowTime(rhs);
+        if (lhs_time != rhs_time) return if (self.private().sort_oldest) lhs_time < rhs_time else lhs_time > rhs_time;
+        const lhs_title = self.rowTitle(lhs);
+        const rhs_title = self.rowTitle(rhs);
+        return std.mem.order(u8, lhs_title, rhs_title) == .lt;
+    }
+
+    fn rowRun(self: *Self, row_ref: ApprovalRowRef) []const u8 {
+        return switch (row_ref.kind) {
+            .pending => if (row_ref.index < self.private().approvals.items.len) self.private().approvals.items[row_ref.index].run_id else "",
+            .decision => if (row_ref.index < self.private().decisions.items.len) self.private().decisions.items[row_ref.index].run_id orelse self.private().decisions.items[row_ref.index].subtitle orelse "" else "",
+        };
+    }
+
+    fn rowTitle(self: *Self, row_ref: ApprovalRowRef) []const u8 {
+        return switch (row_ref.kind) {
+            .pending => if (row_ref.index < self.private().approvals.items.len) self.private().approvals.items[row_ref.index].gate orelse self.private().approvals.items[row_ref.index].node_id else "",
+            .decision => if (row_ref.index < self.private().decisions.items.len) self.private().decisions.items[row_ref.index].title else "",
+        };
+    }
+
+    fn rowTime(self: *Self, row_ref: ApprovalRowRef) i64 {
+        return switch (row_ref.kind) {
+            .pending => if (row_ref.index < self.private().approvals.items.len) self.private().approvals.items[row_ref.index].requested_at orelse 0 else 0,
+            .decision => if (row_ref.index < self.private().decisions.items.len) self.private().decisions.items[row_ref.index].number orelse 0 else 0,
+        };
+    }
+
+    fn groupRow(alloc: std.mem.Allocator, run_id: []const u8) !*gtk.ListBoxRow {
+        const title = try std.fmt.allocPrint(alloc, "Run {s}", .{run_id});
+        defer alloc.free(title);
+        const row = try ui.row(alloc, "folder-symbolic", title, null);
+        row.setActivatable(0);
+        row.setSelectable(0);
+        return row;
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.refresh();
     }
 
-    fn historyClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.private().show_history = !self.private().show_history;
-        self.refresh();
+    fn filterClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
+        const raw = button.as(gobject.Object).getData("smithers-approval-filter") orelse return;
+        const text = std.mem.span(@as([*:0]const u8, @ptrCast(raw)));
+        self.private().filter = if (std.mem.eql(u8, text, "Resolved")) .resolved else if (std.mem.eql(u8, text, "All")) .all else .pending;
+        self.private().selected_index = null;
+        self.renderList() catch {};
+        vh.setStatus(self.allocator(), self.private().detail, "security-high-symbolic", "Select an approval", "Approval payload and actions appear here.");
+    }
+
+    fn sortClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().sort_oldest = !self.private().sort_oldest;
+        self.renderList() catch {};
+        self.private().window.showToast(if (self.private().sort_oldest) "Approvals sorted oldest first" else "Approvals sorted newest first");
+    }
+
+    fn groupClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.private().group_by_run = !self.private().group_by_run;
+        self.renderList() catch {};
+        self.private().window.showToast(if (self.private().group_by_run) "Approvals grouped by run" else "Approval grouping disabled");
     }
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
@@ -304,11 +434,27 @@ pub const ApprovalsView = extern struct {
     }
 
     fn batchApproveClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.approveSelected();
+        self.completeSelected("approveNode", "Approved", false);
+    }
+
+    fn batchDenyClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        self.completeSelected("denyNode", "Denied", true);
     }
 
     fn shortcutRefresh(self: *Self) void {
         self.refresh();
+    }
+
+    fn shortcutApprove(self: *Self) void {
+        self.complete("approveNode", "Approved");
+    }
+
+    fn shortcutDeny(self: *Self) void {
+        self.complete("denyNode", "Denied");
+    }
+
+    fn shortcutBatchApprove(self: *Self) void {
+        self.completeSelected("approveNode", "Approved", false);
     }
 
     fn dispose(self: *Self) callconv(.c) void {
@@ -319,6 +465,7 @@ pub const ApprovalsView = extern struct {
             priv.approvals.deinit(self.allocator());
             vh.clearItems(self.allocator(), &priv.decisions);
             priv.decisions.deinit(self.allocator());
+            priv.visible_rows.deinit(self.allocator());
             priv.selected.deinit(self.allocator());
             ui.clearBox(self.as(gtk.Box));
         }
