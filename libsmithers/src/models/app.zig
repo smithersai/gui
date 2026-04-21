@@ -1,0 +1,25 @@
+const root = @import("mod.zig");
+
+pub const app_model_descriptors = [_]root.ModelDescriptor{
+    .{ .name = "AppPreferenceKeys", .sample_json = "{\"vimModeEnabled\":\"settings.vimModeEnabled\"}" },
+    .{ .name = "NeovimDetector", .sample_json = "{\"available\":false}" },
+    .{ .name = "RunWorkspace", .sample_json = "{\"runId\":\"run-1\",\"title\":\"Run\",\"preview\":\"running\"}" },
+    .{ .name = "TerminalBackend", .sample_json = "\"tmux\"" },
+    .{ .name = "TerminalWorkspaceRecord", .sample_json = "{\"terminalId\":\"term-1\",\"title\":\"Terminal\",\"preview\":\"Shell session\"}" },
+    .{ .name = "TmuxTerminalTarget", .sample_json = "{\"socketName\":\"smithers\",\"sessionName\":\"term\"}" },
+    .{ .name = "TmuxController", .sample_json = "{\"socketName\":\"smithers\"}" },
+    .{ .name = "TmuxControllerError", .sample_json = "{\"message\":\"tmux unavailable\"}" },
+    .{ .name = "SidebarWorkspaceKind", .sample_json = "\"terminal\"" },
+    .{ .name = "SidebarWorkspace", .sample_json = "{\"id\":\"term-1\",\"kind\":\"terminal\",\"title\":\"Terminal\"}" },
+    .{ .name = "ChatMessage", .sample_json = "{\"id\":\"msg-1\",\"type\":\"assistant\",\"content\":\"hi\"}" },
+    .{ .name = "AssistantMessageMetadata", .sample_json = "{\"thinking\":\"...\"}" },
+    .{ .name = "ToolCategory", .sample_json = "\"shell\"" },
+    .{ .name = "ToolExecutionStatus", .sample_json = "\"running\"" },
+    .{ .name = "ToolMessagePayload", .sample_json = "{\"title\":\"Bash\",\"category\":\"shell\"}" },
+    .{ .name = "Command", .sample_json = "{\"name\":\"build\",\"status\":\"running\"}" },
+    .{ .name = "Diff", .sample_json = "{\"files\":[]}" },
+    .{ .name = "DiffFile", .sample_json = "{\"path\":\"README.md\",\"additions\":1,\"deletions\":0}" },
+    .{ .name = "Agent", .sample_json = "{\"id\":\"codex\",\"name\":\"Codex\",\"status\":\"available\"}" },
+    .{ .name = "AgentStatus", .sample_json = "\"available\"" },
+    .{ .name = "JJChange", .sample_json = "{\"id\":\"abc\",\"description\":\"change\"}" },
+};
