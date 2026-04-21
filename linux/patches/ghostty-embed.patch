@@ -1,0 +1,349 @@
+diff --git a/src/apprt.zig b/src/apprt.zig
+index 30fb4918f..4f26ac0cc 100644
+--- a/src/apprt.zig
++++ b/src/apprt.zig
+@@ -37,7 +37,10 @@ pub const runtime = switch (build_config.artifact) {
+         .none => none,
+         .gtk => gtk,
+     },
+-    .lib => embedded,
++    .lib => switch (build_config.app_runtime) {
++        .gtk => gtk,
++        else => embedded,
++    },
+     .wasm_module => browser,
+ };
+ 
+diff --git a/src/apprt/gtk/class/application.zig b/src/apprt/gtk/class/application.zig
+index 0c2ba70e1..4b3ae1fd4 100644
+--- a/src/apprt/gtk/class/application.zig
++++ b/src/apprt/gtk/class/application.zig
+@@ -219,6 +219,8 @@ pub const Application = extern struct {
+ 
+         pub var offset: c_int = 0;
+     };
++
++    var embedded_default: ?*Self = null;
+ 
+     /// Get this application as the default, allowing access to its
+     /// properties globally.
+@@ -228,8 +230,17 @@ pub const Application = extern struct {
+     /// default application is a GhosttyApplication. The program would have
+     /// to be in a very bad state for this to be violated.
+     pub fn default() *Self {
++        if (embedded_default) |app| return app;
+         const app = gio.Application.getDefault().?;
+         return gobject.ext.cast(Self, app).?;
+     }
+ 
++    /// Set an embedder-owned default application.
++    ///
++    /// This lets a host GTK application embed Ghostty GTK surfaces without
++    /// making GhosttyApplication the process-wide GApplication singleton.
++    pub fn setEmbeddedDefault(app: ?*Self) void {
++        embedded_default = app;
++    }
++
+     /// Creates a new Application instance.
+diff --git a/src/apprt/gtk/class/surface.zig b/src/apprt/gtk/class/surface.zig
+index 9d72f36e3..92e41dcd4 100644
+--- a/src/apprt/gtk/class/surface.zig
++++ b/src/apprt/gtk/class/surface.zig
+@@ -17,6 +17,7 @@ const internal_os = @import("../../../os/main.zig");
+ const renderer = @import("../../../renderer.zig");
+ const terminal = @import("../../../terminal/main.zig");
+ const CoreSurface = @import("../../../Surface.zig");
++const CoreApp = @import("../../../App.zig");
+ const gresource = @import("../build/gresource.zig");
+ const ext = @import("../ext.zig");
+ const gsettings = @import("../gsettings.zig");
+@@ -715,18 +716,48 @@ pub const Surface = extern struct {
+         pub var offset: c_int = 0;
+     };
+ 
+-    pub fn new(overrides: struct {
++    pub const NewOptions = struct {
+         command: ?configpkg.Command = null,
+         working_directory: ?[:0]const u8 = null,
+         title: ?[:0]const u8 = null,
+ 
+         pub const none: @This() = .{};
+-    }) *Self {
++    };
++
++    var pending_embed_config: ?*Config = null;
++
++    pub fn new(overrides: NewOptions) *Self {
++        const app = Application.default();
++        const config = app.getConfig();
++        defer config.unref();
++        return newWithCoreAppAndOptions(app.core(), config, overrides);
++    }
++
++    /// Create a surface using an embedder-provided core Ghostty app.
++    ///
++    /// Host applications can use this to instantiate the GTK surface widget
++    /// without relying on GhosttyApplication being the process default
++    /// GApplication. Callers must also install an embedded default
++    /// Application with Application.setEmbeddedDefault so later surface
++    /// callbacks resolve the same core/runtime app.
++    pub fn newWithCoreApp(core_app: *CoreApp, config: *Config) *Self {
++        return newWithCoreAppAndOptions(core_app, config, .none);
++    }
++
++    fn newWithCoreAppAndOptions(
++        core_app: *CoreApp,
++        config: *Config,
++        overrides: NewOptions,
++    ) *Self {
++        const previous_config = pending_embed_config;
++        pending_embed_config = config;
++        defer pending_embed_config = previous_config;
++
+         const self = gobject.ext.newInstance(Self, .{
+             .@"title-override" = overrides.title,
+         });
+-        const alloc = Application.default().allocator();
+         const priv: *Private = self.private();
++        const alloc = core_app.alloc;
+         priv.overrides = .{
+             .command = if (overrides.command) |c| c.clone(alloc) catch null else null,
+             .working_directory = if (overrides.working_directory) |wd| alloc.dupeZ(u8, wd) catch null else null,
+@@ -1774,9 +1805,13 @@ pub const Surface = extern struct {
+ 
+         // If our configuration is null then we get the configuration
+         // from the application.
+         if (priv.config == null) {
+-            const app = Application.default();
+-            priv.config = app.getConfig();
++            if (pending_embed_config) |config| {
++                priv.config = config.ref();
++            } else {
++                const app = Application.default();
++                priv.config = app.getConfig();
++            }
+         }
+ 
+         // Setup our input method state
+diff --git a/src/apprt/gtk/embed.zig b/src/apprt/gtk/embed.zig
+new file mode 100644
+index 000000000..589ff8d57
+--- /dev/null
++++ b/src/apprt/gtk/embed.zig
+@@ -0,0 +1,113 @@
++//! C ABI for embedding Ghostty's real GTK surface widget in a host GTK app.
++
++const std = @import("std");
++const gtk = @import("gtk");
++
++const CoreApp = @import("../../App.zig");
++const ApprtApp = @import("App.zig");
++const Application = @import("class/application.zig").Application;
++const Config = @import("class/config.zig").Config;
++const Surface = @import("class/surface.zig").Surface;
++const input = @import("../../input.zig");
++
++const log = std.log.scoped(.gtk_embed);
++
++pub const std_options: std.Options = .{};
++
++const EmbedApp = struct {
++    core_app: *CoreApp,
++    rt_app: *ApprtApp,
++};
++
++pub export fn ghostty_gtk_app_new() ?*EmbedApp {
++    return appNew() catch |err| {
++        log.err("error initializing embedded GTK app err={}", .{err});
++        return null;
++    };
++}
++
++fn appNew() !*EmbedApp {
++    const alloc = std.heap.c_allocator;
++
++    const core_app = try CoreApp.create(alloc);
++    errdefer core_app.destroy();
++
++    const rt_app = try alloc.create(ApprtApp);
++    errdefer alloc.destroy(rt_app);
++    try rt_app.init(core_app, .{});
++    errdefer rt_app.terminate();
++
++    Application.setEmbeddedDefault(rt_app.app);
++
++    const app = try alloc.create(EmbedApp);
++    app.* = .{
++        .core_app = core_app,
++        .rt_app = rt_app,
++    };
++    return app;
++}
++
++pub export fn ghostty_gtk_app_free(app: *EmbedApp) void {
++    const alloc = std.heap.c_allocator;
++    Application.setEmbeddedDefault(null);
++    app.rt_app.terminate();
++    app.rt_app.app.unref();
++    alloc.destroy(app.rt_app);
++    app.core_app.destroy();
++    alloc.destroy(app);
++}
++
++pub export fn ghostty_gtk_app_tick(app: *EmbedApp) void {
++    app.core_app.tick(app.rt_app) catch |err| {
++        log.err("error ticking embedded GTK app err={}", .{err});
++    };
++}
++
++pub export fn ghostty_gtk_surface_new(app: *EmbedApp) ?*Surface {
++    const config: *Config = app.rt_app.app.getConfig();
++    defer config.unref();
++
++    const surface = Surface.newWithCoreApp(app.core_app, config);
++    _ = surface.refSink();
++    return surface;
++}
++
++pub export fn ghostty_gtk_surface_widget(surface: *Surface) *gtk.Widget {
++    return surface.as(gtk.Widget);
++}
++
++pub export fn ghostty_gtk_surface_free(surface: *Surface) void {
++    surface.unref();
++}
++
++pub export fn ghostty_gtk_surface_redraw(surface: *Surface) void {
++    surface.redraw();
++}
++
++pub export fn ghostty_gtk_surface_title(surface: *Surface) ?[*:0]const u8 {
++    const title = surface.getEffectiveTitle() orelse return null;
++    return title.ptr;
++}
++
++pub export fn ghostty_gtk_surface_binding_action(
++    surface: *Surface,
++    action_ptr: [*]const u8,
++    action_len: usize,
++) bool {
++    const core_surface = surface.core() orelse return false;
++    const action_str = action_ptr[0..action_len];
++    const action = input.Binding.Action.parse(action_str) catch |err| {
++        log.err("error parsing binding action action={s} err={}", .{ action_str, err });
++        return false;
++    };
++
++    return core_surface.performBindingAction(action) catch |err| {
++        log.err("error performing binding action action={f} err={}", .{ action, err });
++        return false;
++    };
++}
++
++test {
++    _ = ghostty_gtk_app_new;
++    _ = ghostty_gtk_app_free;
++    _ = ghostty_gtk_app_tick;
++    _ = ghostty_gtk_surface_new;
++    _ = ghostty_gtk_surface_widget;
++    _ = ghostty_gtk_surface_free;
++    _ = ghostty_gtk_surface_redraw;
++    _ = ghostty_gtk_surface_title;
++    _ = ghostty_gtk_surface_binding_action;
++}
+diff --git a/src/build/GhosttyLibGtk.zig b/src/build/GhosttyLibGtk.zig
+new file mode 100644
+index 000000000..c5b91a96f
+--- /dev/null
++++ b/src/build/GhosttyLibGtk.zig
+@@ -0,0 +1,40 @@
++const GhosttyLibGtk = @This();
++
++const std = @import("std");
++const Config = @import("Config.zig");
++const SharedDeps = @import("SharedDeps.zig");
++
++lib: *std.Build.Step.Compile,
++install_step: *std.Build.Step.InstallArtifact,
++
++pub fn initShared(
++    b: *std.Build,
++    cfg: *const Config,
++    deps: *const SharedDeps,
++) !GhosttyLibGtk {
++    const lib = b.addLibrary(.{
++        .name = "ghostty-gtk",
++        .linkage = .dynamic,
++        .root_module = b.createModule(.{
++            .root_source_file = b.path("src/apprt/gtk/embed.zig"),
++            .target = cfg.target,
++            .optimize = cfg.optimize,
++            .strip = cfg.strip,
++            .omit_frame_pointer = cfg.strip,
++            .unwind_tables = if (cfg.strip) .none else .sync,
++        }),
++        .use_llvm = true,
++    });
++
++    _ = try deps.add(lib);
++
++    return .{
++        .lib = lib,
++        .install_step = b.addInstallArtifact(lib, .{}),
++    };
++}
++
++pub fn install(self: *const GhosttyLibGtk) void {
++    const b = self.install_step.step.owner;
++    b.getInstallStep().dependOn(&self.install_step.step);
++}
+diff --git a/src/build/SharedDeps.zig b/src/build/SharedDeps.zig
+index f217015a6..7c8d1eb9e 100644
+--- a/src/build/SharedDeps.zig
++++ b/src/build/SharedDeps.zig
+@@ -581,7 +581,8 @@ pub fn add(
+     }
+ 
+-    // If we're building an exe then we have additional dependencies.
+-    if (step.kind != .lib) {
++    // If we're building an exe or embeddable GTK library then we have
++    // additional runtime dependencies.
++    if (step.kind != .lib or self.config.app_runtime == .gtk) {
+         // We always statically compile glad
+         step.addIncludePath(b.path("vendor/glad/include/"));
+         step.addCSourceFile(.{
+@@ -889,6 +890,7 @@ pub fn gtkNgDistResources(
+         blueprint_exe.linkLibC();
+         blueprint_exe.linkSystemLibrary2("gtk4", dynamic_link_opts);
+         blueprint_exe.linkSystemLibrary2("libadwaita-1", dynamic_link_opts);
++        if (b.graph.host.result.os.tag == .macos) blueprint_exe.dead_strip_dylibs = true;
+ 
+         for (gresource.blueprints) |bp| {
+             const blueprint_run = b.addRunArtifact(blueprint_exe);
+diff --git a/src/build/main.zig b/src/build/main.zig
+index 82f1f4870..166c6c647 100644
+--- a/src/build/main.zig
++++ b/src/build/main.zig
+@@ -15,5 +15,6 @@ pub const GhosttyFrameData = @import("GhosttyFrameData.zig");
+ pub const GhosttyLib = @import("GhosttyLib.zig");
+ pub const GhosttyLibVt = @import("GhosttyLibVt.zig");
++pub const GhosttyLibGtk = @import("GhosttyLibGtk.zig");
+ pub const GhosttyResources = @import("GhosttyResources.zig");
+ pub const GhosttyI18n = @import("GhosttyI18n.zig");
+ pub const GhosttyXcodebuild = @import("GhosttyXcodebuild.zig");
+diff --git a/build.zig b/build.zig
+index 6ca543201..a2e3373f9 100644
+--- a/build.zig
++++ b/build.zig
+@@ -177,6 +177,11 @@ pub fn build(b: *std.Build) !void {
+             resources.install();
+             if (i18n) |v| v.install();
+         }
++        if (config.app_runtime == .gtk and !config.emit_exe) {
++            const lib_gtk = try buildpkg.GhosttyLibGtk.initShared(b, &config, &deps);
++            lib_gtk.install();
++            resources.install();
++        }
+     } else if (!config.emit_lib_vt) {
+         // The macOS Ghostty Library
+         //

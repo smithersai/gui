@@ -42,6 +42,31 @@ fn checkGtkDeps(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!v
     }
 }
 
+fn checkBun(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
+    const b = step.owner;
+    const result = std.process.Child.run(.{
+        .allocator = b.allocator,
+        .argv = &.{ "bun", "--version" },
+    }) catch |err| {
+        return step.fail(
+            "bun is required to apply Ghostty embed patches ({s}). Install it with `brew install oven-sh/bun/bun` or `curl -fsSL https://bun.sh/install | bash`.",
+            .{@errorName(err)},
+        );
+    };
+    defer b.allocator.free(result.stdout);
+    defer b.allocator.free(result.stderr);
+    const exit_code = switch (result.term) {
+        .Exited => |code| code,
+        else => 1,
+    };
+    if (exit_code != 0) {
+        return step.fail(
+            "bun is required to apply Ghostty embed patches. Install it with `brew install oven-sh/bun/bun` or `curl -fsSL https://bun.sh/install | bash`.",
+            .{},
+        );
+    }
+}
+
 fn libsmithersExists() bool {
     std.fs.cwd().access("../libsmithers/zig-out/lib/libsmithers.a", .{}) catch return false;
     return true;
@@ -57,6 +82,22 @@ pub fn build(b: *std.Build) void {
         "stub-libsmithers",
         "Link the local no-op libsmithers stub instead of ../libsmithers/zig-out/lib/libsmithers.a",
     ) orelse default_stub;
+
+    const check_bun = b.step("check-bun", "Verify bun is available for Ghostty patching");
+    check_bun.makeFn = checkBun;
+
+    const apply_ghostty_patches = b.addSystemCommand(&.{ "bun", "linux/scripts/apply-ghostty-patches.ts" });
+    apply_ghostty_patches.setCwd(b.path(".."));
+    apply_ghostty_patches.step.dependOn(check_bun);
+
+    const ghostty_gtk_build = b.addSystemCommand(&.{
+        "zig",
+        "build",
+        "-Dapp-runtime=gtk",
+        "-Demit-exe=false",
+    });
+    ghostty_gtk_build.setCwd(b.path("../ghostty"));
+    ghostty_gtk_build.step.dependOn(&apply_ghostty_patches.step);
 
     const exe = b.addExecutable(.{
         .name = "smithers-gtk",
@@ -75,6 +116,10 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .macos) exe.dead_strip_dylibs = true;
     exe.addIncludePath(b.path("../libsmithers/include"));
     addGtkImportsAndLinks(b, exe, target, optimize);
+    exe.addLibraryPath(b.path("../ghostty/zig-out/lib"));
+    exe.root_module.addRPath(b.path("../ghostty/zig-out/lib"));
+    exe.linkSystemLibrary2("ghostty-gtk", dynamic_link_opts);
+    exe.step.dependOn(&ghostty_gtk_build.step);
     const check_gtk = b.step("check-gtk-deps", "Verify pkg-config can find GTK4/libadwaita");
     check_gtk.makeFn = checkGtkDeps;
     exe.step.dependOn(check_gtk);
