@@ -65,13 +65,15 @@ This can freeze the UI during streaming persistence. It can also deadlock if sql
 
 Recommendation: move persistence behind a dedicated actor or queue, or switch to a native SQLite binding. If the process wrapper remains, read stdout/stderr concurrently before `waitUntilExit()`.
 
-### Medium: Codex cancellation cannot interrupt bridge creation
+### Medium (historical, obsolete after 65255682): Codex cancellation cannot interrupt bridge creation
 
-`AgentService.sendMessage` creates the Codex bridge in a detached task at `AgentService.swift:317`, but `CodexBridge` initialization calls into `codex_create_with_options` before any handle is activated. `AgentService.cancel()` at `AgentService.swift:366` can cancel the task and cancel an active bridge, but it has no handle while creation is blocked.
+This finding applied to the deleted `AgentService`/`CodexBridge` flow
+(`codex_create_with_options` before handle activation). That stack was removed
+in commit `65255682`, and the current libsmithers path has no Codex bridge
+create/cancel API, so this issue is not actionable in the current tree.
 
-If FFI bridge creation hangs or is slow, `PLATFORM_CODEX_CANCEL` will not take effect until after creation returns. The code does discard a bridge if activation fails after cancellation, but that still leaves the blocking create call uninterruptible.
-
-Recommendation: add a timeout or cancellation-aware create API at the FFI boundary. At minimum, add a test double for lifecycle creation that blocks until cancelled so the behavior is explicitly documented.
+If Codex streaming is reintroduced, require cancellation-aware create semantics
+and stale-create suppression (ticket 0052 acceptance criteria).
 
 ### Low: The selected default route is hidden inside a collapsed sidebar section
 

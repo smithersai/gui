@@ -67,13 +67,16 @@ If Codex emits a completed command item without an exit code, the UI shows a suc
 
 Recommendation: make `Command.exitCode` optional or add an `.unknown` status. Render "completed" separately from "exit 0" unless the bridge actually provides `exit_code: 0`.
 
-### Medium: FFI callback lifetime depends on a synchronous C contract
+### Medium (historical, obsolete after 65255682): FFI callback lifetime depends on a synchronous C contract
 
-`CodexBridge.send` retains a `CallbackBox`, passes it into `codex_send`, and releases it immediately after `codex_send` returns at `AgentService.swift:68` through `AgentService.swift:80`. This is correct only if `codex_send` never calls the callback after returning. The comment says the method blocks, but the Swift wrapper has no enforcement of that contract.
+This finding applied to the deleted `AgentService` + `CodexBridge` path
+(`codex_send` callback ownership and `codex_cancel` concurrency). Those files
+were removed in commit `65255682` during the libsmithers cutover, so this is
+not actionable in the current tree.
 
-If the C side ever becomes asynchronous, this becomes a use-after-free risk. Cancellation also calls `codex_cancel` from a separate detached task at `AgentService.swift:389` through `AgentService.swift:394`, so the send/cancel thread-safety contract should be explicit.
-
-Recommendation: document the FFI contract next to the C declaration and add a bridge test double for callback lifetime and concurrent cancel. If the C API is not guaranteed synchronous, move the callback box lifetime onto the bridge object and release it from a completion callback.
+If Codex streaming is reintroduced through a new Zig/FFI bridge, re-run this
+review against the new callback lifetime and send/cancel thread-safety
+contract.
 
 ### Low: Send button can be enabled when there is nothing to send
 
