@@ -174,6 +174,8 @@ export fn smithers_app_active_workspace_path(handle: c.smithers_app_t) callconv(
     return makeString(cwd);
 }
 
+export fn smithers_app_remove_recent_workspace(_: c.smithers_app_t, _: [*c]const u8) callconv(.c) void {}
+
 export fn smithers_app_recent_workspaces_json(_: c.smithers_app_t) callconv(.c) c.smithers_string_s {
     return makeString(
         \\[

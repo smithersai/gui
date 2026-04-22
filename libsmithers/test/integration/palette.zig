@@ -91,3 +91,33 @@ test "palette activation reports missing items and dispatches dismiss command" {
     defer h.embedded.smithers_error_free(missing);
     try h.expectError(missing, 404, "not found");
 }
+
+test "palette exposes destination routes and presentation metadata" {
+    const app = h.embedded.smithers_app_new(null).?;
+    defer h.embedded.smithers_app_free(app);
+
+    const palette = h.embedded.smithers_palette_new(app).?;
+    defer h.embedded.smithers_palette_free(palette);
+
+    h.embedded.smithers_palette_set_mode(palette, .all);
+    h.embedded.smithers_palette_set_query(palette, "settings");
+
+    const items = h.embedded.smithers_palette_items_json(palette);
+    defer h.embedded.smithers_string_free(items);
+
+    var parsed = try h.expectJsonArray(h.stringSlice(items));
+    defer parsed.deinit();
+
+    var found_settings = false;
+    for (parsed.value.array.items) |item| {
+        const object = item.object;
+        if (!std.mem.eql(u8, object.get("id").?.string, "route:settings")) continue;
+        found_settings = true;
+        try std.testing.expectEqualStrings("Settings", object.get("title").?.string);
+        try std.testing.expectEqualStrings("Navigate to Settings.", object.get("subtitle").?.string);
+        try std.testing.expectEqualStrings("destination", object.get("kind").?.string);
+        try std.testing.expectEqualStrings("Destinations", object.get("section").?.string);
+    }
+
+    try std.testing.expect(found_settings);
+}

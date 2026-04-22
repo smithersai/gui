@@ -111,6 +111,7 @@ pub const RuntimeConfig = extern struct {
     write_clipboard: ?*const fn (Userdata, ?[*:0]const u8) callconv(.c) void = null,
     state_changed: ?*const fn (Userdata) callconv(.c) void = null,
     log: ?*const fn (Userdata, i32, ?[*:0]const u8) callconv(.c) void = null,
+    recents_db_path: ?[*:0]const u8 = null,
 };
 
 pub const Info = extern struct {
@@ -172,6 +173,7 @@ pub extern fn smithers_app_open_workspace(app: App, path: ?[*:0]const u8) Worksp
 pub extern fn smithers_app_close_workspace(app: App, ws: Workspace) void;
 pub extern fn smithers_app_active_workspace_path(app: App) String;
 pub extern fn smithers_app_recent_workspaces_json(app: App) String;
+pub extern fn smithers_app_remove_recent_workspace(app: App, path: ?[*:0]const u8) void;
 
 pub extern fn smithers_session_new(app: App, opts: SessionOptions) Session;
 pub extern fn smithers_session_free(session: Session) void;

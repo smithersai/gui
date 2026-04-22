@@ -225,6 +225,10 @@ typedef struct {
 
   // Optional logging sink. Level: 0=trace,1=debug,2=info,3=warn,4=error.
   void (*log)(smithers_userdata_t, int32_t level, const char *msg);
+
+  // Optional path to the sqlite database used to persist app-level state
+  // (recent workspaces, etc.). When null, state is kept in-memory only.
+  const char *recents_db_path;
 } smithers_runtime_config_s;
 
 //------------------------------------------------------------------------------
@@ -257,6 +261,7 @@ SMITHERS_API smithers_workspace_t smithers_app_open_workspace(smithers_app_t app
 SMITHERS_API void smithers_app_close_workspace(smithers_app_t app, smithers_workspace_t ws);
 SMITHERS_API smithers_string_s smithers_app_active_workspace_path(smithers_app_t app);
 SMITHERS_API smithers_string_s smithers_app_recent_workspaces_json(smithers_app_t app);
+SMITHERS_API void smithers_app_remove_recent_workspace(smithers_app_t app, const char *path);
 
 //------------------------------------------------------------------------------
 // Session (one tab/run/terminal/chat surface)

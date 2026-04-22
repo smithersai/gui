@@ -152,7 +152,7 @@ test "client reports unsupported methods as errors" {
     try std.testing.expectEqualStrings("null", std.mem.sliceTo(result.ptr.?, 0));
 }
 
-test "client typed fallbacks preserve required identifiers" {
+test "client does not synthesize typed fallbacks" {
     const app = embedded.smithers_app_new(null).?;
     defer embedded.smithers_app_free(app);
     const client = embedded.smithers_client_new(app).?;
@@ -162,9 +162,8 @@ test "client typed fallbacks preserve required identifiers" {
     const result = embedded.smithers_client_call(client, "inspectRun", "{\"runId\":\"run-123\"}", &err);
     defer embedded.smithers_string_free(result);
     defer embedded.smithers_error_free(err);
-    try std.testing.expectEqual(@as(i32, 0), err.code);
-    const json = std.mem.sliceTo(result.ptr.?, 0);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"runId\":\"run-123\"") != null);
+    try std.testing.expect(err.code != 0);
+    try std.testing.expectEqualStrings("null", std.mem.sliceTo(result.ptr.?, 0));
 }
 
 test "client local project helpers read and write workspace files" {

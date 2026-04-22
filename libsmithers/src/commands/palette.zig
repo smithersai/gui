@@ -18,6 +18,8 @@ const Candidate = struct {
     title: []u8,
     subtitle: []u8,
     kind: []u8,
+    section: ?[]u8 = null,
+    shortcut: ?[]u8 = null,
     score: i32,
 
     fn deinit(self: Candidate, allocator: std.mem.Allocator) void {
@@ -25,7 +27,90 @@ const Candidate = struct {
         allocator.free(self.title);
         allocator.free(self.subtitle);
         allocator.free(self.kind);
+        if (self.section) |value| allocator.free(value);
+        if (self.shortcut) |value| allocator.free(value);
     }
+};
+
+const AddOptions = struct {
+    section: ?[]const u8 = null,
+    shortcut: ?[]const u8 = null,
+};
+
+const ItemMeta = struct {
+    id: []const u8,
+    title: []const u8,
+    subtitle: []const u8,
+    kind: []const u8,
+    base: i32,
+    options: AddOptions = .{},
+};
+
+const command_items = [_]ItemMeta{
+    .{
+        .id = "command.ask-ai",
+        .title = "Ask AI",
+        .subtitle = "Open the launcher in Ask AI mode.",
+        .kind = "command",
+        .base = 10,
+        .options = .{ .section = "Commands", .shortcut = "Cmd+K" },
+    },
+    .{
+        .id = "command.new-terminal",
+        .title = "New Terminal Workspace",
+        .subtitle = "Create a new terminal workspace and make it active.",
+        .kind = "command",
+        .base = 10,
+        .options = .{ .section = "Commands", .shortcut = "Cmd+N" },
+    },
+    .{
+        .id = "command.close-workspace",
+        .title = "Close Current Workspace",
+        .subtitle = "Close the active chat/run/terminal workspace when applicable.",
+        .kind = "command",
+        .base = 10,
+        .options = .{ .section = "Commands", .shortcut = "Cmd+W" },
+    },
+    .{
+        .id = "command.global-search",
+        .title = "Global Search",
+        .subtitle = "Open the global search route.",
+        .kind = "command",
+        .base = 10,
+        .options = .{ .section = "Commands", .shortcut = "Cmd+Shift+F" },
+    },
+    .{
+        .id = "command.refresh",
+        .title = "Refresh Current View",
+        .subtitle = "Reload the active route view.",
+        .kind = "command",
+        .base = 10,
+        .options = .{ .section = "Commands", .shortcut = "Cmd+R" },
+    },
+    .{
+        .id = "command.cancel",
+        .title = "Cancel Current Operation",
+        .subtitle = "Stop an active chat turn or running workflow action.",
+        .kind = "command",
+        .base = 10,
+        .options = .{ .section = "Commands", .shortcut = "Cmd+." },
+    },
+};
+
+const destination_items = [_]ItemMeta{
+    .{ .id = "route:dashboard", .title = "Dashboard", .subtitle = "Navigate to Dashboard.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:triggers", .title = "Triggers", .subtitle = "Navigate to Triggers.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:approvals", .title = "Approvals", .subtitle = "Navigate to Approvals.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:prompts", .title = "Prompts", .subtitle = "Navigate to Prompts.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:scores", .title = "Scores", .subtitle = "Navigate to Scores.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:memory", .title = "Memory", .subtitle = "Navigate to Memory.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:workspaces", .title = "Workspaces", .subtitle = "Navigate to Workspaces.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:changes", .title = "Changes", .subtitle = "Navigate to Changes.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:jjhub-workflows", .title = "JJHub Workflows", .subtitle = "Navigate to JJHub Workflows.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:landings", .title = "Landings", .subtitle = "Navigate to Landings.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:tickets", .title = "Tickets", .subtitle = "Navigate to Tickets.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:issues", .title = "Issues", .subtitle = "Navigate to Issues.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:settings", .title = "Settings", .subtitle = "Navigate to Settings.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations", .shortcut = "Cmd+," } },
 };
 
 pub fn create(app: *App) !*Palette {
@@ -83,6 +168,8 @@ pub fn itemsJson(self: *Palette) structs.String {
         title: []const u8,
         subtitle: []const u8,
         kind: []const u8,
+        section: ?[]const u8,
+        shortcut: ?[]const u8,
         score: i32,
     };
     var out_items = self.allocator.alloc(JsonItem, items.items.len) catch return ffi.stringDup("[]");
@@ -93,6 +180,8 @@ pub fn itemsJson(self: *Palette) structs.String {
             .title = item.title,
             .subtitle = item.subtitle,
             .kind = item.kind,
+            .section = item.section,
+            .shortcut = item.shortcut,
             .score = item.score,
         };
     }
@@ -127,12 +216,7 @@ fn collect(self: *Palette, mode: structs.PaletteMode, query: []const u8, items: 
     const include_workflows = mode == .all or mode == .workflows;
 
     if (include_commands) {
-        try add(items, self.allocator, "command.ask-ai", "Ask AI", "Open the launcher in Ask AI mode.", "command", 10, query);
-        try add(items, self.allocator, "command.new-terminal", "New Terminal Workspace", "Create a new terminal workspace and make it active.", "command", 10, query);
-        try add(items, self.allocator, "command.close-workspace", "Close Current Workspace", "Close the active chat/run/terminal workspace when applicable.", "command", 10, query);
-        try add(items, self.allocator, "command.global-search", "Global Search", "Open the global search route.", "command", 10, query);
-        try add(items, self.allocator, "command.refresh", "Refresh Current View", "Reload the active route view.", "command", 10, query);
-        try add(items, self.allocator, "command.cancel", "Cancel Current Operation", "Stop an active chat turn or running workflow action.", "command", 10, query);
+        for (command_items) |item| try addMeta(items, self.allocator, item, query);
 
         var slash_matches = std.ArrayList(slash.Command).empty;
         defer slash_matches.deinit(self.allocator);
@@ -142,8 +226,12 @@ fn collect(self: *Palette, mode: structs.PaletteMode, query: []const u8, items: 
             defer self.allocator.free(id);
             const title = try std.fmt.allocPrint(self.allocator, "/{s}", .{cmd.name});
             defer self.allocator.free(title);
-            try add(items, self.allocator, id, title, cmd.description, "slash", 20, query);
+            try add(items, self.allocator, id, title, cmd.description, "slash", 20, query, .{ .section = "Slash Commands" });
         }
+    }
+
+    if (mode == .all) {
+        for (destination_items) |item| try addMeta(items, self.allocator, item, query);
     }
 
     if (include_workspaces) {
@@ -152,17 +240,17 @@ fn collect(self: *Palette, mode: structs.PaletteMode, query: []const u8, items: 
         for (recents) |recent| {
             const id = try std.fmt.allocPrint(self.allocator, "workspace:{s}", .{recent.path});
             defer self.allocator.free(id);
-            try add(items, self.allocator, id, recent.display_name, recent.path, "workspace", 30, query);
+            try add(items, self.allocator, id, recent.display_name, recent.path, "workspace", 30, query, .{ .section = "Workspaces" });
         }
     }
 
     if (include_files) try self.collectFiles(query, items);
 
     if (include_runs) {
-        try add(items, self.allocator, "runs.active", "Active Runs", "Browse running and waiting Smithers runs.", "runs", 60, query);
+        try add(items, self.allocator, "route:runs", "Runs", "Navigate to Runs.", "destination", 20, query, .{ .section = "Destinations" });
     }
     if (include_workflows) {
-        try add(items, self.allocator, "workflows.local", "Local Workflows", "Browse registered Smithers workflows.", "workflow", 50, query);
+        try add(items, self.allocator, "route:workflows", "Workflows", "Navigate to Workflows.", "destination", 20, query, .{ .section = "Destinations" });
     }
 }
 
@@ -179,9 +267,18 @@ fn collectFiles(self: *Palette, query: []const u8, items: *std.ArrayList(Candida
         if (entry.kind == .directory and std.mem.startsWith(u8, entry.name, ".")) continue;
         const id = try std.fmt.allocPrint(self.allocator, "file:{s}/{s}", .{ root, entry.name });
         defer self.allocator.free(id);
-        try add(items, self.allocator, id, entry.name, root, "file", 40, query);
+        try add(items, self.allocator, id, entry.name, root, "file", 40, query, .{ .section = "Files" });
         count += 1;
     }
+}
+
+fn addMeta(
+    items: *std.ArrayList(Candidate),
+    allocator: std.mem.Allocator,
+    item: ItemMeta,
+    query: []const u8,
+) !void {
+    try add(items, allocator, item.id, item.title, item.subtitle, item.kind, item.base, query, item.options);
 }
 
 fn add(
@@ -193,6 +290,7 @@ fn add(
     kind: []const u8,
     base: i32,
     query: []const u8,
+    options: AddOptions,
 ) !void {
     const maybe_score = try score(allocator, title, subtitle, query, base);
     const final_score = maybe_score orelse return;
@@ -201,6 +299,8 @@ fn add(
         .title = undefined,
         .subtitle = undefined,
         .kind = undefined,
+        .section = null,
+        .shortcut = null,
         .score = final_score,
     };
     errdefer allocator.free(candidate.id);
@@ -210,6 +310,14 @@ fn add(
     errdefer allocator.free(candidate.subtitle);
     candidate.kind = try allocator.dupe(u8, kind);
     errdefer allocator.free(candidate.kind);
+    if (options.section) |section| {
+        candidate.section = try allocator.dupe(u8, section);
+        errdefer if (candidate.section) |value| allocator.free(value);
+    }
+    if (options.shortcut) |shortcut| {
+        candidate.shortcut = try allocator.dupe(u8, shortcut);
+        errdefer if (candidate.shortcut) |value| allocator.free(value);
+    }
     try items.append(allocator, candidate);
 }
 

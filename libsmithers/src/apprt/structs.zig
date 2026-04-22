@@ -103,6 +103,7 @@ pub const RuntimeConfig = extern struct {
     write_clipboard: ?*const fn (?*anyopaque, ?[*:0]const u8) callconv(.c) void = null,
     state_changed: ?*const fn (?*anyopaque) callconv(.c) void = null,
     log: ?*const fn (?*anyopaque, i32, ?[*:0]const u8) callconv(.c) void = null,
+    recents_db_path: ?[*:0]const u8 = null,
 };
 
 // keep in sync: smithers_info_s

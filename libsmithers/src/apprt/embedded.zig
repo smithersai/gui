@@ -75,6 +75,11 @@ pub export fn smithers_app_recent_workspaces_json(app: ?*App) structs.String {
     return if (app) |ptr| ptr.recentWorkspacesJson() else ffi.stringDup("[]");
 }
 
+pub export fn smithers_app_remove_recent_workspace(app: ?*App, path: ?[*:0]const u8) void {
+    const ptr = app orelse return;
+    ptr.removeRecent(ffi.spanZ(path));
+}
+
 pub export fn smithers_session_new(app: ?*App, opts: structs.SessionOptions) ?*Session {
     const ptr = app orelse return null;
     return Session.create(ptr, opts) catch null;

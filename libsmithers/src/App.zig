@@ -6,6 +6,7 @@ const cwd = @import("workspace/cwd.zig");
 const manager = @import("workspace/manager.zig");
 
 const Session = @import("session/session.zig");
+const Persistence = @import("persistence/sqlite.zig");
 
 pub const Workspace = struct {
     path: []u8,
@@ -27,6 +28,8 @@ workspaces: std.ArrayList(*Workspace) = .empty,
 sessions: std.ArrayList(*Session) = .empty,
 recents: std.ArrayList(RecentWorkspace) = .empty,
 active_workspace: ?*Workspace = null,
+persistence: ?*Persistence = null,
+pending_session_restores: std.ArrayList([]u8) = .empty,
 
 pub fn create(allocator: std.mem.Allocator, runtime: structs.RuntimeConfig) !*App {
     const app = try allocator.create(App);
@@ -34,7 +37,39 @@ pub fn create(allocator: std.mem.Allocator, runtime: structs.RuntimeConfig) !*Ap
         .allocator = allocator,
         .runtime = runtime,
     };
+    if (runtime.recents_db_path) |db_path| {
+        const path_slice = std.mem.sliceTo(db_path, 0);
+        if (Persistence.open(allocator, path_slice)) |p| {
+            app.persistence = p;
+            app.hydrateRecentsFromPersistence() catch {
+                app.log(3, "failed to hydrate recents from persistence");
+            };
+        } else |_| {
+            app.log(3, "failed to open recents persistence");
+        }
+    }
     return app;
+}
+
+fn hydrateRecentsFromPersistence(self: *App) !void {
+    const p = self.persistence orelse return;
+    const rows = try p.loadRecents(self.allocator);
+    defer Persistence.freeRecents(self.allocator, rows);
+
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    try self.recents.ensureUnusedCapacity(self.allocator, rows.len);
+    for (rows) |row| {
+        const path_copy = try self.allocator.dupe(u8, row.path);
+        errdefer self.allocator.free(path_copy);
+        const display_copy = try self.allocator.dupe(u8, row.display_name);
+        errdefer self.allocator.free(display_copy);
+        self.recents.appendAssumeCapacity(.{
+            .path = path_copy,
+            .display_name = display_copy,
+            .last_opened = row.last_opened,
+        });
+    }
 }
 
 pub fn destroy(self: *App) void {
@@ -51,13 +86,27 @@ pub fn destroy(self: *App) void {
         self.allocator.free(recent.path);
         self.allocator.free(recent.display_name);
     }
+    for (self.pending_session_restores.items) |path| {
+        self.allocator.free(path);
+    }
+    self.pending_session_restores.deinit(self.allocator);
     self.recents.deinit(self.allocator);
     self.sessions.deinit(self.allocator);
+    if (self.persistence) |p| p.close();
     self.allocator.destroy(self);
 }
 
 pub fn tick(self: *App) void {
-    _ = self;
+    while (true) {
+        const workspace_path = blk: {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            if (self.pending_session_restores.items.len == 0) return;
+            break :blk self.pending_session_restores.orderedRemove(0);
+        };
+        defer self.allocator.free(workspace_path);
+        self.restorePersistedChatSessions(workspace_path);
+    }
 }
 
 pub fn userdata(self: *const App) ?*anyopaque {
@@ -75,6 +124,7 @@ pub fn openWorkspace(self: *App, requested_path: []const u8) !*Workspace {
     const resolved = try cwd.resolve(self.allocator, requested_path);
     var owns_resolved = true;
     errdefer if (owns_resolved) self.allocator.free(resolved);
+    var should_restore_sessions = false;
 
     self.mutex.lock();
     errdefer self.mutex.unlock();
@@ -97,6 +147,7 @@ pub fn openWorkspace(self: *App, requested_path: []const u8) !*Workspace {
         self.workspaces.appendAssumeCapacity(created);
         owns_resolved = false;
         self.active_workspace = created;
+        should_restore_sessions = true;
         break :blk created;
     };
     self.mutex.unlock();
@@ -104,6 +155,7 @@ pub fn openWorkspace(self: *App, requested_path: []const u8) !*Workspace {
     defer self.allocator.free(action_path);
 
     _ = self.performAction(.{ .app = self }, .{ .open_workspace = action_path });
+    if (should_restore_sessions) self.queueSessionRestore(action_path);
     self.notifyStateChanged();
     return ws;
 }
@@ -195,6 +247,28 @@ pub fn unregisterSession(self: *App, session: *Session) void {
     }
 }
 
+pub fn upsertPersistedChatSession(self: *App, session: *const Session) void {
+    const persistence = self.persistence orelse return;
+    const record = session.persistedRecord() orelse return;
+
+    var out: std.Io.Writer.Allocating = .init(self.allocator);
+    defer out.deinit();
+    std.json.Stringify.value(record, .{}, &out.writer) catch |err| {
+        self.logPersistedSessionError("failed to encode persisted chat session", err);
+        return;
+    };
+
+    persistence.upsertChatSession(
+        record.@"workspacePath",
+        record.id,
+        out.written(),
+        record.@"createdAtMs",
+        record.@"updatedAtMs",
+    ) catch |err| {
+        self.logPersistedSessionError("failed to save persisted chat session", err);
+    };
+}
+
 pub fn performAction(self: *App, target: action.Target, act: action.Action) bool {
     const cb = self.runtime.action orelse return false;
     var c_action = act.cvalAlloc(self.allocator) catch return false;
@@ -281,10 +355,11 @@ fn upsertRecentLocked(self: *App, path: []const u8) !void {
         i += 1;
     }
 
+    const now = manager.nowSeconds();
     self.recents.insertAssumeCapacity(0, .{
         .path = path_copy,
         .display_name = display_copy,
-        .last_opened = manager.nowSeconds(),
+        .last_opened = now,
     });
 
     while (self.recents.items.len > 20) {
@@ -292,6 +367,91 @@ fn upsertRecentLocked(self: *App, path: []const u8) !void {
         self.allocator.free(removed.path);
         self.allocator.free(removed.display_name);
     }
+
+    if (self.persistence) |p| {
+        p.upsertRecent(path, display, now) catch {
+            self.log(3, "failed to persist recent workspace");
+        };
+    }
+}
+
+fn queueSessionRestore(self: *App, workspace_path: []const u8) void {
+    const owned = self.allocator.dupe(u8, workspace_path) catch return;
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    self.pending_session_restores.append(self.allocator, owned) catch {
+        self.allocator.free(owned);
+    };
+}
+
+fn restorePersistedChatSessions(self: *App, workspace_path: []const u8) void {
+    const persistence = self.persistence orelse return;
+    const rows = persistence.loadChatSessions(self.allocator, workspace_path) catch |err| {
+        self.logPersistedSessionError("failed to load restored chat sessions", err);
+        return;
+    };
+    defer Persistence.freeChatSessions(self.allocator, rows);
+
+    for (rows) |row| {
+        var parsed = std.json.parseFromSlice(Session.PersistedRecord, self.allocator, row.session_json, .{
+            .ignore_unknown_fields = true,
+        }) catch |err| {
+            self.logPersistedSessionError("failed to parse restored chat session", err);
+            continue;
+        };
+        defer parsed.deinit();
+
+        const record = parsed.value;
+        if (record.kind != .chat) continue;
+        if (!std.mem.eql(u8, record.@"workspacePath", workspace_path)) continue;
+        if (self.hasLivePersistedSession(workspace_path, record.id)) continue;
+        _ = Session.createRestored(self, record) catch |err| {
+            self.logPersistedSessionError("failed to restore persisted chat session", err);
+        };
+    }
+}
+
+fn hasLivePersistedSession(self: *App, workspace_path: []const u8, id: []const u8) bool {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    for (self.sessions.items) |session| {
+        const session_workspace = session.workspacePath() orelse continue;
+        if (!std.mem.eql(u8, session_workspace, workspace_path)) continue;
+        if (session.matchesPersistedID(id)) return true;
+    }
+    return false;
+}
+
+fn logPersistedSessionError(self: *App, prefix: []const u8, err: anyerror) void {
+    const message = std.fmt.allocPrint(self.allocator, "{s}: {}", .{ prefix, err }) catch return;
+    defer self.allocator.free(message);
+    self.log(3, message);
+}
+
+pub fn removeRecent(self: *App, path: []const u8) void {
+    var did_remove = false;
+    self.mutex.lock();
+    var i: usize = 0;
+    while (i < self.recents.items.len) {
+        if (std.mem.eql(u8, self.recents.items[i].path, path)) {
+            const removed = self.recents.orderedRemove(i);
+            self.allocator.free(removed.path);
+            self.allocator.free(removed.display_name);
+            did_remove = true;
+            continue;
+        }
+        i += 1;
+    }
+    const maybe_persistence = self.persistence;
+    self.mutex.unlock();
+
+    if (maybe_persistence) |p| {
+        p.removeRecent(path) catch {
+            self.log(3, "failed to persist recent workspace removal");
+        };
+    }
+
+    if (did_remove) self.notifyStateChanged();
 }
 
 test "app opens valid workspace and records recent" {

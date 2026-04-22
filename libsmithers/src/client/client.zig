@@ -6,6 +6,7 @@ const App = @import("../App.zig");
 const devtools = @import("../devtools/DevToolsClient.zig");
 const models = @import("../models/mod.zig");
 const terminal = @import("../terminal/tmux.zig");
+const agents = @import("agents.zig");
 
 pub const Client = @This();
 
@@ -62,6 +63,16 @@ fn callImpl(self: *Client, method: []const u8, args_json: []const u8) !structs.S
         defer self.allocator.free(resolved);
         return ffi.stringJson(.{ .path = resolved });
     }
+    if (std.mem.eql(u8, method, "listAgents")) {
+        const json = try agents.detect(
+            self.allocator,
+            std.posix.getenv("PATH"),
+            std.posix.getenv("HOME"),
+            agents.processEnvLookup,
+        );
+        defer self.allocator.free(json);
+        return ffi.stringDup(json);
+    }
     if (try terminal.call(self.allocator, method, parsed.value)) |json| {
         defer self.allocator.free(json);
         return ffi.stringDup(json);
@@ -84,11 +95,6 @@ fn callImpl(self: *Client, method: []const u8, args_json: []const u8) !structs.S
         return ffi.stringDup(json);
     }
 
-    if (try dynamicFallback(self.allocator, method, parsed.value)) |json| {
-        defer self.allocator.free(json);
-        return ffi.stringDup(json);
-    }
-    if (staticFallback(method)) |json| return ffi.stringDup(json);
     return error.UnsupportedMethod;
 }
 
@@ -141,124 +147,6 @@ fn maybeMockResult(allocator: std.mem.Allocator, value: std.json.Value) !?[]u8 {
     return null;
 }
 
-fn dynamicFallback(allocator: std.mem.Allocator, method: []const u8, args: std.json.Value) !?[]u8 {
-    if (std.mem.eql(u8, method, "inspectRun")) {
-        const run_id = nonEmptyJsonString(args, "runId") orelse "unknown";
-        return try std.fmt.allocPrint(
-            allocator,
-            "{{\"run\":{{\"runId\":{f},\"workflowName\":null,\"workflowPath\":null,\"status\":\"unknown\",\"startedAtMs\":null,\"finishedAtMs\":null,\"summary\":null,\"errorJson\":null}},\"tasks\":[]}}",
-            .{std.json.fmt(run_id, .{})},
-        );
-    }
-    if (std.mem.eql(u8, method, "getSQLTableSchema")) {
-        const table_name = nonEmptyJsonString(args, "tableName") orelse "";
-        return try std.fmt.allocPrint(allocator, "{{\"tableName\":{f},\"columns\":[]}}", .{std.json.fmt(table_name, .{})});
-    }
-    return null;
-}
-
-fn nonEmptyJsonString(value: std.json.Value, key: []const u8) ?[]const u8 {
-    const found = ffi.jsonObjectString(value, key) orelse return null;
-    return if (found.len > 0) found else null;
-}
-
-// TODO(libsmithers-client-transport-parity): replace these typed compatibility
-// fallbacks with real Smithers/JJHub daemon methods as the transport surface
-// lands. Unknown methods intentionally error instead of silently echoing.
-fn staticFallback(method: []const u8) ?[]const u8 {
-    const methods = [_][]const u8{
-        "listWorkflows",
-        "listRuns",
-        "listAgents",
-        "listMemoryFacts",
-        "listAllMemoryFacts",
-        "recallMemory",
-        "listRecentScores",
-        "aggregateScores",
-        "listTickets",
-        "searchTickets",
-        "listPrompts",
-        "listSnapshots",
-        "listJJHubWorkflows",
-        "listChanges",
-        "listLandings",
-        "listIssues",
-        "listWorkspaces",
-        "listWorkspaceSnapshots",
-        "listSQLTables",
-        "listCrons",
-        "listPendingApprovals",
-        "listRecentDecisions",
-        "runWorkflowDoctor",
-        "search",
-    };
-    for (methods) |candidate| if (std.mem.eql(u8, method, candidate)) return "[]";
-
-    const ok_methods = [_][]const u8{
-        "approveNode",
-        "denyNode",
-        "cancelRun",
-        "updatePrompt",
-        "deleteTicket",
-        "saveWorkflowSource",
-        "triggerJJHubWorkflow",
-        "deleteBookmark",
-        "landLanding",
-        "reviewLanding",
-        "toggleCron",
-        "deleteCron",
-        "deleteWorkspace",
-        "suspendWorkspace",
-        "resumeWorkspace",
-        "deleteWorkspaceSnapshot",
-    };
-    for (ok_methods) |candidate| if (std.mem.eql(u8, method, candidate)) return "{\"ok\":true}";
-
-    if (std.mem.eql(u8, method, "runWorkflow")) return "{\"runId\":\"\",\"status\":\"queued\"}";
-    if (std.mem.eql(u8, method, "getCurrentRepo")) return "{\"name\":\"\",\"owner\":null}";
-    if (std.mem.eql(u8, method, "getWorkflowDAG")) {
-        return "{\"workflowID\":null,\"mode\":null,\"runId\":null,\"frameNo\":null,\"xml\":null,\"tasks\":[],\"graphEdges\":null,\"entryTask\":null,\"entryTaskID\":null,\"fields\":null,\"message\":null}";
-    }
-    if (std.mem.eql(u8, method, "getDevToolsSnapshot")) {
-        return "{\"runId\":\"\",\"frameNo\":0,\"seq\":0,\"root\":{\"id\":0,\"type\":\"workflow\",\"name\":\"Workflow\",\"props\":{},\"task\":null,\"children\":[],\"depth\":0}}";
-    }
-    if (std.mem.eql(u8, method, "jumpToFrame")) {
-        return "{\"ok\":true,\"newFrameNo\":0,\"revertedSandboxes\":0,\"deletedFrames\":0,\"deletedAttempts\":0,\"invalidatedDiffs\":0,\"durationMs\":0}";
-    }
-    if (std.mem.eql(u8, method, "getNodeOutput")) return "{\"status\":\"pending\",\"row\":null,\"schema\":null,\"partial\":null}";
-    if (std.mem.eql(u8, method, "getNodeDiff")) return "{\"seq\":0,\"baseRef\":\"\",\"patches\":[]}";
-    if (std.mem.eql(u8, method, "hijackRun")) {
-        return "{\"runId\":\"\",\"agentEngine\":\"smithers\",\"agentBinary\":\"smithers\",\"resumeToken\":\"\",\"cwd\":\"\",\"supportsResume\":false,\"launchCommand\":null,\"launchArgs\":[],\"mode\":null,\"resumeCommand\":null}";
-    }
-    if (std.mem.eql(u8, method, "runQuickLaunchParser")) return "{\"inputs\":{},\"notes\":\"\",\"parseRunId\":\"\"}";
-    if (std.mem.eql(u8, method, "getTokenUsageMetrics")) {
-        return "{\"totalInputTokens\":0,\"totalOutputTokens\":0,\"totalTokens\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0,\"byPeriod\":[]}";
-    }
-    if (std.mem.eql(u8, method, "getLatencyMetrics")) {
-        return "{\"count\":0,\"meanMs\":0,\"minMs\":0,\"maxMs\":0,\"p50Ms\":0,\"p95Ms\":0,\"byPeriod\":[]}";
-    }
-    if (std.mem.eql(u8, method, "getCostTracking")) {
-        return "{\"totalCostUsd\":0,\"inputCostUsd\":0,\"outputCostUsd\":0,\"runCount\":0,\"byPeriod\":[]}";
-    }
-    if (std.mem.eql(u8, method, "executeSQL")) return "{\"columns\":[],\"rows\":[]}";
-    if (std.mem.eql(u8, method, "codexAuthState")) {
-        return "{\"authenticated\":false,\"account\":null,\"expiresAt\":null,\"hasCodexCLI\":false,\"codexCLIPath\":null,\"hasAuthFile\":false,\"hasAPIKey\":false,\"authFilePath\":\"\"}";
-    }
-    if (std.mem.eql(u8, method, "getOrchestratorVersion")) return "\"0.0.0\"";
-    if (std.mem.eql(u8, method, "status") or
-        std.mem.eql(u8, method, "changeDiff") or
-        std.mem.eql(u8, method, "workingCopyDiff") or
-        std.mem.eql(u8, method, "landingDiff") or
-        std.mem.eql(u8, method, "landingChecks") or
-        std.mem.eql(u8, method, "previewPrompt") or
-        std.mem.eql(u8, method, "readWorkflowSource") or
-        std.mem.eql(u8, method, "rerunRun"))
-    {
-        return "\"\"";
-    }
-    return null;
-}
-
 fn cliFallback(self: *Client, method: []const u8, args: std.json.Value) !?[]u8 {
     const argv = try cliArgsFor(self.allocator, method, args);
     defer {
@@ -277,10 +165,10 @@ fn cliFallback(self: *Client, method: []const u8, args: std.json.Value) !?[]u8 {
         .argv = actual,
         .cwd = cwd,
         .max_output_bytes = 2 * 1024 * 1024,
-    }) catch return null;
+    }) catch |err| return err;
     defer self.allocator.free(result.stdout);
     defer self.allocator.free(result.stderr);
-    if (result.term != .Exited or result.term.Exited != 0) return null;
+    if (result.term != .Exited or result.term.Exited != 0) return error.CliInvocationFailed;
 
     return try normalizeCliOutput(self.allocator, method, result.stdout);
 }
@@ -291,10 +179,7 @@ fn normalizeCliOutput(allocator: std.mem.Allocator, method: []const u8, stdout: 
         return jsonStringAlloc(allocator, trimmed);
     }
     if (std.mem.eql(u8, method, "runWorkflow")) {
-        if (trimmed.len == 0) return try allocator.dupe(u8, "{\"runId\":\"\",\"status\":\"queued\"}");
-        if (std.mem.startsWith(u8, trimmed, "run-") or std.mem.indexOfScalar(u8, trimmed, '\n') == null) {
-            return try std.fmt.allocPrint(allocator, "{{\"runId\":{f},\"status\":\"queued\"}}", .{std.json.fmt(trimmed, .{})});
-        }
+        return normalizeRunWorkflowOutput(allocator, trimmed);
     }
     if (trimmed.len == 0) return try allocator.dupe(u8, "{}");
     var parsed = std.json.parseFromSlice(std.json.Value, allocator, trimmed, .{}) catch {
@@ -302,6 +187,37 @@ fn normalizeCliOutput(allocator: std.mem.Allocator, method: []const u8, stdout: 
     };
     defer parsed.deinit();
     return try jsonValueAlloc(allocator, parsed.value);
+}
+
+fn normalizeRunWorkflowOutput(allocator: std.mem.Allocator, trimmed: []const u8) ![]u8 {
+    if (trimmed.len == 0) return error.EmptyCliOutput;
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, trimmed, .{}) catch {
+        return runIdJson(allocator, trimmed);
+    };
+    defer parsed.deinit();
+
+    switch (parsed.value) {
+        .string => |run_id| return runIdJson(allocator, run_id),
+        .object => |object| {
+            if (object.get("runId") != null or object.get("run_id") != null or object.get("id") != null) {
+                return try jsonValueAlloc(allocator, parsed.value);
+            }
+            if (object.get("data")) |data| {
+                if (data == .object and (data.object.get("runId") != null or data.object.get("run_id") != null or data.object.get("id") != null)) {
+                    return try jsonValueAlloc(allocator, parsed.value);
+                }
+            }
+            return error.MissingRunId;
+        },
+        else => return error.MissingRunId,
+    }
+}
+
+fn runIdJson(allocator: std.mem.Allocator, run_id: []const u8) ![]u8 {
+    const clean = std.mem.trim(u8, run_id, &std.ascii.whitespace);
+    if (clean.len == 0) return error.EmptyRunId;
+    return try std.fmt.allocPrint(allocator, "{{\"runId\":{f},\"status\":\"queued\"}}", .{std.json.fmt(clean, .{})});
 }
 
 fn cliArgsFor(allocator: std.mem.Allocator, method: []const u8, args: std.json.Value) !?[][]const u8 {
@@ -320,6 +236,9 @@ fn cliArgsFor(allocator: std.mem.Allocator, method: []const u8, args: std.json.V
     } else if (std.mem.eql(u8, method, "inspectRun")) {
         const run_id = ffi.jsonObjectString(args, "runId") orelse return null;
         try appendArgs(allocator, &list, &.{ "smithers", "inspect", run_id, "--format", "json" });
+    } else if (std.mem.eql(u8, method, "runWorkflowDoctor")) {
+        const workflow_path = ffi.jsonObjectString(args, "workflowPath") orelse return null;
+        try appendArgs(allocator, &list, &.{ "smithers", "workflow", "doctor", workflow_path, "--format", "json" });
     } else if (std.mem.eql(u8, method, "getWorkflowDAG")) {
         const workflow_path = ffi.jsonObjectString(args, "workflowPath") orelse return null;
         try appendArgs(allocator, &list, &.{ "smithers", "graph", workflow_path, "--format", "json" });
@@ -328,6 +247,10 @@ fn cliArgsFor(allocator: std.mem.Allocator, method: []const u8, args: std.json.V
         const workflow_path = ffi.jsonObjectString(args, "workflowPath") orelse return null;
         try appendArgs(allocator, &list, &.{ "smithers", "up", workflow_path, "--detach", "true", "--format", "json" });
         try appendJsonOption(allocator, &list, "--input", jsonObjectValue(args, "inputs"));
+    } else if (std.mem.eql(u8, method, "createChat")) {
+        const agent = ffi.jsonObjectString(args, "agent") orelse return null;
+        try appendArgs(allocator, &list, &.{ "smithers", "chat", "create", "--agent", agent, "--format", "json" });
+        if (ffi.jsonObjectString(args, "cwd")) |cwd| try appendArgs(allocator, &list, &.{ "--cwd", cwd });
     } else if (std.mem.eql(u8, method, "approveNode")) {
         try appendApprovalArgs(allocator, &list, "approve", args, "note");
     } else if (std.mem.eql(u8, method, "denyNode")) {
@@ -335,12 +258,26 @@ fn cliArgsFor(allocator: std.mem.Allocator, method: []const u8, args: std.json.V
     } else if (std.mem.eql(u8, method, "cancelRun")) {
         const run_id = ffi.jsonObjectString(args, "runId") orelse return null;
         try appendArgs(allocator, &list, &.{ "smithers", "cancel", run_id, "--format", "json" });
+    } else if (std.mem.eql(u8, method, "getNodeOutput")) {
+        const run_id = ffi.jsonObjectString(args, "runId") orelse return null;
+        const node_id = ffi.jsonObjectString(args, "nodeId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "smithers", "output", run_id, node_id, "--json" });
+        try appendIntegerOption(allocator, &list, "--iteration", args, "iteration");
+    } else if (std.mem.eql(u8, method, "getNodeDiff")) {
+        const run_id = ffi.jsonObjectString(args, "runId") orelse return null;
+        const node_id = ffi.jsonObjectString(args, "nodeId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "smithers", "diff", run_id, node_id, "--json" });
+        try appendIntegerOption(allocator, &list, "--iteration", args, "iteration");
     } else if (std.mem.eql(u8, method, "getChatOutput")) {
         const run_id = ffi.jsonObjectString(args, "runId") orelse return null;
         try appendArgs(allocator, &list, &.{ "smithers", "chat", run_id, "--format", "json" });
     } else if (std.mem.eql(u8, method, "hijackRun")) {
         const run_id = ffi.jsonObjectString(args, "runId") orelse return null;
         try appendArgs(allocator, &list, &.{ "smithers", "hijack", run_id, "--launch=false", "--format", "json" });
+    } else if (std.mem.eql(u8, method, "listRecentScores")) {
+        const run_id = ffi.jsonObjectString(args, "runId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "smithers", "scores", run_id, "--format", "json" });
+        if (ffi.jsonObjectString(args, "nodeId")) |node_id| try appendArgs(allocator, &list, &.{ "--node", node_id });
     } else if (std.mem.eql(u8, method, "listJJHubWorkflows")) {
         try appendArgs(allocator, &list, &.{ "jjhub", "workflow", "list", "--json" });
     } else if (std.mem.eql(u8, method, "triggerJJHubWorkflow")) {
@@ -366,6 +303,15 @@ fn cliArgsFor(allocator: std.mem.Allocator, method: []const u8, args: std.json.V
         const number = jsonObjectIntegerString(allocator, args, "number") orelse return null;
         defer allocator.free(number);
         try appendArgs(allocator, &list, &.{ "jjhub", "issue", "view", number, "--json" });
+    } else if (std.mem.eql(u8, method, "createIssue")) {
+        const title = ffi.jsonObjectString(args, "title") orelse return null;
+        try appendArgs(allocator, &list, &.{ "jjhub", "issue", "create", "--json", "--title", title });
+        if (ffi.jsonObjectString(args, "body")) |body| try appendArgs(allocator, &list, &.{ "--body", body });
+    } else if (std.mem.eql(u8, method, "closeIssue")) {
+        const number = jsonObjectIntegerString(allocator, args, "number") orelse return null;
+        defer allocator.free(number);
+        try appendArgs(allocator, &list, &.{ "jjhub", "issue", "close", number, "--json" });
+        if (ffi.jsonObjectString(args, "comment")) |comment| try appendArgs(allocator, &list, &.{ "--comment", comment });
     } else if (std.mem.eql(u8, method, "getCurrentRepo")) {
         try appendArgs(allocator, &list, &.{ "jjhub", "repo", "view", "--json" });
     } else if (std.mem.eql(u8, method, "listWorkspaces")) {
@@ -373,6 +319,49 @@ fn cliArgsFor(allocator: std.mem.Allocator, method: []const u8, args: std.json.V
     } else if (std.mem.eql(u8, method, "viewWorkspace")) {
         const workspace_id = ffi.jsonObjectString(args, "workspaceId") orelse return null;
         try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "view", workspace_id, "--json" });
+    } else if (std.mem.eql(u8, method, "createWorkspace")) {
+        try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "create", "--json" });
+        if (ffi.jsonObjectString(args, "name")) |name| try appendArgs(allocator, &list, &.{ "--name", name });
+        if (ffi.jsonObjectString(args, "snapshotId")) |snapshot_id| try appendArgs(allocator, &list, &.{ "--snapshot", snapshot_id });
+    } else if (std.mem.eql(u8, method, "deleteWorkspace")) {
+        const workspace_id = ffi.jsonObjectString(args, "workspaceId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "delete", workspace_id, "--json" });
+    } else if (std.mem.eql(u8, method, "suspendWorkspace")) {
+        const workspace_id = ffi.jsonObjectString(args, "workspaceId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "suspend", workspace_id, "--json" });
+    } else if (std.mem.eql(u8, method, "resumeWorkspace")) {
+        const workspace_id = ffi.jsonObjectString(args, "workspaceId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "resume", workspace_id, "--json" });
+    } else if (std.mem.eql(u8, method, "forkWorkspace")) {
+        const workspace_id = ffi.jsonObjectString(args, "workspaceId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "fork", workspace_id, "--json" });
+        if (ffi.jsonObjectString(args, "name")) |name| try appendArgs(allocator, &list, &.{ "--name", name });
+    } else if (std.mem.eql(u8, method, "listWorkspaceSnapshots")) {
+        try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "snapshot", "list", "--json" });
+    } else if (std.mem.eql(u8, method, "viewWorkspaceSnapshot")) {
+        const snapshot_id = ffi.jsonObjectString(args, "snapshotId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "snapshot", "view", snapshot_id, "--json" });
+    } else if (std.mem.eql(u8, method, "createWorkspaceSnapshot")) {
+        const workspace_id = ffi.jsonObjectString(args, "workspaceId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "snapshot", "create", workspace_id, "--json" });
+        if (ffi.jsonObjectString(args, "name")) |name| try appendArgs(allocator, &list, &.{ "--name", name });
+    } else if (std.mem.eql(u8, method, "deleteWorkspaceSnapshot")) {
+        const snapshot_id = ffi.jsonObjectString(args, "snapshotId") orelse return null;
+        try appendArgs(allocator, &list, &.{ "jjhub", "workspace", "snapshot", "delete", snapshot_id, "--json" });
+    } else if (std.mem.eql(u8, method, "search")) {
+        const scope = ffi.jsonObjectString(args, "scope") orelse return null;
+        const query = ffi.jsonObjectString(args, "query") orelse return null;
+        if (std.mem.eql(u8, scope, "code")) {
+            try appendArgs(allocator, &list, &.{ "jjhub", "search", "code", query, "--json" });
+        } else if (std.mem.eql(u8, scope, "issues")) {
+            try appendArgs(allocator, &list, &.{ "jjhub", "search", "issues", query, "--json" });
+            if (ffi.jsonObjectString(args, "issueState")) |state| try appendArgs(allocator, &list, &.{ "--state", state });
+        } else if (std.mem.eql(u8, scope, "repos")) {
+            try appendArgs(allocator, &list, &.{ "jjhub", "search", "repos", query, "--json" });
+        } else {
+            return null;
+        }
+        try appendIntegerOption(allocator, &list, "--limit", args, "limit");
     } else {
         return null;
     }
@@ -386,6 +375,19 @@ fn appendArgs(allocator: std.mem.Allocator, list: *std.ArrayList([]const u8), ar
 
 fn appendArg(allocator: std.mem.Allocator, list: *std.ArrayList([]const u8), arg: []const u8) !void {
     try list.append(allocator, try allocator.dupe(u8, arg));
+}
+
+fn appendIntegerOption(
+    allocator: std.mem.Allocator,
+    list: *std.ArrayList([]const u8),
+    flag: []const u8,
+    args: std.json.Value,
+    key: []const u8,
+) !void {
+    const value = ffi.jsonObjectInteger(args, key) orelse return;
+    const text = try std.fmt.allocPrint(allocator, "{}", .{value});
+    defer allocator.free(text);
+    try appendArgs(allocator, list, &.{ flag, text });
 }
 
 fn appendJsonOption(allocator: std.mem.Allocator, list: *std.ArrayList([]const u8), flag: []const u8, maybe_value: ?std.json.Value) !void {
@@ -809,6 +811,255 @@ test "client mock call returns result" {
     defer ffi.errorFree(err);
     try std.testing.expectEqual(@as(i32, 0), err.code);
     try std.testing.expect(std.mem.indexOf(u8, std.mem.sliceTo(s.ptr.?, 0), "r1") != null);
+}
+
+test "runWorkflow normalizes JSON and plain run id output" {
+    const json_object = try normalizeCliOutput(std.testing.allocator, "runWorkflow", "{\"runId\":\"run-json\",\"status\":\"queued\"}\n");
+    defer std.testing.allocator.free(json_object);
+    try std.testing.expectEqualStrings("{\"runId\":\"run-json\",\"status\":\"queued\"}", json_object);
+
+    const plain = try normalizeCliOutput(std.testing.allocator, "runWorkflow", "run-plain\n");
+    defer std.testing.allocator.free(plain);
+    try std.testing.expectEqualStrings("{\"runId\":\"run-plain\",\"status\":\"queued\"}", plain);
+
+    try std.testing.expectError(error.MissingRunId, normalizeRunWorkflowOutput(std.testing.allocator, "{\"ok\":true}"));
+}
+
+test "cliArgsFor maps workflow doctor output diff and scores methods" {
+    try expectCliArgsFor(
+        "runWorkflowDoctor",
+        "{\"workflowPath\":\"quick-launch\"}",
+        &.{ "smithers", "workflow", "doctor", "quick-launch", "--format", "json" },
+    );
+    try expectCliArgsFor(
+        "getNodeOutput",
+        "{\"runId\":\"run-1\",\"nodeId\":\"task.build\",\"iteration\":2}",
+        &.{ "smithers", "output", "run-1", "task.build", "--json", "--iteration", "2" },
+    );
+    try expectCliArgsFor(
+        "getNodeDiff",
+        "{\"runId\":\"run-1\",\"nodeId\":\"task.build\",\"iteration\":2}",
+        &.{ "smithers", "diff", "run-1", "task.build", "--json", "--iteration", "2" },
+    );
+    try expectCliArgsFor(
+        "listRecentScores",
+        "{\"runId\":\"run-1\",\"nodeId\":\"task.build\"}",
+        &.{ "smithers", "scores", "run-1", "--format", "json", "--node", "task.build" },
+    );
+}
+
+test "cliArgsFor maps JJHub workspace lifecycle and snapshots" {
+    try expectCliArgsFor(
+        "createWorkspace",
+        "{\"name\":\"scratch\",\"snapshotId\":\"snap-1\"}",
+        &.{ "jjhub", "workspace", "create", "--json", "--name", "scratch", "--snapshot", "snap-1" },
+    );
+    try expectCliArgsFor(
+        "deleteWorkspace",
+        "{\"workspaceId\":\"ws-1\"}",
+        &.{ "jjhub", "workspace", "delete", "ws-1", "--json" },
+    );
+    try expectCliArgsFor(
+        "suspendWorkspace",
+        "{\"workspaceId\":\"ws-1\"}",
+        &.{ "jjhub", "workspace", "suspend", "ws-1", "--json" },
+    );
+    try expectCliArgsFor(
+        "resumeWorkspace",
+        "{\"workspaceId\":\"ws-1\"}",
+        &.{ "jjhub", "workspace", "resume", "ws-1", "--json" },
+    );
+    try expectCliArgsFor(
+        "forkWorkspace",
+        "{\"workspaceId\":\"ws-1\",\"name\":\"scratch-copy\"}",
+        &.{ "jjhub", "workspace", "fork", "ws-1", "--json", "--name", "scratch-copy" },
+    );
+    try expectCliArgsFor(
+        "listWorkspaceSnapshots",
+        "{}",
+        &.{ "jjhub", "workspace", "snapshot", "list", "--json" },
+    );
+    try expectCliArgsFor(
+        "viewWorkspaceSnapshot",
+        "{\"snapshotId\":\"snap-1\"}",
+        &.{ "jjhub", "workspace", "snapshot", "view", "snap-1", "--json" },
+    );
+    try expectCliArgsFor(
+        "createWorkspaceSnapshot",
+        "{\"workspaceId\":\"ws-1\",\"name\":\"before-merge\"}",
+        &.{ "jjhub", "workspace", "snapshot", "create", "ws-1", "--json", "--name", "before-merge" },
+    );
+    try expectCliArgsFor(
+        "deleteWorkspaceSnapshot",
+        "{\"snapshotId\":\"snap-1\"}",
+        &.{ "jjhub", "workspace", "snapshot", "delete", "snap-1", "--json" },
+    );
+}
+
+test "cliArgsFor maps JJHub issue create close and search methods" {
+    try expectCliArgsFor(
+        "createIssue",
+        "{\"title\":\"Ship it\",\"body\":\"Needs rollout notes\"}",
+        &.{ "jjhub", "issue", "create", "--json", "--title", "Ship it", "--body", "Needs rollout notes" },
+    );
+    try expectCliArgsFor(
+        "closeIssue",
+        "{\"number\":42,\"comment\":\"Fixed in main\"}",
+        &.{ "jjhub", "issue", "close", "42", "--json", "--comment", "Fixed in main" },
+    );
+    try expectCliArgsFor(
+        "search",
+        "{\"query\":\"parser\",\"scope\":\"issues\",\"issueState\":\"closed\",\"limit\":50}",
+        &.{ "jjhub", "search", "issues", "parser", "--json", "--state", "closed", "--limit", "50" },
+    );
+    try expectCliArgsFor(
+        "search",
+        "{\"query\":\"tmux\",\"scope\":\"code\",\"limit\":10}",
+        &.{ "jjhub", "search", "code", "tmux", "--json", "--limit", "10" },
+    );
+}
+
+test "unsupported client method reports an error instead of a fake fallback" {
+    var app = try App.create(std.testing.allocator, .{});
+    defer app.destroy();
+    var c = try Client.create(app);
+    defer c.destroy();
+    var err: structs.Error = undefined;
+    const s = c.call("notImplemented", "{}", &err);
+    defer ffi.stringFree(s);
+    defer ffi.errorFree(err);
+    try std.testing.expect(err.code != 0);
+}
+
+fn expectCliArgsFor(method: []const u8, args_json: []const u8, expected: []const []const u8) !void {
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, args_json, .{});
+    defer parsed.deinit();
+
+    const argv = try cliArgsFor(std.testing.allocator, method, parsed.value);
+    defer freeCliArgs(std.testing.allocator, argv);
+
+    try std.testing.expect(argv != null);
+    const actual = argv.?;
+    try std.testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |want, got| {
+        try std.testing.expectEqualStrings(want, got);
+    }
+}
+
+fn freeCliArgs(allocator: std.mem.Allocator, maybe_args: ?[][]const u8) void {
+    const args = maybe_args orelse return;
+    for (args) |arg| allocator.free(arg);
+    allocator.free(args);
+}
+
+test "listAgents reports unavailable when PATH is empty" {
+    const allocator = std.testing.allocator;
+    const json = try agents.detect(allocator, "", null, agents.nullEnvLookup);
+    defer allocator.free(json);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+
+    const obj = parsed.value.object;
+    const list = obj.get("agents").?.array.items;
+    try std.testing.expectEqual(@as(usize, agents.known_agents.len), list.len);
+    try std.testing.expectEqual(@as(usize, 7), list.len);
+    for (list) |entry| {
+        try std.testing.expectEqualStrings("unavailable", entry.object.get("status").?.string);
+        try std.testing.expectEqual(false, entry.object.get("usable").?.bool);
+        try std.testing.expectEqualStrings("", entry.object.get("binaryPath").?.string);
+    }
+}
+
+test "listAgents detects binary in synthetic PATH" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
+
+    const claude_path = try std.fs.path.join(allocator, &.{ tmp_path, "claude" });
+    defer allocator.free(claude_path);
+    {
+        var file = try std.fs.createFileAbsolute(claude_path, .{ .truncate = true, .mode = 0o755 });
+        defer file.close();
+        try file.writeAll("#!/bin/sh\n");
+    }
+
+    const json = try agents.detect(allocator, tmp_path, null, agents.nullEnvLookup);
+    defer allocator.free(json);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+
+    const list = parsed.value.object.get("agents").?.array.items;
+    var claude_entry: ?std.json.Value = null;
+    for (list) |entry| {
+        if (std.mem.eql(u8, entry.object.get("id").?.string, "claude-code")) {
+            claude_entry = entry;
+            break;
+        }
+    }
+    const claude = claude_entry.?;
+    try std.testing.expectEqualStrings("binary-only", claude.object.get("status").?.string);
+    try std.testing.expectEqual(true, claude.object.get("usable").?.bool);
+    try std.testing.expectEqual(false, claude.object.get("hasAuth").?.bool);
+    try std.testing.expectEqual(false, claude.object.get("hasAPIKey").?.bool);
+    const bin_path = claude.object.get("binaryPath").?.string;
+    try std.testing.expect(std.mem.endsWith(u8, bin_path, "/claude"));
+}
+
+const TestEnv = struct {
+    const Entry = struct { key: []const u8, value: []const u8 };
+    var entries: []const Entry = &.{};
+
+    fn lookup(name: []const u8) ?[]const u8 {
+        for (entries) |entry| {
+            if (std.mem.eql(u8, entry.key, name)) return entry.value;
+        }
+        return null;
+    }
+};
+
+test "listAgents reports api-key when env var is set" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
+
+    const claude_path = try std.fs.path.join(allocator, &.{ tmp_path, "claude" });
+    defer allocator.free(claude_path);
+    {
+        var file = try std.fs.createFileAbsolute(claude_path, .{ .truncate = true, .mode = 0o755 });
+        defer file.close();
+        try file.writeAll("#!/bin/sh\n");
+    }
+
+    TestEnv.entries = &.{.{ .key = "ANTHROPIC_API_KEY", .value = "sk-test" }};
+    defer TestEnv.entries = &.{};
+
+    const json = try agents.detect(allocator, tmp_path, null, TestEnv.lookup);
+    defer allocator.free(json);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+
+    const list = parsed.value.object.get("agents").?.array.items;
+    var claude_entry: ?std.json.Value = null;
+    for (list) |entry| {
+        if (std.mem.eql(u8, entry.object.get("id").?.string, "claude-code")) {
+            claude_entry = entry;
+            break;
+        }
+    }
+    const claude = claude_entry.?;
+    try std.testing.expectEqualStrings("api-key", claude.object.get("status").?.string);
+    try std.testing.expectEqual(true, claude.object.get("hasAPIKey").?.bool);
+    try std.testing.expectEqual(false, claude.object.get("hasAuth").?.bool);
+    try std.testing.expectEqual(true, claude.object.get("usable").?.bool);
 }
 
 test "client stream parses sse fixture" {
