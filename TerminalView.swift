@@ -581,6 +581,7 @@ class TerminalSurfaceView: NSView {
     private var retainedCallbacks: Unmanaged<TerminalCallbackCoordinator>?
     private var cleanedUp = false
     var onClose: (() -> Void)?
+    var onProcessExited: (() -> Void)?
     var onFocus: (() -> Void)?
     var onTitleChange: ((String) -> Void)?
     var onWorkingDirectoryChange: ((String) -> Void)?
@@ -1341,7 +1342,13 @@ class TerminalSurfaceView: NSView {
             removeFromSuperview()
         }
 
-        onClose?()
+        if processAlive {
+            onClose?()
+        } else if let onProcessExited {
+            onProcessExited()
+        } else {
+            onClose?()
+        }
     }
 
     func handleTitleChange(_ title: String) {
@@ -1684,6 +1691,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
     var workingDirectory: String? = nil
     var layoutSize: CGSize = .zero
     var onClose: (() -> Void)? = nil
+    var onProcessExited: (() -> Void)? = nil
     var onFocus: (() -> Void)? = nil
     var onTitleChange: ((String) -> Void)? = nil
     var onWorkingDirectoryChange: ((String) -> Void)? = nil
@@ -1724,6 +1732,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
 
     private func applyCallbacks(to view: TerminalSurfaceView) {
         view.onClose = onClose
+        view.onProcessExited = onProcessExited
         view.onFocus = onFocus
         view.onTitleChange = onTitleChange
         view.onWorkingDirectoryChange = onWorkingDirectoryChange
@@ -1754,6 +1763,7 @@ struct TerminalView: View {
     var command: String? = nil
     var workingDirectory: String? = nil
     var onClose: (() -> Void)? = nil
+    var onProcessExited: (() -> Void)? = nil
     var onFocus: (() -> Void)? = nil
     var onTitleChange: ((String) -> Void)? = nil
     var onWorkingDirectoryChange: ((String) -> Void)? = nil
@@ -1802,6 +1812,7 @@ struct TerminalView: View {
                         workingDirectory: workingDirectory,
                         layoutSize: geometry.size,
                         onClose: onClose,
+                        onProcessExited: onProcessExited,
                         onFocus: onFocus,
                         onTitleChange: onTitleChange,
                         onWorkingDirectoryChange: onWorkingDirectoryChange,

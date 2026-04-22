@@ -226,6 +226,36 @@ final class SessionControllerTests: XCTestCase {
         return obj
     }
 
+    private func makeExecutableFixture(named binaryName: String) throws -> (root: URL, referenceFilePath: String, binaryPath: String) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SessionControllerTests-\(UUID().uuidString)", isDirectory: true)
+        let sourceDir = root.appendingPathComponent("nested/a/b", isDirectory: true)
+        let binaryURL = root
+            .appendingPathComponent("libsmithers/zig-out/bin", isDirectory: true)
+            .appendingPathComponent(binaryName, isDirectory: false)
+        try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: binaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binaryURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binaryURL.path)
+        let referenceFilePath = sourceDir.appendingPathComponent("Fixture.swift").path
+        return (root, referenceFilePath, binaryURL.path)
+    }
+
+    private func waitForProcessExit(pid: Int32, timeout: TimeInterval = 3) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if Darwin.kill(pid, 0) != 0, errno == ESRCH {
+                return
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        throw NSError(
+            domain: "SessionControllerTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "timed out waiting for process \(pid) to exit"]
+        )
+    }
+
     // MARK: - Tests
 
     func testPingReturnsVersion() async throws {
@@ -413,5 +443,59 @@ final class SessionControllerTests: XCTestCase {
         } else {
             XCTFail("missing params")
         }
+    }
+
+    func testLocateDaemonBinaryFindsRepoArtifactRelativeToReferenceFile() throws {
+        let fixture = try makeExecutableFixture(named: "smithers-session-daemon")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let resolved = SessionController.locateDaemonBinary(referenceFilePath: fixture.referenceFilePath)
+
+        XCTAssertEqual(resolved, fixture.binaryPath)
+    }
+
+    func testLocateSessionConnectBinaryFindsRepoArtifactRelativeToReferenceFile() throws {
+        let fixture = try makeExecutableFixture(named: "smithers-session-connect")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let resolved = SessionController.locateSessionConnectBinary(referenceFilePath: fixture.referenceFilePath)
+
+        XCTAssertEqual(resolved, fixture.binaryPath)
+    }
+
+    func testBuildNativeAttachCommandIncludesResolvedSocket() {
+        let command = SessionStore.buildNativeAttachCommand(
+            for: "sess-123",
+            sessionConnectBinaryOverride: "/tmp/smithers-session-connect",
+            socketPathOverride: "/tmp/smithers.sock"
+        )
+
+        XCTAssertEqual(
+            command,
+            "'/tmp/smithers-session-connect' 'sess-123' --socket '/tmp/smithers.sock'"
+        )
+    }
+
+    func testEnsureDaemonLaunchesOnSocketOverride() async throws {
+        guard SessionController.locateDaemonBinary() != nil else {
+            throw XCTSkip("smithers-session-daemon binary not found in bundle, env, PATH, or local checkout")
+        }
+
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("smt-launch-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let socketPath = root.appendingPathComponent("sessions.sock").path
+        let controller = SessionController(socketPathOverride: socketPath)
+
+        try await controller.ensureDaemon()
+        let ping = try await controller.ping()
+
+        XCTAssertGreaterThan(ping.pid, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: socketPath))
+
+        XCTAssertEqual(Darwin.kill(ping.pid, SIGTERM), 0)
+        try await waitForProcessExit(pid: ping.pid)
     }
 }

@@ -70,6 +70,7 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
     var browserURLString: String? = nil
     var agentKind: ExternalAgentKind? = nil
     var agentSessionId: String? = nil
+    var snapshot: TerminalWorkspaceSnapshot? = nil
 
     var id: String { terminalId }
     var workspaceID: WorkspaceID { WorkspaceID(terminalId) }
@@ -86,6 +87,7 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         case rootSurfaceId
         case tmuxSocketName
         case tmuxSessionName
+        case sessionId
         case runId
         case hijack
         case isPinned
@@ -93,6 +95,7 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         case browserURLString
         case agentKind
         case agentSessionId
+        case snapshot
     }
 
     init(
@@ -114,7 +117,8 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         rootKind: WorkspaceSurfaceKind = .terminal,
         browserURLString: String? = nil,
         agentKind: ExternalAgentKind? = nil,
-        agentSessionId: String? = nil
+        agentSessionId: String? = nil,
+        snapshot: TerminalWorkspaceSnapshot? = nil
     ) {
         self.terminalId = terminalId
         self.title = title
@@ -135,6 +139,7 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         self.browserURLString = browserURLString
         self.agentKind = agentKind
         self.agentSessionId = agentSessionId
+        self.snapshot = snapshot
     }
 
     init(from decoder: Decoder) throws {
@@ -150,7 +155,7 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         rootSurfaceId = try container.decodeIfPresent(String.self, forKey: .rootSurfaceId)
         tmuxSocketName = try container.decodeIfPresent(String.self, forKey: .tmuxSocketName)
         tmuxSessionName = try container.decodeIfPresent(String.self, forKey: .tmuxSessionName)
-        sessionId = nil
+        sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
         runId = try container.decodeIfPresent(String.self, forKey: .runId)
         hijack = try container.decodeIfPresent(HijackBinding.self, forKey: .hijack)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
@@ -158,6 +163,7 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         browserURLString = try container.decodeIfPresent(String.self, forKey: .browserURLString)
         agentKind = try container.decodeIfPresent(ExternalAgentKind.self, forKey: .agentKind)
         agentSessionId = try container.decodeIfPresent(String.self, forKey: .agentSessionId)
+        snapshot = try container.decodeIfPresent(TerminalWorkspaceSnapshot.self, forKey: .snapshot)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -173,6 +179,7 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         try container.encodeIfPresent(rootSurfaceId, forKey: .rootSurfaceId)
         try container.encodeIfPresent(tmuxSocketName, forKey: .tmuxSocketName)
         try container.encodeIfPresent(tmuxSessionName, forKey: .tmuxSessionName)
+        try container.encodeIfPresent(sessionId, forKey: .sessionId)
         try container.encodeIfPresent(runId, forKey: .runId)
         try container.encodeIfPresent(hijack, forKey: .hijack)
         try container.encode(isPinned, forKey: .isPinned)
@@ -180,6 +187,7 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         try container.encodeIfPresent(browserURLString, forKey: .browserURLString)
         try container.encodeIfPresent(agentKind, forKey: .agentKind)
         try container.encodeIfPresent(agentSessionId, forKey: .agentSessionId)
+        try container.encodeIfPresent(snapshot, forKey: .snapshot)
     }
 }
 

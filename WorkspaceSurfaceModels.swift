@@ -204,6 +204,7 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
     var tmuxSocketName: String?
     var tmuxSessionName: String?
     var sessionId: String? = nil
+    var nativeAttachmentState: NativeTerminalAttachmentState?
     var markdownFilePath: String?
 
     static func terminal(
@@ -230,6 +231,7 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             tmuxSocketName: tmuxSocketName,
             tmuxSessionName: tmuxSessionName,
             sessionId: sessionId,
+            nativeAttachmentState: backend == .native ? (sessionId == nil ? .pending : .ready) : nil,
             markdownFilePath: nil
         )
     }
@@ -253,6 +255,7 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             tmuxSocketName: nil,
             tmuxSessionName: nil,
             sessionId: sessionId,
+            nativeAttachmentState: nil,
             markdownFilePath: nil
         )
     }
@@ -278,6 +281,7 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             tmuxSocketName: nil,
             tmuxSessionName: nil,
             sessionId: sessionId,
+            nativeAttachmentState: nil,
             markdownFilePath: normalizedPath
         )
     }
@@ -289,6 +293,48 @@ struct TerminalWorkspaceSnapshot: Hashable, Codable {
     var layout: WorkspaceLayoutNode
     var focusedSurfaceId: SurfaceID?
     var hasCustomTitle: Bool?
+}
+
+enum NativeTerminalAttachmentState: Equatable, Hashable, Codable {
+    case pending
+    case ready
+    case unavailable(String?)
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case message
+    }
+
+    private enum Kind: String, Codable {
+        case pending
+        case ready
+        case unavailable
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .pending:
+            self = .pending
+        case .ready:
+            self = .ready
+        case .unavailable:
+            self = .unavailable(try container.decodeIfPresent(String.self, forKey: .message))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .pending:
+            try container.encode(Kind.pending, forKey: .kind)
+        case .ready:
+            try container.encode(Kind.ready, forKey: .kind)
+        case .unavailable(let message):
+            try container.encode(Kind.unavailable, forKey: .kind)
+            try container.encodeIfPresent(message, forKey: .message)
+        }
+    }
 }
 
 @MainActor
@@ -311,6 +357,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     private let backend: TerminalBackend
     private let tmuxSocketName: String?
     private let sessionId: String?
+    private var nativeTerminalStates: [SurfaceID: NativeTerminalAttachmentState] = [:]
     weak var changeDelegate: TerminalWorkspaceChangeDelegate?
 
     init(
@@ -379,6 +426,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         self.paneIdsBySurfaceId = [initialSurface.id: PaneID()]
         self.focusedSurfaceId = initialSurface.id
         SurfaceNotificationStore.shared.register(surfaceId: initialSurface.id.rawValue, workspaceId: id.rawValue)
+        initializeNativeTerminalState(for: initialSurface, restored: false)
         if initialSurface.kind == .terminal {
             prepareTerminalSession(initialSurface)
         }
@@ -450,6 +498,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         self.focusedSurfaceId = restoredFocusedSurfaceID
         for surface in nextSurfaces.values {
             SurfaceNotificationStore.shared.register(surfaceId: surface.id.rawValue, workspaceId: id.rawValue)
+            initializeNativeTerminalState(for: surface, restored: true)
             if surface.kind == .terminal {
                 prepareTerminalSession(surface)
             }
@@ -603,6 +652,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         }
 
         SurfaceNotificationStore.shared.register(surfaceId: surface.id.rawValue, workspaceId: id.rawValue)
+        initializeNativeTerminalState(for: surface, restored: false)
         if surface.kind == .terminal {
             prepareTerminalSession(surface)
         }
@@ -657,6 +707,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         surfaces[newSurface.id] = newSurface
         paneIdsBySurfaceId[newSurface.id] = PaneID()
         SurfaceNotificationStore.shared.register(surfaceId: newSurface.id.rawValue, workspaceId: id.rawValue)
+        initializeNativeTerminalState(for: newSurface, restored: false)
         if newSurface.kind == .terminal {
             prepareTerminalSession(newSurface)
         }
@@ -721,6 +772,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         let removed = surfaces.removeValue(forKey: surfaceId)
         layout = layout.removingLeaf(surfaceId) ?? .leaf(surfaces.keys.first ?? surfaceId)
         paneIdsBySurfaceId[surfaceId] = nil
+        nativeTerminalStates[surfaceId] = nil
         SurfaceNotificationStore.shared.unregister(surfaceId: surfaceId.rawValue)
 
         if removed?.kind == .terminal {
@@ -830,10 +882,47 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         notifyChanged()
     }
 
-    func setSurfaceSessionId(surfaceId: SurfaceID, sessionId: String) {
+    func setSurfaceSessionId(surfaceId: SurfaceID, sessionId: String?) {
         guard var surface = surfaces[surfaceId] else { return }
         surface.sessionId = sessionId
+        if surface.kind == .terminal, surface.terminalBackend == .native {
+            surface.nativeAttachmentState = nativeTerminalStates[surfaceId] ?? (sessionId == nil ? .pending : .ready)
+        }
         surfaces[surfaceId] = surface
+        notifyChanged()
+    }
+
+    func nativeTerminalState(surfaceId: SurfaceID) -> NativeTerminalAttachmentState {
+        nativeTerminalStates[surfaceId] ?? .ready
+    }
+
+    func markNativeTerminalPending(surfaceId: SurfaceID) {
+        guard surfaces[surfaceId]?.terminalBackend == .native,
+              surfaces[surfaceId]?.kind == .terminal else { return }
+        nativeTerminalStates[surfaceId] = .pending
+        surfaces[surfaceId]?.nativeAttachmentState = .pending
+        notifyChanged()
+    }
+
+    func markNativeTerminalReady(surfaceId: SurfaceID, sessionId: String) {
+        guard var surface = surfaces[surfaceId],
+              surface.terminalBackend == .native,
+              surface.kind == .terminal else { return }
+        surface.sessionId = sessionId
+        surface.nativeAttachmentState = .ready
+        surfaces[surfaceId] = surface
+        nativeTerminalStates[surfaceId] = .ready
+        notifyChanged()
+    }
+
+    func markNativeTerminalUnavailable(surfaceId: SurfaceID, message: String?) {
+        guard var surface = surfaces[surfaceId],
+              surface.terminalBackend == .native,
+              surface.kind == .terminal else { return }
+        surface.sessionId = nil
+        surface.nativeAttachmentState = .unavailable(message)
+        surfaces[surfaceId] = surface
+        nativeTerminalStates[surfaceId] = .unavailable(message)
         notifyChanged()
     }
 
@@ -894,6 +983,20 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
 
     private func notifyChanged() {
         changeDelegate?.terminalWorkspaceDidChange(self)
+    }
+
+    private func initializeNativeTerminalState(for surface: WorkspaceSurface, restored: Bool) {
+        guard surface.kind == .terminal, surface.terminalBackend == .native else { return }
+        let state: NativeTerminalAttachmentState
+        if restored, case .unavailable(let message) = surface.nativeAttachmentState {
+            state = .unavailable(message)
+        } else if restored || surface.sessionId == nil {
+            state = .pending
+        } else {
+            state = .ready
+        }
+        nativeTerminalStates[surface.id] = state
+        surfaces[surface.id]?.nativeAttachmentState = state
     }
 
     private func reorderedSurfaceIDs(moving surfaceId: SurfaceID, placement: Placement) -> [SurfaceID]? {

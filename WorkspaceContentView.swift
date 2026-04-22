@@ -4,6 +4,7 @@ struct TerminalTabsLayer: View {
     @ObservedObject var store: SessionStore
     let activeTerminalId: String?
     var onRequestClose: (String) -> Void
+    var onProcessExited: ((String) -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
@@ -13,6 +14,7 @@ struct TerminalTabsLayer: View {
                     store: store,
                     terminalId: tab.terminalId,
                     onClose: { onRequestClose(tab.terminalId) },
+                    onProcessExited: onProcessExited.map { handler in { handler(tab.terminalId) } },
                     onAppShortcutCommand: onAppShortcutCommand
                 )
                 .id(tab.terminalId)
@@ -28,6 +30,7 @@ struct TerminalWorkspaceRouteView: View {
     @ObservedObject var store: SessionStore
     let terminalId: String
     var onClose: () -> Void
+    var onProcessExited: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     @State private var workspace: TerminalWorkspace?
@@ -42,6 +45,7 @@ struct TerminalWorkspaceRouteView: View {
                 TerminalWorkspaceView(
                     workspace: currentWorkspace,
                     onCloseWorkspace: onClose,
+                    onWorkspaceProcessExited: onProcessExited,
                     onAppShortcutCommand: onAppShortcutCommand
                 )
             } else {
@@ -65,6 +69,7 @@ struct TerminalWorkspaceView: View {
     @ObservedObject var workspace: TerminalWorkspace
     @ObservedObject private var notifications = SurfaceNotificationStore.shared
     var onCloseWorkspace: () -> Void
+    var onWorkspaceProcessExited: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
@@ -73,6 +78,7 @@ struct TerminalWorkspaceView: View {
                 workspace: workspace,
                 node: workspace.layout,
                 onCloseWorkspace: onCloseWorkspace,
+                onWorkspaceProcessExited: onWorkspaceProcessExited,
                 onAppShortcutCommand: onAppShortcutCommand
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -91,6 +97,7 @@ private struct WorkspaceSplitNodeView: View {
     @ObservedObject var workspace: TerminalWorkspace
     let node: WorkspaceLayoutNode
     var onCloseWorkspace: () -> Void
+    var onWorkspaceProcessExited: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
@@ -101,6 +108,7 @@ private struct WorkspaceSplitNodeView: View {
                     workspace: workspace,
                     surface: surface,
                     onCloseWorkspace: onCloseWorkspace,
+                    onWorkspaceProcessExited: onWorkspaceProcessExited,
                     onAppShortcutCommand: onAppShortcutCommand
                 )
             } else {
@@ -113,6 +121,7 @@ private struct WorkspaceSplitNodeView: View {
                         workspace: workspace,
                         node: first,
                         onCloseWorkspace: onCloseWorkspace,
+                        onWorkspaceProcessExited: onWorkspaceProcessExited,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
                         .frame(minWidth: 280, minHeight: 180)
@@ -120,6 +129,7 @@ private struct WorkspaceSplitNodeView: View {
                         workspace: workspace,
                         node: second,
                         onCloseWorkspace: onCloseWorkspace,
+                        onWorkspaceProcessExited: onWorkspaceProcessExited,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
                         .frame(minWidth: 280, minHeight: 180)
@@ -130,6 +140,7 @@ private struct WorkspaceSplitNodeView: View {
                         workspace: workspace,
                         node: first,
                         onCloseWorkspace: onCloseWorkspace,
+                        onWorkspaceProcessExited: onWorkspaceProcessExited,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
                         .frame(minWidth: 280, minHeight: 180)
@@ -137,6 +148,7 @@ private struct WorkspaceSplitNodeView: View {
                         workspace: workspace,
                         node: second,
                         onCloseWorkspace: onCloseWorkspace,
+                        onWorkspaceProcessExited: onWorkspaceProcessExited,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
                         .frame(minWidth: 280, minHeight: 180)
@@ -151,6 +163,7 @@ private struct WorkspaceSurfaceContainer: View {
     @ObservedObject private var notifications = SurfaceNotificationStore.shared
     let surface: WorkspaceSurface
     var onCloseWorkspace: () -> Void
+    var onWorkspaceProcessExited: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
@@ -209,63 +222,23 @@ private struct WorkspaceSurfaceContainer: View {
     private var paneContent: some View {
         switch surface.kind {
         case .terminal:
-            TerminalView(
-                sessionId: surface.id.rawValue,
-                command: terminalCommand(for: surface),
-                workingDirectory: surface.terminalWorkingDirectory,
-                onClose: {
-                    workspace.closeSurface(surface.id)
-                },
-                onFocus: {
-                    workspace.focusSurface(surface.id)
-                },
-                onTitleChange: { title in
-                    workspace.updateTerminalTitle(surfaceId: surface.id, title: title)
-                },
-                onWorkingDirectoryChange: { workingDirectory in
-                    workspace.updateTerminalWorkingDirectory(surfaceId: surface.id, workingDirectory: workingDirectory)
-                },
-                onNotification: { title, body in
-                    SurfaceNotificationStore.shared.addNotification(
-                        surfaceId: surface.id.rawValue,
-                        title: title,
-                        body: body
+            if surface.terminalBackend == .native {
+                switch workspace.nativeTerminalState(surfaceId: surface.id) {
+                case .ready:
+                    terminalSurfaceView
+                case .pending:
+                    NativeTerminalStatusView(
+                        title: surface.sessionId == nil ? "Starting terminal session..." : "Reattaching terminal session...",
+                        message: "Waiting for the daemon-backed terminal to become available."
                     )
-                },
-                onBell: {
-                    SurfaceNotificationStore.shared.addNotification(
-                        surfaceId: surface.id.rawValue,
-                        title: surface.title,
-                        body: "Terminal bell"
+                case .unavailable(let message):
+                    NativeTerminalStatusView(
+                        title: "Terminal session unavailable",
+                        message: message ?? "The saved terminal session no longer exists. Smithers will not start a fresh shell automatically."
                     )
-                },
-                onSplitRight: {
-                    workspace.splitFocused(axis: .horizontal, kind: .terminal)
-                },
-                onSplitDown: {
-                    workspace.splitFocused(axis: .vertical, kind: .terminal)
-                },
-                onOpenBrowser: {
-                    workspace.splitFocused(axis: .horizontal, kind: .browser)
-                },
-                onJumpToUnread: {
-                    if let surfaceId = SurfaceNotificationStore.shared.latestUnreadSurface(in: workspace.id.rawValue) {
-                        workspace.focusSurface(surfaceId)
-                    }
-                },
-                onAppShortcutCommand: onAppShortcutCommand
-            )
-            .onAppear {
-                let surfaceIdString = surface.id.rawValue
-                TerminalProcessTracker.shared.register(
-                    surfaceId: surfaceIdString,
-                    workspaceId: workspace.id.rawValue
-                ) { [weak workspace] sid, name in
-                    workspace?.updateRunningProcessName(surfaceId: SurfaceID(sid), name: name)
                 }
-            }
-            .onDisappear {
-                TerminalProcessTracker.shared.unregister(surfaceId: surface.id.rawValue)
+            } else {
+                terminalSurfaceView
             }
         case .browser:
             BrowserSurfaceView(
@@ -286,6 +259,78 @@ private struct WorkspaceSurfaceContainer: View {
         }
     }
 
+    private var terminalSurfaceView: some View {
+        TerminalView(
+            sessionId: surface.id.rawValue,
+            command: terminalCommand(for: surface),
+            workingDirectory: surface.terminalWorkingDirectory,
+            onClose: {
+                if workspace.orderedSurfaces.count <= 1 {
+                    onCloseWorkspace()
+                } else {
+                    workspace.closeSurface(surface.id)
+                }
+            },
+            onProcessExited: {
+                if workspace.orderedSurfaces.count <= 1 {
+                    (onWorkspaceProcessExited ?? onCloseWorkspace)()
+                } else {
+                    workspace.closeSurface(surface.id)
+                }
+            },
+            onFocus: {
+                workspace.focusSurface(surface.id)
+            },
+            onTitleChange: { title in
+                workspace.updateTerminalTitle(surfaceId: surface.id, title: title)
+            },
+            onWorkingDirectoryChange: { workingDirectory in
+                workspace.updateTerminalWorkingDirectory(surfaceId: surface.id, workingDirectory: workingDirectory)
+            },
+            onNotification: { title, body in
+                SurfaceNotificationStore.shared.addNotification(
+                    surfaceId: surface.id.rawValue,
+                    title: title,
+                    body: body
+                )
+            },
+            onBell: {
+                SurfaceNotificationStore.shared.addNotification(
+                    surfaceId: surface.id.rawValue,
+                    title: surface.title,
+                    body: "Terminal bell"
+                )
+            },
+            onSplitRight: {
+                workspace.splitFocused(axis: .horizontal, kind: .terminal)
+            },
+            onSplitDown: {
+                workspace.splitFocused(axis: .vertical, kind: .terminal)
+            },
+            onOpenBrowser: {
+                workspace.splitFocused(axis: .horizontal, kind: .browser)
+            },
+            onJumpToUnread: {
+                if let surfaceId = SurfaceNotificationStore.shared.latestUnreadSurface(in: workspace.id.rawValue) {
+                    workspace.focusSurface(surfaceId)
+                }
+            },
+            onAppShortcutCommand: onAppShortcutCommand
+        )
+        .onAppear {
+            let surfaceIdString = surface.id.rawValue
+            TerminalProcessTracker.shared.register(
+                surfaceId: surfaceIdString,
+                workspaceId: workspace.id.rawValue
+            ) { [weak workspace] sid, name in
+                workspace?.updateRunningProcessName(surfaceId: SurfaceID(sid), name: name)
+            }
+        }
+        .onDisappear {
+            TerminalProcessTracker.shared.unregister(surfaceId: surface.id.rawValue)
+        }
+    }
+
     private func terminalCommand(for surface: WorkspaceSurface) -> String? {
         switch surface.terminalBackend {
         case .tmux:
@@ -294,17 +339,33 @@ private struct WorkspaceSurfaceContainer: View {
                 sessionName: surface.tmuxSessionName
             ) ?? surface.terminalCommand
         case .native:
-            // Wrap ghostty's spawn around smithers-session-connect so the
-            // terminal surface mirrors the native daemon's PTY. If the
-            // session id hasn't landed yet, let ghostty spawn a plain shell
-            // — the SessionStore will replace the surface when the id
-            // arrives via `setSurfaceSessionId`.
-            if let cmd = SessionStore.buildNativeAttachCommand(for: surface.sessionId) {
-                return cmd
-            }
-            return surface.terminalCommand
+            return SessionStore.buildNativeAttachCommand(for: surface.sessionId)
         case .ghostty:
             return surface.terminalCommand
         }
+    }
+}
+
+private struct NativeTerminalStatusView: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "terminal")
+                .font(.system(size: 28))
+                .foregroundColor(Theme.textTertiary)
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(Theme.textSecondary)
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundColor(Theme.textTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.base)
+        .accessibilityIdentifier("terminal.native.status")
     }
 }

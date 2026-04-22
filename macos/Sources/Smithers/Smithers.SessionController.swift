@@ -75,6 +75,7 @@ public enum SessionControllerError: Error {
 
 public actor SessionController {
     public static let shared = SessionController()
+    private static let binarySearchAncestorLimit = 8
 
     private let socketPathOverride: String?
     private var nextId: Int = 0
@@ -92,13 +93,13 @@ public actor SessionController {
     public func ensureDaemon() async throws {
         if (try? await ping()) != nil { return }
 
-        guard let binary = locateDaemonBinary() else {
+        guard let binary = Self.locateDaemonBinary() else {
             throw SessionControllerError.daemonUnavailable
         }
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
-        proc.arguments = []
+        proc.arguments = ["--socket", socketPath()]
         proc.standardInput = FileHandle(forReadingAtPath: "/dev/null")
         proc.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
         proc.standardError = FileHandle(forWritingAtPath: "/dev/null")
@@ -240,12 +241,7 @@ public actor SessionController {
     // MARK: - Internals
 
     internal func socketPath() -> String {
-        if let override = socketPathOverride { return override }
-        if let xdg = ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"], !xdg.isEmpty {
-            return (xdg as NSString).appendingPathComponent("smithers-sessions.sock")
-        }
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".smithers/sessions.sock").path
+        Self.resolvedSocketPath(socketPathOverride: socketPathOverride)
     }
 
     private func nextRequestID() -> Int {
@@ -253,24 +249,85 @@ public actor SessionController {
         return nextId
     }
 
-    private func locateDaemonBinary() -> String? {
-        let bundle = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Resources/smithers-session-daemon")
-            .path
-        if FileManager.default.isExecutableFile(atPath: bundle) { return bundle }
+    internal nonisolated static func resolvedSocketPath(socketPathOverride: String? = nil) -> String {
+        if let override = socketPathOverride, !override.isEmpty { return override }
+        if let env = currentEnvironmentValue("SMITHERS_SESSION_SOCKET"), !env.isEmpty {
+            return env
+        }
+        if let xdg = currentEnvironmentValue("XDG_RUNTIME_DIR"), !xdg.isEmpty {
+            return (xdg as NSString).appendingPathComponent("smithers-sessions.sock")
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".smithers/sessions.sock").path
+    }
 
-        if let env = ProcessInfo.processInfo.environment["SMITHERS_SESSION_DAEMON"],
+    internal nonisolated static func locateDaemonBinary(referenceFilePath: String = #filePath) -> String? {
+        locateHelperBinary(
+            named: "smithers-session-daemon",
+            environmentKey: "SMITHERS_SESSION_DAEMON",
+            referenceFilePath: referenceFilePath
+        )
+    }
+
+    internal nonisolated static func locateSessionConnectBinary(referenceFilePath: String = #filePath) -> String? {
+        locateHelperBinary(
+            named: "smithers-session-connect",
+            environmentKey: "SMITHERS_SESSION_CONNECT",
+            referenceFilePath: referenceFilePath
+        )
+    }
+
+    private nonisolated static func locateHelperBinary(
+        named binaryName: String,
+        environmentKey: String,
+        referenceFilePath: String = #filePath
+    ) -> String? {
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/\(binaryName)")
+            .path
+        if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
+
+        if let env = currentEnvironmentValue(environmentKey),
            FileManager.default.isExecutableFile(atPath: env) {
             return env
         }
 
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
+        if let devBinary = locateRepoBuildBinary(named: binaryName, referenceFilePath: referenceFilePath) {
+            return devBinary
+        }
+
+        if let path = currentEnvironmentValue("PATH") {
             for dir in path.split(separator: ":") {
-                let candidate = (String(dir) as NSString).appendingPathComponent("smithers-session-daemon")
+                let candidate = (String(dir) as NSString).appendingPathComponent(binaryName)
                 if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
             }
         }
         return nil
+    }
+
+    private nonisolated static func locateRepoBuildBinary(
+        named binaryName: String,
+        referenceFilePath: String
+    ) -> String? {
+        var dir = URL(fileURLWithPath: referenceFilePath).deletingLastPathComponent()
+        for _ in 0..<binarySearchAncestorLimit {
+            let candidate = dir
+                .appendingPathComponent("libsmithers/zig-out/bin/\(binaryName)")
+                .path
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+            dir = dir.deletingLastPathComponent()
+        }
+        return nil
+    }
+
+    private static func currentEnvironmentValue(_ key: String) -> String? {
+        if let value = getenv(key) {
+            let string = String(cString: value)
+            return string.isEmpty ? nil : string
+        }
+        return ProcessInfo.processInfo.environment[key]
     }
 
     // MARK: - RPC call

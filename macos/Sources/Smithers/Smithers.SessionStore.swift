@@ -24,6 +24,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private var willTerminateObserver: NSObjectProtocol?
     private var pendingSaveTask: Task<Void, Never>?
     private let sessionPersistenceDisabled: Bool
+    private var nativeSurfaceOperationsInFlight: Set<NativeSurfaceKey> = []
 
     private static let persistenceSaveDebounceNanoseconds: UInt64 = 500_000_000
     private static let persistenceEncoder: JSONEncoder = {
@@ -58,6 +59,11 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             runTab = nil
             self.terminalTab = terminalTab
         }
+    }
+
+    private struct NativeSurfaceKey: Hashable {
+        let terminalId: String
+        let surfaceId: SurfaceID
     }
 
     var workspaceRootPath: String { workingDirectory }
@@ -181,36 +187,52 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 runId: normalizedRunId,
                 hijack: hijack,
                 rootKind: .terminal,
-                browserURLString: nil
+                browserURLString: nil,
+                snapshot: workspace.snapshot
             ),
             at: 0
         )
         scheduleSave()
-
-        // Kick off the native PTY session in the background. `sessionId` on
-        // the surface is filled in asynchronously; the attach path will wait
-        // if it lands first.
-        ensureNativeSession(
-            terminalId: id,
-            surfaceId: rootSurfaceID,
-            workingDirectory: cwd,
-            command: command
-        )
+        reconcileNativeTerminalSurfaces(in: workspace)
 
         return id
     }
 
-    /// Best-effort native session spawn. Writes the returned session id back
-    /// into the surface so `terminalAttachCommand` can build an argv for
-    /// smithers-session-connect. Failures (e.g. daemon not installed) leave
-    /// the surface without a sessionId — the attach path degrades by showing
-    /// the local shell via ghostty's built-in spawn.
-    private func ensureNativeSession(
-        terminalId: String,
-        surfaceId: SurfaceID,
+    private func reconcileNativeTerminalSurfaces(in workspace: TerminalWorkspace) {
+        let terminalId = workspace.id.rawValue
+        for surface in workspace.orderedSurfaces
+        where surface.kind == .terminal && surface.terminalBackend == .native {
+            let key = NativeSurfaceKey(terminalId: terminalId, surfaceId: surface.id)
+            guard !nativeSurfaceOperationsInFlight.contains(key) else { continue }
+
+            switch workspace.nativeTerminalState(surfaceId: surface.id) {
+            case .ready, .unavailable:
+                continue
+            case .pending:
+                if let sessionId = normalizedOptionalText(surface.sessionId) {
+                    verifyNativeSession(
+                        key: key,
+                        sessionId: sessionId
+                    )
+                } else {
+                    createNativeSession(
+                        key: key,
+                        workingDirectory: surface.terminalWorkingDirectory,
+                        command: surface.terminalCommand
+                    )
+                }
+            }
+        }
+    }
+
+    private func createNativeSession(
+        key: NativeSurfaceKey,
         workingDirectory: String?,
         command: String?
     ) {
+        nativeSurfaceOperationsInFlight.insert(key)
+        terminalWorkspaces[key.terminalId]?.markNativeTerminalPending(surfaceId: key.surfaceId)
+
         let shell = ProcessInfo.processInfo.environment["SHELL"]
         Task { [weak self] in
             do {
@@ -224,33 +246,73 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                     rows: 24,
                     cols: 80
                 )
-                self?.applyNativeSessionId(
-                    terminalId: terminalId,
-                    surfaceId: surfaceId,
-                    sessionId: info.id
-                )
+                await MainActor.run {
+                    self?.nativeSurfaceOperationsInFlight.remove(key)
+                    self?.applyNativeSessionReady(key: key, sessionId: info.id)
+                }
             } catch {
-                AppLogger.terminal.warning(
-                    "native session create failed",
-                    metadata: ["error": "\(error)"]
-                )
+                await MainActor.run {
+                    self?.nativeSurfaceOperationsInFlight.remove(key)
+                    self?.applyNativeSessionUnavailable(
+                        key: key,
+                        message: "Failed to start terminal session: \(error)"
+                    )
+                }
             }
         }
     }
 
-    @MainActor
-    private func applyNativeSessionId(terminalId: String, surfaceId: SurfaceID, sessionId: String) {
-        if let workspace = terminalWorkspaces[terminalId],
-           var surface = workspace.surfaces[surfaceId] {
-            surface.sessionId = sessionId
-            // Force the workspace to observe the surface mutation by updating
-            // via the registry. TerminalWorkspace currently has no public
-            // setter — fall back to reinserting through an internal path.
-            // TODO: expose a proper setSessionId API on TerminalWorkspace.
-            workspace.setSurfaceSessionId(surfaceId: surfaceId, sessionId: sessionId)
+    private func verifyNativeSession(
+        key: NativeSurfaceKey,
+        sessionId: String
+    ) {
+        nativeSurfaceOperationsInFlight.insert(key)
+        terminalWorkspaces[key.terminalId]?.markNativeTerminalPending(surfaceId: key.surfaceId)
+
+        Task { [weak self] in
+            do {
+                try await SessionController.shared.ensureDaemon()
+                _ = try await SessionController.shared.info(sessionId: PTYSessionID(sessionId))
+                await MainActor.run {
+                    self?.nativeSurfaceOperationsInFlight.remove(key)
+                    self?.applyNativeSessionReady(key: key, sessionId: sessionId)
+                }
+            } catch {
+                AppLogger.terminal.info(
+                    "persisted native session is gone; keeping surface unavailable",
+                    metadata: [
+                        "sessionId": sessionId,
+                        "error": "\(error)"
+                    ]
+                )
+                await MainActor.run {
+                    self?.nativeSurfaceOperationsInFlight.remove(key)
+                    self?.applyNativeSessionUnavailable(
+                        key: key,
+                        message: "Saved terminal session is no longer available."
+                    )
+                }
+            }
         }
-        if let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }) {
+    }
+
+    private func applyNativeSessionReady(key: NativeSurfaceKey, sessionId: String) {
+        if let workspace = terminalWorkspaces[key.terminalId] {
+            workspace.markNativeTerminalReady(surfaceId: key.surfaceId, sessionId: sessionId)
+        }
+        if let idx = terminalTabs.firstIndex(where: { $0.terminalId == key.terminalId }) {
             terminalTabs[idx].sessionId = sessionId
+            terminalTabs[idx].timestamp = Date()
+        }
+        scheduleSave()
+    }
+
+    private func applyNativeSessionUnavailable(key: NativeSurfaceKey, message: String) {
+        if let workspace = terminalWorkspaces[key.terminalId] {
+            workspace.markNativeTerminalUnavailable(surfaceId: key.surfaceId, message: message)
+        }
+        if let idx = terminalTabs.firstIndex(where: { $0.terminalId == key.terminalId }) {
+            terminalTabs[idx].sessionId = nil
             terminalTabs[idx].timestamp = Date()
         }
         scheduleSave()
@@ -291,7 +353,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 tmuxSocketName: nil,
                 tmuxSessionName: nil,
                 rootKind: .browser,
-                browserURLString: urlString
+                browserURLString: urlString,
+                snapshot: workspace.snapshot
             ),
             at: 0
         )
@@ -392,6 +455,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     func ensureTerminalWorkspace(_ terminalId: String) -> TerminalWorkspace {
         if let workspace = terminalWorkspaces[terminalId] {
             workspace.prepareAllTerminalSessions()
+            reconcileNativeTerminalSurfaces(in: workspace)
             return workspace
         }
         let workspaceID = WorkspaceID(terminalId)
@@ -405,31 +469,38 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             guard resolvedBackend == .tmux else { return nil }
             return normalizedOptionalText(tab?.tmuxSocketName) ?? TmuxController.socketName(for: cwd)
         }()
-        let workspace = TerminalWorkspace(
-            id: workspaceID,
-            windowID: workspaceWindowIds[workspaceID] ?? windowID,
-            title: tab?.title ?? "Terminal",
-            workingDirectory: cwd,
-            command: tab?.command,
-            runId: tab?.runId,
-            rootSurfaceId: rootSurfaceID,
-            rootKind: rootKind,
-            browserURLString: tab?.browserURLString,
-            backend: resolvedBackend,
-            tmuxSocketName: socketName,
-            sessionId: tab?.sessionId
-        )
-        attachTerminalWorkspaceChangeHandler(workspace)
-        terminalWorkspaces[terminalId] = workspace
-        if resolvedBackend == .native, rootKind == .terminal, tab?.sessionId == nil {
-            ensureNativeSession(
-                terminalId: terminalId,
-                surfaceId: rootSurfaceID,
+        let workspace: TerminalWorkspace
+        if let snapshot = tab?.snapshot {
+            workspace = TerminalWorkspace(
+                id: workspaceID,
+                windowID: workspaceWindowIds[workspaceID] ?? windowID,
+                snapshot: snapshot,
                 workingDirectory: cwd,
-                command: tab?.command
+                runId: tab?.runId,
+                backend: resolvedBackend,
+                tmuxSocketName: socketName,
+                sessionId: tab?.sessionId
+            )
+        } else {
+            workspace = TerminalWorkspace(
+                id: workspaceID,
+                windowID: workspaceWindowIds[workspaceID] ?? windowID,
+                title: tab?.title ?? "Terminal",
+                workingDirectory: cwd,
+                command: tab?.command,
+                runId: tab?.runId,
+                rootSurfaceId: rootSurfaceID,
+                rootKind: rootKind,
+                browserURLString: tab?.browserURLString,
+                backend: resolvedBackend,
+                tmuxSocketName: socketName,
+                sessionId: tab?.sessionId
             )
         }
+        attachTerminalWorkspaceChangeHandler(workspace)
+        terminalWorkspaces[terminalId] = workspace
         syncTerminalTabMetadata(from: workspace)
+        reconcileNativeTerminalSurfaces(in: workspace)
         return workspace
     }
 
@@ -474,6 +545,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         if let workspace = terminalWorkspaces[terminalId],
            let surface = workspace.orderedSurfaces.first(where: { $0.kind == .terminal }) {
             if surface.terminalBackend == .native {
+                guard workspace.nativeTerminalState(surfaceId: surface.id) == .ready else { return nil }
                 return nativeAttachCommand(for: surface.sessionId)
             }
             return TmuxController.attachCommand(socketName: surface.tmuxSocketName, sessionName: surface.tmuxSessionName)
@@ -486,29 +558,32 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     /// Build a `smithers-session-connect <sessionId>` command line, locating
-    /// the binary in bundle resources, an env override, or PATH. Returns nil
-    /// when the session id is missing so the caller can fall back.
+    /// the helper in bundle resources, env overrides, the local checkout, or
+    /// PATH. Returns nil when the session id is missing.
     nonisolated func nativeAttachCommand(for sessionId: String?) -> String? {
         Self.buildNativeAttachCommand(for: sessionId)
     }
 
-    nonisolated static func buildNativeAttachCommand(for sessionId: String?) -> String? {
+    nonisolated static func buildNativeAttachCommand(
+        for sessionId: String?,
+        sessionConnectBinaryOverride: String? = nil,
+        socketPathOverride: String? = nil
+    ) -> String? {
         guard let sessionId, !sessionId.isEmpty else { return nil }
 
         let binary: String = {
-            let bundled = Bundle.main.bundleURL
-                .appendingPathComponent("Contents/Resources/smithers-session-connect")
-                .path
-            if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
-            if let env = ProcessInfo.processInfo.environment["SMITHERS_SESSION_CONNECT"],
-               FileManager.default.isExecutableFile(atPath: env) { return env }
-            return "smithers-session-connect"
+            if let override = sessionConnectBinaryOverride, !override.isEmpty {
+                return override
+            }
+            return SessionController.locateSessionConnectBinary() ?? "smithers-session-connect"
         }()
+        let socketPath = SessionController.resolvedSocketPath(socketPathOverride: socketPathOverride)
 
         // Defensive shell-quoting: the session id is UUID-ish but don't trust it.
         let escapedId = sessionId.replacingOccurrences(of: "'", with: "'\"'\"'")
         let escapedBin = binary.replacingOccurrences(of: "'", with: "'\"'\"'")
-        return "'\(escapedBin)' '\(escapedId)'"
+        let escapedSocket = socketPath.replacingOccurrences(of: "'", with: "'\"'\"'")
+        return "'\(escapedBin)' '\(escapedId)' --socket '\(escapedSocket)'"
     }
 
     func removeTerminalTab(_ terminalId: String) {
@@ -519,7 +594,13 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             terminateTmuxSessions(in: workspace.snapshot)
             terminateNativeSessions(in: workspace.snapshot)
         } else if let tab = terminalTabs.first(where: { $0.terminalId == terminalId }) {
-            if tab.backend == .tmux {
+            if let snapshot = tab.snapshot {
+                if tab.backend == .tmux {
+                    terminateTmuxSessions(in: snapshot)
+                } else if tab.backend == .native {
+                    terminateNativeSessions(in: snapshot)
+                }
+            } else if tab.backend == .tmux {
                 TmuxController.terminateSession(socketName: tab.tmuxSocketName, sessionName: tab.tmuxSessionName)
             } else if tab.backend == .native, let sid = tab.sessionId {
                 Task.detached {
@@ -605,17 +686,35 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
 
     func autoPopulateActiveRunTabs(_ runs: [RunSummary]) {
         var didMutate = false
-        for run in runs where run.status == .running || run.status == .waitingApproval {
+        for run in runs {
             if let idx = runTabs.firstIndex(where: { $0.runId == run.runId }) {
                 runTabs[idx].title = runTabTitle(runId: run.runId, title: run.workflowName)
                 runTabs[idx].preview = runPreview(for: run)
                 didMutate = true
-            } else {
+            } else if run.status == .running || run.status == .waitingApproval {
                 addRunTab(runId: run.runId, title: run.workflowName, preview: runPreview(for: run))
                 didMutate = true
             }
         }
         if didMutate {
+            scheduleSave()
+        }
+    }
+
+    func updateRunTab(with run: RunSummary) {
+        guard let idx = runTabs.firstIndex(where: { $0.runId == run.runId }) else { return }
+        let title = runTabTitle(runId: run.runId, title: run.workflowName)
+        let preview = runPreview(for: run)
+        var mutated = false
+        if runTabs[idx].title != title {
+            runTabs[idx].title = title
+            mutated = true
+        }
+        if runTabs[idx].preview != preview {
+            runTabs[idx].preview = preview
+            mutated = true
+        }
+        if mutated {
             scheduleSave()
         }
     }
@@ -664,6 +763,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
 
     func terminalWorkspaceDidChange(_ workspace: TerminalWorkspace) {
         syncTerminalTabMetadata(from: workspace)
+        reconcileNativeTerminalSurfaces(in: workspace)
     }
 
     private func refreshFromCore() {
@@ -717,6 +817,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         terminalTabs[idx].sessionId = firstTerminal?.sessionId ?? terminalTabs[idx].sessionId
         terminalTabs[idx].rootKind = rootSurface?.kind ?? terminalTabs[idx].rootKind
         terminalTabs[idx].browserURLString = rootSurface?.browserURLString ?? terminalTabs[idx].browserURLString
+        terminalTabs[idx].snapshot = workspace.snapshot
         terminalTabs[idx].timestamp = Date()
         scheduleSave()
     }

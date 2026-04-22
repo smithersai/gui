@@ -82,7 +82,7 @@ final class SessionStoreHijackTests: XCTestCase {
         XCTAssertEqual(decoded.terminalId, record.terminalId)
         XCTAssertEqual(decoded.runId, "run-123")
         XCTAssertEqual(decoded.hijack, record.hijack)
-        XCTAssertNil(decoded.sessionId)
+        XCTAssertEqual(decoded.sessionId, "session-1")
         XCTAssertEqual(decoded.timestamp, date)
         XCTAssertEqual(decoded.createdAt, date)
     }
