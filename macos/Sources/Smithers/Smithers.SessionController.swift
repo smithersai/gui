@@ -261,31 +261,39 @@ public actor SessionController {
         return home.appendingPathComponent(".smithers/sessions.sock").path
     }
 
-    internal nonisolated static func locateDaemonBinary(referenceFilePath: String = #filePath) -> String? {
+    internal nonisolated static func locateDaemonBinary(
+        referenceFilePath: String = #filePath,
+        bundleURL: URL = Bundle.main.bundleURL
+    ) -> String? {
         locateHelperBinary(
             named: "smithers-session-daemon",
             environmentKey: "SMITHERS_SESSION_DAEMON",
-            referenceFilePath: referenceFilePath
+            referenceFilePath: referenceFilePath,
+            bundleURL: bundleURL
         )
     }
 
-    internal nonisolated static func locateSessionConnectBinary(referenceFilePath: String = #filePath) -> String? {
+    internal nonisolated static func locateSessionConnectBinary(
+        referenceFilePath: String = #filePath,
+        bundleURL: URL = Bundle.main.bundleURL
+    ) -> String? {
         locateHelperBinary(
             named: "smithers-session-connect",
             environmentKey: "SMITHERS_SESSION_CONNECT",
-            referenceFilePath: referenceFilePath
+            referenceFilePath: referenceFilePath,
+            bundleURL: bundleURL
         )
     }
 
     private nonisolated static func locateHelperBinary(
         named binaryName: String,
         environmentKey: String,
-        referenceFilePath: String = #filePath
+        referenceFilePath: String = #filePath,
+        bundleURL: URL = Bundle.main.bundleURL
     ) -> String? {
-        let bundled = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Resources/\(binaryName)")
-            .path
-        if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
+        if let bundled = locateBundledHelperBinary(named: binaryName, bundleURL: bundleURL) {
+            return bundled
+        }
 
         if let env = currentEnvironmentValue(environmentKey),
            FileManager.default.isExecutableFile(atPath: env) {
@@ -294,6 +302,15 @@ public actor SessionController {
 
         if let devBinary = locateRepoBuildBinary(named: binaryName, referenceFilePath: referenceFilePath) {
             return devBinary
+        }
+
+        if let bundleRelativeBinary = locateRepoBuildBinary(named: binaryName, searchRootURL: bundleURL) {
+            return bundleRelativeBinary
+        }
+
+        if let executableURL = Bundle.main.executableURL,
+           let executableRelativeBinary = locateRepoBuildBinary(named: binaryName, searchRootURL: executableURL) {
+            return executableRelativeBinary
         }
 
         if let path = currentEnvironmentValue("PATH") {
@@ -305,11 +322,37 @@ public actor SessionController {
         return nil
     }
 
+    private nonisolated static func locateBundledHelperBinary(
+        named binaryName: String,
+        bundleURL: URL
+    ) -> String? {
+        let resourcesURL = bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Resources", isDirectory: true)
+        let candidate = resourcesURL
+            .appendingPathComponent(binaryName, isDirectory: false)
+            .path
+        if FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+        return nil
+    }
+
     private nonisolated static func locateRepoBuildBinary(
         named binaryName: String,
         referenceFilePath: String
     ) -> String? {
-        var dir = URL(fileURLWithPath: referenceFilePath).deletingLastPathComponent()
+        locateRepoBuildBinary(
+            named: binaryName,
+            searchRootURL: URL(fileURLWithPath: referenceFilePath).deletingLastPathComponent()
+        )
+    }
+
+    private nonisolated static func locateRepoBuildBinary(
+        named binaryName: String,
+        searchRootURL: URL
+    ) -> String? {
+        var dir = searchRootURL.hasDirectoryPath ? searchRootURL : searchRootURL.deletingLastPathComponent()
         for _ in 0..<binarySearchAncestorLimit {
             let candidate = dir
                 .appendingPathComponent("libsmithers/zig-out/bin/\(binaryName)")
@@ -317,7 +360,11 @@ public actor SessionController {
             if FileManager.default.isExecutableFile(atPath: candidate) {
                 return candidate
             }
-            dir = dir.deletingLastPathComponent()
+            let parent = dir.deletingLastPathComponent()
+            if parent.path == dir.path {
+                break
+            }
+            dir = parent
         }
         return nil
     }

@@ -241,6 +241,34 @@ final class SessionControllerTests: XCTestCase {
         return (root, referenceFilePath, binaryURL.path)
     }
 
+    private func makeBundledExecutableFixture(named binaryName: String) throws -> (root: URL, bundleURL: URL, binaryPath: String) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SessionControllerTests-Bundle-\(UUID().uuidString)", isDirectory: true)
+        let bundleURL = root.appendingPathComponent("SmithersGUI.app", isDirectory: true)
+        let binaryURL = bundleURL
+            .appendingPathComponent("Contents/Resources", isDirectory: true)
+            .appendingPathComponent(binaryName, isDirectory: false)
+        try FileManager.default.createDirectory(at: binaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binaryURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binaryURL.path)
+        return (root, bundleURL, binaryURL.path)
+    }
+
+    private func makeBundleRelativeExecutableFixture(named binaryName: String) throws -> (root: URL, bundleURL: URL, binaryPath: String) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SessionControllerTests-AppBundle-\(UUID().uuidString)", isDirectory: true)
+        let exportDir = root.appendingPathComponent("build/export", isDirectory: true)
+        let bundleURL = exportDir.appendingPathComponent("SmithersGUI.app", isDirectory: true)
+        let binaryURL = root
+            .appendingPathComponent("libsmithers/zig-out/bin", isDirectory: true)
+            .appendingPathComponent(binaryName, isDirectory: false)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: binaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binaryURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binaryURL.path)
+        return (root, bundleURL, binaryURL.path)
+    }
+
     private func waitForProcessExit(pid: Int32, timeout: TimeInterval = 3) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -449,7 +477,10 @@ final class SessionControllerTests: XCTestCase {
         let fixture = try makeExecutableFixture(named: "smithers-session-daemon")
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
-        let resolved = SessionController.locateDaemonBinary(referenceFilePath: fixture.referenceFilePath)
+        let resolved = SessionController.locateDaemonBinary(
+            referenceFilePath: fixture.referenceFilePath,
+            bundleURL: fixture.root.appendingPathComponent("NoBundle.app", isDirectory: true)
+        )
 
         XCTAssertEqual(resolved, fixture.binaryPath)
     }
@@ -458,7 +489,34 @@ final class SessionControllerTests: XCTestCase {
         let fixture = try makeExecutableFixture(named: "smithers-session-connect")
         defer { try? FileManager.default.removeItem(at: fixture.root) }
 
-        let resolved = SessionController.locateSessionConnectBinary(referenceFilePath: fixture.referenceFilePath)
+        let resolved = SessionController.locateSessionConnectBinary(
+            referenceFilePath: fixture.referenceFilePath,
+            bundleURL: fixture.root.appendingPathComponent("NoBundle.app", isDirectory: true)
+        )
+
+        XCTAssertEqual(resolved, fixture.binaryPath)
+    }
+
+    func testLocateSessionConnectBinaryPrefersBundledResource() throws {
+        let fixture = try makeBundledExecutableFixture(named: "smithers-session-connect")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let resolved = SessionController.locateSessionConnectBinary(
+            referenceFilePath: "/tmp/SessionControllerTests/Nowhere.swift",
+            bundleURL: fixture.bundleURL
+        )
+
+        XCTAssertEqual(resolved, fixture.binaryPath)
+    }
+
+    func testLocateSessionConnectBinaryFindsRepoArtifactRelativeToBundleURL() throws {
+        let fixture = try makeBundleRelativeExecutableFixture(named: "smithers-session-connect")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let resolved = SessionController.locateSessionConnectBinary(
+            referenceFilePath: "/tmp/SessionControllerTests/Nowhere.swift",
+            bundleURL: fixture.bundleURL
+        )
 
         XCTAssertEqual(resolved, fixture.binaryPath)
     }

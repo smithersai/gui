@@ -32,6 +32,7 @@ targets:
       - RewindConfirmationDialog.swift
       - LiveRunLayout.swift
       - LiveRunView.swift
+      - LiveRunTreeExpansionStore.swift
       - LiveRunTreeView.swift
       - TreeRowView.swift
       - LastLogPerNodeStore.swift
@@ -116,6 +117,10 @@ targets:
       - macos/Sources/Smithers
       - path: Resources/MarkdownShell
         type: folder
+      - path: libsmithers/zig-out/bin/smithers-session-daemon
+        buildPhase: resources
+      - path: libsmithers/zig-out/bin/smithers-session-connect
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUI
