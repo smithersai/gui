@@ -211,7 +211,7 @@ fn queryCall(allocator: std.mem.Allocator, args: Value, table: []const u8) ![]u8
     );
 }
 
-fn nodeStateDictCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
+pub fn nodeStateDictCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
     const rows = arrayArg(args, "rows") orelse &.{};
     var entries: std.ArrayList(NodeStateEntry) = .empty;
     defer entries.deinit(allocator);
@@ -242,7 +242,7 @@ fn nodeStateDictCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
     return writeNodeStateMap(allocator, entries.items);
 }
 
-fn attemptEntriesCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
+pub fn attemptEntriesCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
     const rows = arrayArg(args, "rows") orelse &.{};
     var entries: std.ArrayList(AttemptEntry) = .empty;
     defer entries.deinit(allocator);
@@ -264,7 +264,7 @@ fn attemptEntriesCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
     return writeAttemptArray(allocator, entries.items);
 }
 
-fn nodeStatesAtTimestampCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
+pub fn nodeStatesAtTimestampCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
     const attempts_json = arrayArg(args, "attempts") orelse &.{};
     const frame_timestamp_ms = intArg(args, "frameTimestampMs") orelse 0;
     var chosen: std.ArrayList(AttemptEntry) = .empty;
@@ -319,7 +319,7 @@ fn nodeStatesAtTimestampCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
     return writeNodeStateMap(allocator, states.items);
 }
 
-fn buildTreeCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
+pub fn buildTreeCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const scratch = arena.allocator();
@@ -467,7 +467,7 @@ fn buildNode(
     return .{ .json = try out.toOwnedSlice(), .state = state_for_parent };
 }
 
-fn applyFrameDeltasCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
+pub fn applyFrameDeltasCall(allocator: std.mem.Allocator, args: Value) ![]u8 {
     var tree = objectValue(args, "keyframe") orelse return error.InvalidFrame;
     const deltas = arrayArg(args, "deltas") orelse &.{};
     for (deltas) |delta| {

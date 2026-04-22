@@ -107,6 +107,19 @@ pub fn build(b: *std.Build) void {
     configureSQLite(b, tests.root_module, target);
 
     const run_tests = b.addRunArtifact(tests);
+
+    const devtools_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/devtools_stream.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "libsmithers", .module = root_mod },
+            },
+        }),
+    });
+    configureSQLite(b, devtools_tests.root_module, target);
+    const run_devtools_tests = b.addRunArtifact(devtools_tests);
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
@@ -134,6 +147,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_daemon_unit_tests.step);
     test_step.dependOn(&run_connect_unit_tests.step);
+    test_step.dependOn(&run_devtools_tests.step);
     test_step.dependOn(&(blk: {
         const integration_tests = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path("test/integration/all.zig"),
