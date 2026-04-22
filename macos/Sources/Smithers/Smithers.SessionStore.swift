@@ -285,11 +285,21 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                         "error": "\(error)"
                     ]
                 )
+                let preservingSessionId: Bool = {
+                    if case SessionControllerError.daemonUnavailable = error {
+                        return true
+                    }
+                    return false
+                }()
+                let message = preservingSessionId
+                    ? "Saved terminal session could not be verified because the session daemon is unavailable."
+                    : "Saved terminal session is no longer available."
                 await MainActor.run {
                     self?.nativeSurfaceOperationsInFlight.remove(key)
                     self?.applyNativeSessionUnavailable(
                         key: key,
-                        message: "Saved terminal session is no longer available."
+                        message: message,
+                        preservingSessionId: preservingSessionId
                     )
                 }
             }
@@ -307,12 +317,22 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         scheduleSave()
     }
 
-    private func applyNativeSessionUnavailable(key: NativeSurfaceKey, message: String) {
+    private func applyNativeSessionUnavailable(
+        key: NativeSurfaceKey,
+        message: String,
+        preservingSessionId: Bool = false
+    ) {
         if let workspace = terminalWorkspaces[key.terminalId] {
-            workspace.markNativeTerminalUnavailable(surfaceId: key.surfaceId, message: message)
+            workspace.markNativeTerminalUnavailable(
+                surfaceId: key.surfaceId,
+                message: message,
+                preservingSessionId: preservingSessionId
+            )
         }
         if let idx = terminalTabs.firstIndex(where: { $0.terminalId == key.terminalId }) {
-            terminalTabs[idx].sessionId = nil
+            if !preservingSessionId {
+                terminalTabs[idx].sessionId = nil
+            }
             terminalTabs[idx].timestamp = Date()
         }
         scheduleSave()

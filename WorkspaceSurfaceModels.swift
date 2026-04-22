@@ -915,11 +915,17 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         notifyChanged()
     }
 
-    func markNativeTerminalUnavailable(surfaceId: SurfaceID, message: String?) {
+    func markNativeTerminalUnavailable(
+        surfaceId: SurfaceID,
+        message: String?,
+        preservingSessionId: Bool = false
+    ) {
         guard var surface = surfaces[surfaceId],
               surface.terminalBackend == .native,
               surface.kind == .terminal else { return }
-        surface.sessionId = nil
+        if !preservingSessionId {
+            surface.sessionId = nil
+        }
         surface.nativeAttachmentState = .unavailable(message)
         surfaces[surfaceId] = surface
         nativeTerminalStates[surfaceId] = .unavailable(message)
@@ -989,7 +995,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         guard surface.kind == .terminal, surface.terminalBackend == .native else { return }
         let state: NativeTerminalAttachmentState
         if restored, case .unavailable(let message) = surface.nativeAttachmentState {
-            state = .unavailable(message)
+            state = surface.sessionId == nil ? .unavailable(message) : .pending
         } else if restored || surface.sessionId == nil {
             state = .pending
         } else {

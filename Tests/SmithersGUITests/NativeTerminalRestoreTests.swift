@@ -66,6 +66,62 @@ final class NativeTerminalRestoreTests: XCTestCase {
         XCTAssertEqual(restored.surfaces.first(where: { $0.id == split.id })?.nativeAttachmentState, .ready)
     }
 
+    func testNativeWorkspaceCanPreserveSessionIdWhenMarkedUnavailable() {
+        let rootId = SurfaceID()
+        let workspace = TerminalWorkspace(
+            id: WorkspaceID(),
+            title: "Codex",
+            workingDirectory: "/tmp/project",
+            command: "codex",
+            rootSurfaceId: rootId,
+            backend: .native,
+            sessionId: "sess-root"
+        )
+
+        workspace.markNativeTerminalUnavailable(
+            surfaceId: rootId,
+            message: "Saved terminal session could not be verified because the session daemon is unavailable.",
+            preservingSessionId: true
+        )
+
+        XCTAssertEqual(workspace.surfaces[rootId]?.sessionId, "sess-root")
+        XCTAssertEqual(
+            workspace.nativeTerminalState(surfaceId: rootId),
+            .unavailable("Saved terminal session could not be verified because the session daemon is unavailable.")
+        )
+    }
+
+    func testRestoredUnavailableNativeSurfaceWithSessionIdRetriesVerification() {
+        let rootId = SurfaceID()
+        var root = WorkspaceSurface.terminal(
+            id: rootId,
+            workingDirectory: "/tmp/project",
+            command: "codex",
+            backend: .native,
+            sessionId: "sess-root"
+        )
+        root.nativeAttachmentState = .unavailable(
+            "Saved terminal session could not be verified because the session daemon is unavailable."
+        )
+        let snapshot = TerminalWorkspaceSnapshot(
+            title: "Codex",
+            surfaces: [root],
+            layout: .leaf(rootId),
+            focusedSurfaceId: rootId,
+            hasCustomTitle: false
+        )
+
+        let workspace = TerminalWorkspace(
+            id: WorkspaceID(),
+            snapshot: snapshot,
+            workingDirectory: "/tmp/project",
+            backend: .native
+        )
+
+        XCTAssertEqual(workspace.surfaces[rootId]?.sessionId, "sess-root")
+        XCTAssertEqual(workspace.nativeTerminalState(surfaceId: rootId), .pending)
+    }
+
     #if os(macOS)
     func testSessionStoreReloadRestoresWorkspaceSnapshot() async throws {
         let context = try makeStoreContext(name: "snapshot")
@@ -310,6 +366,7 @@ final class NativeTerminalRestoreTests: XCTestCase {
             userInfo: [NSLocalizedDescriptionKey: "timed out waiting for unavailable native session"]
         )
     }
+
 }
 
 private struct StoreContext {
