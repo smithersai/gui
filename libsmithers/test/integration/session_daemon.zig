@@ -5,6 +5,68 @@ const server_mod = @import("session_server");
 
 const posix = std.posix;
 
+const CmsgLen = if (builtin.os.tag == .linux) usize else posix.socklen_t;
+
+const Cmsghdr = extern struct {
+    cmsg_len: CmsgLen,
+    cmsg_level: c_int,
+    cmsg_type: c_int,
+};
+
+fn solSocket() c_int {
+    return switch (builtin.os.tag) {
+        .linux => 1,
+        .macos, .ios, .tvos, .watchos, .visionos => 0xffff,
+        else => @compileError("SCM_RIGHTS is only implemented for Linux and Darwin targets"),
+    };
+}
+
+/// Recvmsg that captures both the attach response payload and the passed
+/// PTY fd (if any), so the test doesn't leak the fd after verifying the
+/// payload. Returns an allocated payload slice trimmed at the first newline.
+fn recvAttachResponse(
+    allocator: std.mem.Allocator,
+    fd: posix.fd_t,
+    max_payload: usize,
+) !struct { payload: []u8, pty_fd: ?posix.fd_t } {
+    const buf = try allocator.alloc(u8, max_payload);
+    errdefer allocator.free(buf);
+
+    var iov = [_]posix.iovec{.{ .base = buf.ptr, .len = buf.len }};
+    var control: [64]u8 align(@alignOf(Cmsghdr)) = undefined;
+    @memset(&control, 0);
+
+    var msg: posix.msghdr = .{
+        .name = null,
+        .namelen = 0,
+        .iov = &iov,
+        .iovlen = 1,
+        .control = &control,
+        .controllen = @intCast(control.len),
+        .flags = 0,
+    };
+
+    const rc = posix.system.recvmsg(fd, &msg, 0);
+    if (posix.errno(rc) != .SUCCESS) return error.RecvMsgFailed;
+    const n: usize = @intCast(rc);
+    if (n == 0) return error.EndOfStream;
+
+    var pty_fd: ?posix.fd_t = null;
+    if (msg.controllen >= @sizeOf(Cmsghdr)) {
+        const header: *const Cmsghdr = @ptrCast(@alignCast(&control[0]));
+        if (header.cmsg_level == solSocket() and header.cmsg_type == 0x01) {
+            const data_offset = (@sizeOf(Cmsghdr) + @sizeOf(CmsgLen) - 1) & ~(@as(usize, @sizeOf(CmsgLen)) - 1);
+            const fd_ptr: *const posix.fd_t = @ptrCast(@alignCast(&control[data_offset]));
+            pty_fd = fd_ptr.*;
+        }
+    }
+
+    const end = std.mem.indexOfScalar(u8, buf[0..n], '\n') orelse n;
+    const payload = try allocator.dupe(u8, buf[0..end]);
+    allocator.free(buf);
+    return .{ .payload = payload, .pty_fd = pty_fd };
+}
+
 fn tempSocketPath(allocator: std.mem.Allocator) ![]u8 {
     // Use the system tmp dir for the UNIX domain socket. sun_path has a
     // ~104 byte limit on Darwin, so we keep the path short.
@@ -253,4 +315,189 @@ test "native session daemon end-to-end: ping, create, send, capture, terminate, 
     server_stopped = true;
 
     try std.testing.expect(ctx.run_error == null);
+}
+
+// Regression: after removing tmux, reopening a session dropped the prior
+// terminal state — e.g. Claude Code would appear as a fresh chat instead
+// of showing the previous conversation. The daemon was buffering scrollback
+// while detached but never delivering it on reattach. This test drives an
+// attach, detaches, lets the shell emit more output, then re-attaches and
+// verifies the attach response carries the captured scrollback under
+// `replayBase64` so the client can redraw prior state (tmux-style).
+test "session.attach replays scrollback on reattach so reopened sessions keep their state" {
+    if (!(builtin.os.tag == .linux or builtin.os.tag.isDarwin())) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const socket_path = try tempSocketPath(allocator);
+    defer allocator.free(socket_path);
+    std.fs.deleteFileAbsolute(socket_path) catch {};
+    defer std.fs.deleteFileAbsolute(socket_path) catch {};
+
+    var server = try server_mod.Server.init(allocator, socket_path, 0);
+    var ctx = RunServerCtx{ .server = &server };
+    const thread = try std.Thread.spawn(.{}, RunServerCtx.run, .{&ctx});
+    var server_stopped = false;
+    errdefer {
+        if (!server_stopped) {
+            server.running.store(false, .seq_cst);
+            thread.join();
+            server.deinit();
+        }
+    }
+
+    try waitForSocket(socket_path, 2_000);
+
+    // Create a long-lived session that emits a known sentinel and then
+    // stays alive so the PTY doesn't close before we reattach. `cat`
+    // (with no args) blocks on stdin forever after the echo, giving us a
+    // stable target for reattach.
+    var session_id_owned: []u8 = &.{};
+    defer if (session_id_owned.len > 0) allocator.free(session_id_owned);
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        try writeAll(
+            client,
+            "{\"id\":1,\"method\":\"session.create\",\"params\":" ++
+                "{\"shell\":\"/bin/sh\",\"command\":\"echo REOPEN_SENTINEL_ONE; cat\"," ++
+                "\"cwd\":\"/tmp\",\"rows\":24,\"cols\":80}}\n",
+        );
+        const line = try readLineAlloc(allocator, client, 64 * 1024);
+        defer allocator.free(line);
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, line, .{});
+        defer parsed.deinit();
+        const result_val = parsed.value.object.get("result") orelse return error.MissingResult;
+        const id_val = result_val.object.get("id") orelse return error.MissingSessionId;
+        session_id_owned = try allocator.dupe(u8, id_val.string);
+    }
+
+    // Give the child a moment to emit the sentinel into the scrollback.
+    std.Thread.sleep(500 * std.time.ns_per_ms);
+
+    // First attach: the replay should already contain the initial sentinel.
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        const attach_req = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":2,\"method\":\"session.attach\",\"params\":{{\"sessionId\":\"{s}\"}}}}\n",
+            .{session_id_owned},
+        );
+        defer allocator.free(attach_req);
+        try writeAll(client, attach_req);
+
+        const resp = try recvAttachResponse(allocator, client, 1024 * 1024);
+        defer allocator.free(resp.payload);
+        if (resp.pty_fd) |pfd| posix.close(pfd);
+
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, resp.payload, .{});
+        defer parsed.deinit();
+        const result_val = parsed.value.object.get("result") orelse return error.MissingResult;
+        const replay_val = result_val.object.get("replayBase64") orelse
+            return error.MissingReplayField;
+        try std.testing.expect(replay_val == .string);
+        const decoded = try decodeBase64(allocator, replay_val.string);
+        defer allocator.free(decoded);
+        try std.testing.expect(std.mem.indexOf(u8, decoded, "REOPEN_SENTINEL_ONE") != null);
+    }
+
+    // Detach, then write more output to the PTY so scrollback keeps growing
+    // while we're detached (this simulates a long-running Claude Code
+    // session continuing to stream while the UI is closed).
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        const detach_req = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":3,\"method\":\"session.detach\",\"params\":{{\"sessionId\":\"{s}\"}}}}\n",
+            .{session_id_owned},
+        );
+        defer allocator.free(detach_req);
+        try writeAll(client, detach_req);
+        const line = try readLineAlloc(allocator, client, 64 * 1024);
+        defer allocator.free(line);
+    }
+
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        const send_req = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":4,\"method\":\"session.send\",\"params\":" ++
+                "{{\"sessionId\":\"{s}\",\"text\":\"REOPEN_SENTINEL_TWO\\n\"}}}}\n",
+            .{session_id_owned},
+        );
+        defer allocator.free(send_req);
+        try writeAll(client, send_req);
+        const line = try readLineAlloc(allocator, client, 64 * 1024);
+        defer allocator.free(line);
+    }
+
+    // Let `cat` echo the input back to the PTY so the daemon captures it.
+    std.Thread.sleep(500 * std.time.ns_per_ms);
+
+    // Second attach: the replay must now carry BOTH sentinels. Before this
+    // fix, the attach payload had no replay at all and the client saw a
+    // blank terminal on reopen.
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        const attach_req = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":5,\"method\":\"session.attach\",\"params\":{{\"sessionId\":\"{s}\"}}}}\n",
+            .{session_id_owned},
+        );
+        defer allocator.free(attach_req);
+        try writeAll(client, attach_req);
+
+        const resp = try recvAttachResponse(allocator, client, 1024 * 1024);
+        defer allocator.free(resp.payload);
+        if (resp.pty_fd) |pfd| posix.close(pfd);
+
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, resp.payload, .{});
+        defer parsed.deinit();
+        const result_val = parsed.value.object.get("result") orelse return error.MissingResult;
+        const replay_val = result_val.object.get("replayBase64") orelse
+            return error.MissingReplayField;
+        const decoded = try decodeBase64(allocator, replay_val.string);
+        defer allocator.free(decoded);
+        try std.testing.expect(std.mem.indexOf(u8, decoded, "REOPEN_SENTINEL_ONE") != null);
+        try std.testing.expect(std.mem.indexOf(u8, decoded, "REOPEN_SENTINEL_TWO") != null);
+    }
+
+    // Clean up: terminate the session and shut the server down.
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        const req = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":6,\"method\":\"session.terminate\",\"params\":{{\"sessionId\":\"{s}\"}}}}\n",
+            .{session_id_owned},
+        );
+        defer allocator.free(req);
+        try writeAll(client, req);
+        const line = try readLineAlloc(allocator, client, 64 * 1024);
+        defer allocator.free(line);
+    }
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        try writeAll(client, "{\"id\":7,\"method\":\"daemon.shutdown\",\"params\":{}}\n");
+        const line = try readLineAlloc(allocator, client, 64 * 1024);
+        defer allocator.free(line);
+    }
+
+    thread.join();
+    server.deinit();
+    server_stopped = true;
+    try std.testing.expect(ctx.run_error == null);
+}
+
+fn decodeBase64(allocator: std.mem.Allocator, encoded: []const u8) ![]u8 {
+    const decoder = std.base64.standard.Decoder;
+    const decoded_len = try decoder.calcSizeForSlice(encoded);
+    const out = try allocator.alloc(u8, decoded_len);
+    errdefer allocator.free(out);
+    try decoder.decode(out, encoded);
+    return out;
 }

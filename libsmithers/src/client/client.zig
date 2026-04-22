@@ -6,6 +6,8 @@ const App = @import("../App.zig");
 const devtools = @import("../devtools/DevToolsClient.zig");
 const devtools_snapshot = @import("../devtools/Snapshot.zig");
 const devtools_stream = @import("../devtools/Stream.zig");
+const devtools_chat_output = @import("../devtools/ChatOutput.zig");
+const devtools_chat_stream = @import("../devtools/ChatStream.zig");
 const models = @import("../models/mod.zig");
 const terminal = @import("../terminal/tmux.zig");
 const agents = @import("agents.zig");
@@ -92,6 +94,14 @@ fn callImpl(self: *Client, method: []const u8, args_json: []const u8) !structs.S
         defer self.allocator.free(json);
         return ffi.stringDup(json);
     }
+    if (std.mem.eql(u8, method, "getChatOutput")) {
+        const run_id = ffi.jsonObjectString(parsed.value, "runId") orelse return error.MissingRunId;
+        const db_path = try self.resolveDbPath() orelse return error.SmithersDbNotFound;
+        defer self.allocator.free(db_path);
+        const json = try devtools_chat_output.loadChatOutputJson(self.allocator, db_path, run_id);
+        defer self.allocator.free(json);
+        return ffi.stringDup(json);
+    }
     if (try models.call(self.allocator, method, parsed.value)) |json| {
         defer self.allocator.free(json);
         return ffi.stringDup(json);
@@ -136,6 +146,25 @@ fn streamImpl(self: *Client, method: []const u8, args_json: []const u8) !*EventS
         try devtools_stream.start(self.allocator, event_stream, run_id, db_path, from_seq);
         return event_stream;
     }
+
+    if (std.mem.eql(u8, method, "streamChat")) {
+        const run_id = ffi.jsonObjectString(parsed.value, "runId") orelse return error.MissingRunId;
+        const db_path = try self.resolveDbPath() orelse return error.SmithersDbNotFound;
+        defer self.allocator.free(db_path);
+        const event_stream = try EventStream.create(self.allocator);
+        errdefer event_stream.destroy();
+        try devtools_chat_stream.start(self.allocator, event_stream, run_id, db_path);
+        return event_stream;
+    }
+
+    // Methods with a dedicated producer must not fall through to the
+    // `{"method":..., "args":...}` passthrough below — that payload has no
+    // `type` key and surfaces in the GUI as
+    // `Malformed event: keyNotFound("type")`, which is exactly what you see
+    // when the app is linked against a stale libsmithers.a that predates the
+    // dedicated handler. Fail fast so the error is visible at connect time.
+    if (std.mem.eql(u8, method, "streamDevTools")) return error.UnsupportedMethod;
+    if (std.mem.eql(u8, method, "streamChat")) return error.UnsupportedMethod;
 
     const event_stream = try EventStream.create(self.allocator);
     errdefer event_stream.destroy();
@@ -221,9 +250,66 @@ fn cliFallback(self: *Client, method: []const u8, args: std.json.Value) !?[]u8 {
     }) catch |err| return err;
     defer self.allocator.free(result.stdout);
     defer self.allocator.free(result.stderr);
-    if (result.term != .Exited or result.term.Exited != 0) return error.CliInvocationFailed;
+    if (result.term != .Exited or result.term.Exited != 0) return cliStderrToError(result.stderr);
 
     return try normalizeCliOutput(self.allocator, method, result.stdout);
+}
+
+// Map a failing smithers CLI invocation's stderr to a descriptive zig error.
+// smithers prints lines like `error: <Code>: <message>` when a request fails.
+// Surfacing the code as the error name lets the GUI map it back to a typed
+// DevToolsClientError instead of showing a generic `CliInvocationFailed`.
+fn cliStderrToError(stderr: []const u8) anyerror {
+    const code = extractCliErrorCode(stderr) orelse return error.CliInvocationFailed;
+    if (std.mem.eql(u8, code, "AttemptNotFinished")) return error.AttemptNotFinished;
+    if (std.mem.eql(u8, code, "AttemptNotFound")) return error.AttemptNotFound;
+    if (std.mem.eql(u8, code, "RunNotFound")) return error.RunNotFound;
+    if (std.mem.eql(u8, code, "NodeNotFound")) return error.NodeNotFound;
+    if (std.mem.eql(u8, code, "NodeHasNoOutput")) return error.NodeHasNoOutput;
+    if (std.mem.eql(u8, code, "InvalidRunId")) return error.InvalidRunId;
+    if (std.mem.eql(u8, code, "InvalidNodeId")) return error.InvalidNodeId;
+    if (std.mem.eql(u8, code, "InvalidIteration")) return error.InvalidIteration;
+    if (std.mem.eql(u8, code, "IterationNotFound")) return error.IterationNotFound;
+    if (std.mem.eql(u8, code, "PayloadTooLarge")) return error.PayloadTooLarge;
+    if (std.mem.eql(u8, code, "DiffTooLarge")) return error.DiffTooLarge;
+    if (std.mem.eql(u8, code, "WorkingTreeDirty")) return error.WorkingTreeDirty;
+    if (std.mem.eql(u8, code, "VcsError")) return error.VcsError;
+    if (std.mem.eql(u8, code, "FrameOutOfRange")) return error.FrameOutOfRange;
+    if (std.mem.eql(u8, code, "MalformedOutputRow")) return error.MalformedOutputRow;
+    if (std.mem.eql(u8, code, "ConfirmationRequired")) return error.ConfirmationRequired;
+    if (std.mem.eql(u8, code, "Busy")) return error.Busy;
+    if (std.mem.eql(u8, code, "UnsupportedSandbox")) return error.UnsupportedSandbox;
+    if (std.mem.eql(u8, code, "RewindFailed")) return error.RewindFailed;
+    if (std.mem.eql(u8, code, "RateLimited")) return error.RateLimited;
+    return error.CliInvocationFailed;
+}
+
+fn extractCliErrorCode(stderr: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, stderr, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, &std.ascii.whitespace);
+        const prefix = "error: ";
+        if (!std.mem.startsWith(u8, line, prefix)) continue;
+        const rest = line[prefix.len..];
+        const colon = std.mem.indexOfScalar(u8, rest, ':') orelse continue;
+        const code = std.mem.trim(u8, rest[0..colon], &std.ascii.whitespace);
+        if (code.len == 0 or code.len > 64) continue;
+        if (!isPascalCaseIdentifier(code)) continue;
+        return code;
+    }
+    return null;
+}
+
+fn isPascalCaseIdentifier(s: []const u8) bool {
+    if (s.len == 0) return false;
+    if (!(s[0] >= 'A' and s[0] <= 'Z')) return false;
+    for (s) |ch| {
+        const ok = (ch >= 'A' and ch <= 'Z') or
+            (ch >= 'a' and ch <= 'z') or
+            (ch >= '0' and ch <= '9');
+        if (!ok) return false;
+    }
+    return true;
 }
 
 fn normalizeCliOutput(allocator: std.mem.Allocator, method: []const u8, stdout: []const u8) ![]u8 {
@@ -986,6 +1072,36 @@ test "cliArgsFor maps JJHub issue create close and search methods" {
         "{\"query\":\"tmux\",\"scope\":\"code\",\"limit\":10}",
         &.{ "jjhub", "search", "code", "tmux", "--json", "--limit", "10" },
     );
+}
+
+test "extractCliErrorCode pulls code from smithers stderr" {
+    const stderr =
+        "timestamp=2026-04-22T16:34:48.296Z level=INFO fiber=#17 message=\"handled\"\n" ++
+        "error: AttemptNotFinished: The latest attempt is still running.\n" ++
+        "  hint: Wait for the task to finish before asking for a diff.\n";
+    const code = extractCliErrorCode(stderr);
+    try std.testing.expect(code != null);
+    try std.testing.expectEqualStrings("AttemptNotFinished", code.?);
+}
+
+test "extractCliErrorCode ignores non-error log lines" {
+    const stderr = "timestamp=... level=WARN message=\"error: not-a-code\"\nsome other log\n";
+    try std.testing.expect(extractCliErrorCode(stderr) == null);
+}
+
+test "extractCliErrorCode rejects lowercase or punctuated identifiers" {
+    try std.testing.expect(extractCliErrorCode("error: attemptNotFinished: msg\n") == null);
+    try std.testing.expect(extractCliErrorCode("error: : missing code\n") == null);
+    try std.testing.expect(extractCliErrorCode("error: Weird-Code: nope\n") == null);
+}
+
+test "cliStderrToError maps known codes and falls back otherwise" {
+    try std.testing.expect(cliStderrToError("error: AttemptNotFinished: running\n") == error.AttemptNotFinished);
+    try std.testing.expect(cliStderrToError("error: RunNotFound: gone\n") == error.RunNotFound);
+    try std.testing.expect(cliStderrToError("error: DiffTooLarge: 51MB\n") == error.DiffTooLarge);
+    try std.testing.expect(cliStderrToError("error: NodeHasNoOutput: none\n") == error.NodeHasNoOutput);
+    try std.testing.expect(cliStderrToError("") == error.CliInvocationFailed);
+    try std.testing.expect(cliStderrToError("error: UnheardOfCode: msg\n") == error.CliInvocationFailed);
 }
 
 test "unsupported client method reports an error instead of a fake fallback" {

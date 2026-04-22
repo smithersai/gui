@@ -248,6 +248,28 @@ enum DevToolsClientError: Error, Equatable {
         .network(urlError)
     }
 
+    // libsmithers formats anyerror via `{}` as `error.<Name>`, wrapped by the
+    // ffi layer as `client call: error.<Name>`. Parse the suffix so GUI
+    // surfaces map known codes (e.g. AttemptNotFinished) to typed errors
+    // instead of the opaque `.unknown("api(\"…\")")` fallback.
+    static func from(libsmithersMessage message: String) -> DevToolsClientError? {
+        let marker = "error."
+        guard let range = message.range(of: marker, options: .backwards) else { return nil }
+        let tail = message[range.upperBound...]
+        var code = ""
+        for character in tail {
+            if character.isLetter || character.isNumber {
+                code.append(character)
+            } else {
+                break
+            }
+        }
+        guard let first = code.first, first.isUppercase else { return nil }
+        let mapped = DevToolsClientError.from(serverErrorCode: code)
+        if case .unknown = mapped { return nil }
+        return mapped
+    }
+
     static func from(decodingError: DecodingError) -> DevToolsClientError {
         .malformedEvent(String(describing: decodingError))
     }

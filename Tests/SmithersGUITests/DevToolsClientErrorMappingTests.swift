@@ -182,6 +182,30 @@ final class DevToolsClientErrorMappingTests: XCTestCase {
 
     // MARK: - Exhaustive server error code coverage
 
+    // MARK: - libsmithers message parsing
+
+    func testLibsmithersMessageMapsAttemptNotFinished() {
+        let mapped = DevToolsClientError.from(libsmithersMessage: "client call: error.AttemptNotFinished")
+        XCTAssertEqual(mapped, .attemptNotFinished)
+    }
+
+    func testLibsmithersMessageMapsDiffTooLarge() {
+        let mapped = DevToolsClientError.from(libsmithersMessage: "client call: error.DiffTooLarge")
+        XCTAssertEqual(mapped, .diffTooLarge(nil))
+    }
+
+    func testLibsmithersMessageReturnsNilForUnknownTail() {
+        XCTAssertNil(DevToolsClientError.from(libsmithersMessage: "client call: error.BrandNewCode"))
+    }
+
+    func testLibsmithersMessageReturnsNilWhenNoErrorPrefix() {
+        XCTAssertNil(DevToolsClientError.from(libsmithersMessage: "some other failure"))
+    }
+
+    func testLibsmithersMessageReturnsNilWhenTailIsLowercase() {
+        XCTAssertNil(DevToolsClientError.from(libsmithersMessage: "client call: error.attemptNotFinished"))
+    }
+
     func testEveryServerErrorCodeMapsToExactlyOneCase() {
         let codes = [
             "RunNotFound",

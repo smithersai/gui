@@ -93,6 +93,9 @@ final class DiffTabModel: ObservableObject {
                     mapped = devError
                 } else if let urlError = error as? URLError {
                     mapped = .from(urlError: urlError)
+                } else if let localized = (error as? LocalizedError)?.errorDescription,
+                          let parsed = DevToolsClientError.from(libsmithersMessage: localized) {
+                    mapped = parsed
                 } else {
                     mapped = .unknown(String(describing: error))
                 }
