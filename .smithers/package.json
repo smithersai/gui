@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@effect/sql-sqlite-bun": "^0.52.0",
-    "smithers-orchestrator": "0.16.1",
+    "smithers-orchestrator": "^0.16.8",
     "zod": "4.3.6"
   },
   "devDependencies": {
