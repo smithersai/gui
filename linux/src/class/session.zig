@@ -68,16 +68,16 @@ pub const SessionWidget = extern struct {
         return self;
     }
 
-    pub fn fromHandle(app: *Application, handle: smithers.c.smithers_session_t) !*Self {
+    pub fn fromHandle(app: *Application, session_handle: smithers.c.smithers_session_t) !*Self {
         const self = gobject.ext.newInstance(Self, .{});
         errdefer self.unref();
 
-        const kind = smithers.c.smithers_session_kind(handle);
+        const kind = smithers.c.smithers_session_kind(session_handle);
         const priv = self.private();
         priv.* = .{
             .app = app,
             .kind = kind,
-            .session = handle,
+            .session = session_handle,
         };
         try self.initWithHandle(null);
         return self;

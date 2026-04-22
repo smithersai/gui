@@ -95,6 +95,7 @@ pub fn build(b: *std.Build) void {
         "build",
         "-Dapp-runtime=gtk",
         "-Demit-exe=false",
+        "-Drenderer=opengl",
     });
     ghostty_gtk_build.setCwd(b.path("../ghostty"));
     ghostty_gtk_build.step.dependOn(&apply_ghostty_patches.step);

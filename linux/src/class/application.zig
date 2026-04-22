@@ -88,9 +88,51 @@ pub const Application = extern struct {
             priv.shortcut_bindings = .{ .allocator = alloc };
         }
 
+        adw.StyleManager.getDefault().setColorScheme(.force_dark);
+
         const css = 
-            \\ list.navigation-sidebar { background-color: transparent; }
-            \\ row.navigation-sidebar { border-radius: 6px; margin: 2px 8px; }
+            \\ window {
+            \\     background-color: #0C0E16;
+            \\     --window-bg-color: #0C0E16;
+            \\     --window-fg-color: rgba(255, 255, 255, 0.88);
+            \\     --view-bg-color: #141826;
+            \\     --view-fg-color: rgba(255, 255, 255, 0.88);
+            \\     --headerbar-bg-color: #141826;
+            \\     --headerbar-fg-color: rgba(255, 255, 255, 0.70);
+            \\     --popover-bg-color: #1A2030;
+            \\     --popover-fg-color: rgba(255, 255, 255, 0.88);
+            \\     --accent-color: #4C8DFF;
+            \\     --accent-bg-color: #4C8DFF;
+            \\     --card-bg-color: #1A2030;
+            \\     --card-fg-color: rgba(255, 255, 255, 0.88);
+            \\     --card-border-color: rgba(255, 255, 255, 0.08);
+            \\     --border-color: rgba(255, 255, 255, 0.08);
+            \\ }
+            \\ .navigation-sidebar { 
+            \\     background-color: #0C0E16; 
+            \\ }
+            \\ list.navigation-sidebar { 
+            \\     background-color: transparent; 
+            \\ }
+            \\ row.navigation-sidebar { 
+            \\     border-radius: 6px; 
+            \\     margin: 2px 8px; 
+            \\ }
+            \\ row.navigation-sidebar:selected, row.navigation-sidebar.selected {
+            \\     background-color: rgba(76, 141, 255, 0.12);
+            \\     color: #4C8DFF;
+            \\ }
+            \\ row.navigation-sidebar:hover {
+            \\     background-color: rgba(255, 255, 255, 0.04);
+            \\ }
+            \\ .boxed-list {
+            \\     background-color: #1A2030;
+            \\     border-radius: 8px;
+            \\     border: 1px solid rgba(255, 255, 255, 0.08);
+            \\ }
+            \\ list row {
+            \\     background-color: transparent;
+            \\ }
         ;
         const provider = gtk.CssProvider.new();
         provider.loadFromString(css);

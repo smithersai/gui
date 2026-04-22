@@ -1,8 +1,24 @@
+diff --git a/build.zig b/build.zig
+index b89958e55..e6dda4264 100644
+--- a/build.zig
++++ b/build.zig
+@@ -176,6 +176,11 @@ pub fn build(b: *std.Build) !void {
+             resources.install();
+             if (i18n) |v| v.install();
+         }
++        if (config.app_runtime == .gtk and !config.emit_exe) {
++            const lib_gtk = try buildpkg.GhosttyLibGtk.initShared(b, &config, &deps);
++            lib_gtk.install();
++            resources.install();
++        }
+     } else if (!config.emit_lib_vt) {
+         // The macOS Ghostty Library
+         //
 diff --git a/src/apprt.zig b/src/apprt.zig
-index 30fb4918f..4f26ac0cc 100644
+index c467f1801..1fd24ed9e 100644
 --- a/src/apprt.zig
 +++ b/src/apprt.zig
-@@ -37,7 +37,10 @@ pub const runtime = switch (build_config.artifact) {
+@@ -44,7 +44,10 @@ pub const runtime = switch (build_config.artifact) {
          .none => none,
          .gtk => gtk,
      },
@@ -14,20 +30,37 @@ index 30fb4918f..4f26ac0cc 100644
      .wasm_module => browser,
  };
  
+diff --git a/src/apprt/gtk/App.zig b/src/apprt/gtk/App.zig
+index 39c13c19d..1b7097638 100644
+--- a/src/apprt/gtk/App.zig
++++ b/src/apprt/gtk/App.zig
+@@ -91,3 +91,12 @@ pub fn performIpc(
+ pub fn redrawInspector(_: *App, surface: *Surface) void {
+     surface.redrawInspector();
+ }
++
++pub fn keyboardLayout(_: *App) struct {
++    pub const OptionAsAlt = @import("../../input.zig").OptionAsAlt;
++    pub fn detectOptionAsAlt(_: @This()) OptionAsAlt {
++        return .false;
++    }
++} {
++    return .{};
++}
 diff --git a/src/apprt/gtk/class/application.zig b/src/apprt/gtk/class/application.zig
-index 0c2ba70e1..4b3ae1fd4 100644
+index 873674cec..51a12eb99 100644
 --- a/src/apprt/gtk/class/application.zig
 +++ b/src/apprt/gtk/class/application.zig
-@@ -219,6 +219,8 @@ pub const Application = extern struct {
- 
+@@ -221,6 +221,8 @@ pub const Application = extern struct {
          pub var offset: c_int = 0;
      };
-+
-+    var embedded_default: ?*Self = null;
  
++    var embedded_default: ?*Self = null;
++
      /// Get this application as the default, allowing access to its
      /// properties globally.
-@@ -228,8 +230,17 @@ pub const Application = extern struct {
+     ///
+@@ -228,10 +230,19 @@ pub const Application = extern struct {
      /// default application is a GhosttyApplication. The program would have
      /// to be in a very bad state for this to be violated.
      pub fn default() *Self {
@@ -45,11 +78,13 @@ index 0c2ba70e1..4b3ae1fd4 100644
 +    }
 +
      /// Creates a new Application instance.
+     ///
+     /// This does a lot more work than a typical class instantiation,
 diff --git a/src/apprt/gtk/class/surface.zig b/src/apprt/gtk/class/surface.zig
-index 9d72f36e3..92e41dcd4 100644
+index 179c779d7..94ac0846d 100644
 --- a/src/apprt/gtk/class/surface.zig
 +++ b/src/apprt/gtk/class/surface.zig
-@@ -17,6 +17,7 @@ const internal_os = @import("../../../os/main.zig");
+@@ -18,6 +18,7 @@ const internal_os = @import("../../../os/main.zig");
  const renderer = @import("../../../renderer.zig");
  const terminal = @import("../../../terminal/main.zig");
  const CoreSurface = @import("../../../Surface.zig");
@@ -57,7 +92,7 @@ index 9d72f36e3..92e41dcd4 100644
  const gresource = @import("../build/gresource.zig");
  const ext = @import("../ext.zig");
  const gsettings = @import("../gsettings.zig");
-@@ -715,18 +716,48 @@ pub const Surface = extern struct {
+@@ -716,18 +717,48 @@ pub const Surface = extern struct {
          pub var offset: c_int = 0;
      };
  
@@ -109,8 +144,7 @@ index 9d72f36e3..92e41dcd4 100644
          priv.overrides = .{
              .command = if (overrides.command) |c| c.clone(alloc) catch null else null,
              .working_directory = if (overrides.working_directory) |wd| alloc.dupeZ(u8, wd) catch null else null,
-@@ -1774,9 +1805,13 @@ pub const Surface = extern struct {
- 
+@@ -1774,8 +1805,12 @@ pub const Surface = extern struct {
          // If our configuration is null then we get the configuration
          // from the application.
          if (priv.config == null) {
@@ -127,10 +161,10 @@ index 9d72f36e3..92e41dcd4 100644
          // Setup our input method state
 diff --git a/src/apprt/gtk/embed.zig b/src/apprt/gtk/embed.zig
 new file mode 100644
-index 000000000..589ff8d57
+index 000000000..85e2f31cd
 --- /dev/null
 +++ b/src/apprt/gtk/embed.zig
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,114 @@
 +//! C ABI for embedding Ghostty's real GTK surface widget in a host GTK app.
 +
 +const std = @import("std");
@@ -244,16 +278,10 @@ index 000000000..589ff8d57
 +    _ = ghostty_gtk_app_new;
 +    _ = ghostty_gtk_app_free;
 +    _ = ghostty_gtk_app_tick;
-+    _ = ghostty_gtk_surface_new;
-+    _ = ghostty_gtk_surface_widget;
-+    _ = ghostty_gtk_surface_free;
-+    _ = ghostty_gtk_surface_redraw;
-+    _ = ghostty_gtk_surface_title;
-+    _ = ghostty_gtk_surface_binding_action;
 +}
 diff --git a/src/build/GhosttyLibGtk.zig b/src/build/GhosttyLibGtk.zig
 new file mode 100644
-index 000000000..c5b91a96f
+index 000000000..9c883bd81
 --- /dev/null
 +++ b/src/build/GhosttyLibGtk.zig
 @@ -0,0 +1,40 @@
@@ -275,7 +303,7 @@ index 000000000..c5b91a96f
 +        .name = "ghostty-gtk",
 +        .linkage = .dynamic,
 +        .root_module = b.createModule(.{
-+            .root_source_file = b.path("src/apprt/gtk/embed.zig"),
++            .root_source_file = b.path("src/embed_gtk.zig"),
 +            .target = cfg.target,
 +            .optimize = cfg.optimize,
 +            .strip = cfg.strip,
@@ -298,10 +326,23 @@ index 000000000..c5b91a96f
 +    b.getInstallStep().dependOn(&self.install_step.step);
 +}
 diff --git a/src/build/SharedDeps.zig b/src/build/SharedDeps.zig
-index f217015a6..7c8d1eb9e 100644
+index 70ff84b8c..0bb1fc87f 100644
 --- a/src/build/SharedDeps.zig
 +++ b/src/build/SharedDeps.zig
-@@ -581,7 +581,8 @@ pub fn add(
+@@ -529,9 +529,8 @@ pub fn add(
+         .freetype = true,
+         .@"backend-metal" = target.result.os.tag.isDarwin(),
+         .@"backend-osx" = target.result.os.tag == .macos,
+-        // OpenGL3 backend should only be built on non-Apple targets.
+-        // Apple platforms use Metal (and macOS may also use the OSX backend).
+-        .@"backend-opengl3" = !target.result.os.tag.isDarwin(),
++        // Always enable opengl3 backend since GTK Apprt uses it
++        .@"backend-opengl3" = true,
+     })) |dep| {
+         step.root_module.addImport("dcimgui", dep.module("dcimgui"));
+         step.linkLibrary(dep.artifact("dcimgui"));
+@@ -580,8 +579,9 @@ pub fn add(
+         }
      }
  
 -    // If we're building an exe then we have additional dependencies.
@@ -312,7 +353,7 @@ index f217015a6..7c8d1eb9e 100644
          // We always statically compile glad
          step.addIncludePath(b.path("vendor/glad/include/"));
          step.addCSourceFile(.{
-@@ -889,6 +890,7 @@ pub fn gtkNgDistResources(
+@@ -888,6 +888,7 @@ pub fn gtkNgDistResources(
          blueprint_exe.linkLibC();
          blueprint_exe.linkSystemLibrary2("gtk4", dynamic_link_opts);
          blueprint_exe.linkSystemLibrary2("libadwaita-1", dynamic_link_opts);
@@ -321,29 +362,23 @@ index f217015a6..7c8d1eb9e 100644
          for (gresource.blueprints) |bp| {
              const blueprint_run = b.addRunArtifact(blueprint_exe);
 diff --git a/src/build/main.zig b/src/build/main.zig
-index 82f1f4870..166c6c647 100644
+index 1f36d375c..21e0cc423 100644
 --- a/src/build/main.zig
 +++ b/src/build/main.zig
-@@ -15,5 +15,6 @@ pub const GhosttyFrameData = @import("GhosttyFrameData.zig");
+@@ -14,6 +14,7 @@ pub const GhosttyExe = @import("GhosttyExe.zig");
+ pub const GhosttyFrameData = @import("GhosttyFrameData.zig");
  pub const GhosttyLib = @import("GhosttyLib.zig");
  pub const GhosttyLibVt = @import("GhosttyLibVt.zig");
 +pub const GhosttyLibGtk = @import("GhosttyLibGtk.zig");
  pub const GhosttyResources = @import("GhosttyResources.zig");
  pub const GhosttyI18n = @import("GhosttyI18n.zig");
  pub const GhosttyXcodebuild = @import("GhosttyXcodebuild.zig");
-diff --git a/build.zig b/build.zig
-index 6ca543201..a2e3373f9 100644
---- a/build.zig
-+++ b/build.zig
-@@ -177,6 +177,11 @@ pub fn build(b: *std.Build) !void {
-             resources.install();
-             if (i18n) |v| v.install();
-         }
-+        if (config.app_runtime == .gtk and !config.emit_exe) {
-+            const lib_gtk = try buildpkg.GhosttyLibGtk.initShared(b, &config, &deps);
-+            lib_gtk.install();
-+            resources.install();
-+        }
-     } else if (!config.emit_lib_vt) {
-         // The macOS Ghostty Library
-         //
+diff --git a/src/embed_gtk.zig b/src/embed_gtk.zig
+new file mode 100644
+index 000000000..440d8a6d5
+--- /dev/null
++++ b/src/embed_gtk.zig
+@@ -0,0 +1,3 @@
++comptime {
++    _ = @import("apprt/gtk/embed.zig");
++}
