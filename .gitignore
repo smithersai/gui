@@ -14,3 +14,4 @@ node_modules/
 run-*.log
 vendor/
 .claude/scheduled_tasks.lock
+tmux/

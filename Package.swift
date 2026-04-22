@@ -24,6 +24,7 @@ let package = Package(
                 "ghostty",
                 "CGhosttyKit",
                 "CSmithersKit",
+                "tmux",
                 "build.zig",
                 ".zig-cache",
                 "CONTRIBUTING.md",
