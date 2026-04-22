@@ -741,8 +741,8 @@ struct ContentView: View {
 
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
     @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
-    @State private var destination: NavDestination = .dashboard
-    @State private var navHistory: [NavDestination] = [.dashboard]
+    @State private var destination: NavDestination = .home
+    @State private var navHistory: [NavDestination] = [.home]
     @State private var navHistoryIndex: Int = 0
     @State private var isNavigatingThroughHistory = false
     @State private var navigationSplitVisibility: NavigationSplitViewVisibility = .all
