@@ -209,9 +209,10 @@ struct CommandPaletteView: View {
                         row(item: item, index: index)
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
             }
-            .frame(minHeight: 220, maxHeight: 460)
+            .frame(minHeight: 220, maxHeight: isInline ? .infinity : 460)
             .background(Theme.surface1)
         }
     }

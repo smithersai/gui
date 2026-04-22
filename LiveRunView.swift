@@ -12,6 +12,7 @@ struct LiveRunView: View {
     var onOpenTerminalCommand: ((String, String, String) -> Void)? = nil
     var onOpenWorkflow: ((String) -> Void)? = nil
     var onOpenPrompt: (() -> Void)? = nil
+    var onRunSummaryRefreshed: ((RunSummary) -> Void)? = nil
     var onClose: () -> Void = {}
 
     @StateObject private var store: LiveRunDevToolsStore
@@ -84,6 +85,7 @@ struct LiveRunView: View {
         onOpenTerminalCommand: ((String, String, String) -> Void)? = nil,
         onOpenWorkflow: ((String) -> Void)? = nil,
         onOpenPrompt: (() -> Void)? = nil,
+        onRunSummaryRefreshed: ((RunSummary) -> Void)? = nil,
         onClose: @escaping () -> Void = {}
     ) {
         self.smithers = smithers
@@ -92,6 +94,7 @@ struct LiveRunView: View {
         self.onOpenTerminalCommand = onOpenTerminalCommand
         self.onOpenWorkflow = onOpenWorkflow
         self.onOpenPrompt = onOpenPrompt
+        self.onRunSummaryRefreshed = onRunSummaryRefreshed
         self.onClose = onClose
         _store = StateObject(wrappedValue: LiveRunDevToolsStore(streamProvider: smithers))
         _lastLogStore = StateObject(
@@ -455,6 +458,7 @@ struct LiveRunView: View {
             if inspection.run.status != .unknown {
                 store.setRunStatus(inspection.run.status)
             }
+            onRunSummaryRefreshed?(inspection.run)
         } catch {
             let message = error.localizedDescription
             if isRunNotFoundError(error) {

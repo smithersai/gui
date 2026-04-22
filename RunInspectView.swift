@@ -5,6 +5,7 @@ struct RunInspectView: View {
     let runId: String
     var onOpenLiveChat: ((String, String?) -> Void)? = nil
     var onOpenTerminalCommand: ((String, String, String) -> Void)? = nil
+    var onRunSummaryRefreshed: ((RunSummary) -> Void)? = nil
     var onClose: () -> Void = {}
 
     @State private var inspection: RunInspection?
@@ -632,8 +633,10 @@ struct RunInspectView: View {
         }
 
         do {
-            inspection = try await smithers.inspectRun(runId)
+            let fetched = try await smithers.inspectRun(runId)
+            inspection = fetched
             clampSelection()
+            onRunSummaryRefreshed?(fetched.run)
         } catch {
             self.error = error.localizedDescription
         }

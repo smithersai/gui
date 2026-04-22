@@ -862,6 +862,7 @@ struct ContentView: View {
                     destination = .workflows
                 },
                 onOpenPrompt: { destination = .prompts },
+                onRunSummaryRefreshed: { store.updateRunTab(with: $0) },
                 onClose: { destination = .runs }
             )
             .id("live-run-\(runId)-\(nodeId ?? "all")")
@@ -877,6 +878,7 @@ struct ContentView: View {
                     openRunTab(runId: runId, title: workflowName, preview: preview, nodeId: nodeId)
                 },
                 onOpenTerminalCommand: openTerminalCommandTab,
+                onRunSummaryRefreshed: { store.updateRunTab(with: $0) },
                 onClose: { destination = .runs }
             )
             .id("run-inspect-\(runId)")
@@ -1077,6 +1079,7 @@ struct ContentView: View {
                             store: store,
                             activeTerminalId: activeTerminalId,
                             onRequestClose: { id in requestTerminalClose(id) },
+                            onProcessExited: { id in handleTerminalProcessExited(id) },
                             onAppShortcutCommand: { command in
                                 handleKeyboardShortcutCommand(command)
                             }
@@ -2198,6 +2201,16 @@ struct ContentView: View {
         pendingTerminalCloseTitle = store.terminalTabs.first(where: { $0.terminalId == terminalId })?.title ?? terminalId
     }
 
+    private func handleTerminalProcessExited(_ terminalId: String) {
+        store.removeTerminalTab(terminalId)
+        if case .terminal(let activeId) = destination, activeId == terminalId {
+            destination = defaultDestination
+        }
+        if pendingTerminalCloseId == terminalId {
+            clearPendingTerminalClose()
+        }
+    }
+
     private func confirmTerminalClose() {
         guard let terminalId = pendingTerminalCloseId else { return }
         store.removeTerminalTab(terminalId)
@@ -2422,17 +2435,15 @@ struct HomeView: View {
     let onExecute: (CommandPaletteItem, String) -> Void
 
     var body: some View {
-        VStack {
-            Spacer()
-            CommandPaletteView(
-                initialQuery: "",
-                isInline: true,
-                itemsProvider: itemsProvider,
-                onExecute: onExecute,
-                onDismiss: {}
-            )
-            Spacer().frame(maxHeight: .infinity).layoutPriority(1)
-        }
+        CommandPaletteView(
+            initialQuery: "",
+            isInline: true,
+            itemsProvider: itemsProvider,
+            onExecute: onExecute,
+            onDismiss: {}
+        )
+        .padding(.top, 88)
+        .padding(.bottom, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.surface1)
     }
