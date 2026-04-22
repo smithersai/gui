@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "id": "ticket-kanban",
+  "name": "Ticket Kanban",
+  "framework": "react",
+  "entry": "dist/index.html",
+  "apiBasePath": "/api",
+  "defaultPath": "/",
+  "permissions": {
+    "read": ["workflow", "runs", "inspect", "tickets"],
+    "write": ["launchRun", "cancelRun"]
+  }
+}
