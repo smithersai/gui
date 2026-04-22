@@ -1,6 +1,11 @@
 import Foundation
 import SwiftUI
 import Combine
+import CSmithersKit
+
+#if os(macOS)
+import AppKit
+#endif
 
 @MainActor
 class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
@@ -14,7 +19,46 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private let userDefaults: UserDefaults
     private let app: Smithers.App
     private var sessions: [String: Smithers.Session] = [:]
+    private var externalAgentWatchers: [String: ExternalAgentSessionWatcher] = [:]
     private var stateChangedObserver: NSObjectProtocol?
+    private var willTerminateObserver: NSObjectProtocol?
+    private var pendingSaveTask: Task<Void, Never>?
+    private let sessionPersistenceDisabled: Bool
+
+    private static let persistenceSaveDebounceNanoseconds: UInt64 = 500_000_000
+    private static let persistenceEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        return encoder
+    }()
+    private static let persistenceDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        return decoder
+    }()
+
+    private struct PersistedSessionEntry: Codable {
+        enum Kind: String, Codable {
+            case run
+            case terminal
+        }
+
+        let kind: Kind
+        let runTab: RunTab?
+        let terminalTab: TerminalTab?
+
+        init(runTab: RunTab) {
+            kind = .run
+            self.runTab = runTab
+            terminalTab = nil
+        }
+
+        init(terminalTab: TerminalTab) {
+            kind = .terminal
+            runTab = nil
+            self.terminalTab = terminalTab
+        }
+    }
 
     var workspaceRootPath: String { workingDirectory }
 
@@ -26,6 +70,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         self.workingDirectory = Smithers.CWD.resolve(workingDirectory)
         self.userDefaults = userDefaults
         self.app = app ?? Smithers.App()
+        self.sessionPersistenceDisabled = Self.isSessionPersistenceDisabled()
+        restorePersistedSessions()
         stateChangedObserver = NotificationCenter.default.addObserver(
             forName: .smithersStateChanged,
             object: nil,
@@ -33,12 +79,26 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         ) { [weak self] _ in
             Task { @MainActor in self?.refreshFromCore() }
         }
+        #if os(macOS)
+        willTerminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.flushPendingSave() }
+        }
+        #endif
     }
 
     deinit {
+        pendingSaveTask?.cancel()
+        pendingSaveTask = nil
         sessions.removeAll()
         if let stateChangedObserver {
             NotificationCenter.default.removeObserver(stateChangedObserver)
+        }
+        if let willTerminateObserver {
+            NotificationCenter.default.removeObserver(willTerminateObserver)
         }
     }
 
@@ -56,6 +116,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         )
         runTabs.removeAll { $0.runId == runId }
         runTabs.insert(tab, at: 0)
+        scheduleSave()
         return runId
     }
 
@@ -63,24 +124,31 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         runTabs.removeAll { $0.runId == runId }
         sessions[runId] = nil
         workspaceWindowIds[WorkspaceID(runId)] = nil
+        scheduleSave()
     }
 
     @discardableResult
     func addTerminalTab(
         title requestedTitle: String? = nil,
         workingDirectory requestedWorkingDirectory: String? = nil,
-        command: String? = nil
+        command: String? = nil,
+        runId: String? = nil,
+        hijack: TerminalWorkspaceRecord.HijackBinding? = nil
     ) -> String {
         let workspaceID = WorkspaceID()
         let id = workspaceID.rawValue
         registerWorkspace(workspaceID)
-        sessions[id] = Smithers.Session(app: app, kind: .terminal, workspacePath: self.workingDirectory, targetID: id)
+        let normalizedRunId = normalizedOptionalText(runId)
+        sessions[id] = Smithers.Session(
+            app: app,
+            kind: terminalSessionKind(runId: normalizedRunId, hijack: hijack),
+            workspacePath: self.workingDirectory,
+            targetID: id
+        )
 
         let cwd = normalizedOptionalText(requestedWorkingDirectory) ?? workingDirectory
         let rootSurfaceID = SurfaceID()
         let rootSurfaceId = rootSurfaceID.rawValue
-        let socketName = TmuxController.socketName(for: cwd)
-        let sessionName = TmuxController.sessionName(for: rootSurfaceId)
         let title = normalizedOptionalText(requestedTitle) ?? "Terminal \(terminalTabs.count + 1)"
         let workspace = TerminalWorkspace(
             id: workspaceID,
@@ -88,9 +156,10 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             title: title,
             workingDirectory: cwd,
             command: command,
+            runId: normalizedRunId,
             rootSurfaceId: rootSurfaceID,
-            backend: .tmux,
-            tmuxSocketName: socketName
+            backend: .native,
+            tmuxSocketName: nil
         )
         attachTerminalWorkspaceChangeHandler(workspace)
         terminalWorkspaces[id] = workspace
@@ -105,14 +174,86 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 createdAt: now,
                 workingDirectory: cwd,
                 command: command,
-                backend: .tmux,
+                backend: .native,
                 rootSurfaceId: rootSurfaceId,
-                tmuxSocketName: socketName,
-                tmuxSessionName: sessionName
+                tmuxSocketName: nil,
+                tmuxSessionName: nil,
+                runId: normalizedRunId,
+                hijack: hijack,
+                rootKind: .terminal,
+                browserURLString: nil
             ),
             at: 0
         )
+        scheduleSave()
+
+        // Kick off the native PTY session in the background. `sessionId` on
+        // the surface is filled in asynchronously; the attach path will wait
+        // if it lands first.
+        ensureNativeSession(
+            terminalId: id,
+            surfaceId: rootSurfaceID,
+            workingDirectory: cwd,
+            command: command
+        )
+
         return id
+    }
+
+    /// Best-effort native session spawn. Writes the returned session id back
+    /// into the surface so `terminalAttachCommand` can build an argv for
+    /// smithers-session-connect. Failures (e.g. daemon not installed) leave
+    /// the surface without a sessionId — the attach path degrades by showing
+    /// the local shell via ghostty's built-in spawn.
+    private func ensureNativeSession(
+        terminalId: String,
+        surfaceId: SurfaceID,
+        workingDirectory: String?,
+        command: String?
+    ) {
+        let shell = ProcessInfo.processInfo.environment["SHELL"]
+        Task { [weak self] in
+            do {
+                try await SessionController.shared.ensureDaemon()
+                let info = try await SessionController.shared.createSession(
+                    title: nil,
+                    shell: shell,
+                    command: command,
+                    cwd: workingDirectory,
+                    env: nil,
+                    rows: 24,
+                    cols: 80
+                )
+                self?.applyNativeSessionId(
+                    terminalId: terminalId,
+                    surfaceId: surfaceId,
+                    sessionId: info.id
+                )
+            } catch {
+                AppLogger.terminal.warning(
+                    "native session create failed",
+                    metadata: ["error": "\(error)"]
+                )
+            }
+        }
+    }
+
+    @MainActor
+    private func applyNativeSessionId(terminalId: String, surfaceId: SurfaceID, sessionId: String) {
+        if let workspace = terminalWorkspaces[terminalId],
+           var surface = workspace.surfaces[surfaceId] {
+            surface.sessionId = sessionId
+            // Force the workspace to observe the surface mutation by updating
+            // via the registry. TerminalWorkspace currently has no public
+            // setter — fall back to reinserting through an internal path.
+            // TODO: expose a proper setSessionId API on TerminalWorkspace.
+            workspace.setSurfaceSessionId(surfaceId: surfaceId, sessionId: sessionId)
+        }
+        if let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }) {
+            terminalTabs[idx].sessionId = sessionId
+            terminalTabs[idx].timestamp = Date()
+        }
+        scheduleSave()
     }
 
     @discardableResult
@@ -130,7 +271,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             rootSurfaceId: rootSurfaceID,
             rootKind: .browser,
             browserURLString: urlString,
-            backend: .tmux,
+            backend: .native,
             tmuxSocketName: nil
         )
         attachTerminalWorkspaceChangeHandler(workspace)
@@ -145,19 +286,97 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 createdAt: now,
                 workingDirectory: workingDirectory,
                 command: nil,
-                backend: .tmux,
+                backend: .native,
                 rootSurfaceId: rootSurfaceID.rawValue,
                 tmuxSocketName: nil,
-                tmuxSessionName: nil
+                tmuxSessionName: nil,
+                rootKind: .browser,
+                browserURLString: urlString
             ),
             at: 0
         )
+        scheduleSave()
         return id
     }
 
     @discardableResult
     func launchExternalAgentTab(name: String, command: String) -> String {
-        addTerminalTab(title: name, workingDirectory: workingDirectory, command: Self.applyDefaultAgentFlags(command, userDefaults: userDefaults))
+        let resolvedCommand = Self.applyDefaultAgentFlags(command, userDefaults: userDefaults)
+        let cwd = workingDirectory
+        let kind = ExternalAgentKind.detect(fromCommand: resolvedCommand)
+        let excluded: Set<String> = {
+            guard let kind else { return [] }
+            return ExternalAgentSessionSnapshot.existingSessionIds(kind: kind, workingDirectory: cwd)
+        }()
+        let terminalId = addTerminalTab(title: name, workingDirectory: cwd, command: resolvedCommand)
+        if let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }) {
+            terminalTabs[idx].agentKind = kind
+        }
+        if let kind, kind.sessionDirectory(forWorkingDirectory: cwd) != nil {
+            startAgentSessionWatcher(
+                terminalId: terminalId,
+                kind: kind,
+                workingDirectory: cwd,
+                excludedSessionIds: excluded
+            )
+        }
+        return terminalId
+    }
+
+    @discardableResult
+    func forkTerminalTab(_ terminalId: String) -> String? {
+        guard let tab = terminalTabs.first(where: { $0.terminalId == terminalId }),
+              let kind = tab.agentKind,
+              kind.supportsResume,
+              let sessionId = tab.agentSessionId,
+              let command = tab.command else {
+            return nil
+        }
+        let forked = kind.resumeCommand(sessionId: sessionId, originalCommand: command)
+        return launchExternalAgentTab(name: tab.title, command: forked)
+    }
+
+    func canForkTerminalTab(_ terminalId: String) -> Bool {
+        guard let tab = terminalTabs.first(where: { $0.terminalId == terminalId }),
+              let kind = tab.agentKind else { return false }
+        return kind.supportsResume && tab.agentSessionId != nil && tab.command != nil
+    }
+
+    private func startAgentSessionWatcher(
+        terminalId: String,
+        kind: ExternalAgentKind,
+        workingDirectory: String,
+        excludedSessionIds: Set<String>
+    ) {
+        externalAgentWatchers[terminalId]?.cancel()
+        let configuration = ExternalAgentSessionWatcher.Configuration(
+            kind: kind,
+            workingDirectory: workingDirectory,
+            launchTime: Date(),
+            excludedSessionIds: excludedSessionIds,
+            timeout: 30,
+            pollInterval: 0.5
+        )
+        let watcher = ExternalAgentSessionWatcher(
+            configuration: configuration,
+            onDiscover: { [weak self] sessionId in
+                self?.applyDiscoveredAgentSessionId(terminalId: terminalId, sessionId: sessionId)
+            },
+            onTimeout: { [weak self] in
+                self?.externalAgentWatchers[terminalId] = nil
+            }
+        )
+        externalAgentWatchers[terminalId] = watcher
+        watcher.start()
+    }
+
+    private func applyDiscoveredAgentSessionId(terminalId: String, sessionId: String) {
+        if let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }) {
+            terminalTabs[idx].agentSessionId = sessionId
+            terminalTabs[idx].timestamp = Date()
+            scheduleSave()
+        }
+        externalAgentWatchers[terminalId] = nil
     }
 
     @discardableResult
@@ -180,19 +399,36 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         let tab = terminalTabs.first { $0.terminalId == terminalId }
         let cwd = normalizedOptionalText(tab?.workingDirectory) ?? workingDirectory
         let rootSurfaceID = tab?.rootSurfaceId.map { SurfaceID($0) } ?? SurfaceID()
-        let socketName = normalizedOptionalText(tab?.tmuxSocketName) ?? TmuxController.socketName(for: cwd)
+        let resolvedBackend = tab?.backend ?? .native
+        let rootKind = tab?.rootKind ?? .terminal
+        let socketName: String? = {
+            guard resolvedBackend == .tmux else { return nil }
+            return normalizedOptionalText(tab?.tmuxSocketName) ?? TmuxController.socketName(for: cwd)
+        }()
         let workspace = TerminalWorkspace(
             id: workspaceID,
             windowID: workspaceWindowIds[workspaceID] ?? windowID,
             title: tab?.title ?? "Terminal",
             workingDirectory: cwd,
             command: tab?.command,
+            runId: tab?.runId,
             rootSurfaceId: rootSurfaceID,
-            backend: tab?.backend ?? .tmux,
-            tmuxSocketName: socketName
+            rootKind: rootKind,
+            browserURLString: tab?.browserURLString,
+            backend: resolvedBackend,
+            tmuxSocketName: socketName,
+            sessionId: tab?.sessionId
         )
         attachTerminalWorkspaceChangeHandler(workspace)
         terminalWorkspaces[terminalId] = workspace
+        if resolvedBackend == .native, rootKind == .terminal, tab?.sessionId == nil {
+            ensureNativeSession(
+                terminalId: terminalId,
+                surfaceId: rootSurfaceID,
+                workingDirectory: cwd,
+                command: tab?.command
+            )
+        }
         syncTerminalTabMetadata(from: workspace)
         return workspace
     }
@@ -201,18 +437,29 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         terminalWorkspaces[terminalId]
     }
 
+    func terminalTab(forRunId runId: String) -> TerminalWorkspaceRecord? {
+        guard let runId = normalizedOptionalText(runId) else { return nil }
+        return terminalTabs.first { $0.runId == runId }
+    }
+
+    func sessionKind(forTerminalId terminalId: String) -> Smithers.Session.Kind? {
+        sessions[terminalId]?.kind
+    }
+
     func renameTerminalTab(_ terminalId: String, to title: String) {
         guard let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }),
               let title = normalizedOptionalText(title) else { return }
         terminalTabs[idx].title = title
         terminalTabs[idx].timestamp = Date()
         terminalWorkspaces[terminalId]?.updateWorkspaceTitle(title)
+        scheduleSave()
     }
 
     func toggleTerminalPinned(_ terminalId: String) {
         guard let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }) else { return }
         terminalTabs[idx].isPinned.toggle()
         terminalTabs[idx].timestamp = Date()
+        scheduleSave()
     }
 
     func terminalWorkingDirectory(_ terminalId: String) -> String? {
@@ -226,10 +473,42 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     func terminalAttachCommand(_ terminalId: String) -> String? {
         if let workspace = terminalWorkspaces[terminalId],
            let surface = workspace.orderedSurfaces.first(where: { $0.kind == .terminal }) {
+            if surface.terminalBackend == .native {
+                return nativeAttachCommand(for: surface.sessionId)
+            }
             return TmuxController.attachCommand(socketName: surface.tmuxSocketName, sessionName: surface.tmuxSessionName)
         }
         guard let tab = terminalTabs.first(where: { $0.terminalId == terminalId }) else { return nil }
+        if tab.backend == .native {
+            return nativeAttachCommand(for: tab.sessionId)
+        }
         return TmuxController.attachCommand(socketName: tab.tmuxSocketName, sessionName: tab.tmuxSessionName)
+    }
+
+    /// Build a `smithers-session-connect <sessionId>` command line, locating
+    /// the binary in bundle resources, an env override, or PATH. Returns nil
+    /// when the session id is missing so the caller can fall back.
+    nonisolated func nativeAttachCommand(for sessionId: String?) -> String? {
+        Self.buildNativeAttachCommand(for: sessionId)
+    }
+
+    nonisolated static func buildNativeAttachCommand(for sessionId: String?) -> String? {
+        guard let sessionId, !sessionId.isEmpty else { return nil }
+
+        let binary: String = {
+            let bundled = Bundle.main.bundleURL
+                .appendingPathComponent("Contents/Resources/smithers-session-connect")
+                .path
+            if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
+            if let env = ProcessInfo.processInfo.environment["SMITHERS_SESSION_CONNECT"],
+               FileManager.default.isExecutableFile(atPath: env) { return env }
+            return "smithers-session-connect"
+        }()
+
+        // Defensive shell-quoting: the session id is UUID-ish but don't trust it.
+        let escapedId = sessionId.replacingOccurrences(of: "'", with: "'\"'\"'")
+        let escapedBin = binary.replacingOccurrences(of: "'", with: "'\"'\"'")
+        return "'\(escapedBin)' '\(escapedId)'"
     }
 
     func removeTerminalTab(_ terminalId: String) {
@@ -238,13 +517,32 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 SurfaceNotificationStore.shared.unregister(surfaceId: surfaceId.rawValue)
             }
             terminateTmuxSessions(in: workspace.snapshot)
+            terminateNativeSessions(in: workspace.snapshot)
         } else if let tab = terminalTabs.first(where: { $0.terminalId == terminalId }) {
-            TmuxController.terminateSession(socketName: tab.tmuxSocketName, sessionName: tab.tmuxSessionName)
+            if tab.backend == .tmux {
+                TmuxController.terminateSession(socketName: tab.tmuxSocketName, sessionName: tab.tmuxSessionName)
+            } else if tab.backend == .native, let sid = tab.sessionId {
+                Task.detached {
+                    try? await SessionController.shared.terminate(sessionId: PTYSessionID(sid))
+                }
+            }
         }
         terminalTabs.removeAll { $0.terminalId == terminalId }
         sessions[terminalId] = nil
         workspaceWindowIds[WorkspaceID(terminalId)] = nil
         TerminalSurfaceRegistry.shared.deregister(sessionId: terminalId)
+        scheduleSave()
+    }
+
+    private func terminateNativeSessions(in snapshot: TerminalWorkspaceSnapshot) {
+        for surface in snapshot.surfaces
+        where surface.kind == .terminal && surface.terminalBackend == .native {
+            if let sid = surface.sessionId {
+                Task.detached {
+                    try? await SessionController.shared.terminate(sessionId: PTYSessionID(sid))
+                }
+            }
+        }
     }
 
     @discardableResult
@@ -306,13 +604,19 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     func autoPopulateActiveRunTabs(_ runs: [RunSummary]) {
+        var didMutate = false
         for run in runs where run.status == .running || run.status == .waitingApproval {
             if let idx = runTabs.firstIndex(where: { $0.runId == run.runId }) {
                 runTabs[idx].title = runTabTitle(runId: run.runId, title: run.workflowName)
                 runTabs[idx].preview = runPreview(for: run)
+                didMutate = true
             } else {
                 addRunTab(runId: run.runId, title: run.workflowName, preview: runPreview(for: run))
+                didMutate = true
             }
+        }
+        if didMutate {
+            scheduleSave()
         }
     }
 
@@ -396,19 +700,25 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         }
         tabs.insert(tab, at: insertionIndex)
         terminalTabs = tabs
+        scheduleSave()
         return true
     }
 
     private func syncTerminalTabMetadata(from workspace: TerminalWorkspace) {
         guard let idx = terminalTabs.firstIndex(where: { $0.workspaceID == workspace.id }) else { return }
         let firstTerminal = workspace.orderedSurfaces.first { $0.kind == .terminal }
+        let rootSurface = workspace.layout.firstSurfaceId.flatMap { workspace.surfaces[$0] }
         terminalTabs[idx].title = workspace.title
         terminalTabs[idx].preview = workspace.displayPreview
         terminalTabs[idx].workingDirectory = firstTerminal?.terminalWorkingDirectory ?? terminalTabs[idx].workingDirectory
-        terminalTabs[idx].rootSurfaceId = firstTerminal?.id.rawValue ?? terminalTabs[idx].rootSurfaceId
+        terminalTabs[idx].rootSurfaceId = rootSurface?.id.rawValue ?? terminalTabs[idx].rootSurfaceId
         terminalTabs[idx].tmuxSocketName = firstTerminal?.tmuxSocketName ?? terminalTabs[idx].tmuxSocketName
         terminalTabs[idx].tmuxSessionName = firstTerminal?.tmuxSessionName ?? terminalTabs[idx].tmuxSessionName
+        terminalTabs[idx].sessionId = firstTerminal?.sessionId ?? terminalTabs[idx].sessionId
+        terminalTabs[idx].rootKind = rootSurface?.kind ?? terminalTabs[idx].rootKind
+        terminalTabs[idx].browserURLString = rootSurface?.browserURLString ?? terminalTabs[idx].browserURLString
         terminalTabs[idx].timestamp = Date()
+        scheduleSave()
     }
 
     private func terminateTmuxSessions(in snapshot: TerminalWorkspaceSnapshot) {
@@ -427,6 +737,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         case "claude":
             return appendFlagIfMissing("--dangerously-skip-permissions", to: trimmed)
         case "gemini":
+            return appendFlagIfMissing("--yolo", to: trimmed)
+        case "kimi":
             return appendFlagIfMissing("--yolo", to: trimmed)
         case "codex":
             let base = trimmed.contains("model_reasoning_effort") ? trimmed : "\(trimmed) -c model_reasoning_effort=\"high\""
@@ -457,6 +769,17 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         [run.status.label, run.elapsedString.isEmpty ? nil : run.elapsedString]
             .compactMap { $0 }
             .joined(separator: " - ")
+    }
+
+    private func terminalSessionKind(for tab: TerminalTab) -> Smithers.Session.Kind {
+        terminalSessionKind(runId: normalizedOptionalText(tab.runId), hijack: tab.hijack)
+    }
+
+    private func terminalSessionKind(
+        runId: String?,
+        hijack: TerminalWorkspaceRecord.HijackBinding?
+    ) -> Smithers.Session.Kind {
+        (runId != nil || hijack != nil) ? .chat : .terminal
     }
 
     private func makeSidebarTab(
@@ -506,5 +829,117 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         if seconds < 3600 { return "\(seconds / 60)m ago" }
         if seconds < 86400 { return "\(seconds / 3600)h ago" }
         return "\(seconds / 86400)d ago"
+    }
+
+    private static func isSessionPersistenceDisabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        environment["SMITHERS_SESSION_PERSISTENCE_DISABLE"] == "1"
+    }
+
+    private func restorePersistedSessions() {
+        guard !sessionPersistenceDisabled else { return }
+        guard let persistence = app.persistence() else { return }
+
+        let loaded = workingDirectory.withCString { smithers_persistence_load_sessions(persistence, $0) }
+        let json = Smithers.string(from: loaded)
+        guard let data = json.data(using: .utf8) else { return }
+
+        let entries: [PersistedSessionEntry]
+        do {
+            entries = try Self.persistenceDecoder.decode([PersistedSessionEntry].self, from: data)
+        } catch {
+            guard json.trimmingCharacters(in: .whitespacesAndNewlines) != "[]" else { return }
+            AppLogger.ui.warning("Failed to decode persisted sessions", metadata: [
+                "workspace": workingDirectory,
+                "error": "\(error)",
+            ])
+            return
+        }
+
+        runTabs = entries.compactMap { entry in
+            guard entry.kind == .run else { return nil }
+            return entry.runTab
+        }
+        terminalTabs = entries.compactMap { entry in
+            guard entry.kind == .terminal else { return nil }
+            return entry.terminalTab
+        }
+
+        for tab in runTabs {
+            registerWorkspace(tab.workspaceID)
+            sessions[tab.runId] = Smithers.Session(
+                app: app,
+                kind: .runInspect,
+                workspacePath: workingDirectory,
+                targetID: tab.runId
+            )
+        }
+        for tab in terminalTabs {
+            registerWorkspace(tab.workspaceID)
+            sessions[tab.terminalId] = Smithers.Session(
+                app: app,
+                kind: terminalSessionKind(for: tab),
+                workspacePath: workingDirectory,
+                targetID: tab.terminalId
+            )
+        }
+    }
+
+    private func scheduleSave() {
+        guard !sessionPersistenceDisabled else { return }
+        guard app.persistence() != nil else { return }
+
+        pendingSaveTask?.cancel()
+        pendingSaveTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: Self.persistenceSaveDebounceNanoseconds)
+            } catch {
+                return
+            }
+            self?.saveSessionsNow()
+        }
+    }
+
+    private func flushPendingSave() {
+        guard !sessionPersistenceDisabled else { return }
+        pendingSaveTask?.cancel()
+        pendingSaveTask = nil
+        saveSessionsNow()
+    }
+
+    private func saveSessionsNow() {
+        guard !sessionPersistenceDisabled else { return }
+        guard let persistence = app.persistence() else { return }
+        pendingSaveTask = nil
+
+        let entries = runTabs.map(PersistedSessionEntry.init(runTab:)) +
+            terminalTabs.map(PersistedSessionEntry.init(terminalTab:))
+
+        do {
+            let data = try Self.persistenceEncoder.encode(entries)
+            guard let json = String(data: data, encoding: .utf8) else {
+                AppLogger.ui.warning("Failed to serialize persisted sessions", metadata: [
+                    "workspace": workingDirectory,
+                ])
+                return
+            }
+            let saveError = workingDirectory.withCString { workspacePtr in
+                json.withCString { jsonPtr in
+                    smithers_persistence_save_sessions(persistence, workspacePtr, jsonPtr)
+                }
+            }
+            if let message = Smithers.message(from: saveError) {
+                AppLogger.ui.warning("Failed to persist sessions", metadata: [
+                    "workspace": workingDirectory,
+                    "error": message,
+                ])
+            }
+        } catch {
+            AppLogger.ui.warning("Failed to encode persisted sessions", metadata: [
+                "workspace": workingDirectory,
+                "error": "\(error)",
+            ])
+        }
     }
 }

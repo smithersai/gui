@@ -68,11 +68,29 @@ class SmithersClient: ObservableObject {
         args: [String: AnyEncodable] = [:],
         as type: Value.Type = Value.self
     ) async throws -> Value {
-        try decode(Value.self, from: try callData(method, args: args))
+        try decode(Value.self, from: try await callDataAsync(method, args: args))
     }
 
     func callVoid(_ method: String, args: [String: AnyEncodable] = [:]) async throws {
-        _ = try callData(method, args: args)
+        _ = try await callDataAsync(method, args: args)
+    }
+
+    private func callDataAsync(_ method: String, args: [String: AnyEncodable] = [:]) async throws -> Data {
+        guard let client else {
+            throw SmithersError.notAvailable("libsmithers client is unavailable")
+        }
+        let argsData = try encoder.encode(args)
+        let argsJSON = String(data: argsData, encoding: .utf8) ?? "{}"
+        let context = ClientCallContext(client: client, method: method, argsJSON: argsJSON)
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    continuation.resume(returning: try Self.performClientCall(context))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     private func callData(_ method: String, args: [String: AnyEncodable] = [:]) throws -> Data {
@@ -81,10 +99,14 @@ class SmithersClient: ObservableObject {
         }
         let argsData = try encoder.encode(args)
         let argsJSON = String(data: argsData, encoding: .utf8) ?? "{}"
+        return try Self.performClientCall(ClientCallContext(client: client, method: method, argsJSON: argsJSON))
+    }
+
+    private nonisolated static func performClientCall(_ context: ClientCallContext) throws -> Data {
         var outError = smithers_error_s(code: 0, msg: nil)
-        let result = method.withCString { methodPtr in
-            argsJSON.withCString { argsPtr in
-                smithers_client_call(client, methodPtr, argsPtr, &outError)
+        let result = context.method.withCString { methodPtr in
+            context.argsJSON.withCString { argsPtr in
+                smithers_client_call(context.client, methodPtr, argsPtr, &outError)
             }
         }
         if let message = Smithers.message(from: outError) {
@@ -143,7 +165,7 @@ class SmithersClient: ObservableObject {
         args: [String: AnyEncodable] = [:],
         keys: [String]
     ) async throws -> [Value] {
-        let data = try callData(method, args: args)
+        let data = try await callDataAsync(method, args: args)
         if let value = try? decode([Value].self, from: data) {
             return value
         }
@@ -155,7 +177,7 @@ class SmithersClient: ObservableObject {
         args: [String: AnyEncodable] = [:],
         keys: [String]
     ) async throws -> Value {
-        let data = try callData(method, args: args)
+        let data = try await callDataAsync(method, args: args)
         if let value = try? decode(Value.self, from: data) {
             return value
         }
@@ -1080,14 +1102,30 @@ class SmithersClient: ObservableObject {
 
     func getOrchestratorVersion() async -> String? {
         do {
-            let version: String = try await call("getOrchestratorVersion")
+            let rawVersion: String = try await call("getOrchestratorVersion")
+            guard let version = Self.normalizeOrchestratorVersion(rawVersion) else {
+                orchestratorVersion = nil
+                orchestratorVersionMeetsMinimum = nil
+                return nil
+            }
             orchestratorVersion = version
             orchestratorVersionMeetsMinimum = Self.versionAtLeast(version, minimum: Self.minimumOrchestratorVersion)
             return version
         } catch {
+            orchestratorVersion = nil
             orchestratorVersionMeetsMinimum = nil
             return nil
         }
+    }
+
+    nonisolated static func normalizeOrchestratorVersion(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.lowercased() == "unknown" { return nil }
+        guard let first = trimmed.unicodeScalars.first, CharacterSet.decimalDigits.contains(first) else {
+            return nil
+        }
+        return trimmed
     }
 
     func checkConnection() async {
@@ -1211,6 +1249,12 @@ extension SmithersClient: @preconcurrency DevToolsStreamProvider, NodeOutputProv
 
 private struct DataEnvelope<Value: Decodable>: Decodable {
     let data: Value
+}
+
+private struct ClientCallContext: @unchecked Sendable {
+    let client: smithers_client_t
+    let method: String
+    let argsJSON: String
 }
 
 struct AnyEncodable: Encodable {

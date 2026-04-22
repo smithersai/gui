@@ -5,6 +5,32 @@ import CSmithersKit
 #if os(macOS)
 import AppKit
 import UserNotifications
+
+private let clipboardReadBuffer = ClipboardReadBuffer()
+
+private final class ClipboardReadBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [UInt8] = []
+
+    func write(_ string: String, into out: UnsafeMutablePointer<smithers_string_s>) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        storage = Array(string.utf8) + [0]
+        guard !storage.isEmpty else {
+            return false
+        }
+
+        return storage.withUnsafeBufferPointer { buffer in
+            guard let baseAddress = buffer.baseAddress else { return false }
+            out.pointee = smithers_string_s(
+                ptr: UnsafeRawPointer(baseAddress).assumingMemoryBound(to: CChar.self),
+                len: string.utf8.count
+            )
+            return true
+        }
+    }
+}
 #endif
 
 extension Notification.Name {
@@ -19,31 +45,102 @@ extension Smithers {
         @Published private(set) var app: smithers_app_t?
 
         nonisolated(unsafe) private let appHandle = MainThreadAppHandle()
+        nonisolated(unsafe) private let persistenceHandle = PersistenceHandle()
 
-        init() {
-            var config = smithers_runtime_config_s(
-                userdata: Unmanaged.passUnretained(self).toOpaque(),
-                wakeup: { userdata in App.wakeup(userdata) },
-                action: { app, target, action in
-                    guard let app else { return false }
-                    return App.action(app, target: target, action: action)
-                },
-                read_clipboard: { userdata, out in App.readClipboard(userdata, out: out) },
-                write_clipboard: { userdata, text in App.writeClipboard(userdata, text: text) },
-                state_changed: { userdata in App.stateChanged(userdata) },
-                log: { userdata, level, message in App.log(userdata, level: level, message: message) }
-            )
-            guard let created = smithers_app_new(&config) else {
+        init(
+            databasePath: String? = nil,
+            environment: [String: String] = ProcessInfo.processInfo.environment
+        ) {
+            let dbPath = Self.resolveAppDatabasePath(override: databasePath, environment: environment)
+            let userdata = Unmanaged.passUnretained(self).toOpaque()
+
+            func makeConfig(dbCStr: UnsafePointer<CChar>?) -> smithers_runtime_config_s {
+                smithers_runtime_config_s(
+                    userdata: userdata,
+                    wakeup: { userdata in App.wakeup(userdata) },
+                    action: { app, target, action in
+                        guard let app else { return false }
+                        return App.action(app, target: target, action: action)
+                    },
+                    read_clipboard: { userdata, out in App.readClipboard(userdata, out: out) },
+                    write_clipboard: { userdata, text in App.writeClipboard(userdata, text: text) },
+                    state_changed: { userdata in App.stateChanged(userdata) },
+                    log: { userdata, level, message in App.log(userdata, level: level, message: message) },
+                    recents_db_path: dbCStr
+                )
+            }
+
+            let created: smithers_app_t? = {
+                if let dbPath {
+                    return dbPath.withCString { ptr in
+                        var config = makeConfig(dbCStr: ptr)
+                        return smithers_app_new(&config)
+                    }
+                }
+                var config = makeConfig(dbCStr: nil)
+                return smithers_app_new(&config)
+            }()
+
+            guard let created else {
                 readiness = .error
                 return
             }
             appHandle.replace(created)
             app = created
+            if let dbPath {
+                var openError = smithers_error_s(code: 0, msg: nil)
+                let persistence = dbPath.withCString { smithers_persistence_open($0, &openError) }
+                if let message = Smithers.message(from: openError) {
+                    AppLogger.ui.warning("Failed to open session persistence", metadata: [
+                        "dbPath": dbPath,
+                        "error": message,
+                    ])
+                }
+                persistenceHandle.replace(persistence)
+            }
             readiness = .ready
+        }
+
+        func persistence() -> smithers_persistence_t? {
+            persistenceHandle.value
+        }
+
+        private static func resolveAppDatabasePath(
+            override: String? = nil,
+            environment: [String: String] = ProcessInfo.processInfo.environment
+        ) -> String? {
+            let fm = FileManager.default
+            if let override {
+                let expanded = (override as NSString).expandingTildeInPath
+                return prepareDatabasePath(at: URL(fileURLWithPath: expanded))
+            }
+            if let supportOverride = environment["SMITHERS_APP_SUPPORT"], !supportOverride.isEmpty {
+                let expanded = (supportOverride as NSString).expandingTildeInPath
+                let dir = URL(fileURLWithPath: expanded, isDirectory: true)
+                return prepareDatabasePath(at: dir.appendingPathComponent("app.sqlite"))
+            }
+            guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                return nil
+            }
+            let dir = base.appendingPathComponent("Smithers", isDirectory: true)
+            return prepareDatabasePath(at: dir.appendingPathComponent("app.sqlite"))
+        }
+
+        private static func prepareDatabasePath(at url: URL) -> String? {
+            let fm = FileManager.default
+            let dir = url.deletingLastPathComponent()
+            do {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            } catch {
+                AppLogger.ui.warning("Failed to create app support directory", metadata: ["error": "\(error)"])
+                return nil
+            }
+            return url.path
         }
 
         deinit {
             appHandle.replace(nil)
+            persistenceHandle.replace(nil)
         }
 
         func tick() {
@@ -158,22 +255,22 @@ extension Smithers {
         ) -> Bool {
             _ = userdata
             #if os(macOS)
-            guard let out,
-                  let string = NSPasteboard.general.string(forType: .string)
-            else {
+            guard let out else {
                 return false
             }
 
-            var bytes = ContiguousArray(string.utf8)
-            bytes.append(0)
-            return bytes.withUnsafeBufferPointer { buffer in
-                guard let baseAddress = buffer.baseAddress else { return false }
-                out.pointee = smithers_string_s(
-                    ptr: UnsafeRawPointer(baseAddress).assumingMemoryBound(to: CChar.self),
-                    len: string.utf8.count
-                )
-                return true
+            let string: String? = if Thread.isMainThread {
+                NSPasteboard.general.string(forType: .string)
+            } else {
+                DispatchQueue.main.sync {
+                    NSPasteboard.general.string(forType: .string)
+                }
             }
+            guard let string else {
+                return false
+            }
+
+            return clipboardReadBuffer.write(string, into: out)
             #else
             _ = out
             return false
@@ -233,6 +330,27 @@ private final class MainThreadAppHandle {
             DispatchQueue.main.sync {
                 smithers_app_free(app)
             }
+        }
+    }
+}
+
+private final class PersistenceHandle {
+    private var persistence: smithers_persistence_t?
+
+    var value: smithers_persistence_t? {
+        persistence
+    }
+
+    func replace(_ newValue: smithers_persistence_t?) {
+        if let persistence {
+            smithers_persistence_close(persistence)
+        }
+        persistence = newValue
+    }
+
+    deinit {
+        if let persistence {
+            smithers_persistence_close(persistence)
         }
     }
 }

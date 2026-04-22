@@ -181,10 +181,13 @@ enum CommandPaletteAction: Hashable {
     case navigate(NavDestination)
     case selectSidebarTab(String)
     case newTerminal
+    case newTab(NewTabSelection)
+    case expandNewTabs
     case openMarkdownFilePicker
     case closeCurrentTab
     case askAI(String)
     case slashCommand(String)
+    case runWorkflow(Workflow)
     case openFile(String)
     case globalSearch(String)
     case refreshCurrentView
@@ -215,29 +218,33 @@ struct CommandPaletteContext {
 
 @MainActor
 enum CommandPaletteBuilder {
-    static func items(for rawQuery: String, context: CommandPaletteContext, limit: Int = 120) -> [CommandPaletteItem] {
+    static func items(
+        for rawQuery: String,
+        context: CommandPaletteContext,
+        limit: Int = 120,
+        primaryItems: [CommandPaletteItem]? = nil
+    ) -> [CommandPaletteItem] {
         let parsed = CommandPaletteQueryParser.parse(rawQuery)
-        let palette = Smithers.Palette()
-        palette.mode = parsed.mode
-        palette.query = parsed.searchText
-        let libItems = palette.items(limit: limit)
-        if !libItems.isEmpty {
-            return libItems
-        }
+        let libItems = resolvedPrimaryItems(
+            override: primaryItems,
+            parsed: parsed,
+            workflows: context.workflows,
+            limit: limit
+        )
 
-        // UI-only fallback for the empty/stub palette path. Core owns ranking
-        // and discovery; this keeps keyboard navigation usable while it is absent.
+        // Supplement libsmithers results with app-local routes and tabs so
+        // navigation remains complete even when core discovery is partial.
         let query = parsed.searchText.normalizedCommandPaletteQuery
-        let candidates: [CommandPaletteItem]
+        let supplementalCandidates: [CommandPaletteItem]
         switch parsed.mode {
         case .command:
-            candidates = commandItems(developerToolsEnabled: context.developerToolsEnabled)
+            supplementalCandidates = commandItems(developerToolsEnabled: context.developerToolsEnabled)
         case .slash:
-            candidates = slashItems(commands: context.slashCommands, query: parsed.searchText)
+            supplementalCandidates = slashItems(commands: context.slashCommands, query: parsed.searchText)
         case .mentionFile:
-            candidates = context.files.prefix(limit).map { fileItem($0) }
+            supplementalCandidates = context.files.prefix(limit).map { fileItem($0) }
         case .askAI:
-            candidates = [CommandPaletteItem(
+            supplementalCandidates = [CommandPaletteItem(
                 id: "ask:\(parsed.searchText)",
                 title: parsed.searchText.isEmpty ? "Ask AI" : parsed.searchText,
                 subtitle: "Ask about this workspace.",
@@ -249,25 +256,70 @@ enum CommandPaletteBuilder {
                 isEnabled: true
             )]
         default:
-            candidates = routeItems(developerToolsEnabled: context.developerToolsEnabled) +
+            supplementalCandidates = routeItems(developerToolsEnabled: context.developerToolsEnabled) +
                 context.sidebarTabs.map(tabItem) +
                 context.runTabs.map(runItem) +
+                context.workflows.map(workflowItem) +
                 context.files.prefix(20).map(fileItem)
         }
-        guard !query.isEmpty else { return Array(candidates.prefix(limit)) }
-        return candidates
-            .filter { item in
-                ([item.title, item.subtitle] + item.keywords).contains {
-                    $0.normalizedCommandPaletteQuery.contains(query)
-                }
+
+        let filteredSupplemental: [CommandPaletteItem]
+        if query.isEmpty {
+            filteredSupplemental = Array(supplementalCandidates.prefix(limit))
+        } else {
+            filteredSupplemental = supplementalCandidates
+                .filter { matches($0, query: query) }
+                .prefix(limit)
+                .map { $0 }
+        }
+
+        return mergedItems(primary: libItems, supplemental: filteredSupplemental, limit: limit)
+    }
+
+    private static func mergedItems(
+        primary: [CommandPaletteItem],
+        supplemental: [CommandPaletteItem],
+        limit: Int
+    ) -> [CommandPaletteItem] {
+        guard !primary.isEmpty else { return Array(supplemental.prefix(limit)) }
+
+        var merged = primary
+        var seen = Set(primary.map(deduplicationKey(for:)))
+        for item in supplemental where seen.insert(deduplicationKey(for: item)).inserted {
+            merged.append(item)
+            if merged.count == limit {
+                break
             }
-            .prefix(limit)
-            .map { $0 }
+        }
+        return merged
+    }
+
+    private static func deduplicationKey(for item: CommandPaletteItem) -> String {
+        switch item.action {
+        case .navigate(let destination):
+            return "navigate:\(destination.label.normalizedCommandPaletteQuery)"
+        case .selectSidebarTab(let id):
+            return "tab:\(id)"
+        case .slashCommand(let name):
+            return "slash:\(name)"
+        case .runWorkflow(let workflow):
+            return "workflow:\((workflow.filePath ?? workflow.id).normalizedCommandPaletteQuery)"
+        case .openFile(let path):
+            return "file:\(path)"
+        case .askAI(let query):
+            return "ask:\(query)"
+        default:
+            if isWorkflowCandidate(item) {
+                return "workflow:\(workflowIdentity(for: item))"
+            }
+            return "id:\(item.id.normalizedCommandPaletteQuery)"
+        }
     }
 
     static func routeItems(developerToolsEnabled: Bool) -> [CommandPaletteItem] {
         let routes: [NavDestination] = [
-            .dashboard, .terminal(id: "default"), .runs, .workflows, .triggers,
+            .dashboard, .vcsDashboard, .agents, .terminal(id: "default"), .runs, .snapshots,
+            .workflows, .triggers,
             .approvals, .prompts, .search, .memory, .scores, .sql, .logs,
             .workspaces, .changes, .jjhubWorkflows, .landings, .tickets, .issues,
             .settings,
@@ -317,6 +369,20 @@ enum CommandPaletteBuilder {
                 isEnabled: true
             )
         }
+    }
+
+    static func workflowItem(_ workflow: Workflow) -> CommandPaletteItem {
+        CommandPaletteItem(
+            id: "workflow:\(workflow.filePath ?? workflow.id)",
+            title: workflow.name,
+            subtitle: workflowSubtitle(for: workflow),
+            icon: "arrow.triangle.branch",
+            section: "Workflows",
+            keywords: workflowMatchTokens(for: workflow),
+            shortcut: nil,
+            action: .runWorkflow(workflow),
+            isEnabled: true
+        )
     }
 
     private static func routeItem(_ destination: NavDestination) -> CommandPaletteItem {
@@ -374,6 +440,202 @@ enum CommandPaletteBuilder {
             isEnabled: true
         )
     }
+
+    private static func resolvedPrimaryItems(
+        override: [CommandPaletteItem]?,
+        parsed: ParsedCommandPaletteQuery,
+        workflows: [Workflow],
+        limit: Int
+    ) -> [CommandPaletteItem] {
+        let items: [CommandPaletteItem]
+        if let override {
+            items = override
+        } else {
+            let palette = Smithers.Palette()
+            palette.mode = parsed.mode
+            palette.query = parsed.searchText
+            items = palette.items(limit: limit)
+        }
+        return items.map { resolvedWorkflowItem($0, workflows: workflows) }
+    }
+
+    private static func resolvedWorkflowItem(_ item: CommandPaletteItem, workflows: [Workflow]) -> CommandPaletteItem {
+        guard !matchesKnownWorkflowAction(item) else { return item }
+        guard isWorkflowCandidate(item) else { return item }
+        guard let workflow = workflows.first(where: { workflowMatches($0, item: item) }) else {
+            return item
+        }
+
+        return CommandPaletteItem(
+            id: item.id,
+            title: item.title,
+            subtitle: item.subtitle.isEmpty ? workflowSubtitle(for: workflow) : item.subtitle,
+            icon: item.icon,
+            section: item.section,
+            keywords: uniqued(item.keywords + workflowMatchTokens(for: workflow)),
+            shortcut: item.shortcut,
+            action: .runWorkflow(workflow),
+            isEnabled: item.isEnabled
+        )
+    }
+
+    private static func matches(_ item: CommandPaletteItem, query: String) -> Bool {
+        let searchableValues = ([item.title, item.subtitle] + item.keywords)
+            .map(\.normalizedCommandPaletteQuery)
+            .filter { !$0.isEmpty }
+        if searchableValues.contains(where: { $0.contains(query) }) {
+            return true
+        }
+        guard case .runWorkflow(let workflow) = item.action else { return false }
+        guard let leadingToken = leadingToken(in: query) else { return false }
+        return workflowMatchTokens(for: workflow).contains {
+            $0.normalizedCommandPaletteQuery.contains(leadingToken)
+        }
+    }
+
+    fileprivate static func workflowMatchTokens(for workflow: Workflow) -> [String] {
+        uniqued([workflow.name] + workflowAliases(for: workflow))
+    }
+
+    fileprivate static func workflowSubtitle(for workflow: Workflow) -> String {
+        if let path = workflow.filePath {
+            return "Workflow · \(path)"
+        }
+        return "Workflow"
+    }
+
+    private static func workflowAliases(for workflow: Workflow) -> [String] {
+        var aliases = [workflow.id]
+        if let path = workflow.filePath {
+            aliases.append(path)
+            let lastPathComponent = path.lastPathComponent
+            aliases.append(lastPathComponent)
+            let stem = (lastPathComponent as NSString).deletingPathExtension
+            aliases.append(stem)
+        }
+        return aliases
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.normalizedCommandPaletteQuery != workflow.name.normalizedCommandPaletteQuery }
+    }
+
+    private static func workflowMatches(_ workflow: Workflow, item: CommandPaletteItem) -> Bool {
+        let title = item.title.normalizedCommandPaletteQuery
+        let subtitle = item.subtitle.normalizedCommandPaletteQuery
+        let identifier = item.id.normalizedCommandPaletteQuery
+
+        if workflowMatchTokens(for: workflow).contains(where: { $0.normalizedCommandPaletteQuery == title }) {
+            return true
+        }
+
+        guard let path = workflow.filePath?.normalizedCommandPaletteQuery else {
+            return false
+        }
+
+        return subtitle == path || identifier.contains(path)
+    }
+
+    private static func matchesKnownWorkflowAction(_ item: CommandPaletteItem) -> Bool {
+        if case .runWorkflow = item.action {
+            return true
+        }
+        return false
+    }
+
+    private static func isWorkflowCandidate(_ item: CommandPaletteItem) -> Bool {
+        let normalizedSection = item.section.normalizedCommandPaletteQuery
+        let normalizedID = item.id.normalizedCommandPaletteQuery
+        return normalizedSection == "workflows" ||
+            item.icon == "arrow.triangle.branch" ||
+            normalizedID.hasPrefix("workflow")
+    }
+
+    private static func workflowIdentity(for item: CommandPaletteItem) -> String {
+        let normalizedTitle = item.title.normalizedCommandPaletteQuery
+        if !normalizedTitle.isEmpty {
+            return normalizedTitle
+        }
+        let normalizedSubtitle = item.subtitle.normalizedCommandPaletteQuery
+        if !normalizedSubtitle.isEmpty {
+            return normalizedSubtitle
+        }
+        return item.id.normalizedCommandPaletteQuery
+    }
+
+    private static func leadingToken(in query: String) -> String? {
+        query
+            .split(whereSeparator: \.isWhitespace)
+            .first
+            .map(String.init)?
+            .normalizedCommandPaletteQuery
+            .nilIfEmpty
+    }
+
+    private static func uniqued(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { value in
+            guard !value.isEmpty else { return false }
+            return seen.insert(value.normalizedCommandPaletteQuery).inserted
+        }
+    }
+}
+
+struct CommandPaletteQuickLaunchRequest: Equatable {
+    let workflow: Workflow
+    let prompt: String
+}
+
+@MainActor
+enum CommandPaletteQuickLaunchResolver {
+    static func request(
+        for action: CommandPaletteAction,
+        rawQuery: String,
+        slashCommands: [SlashCommandItem]
+    ) -> CommandPaletteQuickLaunchRequest? {
+        switch action {
+        case .runWorkflow(let workflow):
+            return CommandPaletteQuickLaunchRequest(
+                workflow: workflow,
+                prompt: trailingPrompt(
+                    from: rawQuery,
+                    matchedTokens: CommandPaletteBuilder.workflowMatchTokens(for: workflow)
+                ) ?? ""
+            )
+        case .slashCommand(let name):
+            guard let command = slashCommands.first(where: { $0.name == name }) else { return nil }
+            guard case .runWorkflow(let workflow) = command.action else { return nil }
+            guard let prompt = trailingPrompt(
+                from: rawQuery,
+                matchedTokens: [name, command.title] + command.aliases
+            ), !prompt.isEmpty else {
+                return nil
+            }
+            return CommandPaletteQuickLaunchRequest(workflow: workflow, prompt: prompt)
+        default:
+            return nil
+        }
+    }
+
+    static func trailingPrompt(from rawQuery: String, matchedTokens: [String]) -> String? {
+        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let stripped: String = {
+            if trimmed.hasPrefix("/") || trimmed.hasPrefix(">") {
+                return String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+            }
+            return trimmed
+        }()
+
+        guard let firstSpace = stripped.firstIndex(of: " ") else { return nil }
+        let first = String(stripped[..<firstSpace])
+        let rest = stripped[firstSpace...].trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return nil }
+        let lowered = first.lowercased()
+        for token in matchedTokens where token.lowercased() == lowered {
+            return rest
+        }
+        return nil
+    }
 }
 
 @MainActor
@@ -404,6 +666,7 @@ private struct PaletteItemPayload: Decodable {
     let title: String
     let subtitle: String?
     let kind: String?
+    let section: String?
     let score: Double?
     let icon: String?
     let shortcut: String?
@@ -414,30 +677,81 @@ private extension CommandPaletteItem {
         self.id = payload.id
         self.title = payload.title
         self.subtitle = payload.subtitle ?? ""
-        self.icon = payload.icon ?? Self.icon(for: payload.kind)
-        self.section = payload.kind?.capitalized ?? "Results"
+        self.icon = payload.icon ?? Self.icon(for: payload)
+        self.section = payload.section ?? payload.kind?.capitalized ?? "Results"
         self.keywords = [payload.id, payload.title, payload.subtitle].compactMap { $0 }
         self.shortcut = payload.shortcut
         self.action = Self.action(for: payload)
         self.isEnabled = true
     }
 
-    static func icon(for kind: String?) -> String {
-        switch kind?.lowercased() {
-        case "file", "files": return "doc.text"
-        case "workflow", "workflows": return "arrow.triangle.branch"
-        case "workspace", "workspaces": return "desktopcomputer"
-        case "run", "runs": return "dot.radiowaves.left.and.right"
-        default: return "magnifyingglass"
+    static func icon(for payload: PaletteItemPayload) -> String {
+        if let route = NavDestination.paletteRoute(id: payload.id, title: payload.title) {
+            return route.icon
+        }
+        switch payload.id {
+        case "command.ask-ai":
+            return "sparkles"
+        case "command.new-terminal":
+            return "terminal.fill"
+        case "command.close-workspace":
+            return "xmark"
+        case "command.global-search":
+            return "magnifyingglass"
+        case "command.refresh":
+            return "arrow.clockwise"
+        case "command.cancel":
+            return "xmark.circle"
+        default:
+            break
+        }
+        switch payload.kind?.lowercased() {
+        case "destination":
+            return "square.grid.2x2"
+        case "file", "files":
+            return "doc.text"
+        case "workflow", "workflows":
+            return "arrow.triangle.branch"
+        case "workspace", "workspaces":
+            return "desktopcomputer"
+        case "run", "runs":
+            return "dot.radiowaves.left.and.right"
+        case "slash":
+            return "square.grid.2x2"
+        default:
+            return "magnifyingglass"
         }
     }
 
     static func action(for payload: PaletteItemPayload) -> CommandPaletteAction {
+        switch payload.id {
+        case "command.ask-ai":
+            return .askAI("")
+        case "command.new-terminal":
+            return .newTerminal
+        case "command.close-workspace":
+            return .closeCurrentTab
+        case "command.global-search":
+            return .globalSearch("")
+        case "command.refresh":
+            return .refreshCurrentView
+        case "command.cancel":
+            return .cancelCurrentOperation
+        case "runs.active":
+            return .navigate(.runs)
+        case "workflows.local":
+            return .navigate(.workflows)
+        default:
+            break
+        }
         if payload.id.hasPrefix("file:") {
             return .openFile(String(payload.id.dropFirst(5)))
         }
         if payload.id.hasPrefix("slash:") {
             return .slashCommand(String(payload.id.dropFirst(6)))
+        }
+        if payload.id.hasPrefix("workspace:") {
+            return .navigate(.workspaces)
         }
         if let route = NavDestination.paletteRoute(id: payload.id, title: payload.title) {
             return .navigate(route)
@@ -448,7 +762,10 @@ private extension CommandPaletteItem {
 
 private extension NavDestination {
     static func paletteRoute(id: String, title: String) -> NavDestination? {
-        let token = id.replacingOccurrences(of: "route:", with: "").normalizedCommandPaletteQuery
+        let token = id
+            .replacingOccurrences(of: "route:", with: "")
+            .replacingOccurrences(of: "nav:", with: "")
+            .normalizedCommandPaletteQuery
         switch token.isEmpty ? title.normalizedCommandPaletteQuery : token {
         case "dashboard": return .dashboard
         case "vcsdashboard", "vcs-dashboard": return .vcsDashboard
@@ -499,6 +816,10 @@ extension String {
 
     var lastPathComponent: String {
         (self as NSString).lastPathComponent
+    }
+
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }
 

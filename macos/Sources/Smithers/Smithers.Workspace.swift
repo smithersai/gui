@@ -15,6 +15,25 @@ extension Smithers {
     }
 }
 
+struct RecentWorkspace: Codable, Equatable, Identifiable {
+    let path: String
+    var displayName: String
+    var lastOpened: Date
+
+    var id: String { path }
+    var url: URL { URL(fileURLWithPath: path, isDirectory: true) }
+    var exists: Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+    }
+}
+
+private let recentWorkspaceDecoder: JSONDecoder = {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .secondsSince1970
+    return decoder
+}()
+
 @MainActor
 final class WorkspaceManager: ObservableObject {
     static let shared = WorkspaceManager()
@@ -27,7 +46,6 @@ final class WorkspaceManager: ObservableObject {
     nonisolated(unsafe) private let activeWorkspaceHandle = MainThreadWorkspaceHandle()
 
     init(
-        store: RecentWorkspaceStore = .shared,
         userDefaults: UserDefaults = .standard,
         launchArguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -83,7 +101,12 @@ final class WorkspaceManager: ObservableObject {
     }
 
     func removeRecent(path: String) {
-        recents.removeAll { $0.path == path }
+        guard let cApp = app.app else {
+            recents.removeAll { $0.path == path }
+            return
+        }
+        path.withCString { smithers_app_remove_recent_workspace(cApp, $0) }
+        refreshRecents()
     }
 
     func refreshRecents() {
@@ -93,7 +116,7 @@ final class WorkspaceManager: ObservableObject {
         }
         let json = Smithers.string(from: smithers_app_recent_workspaces_json(cApp))
         guard let data = json.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([RecentWorkspace].self, from: data) else {
+              let decoded = try? recentWorkspaceDecoder.decode([RecentWorkspace].self, from: data) else {
             recents = []
             return
         }
