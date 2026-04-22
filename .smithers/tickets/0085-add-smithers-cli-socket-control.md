@@ -1,3 +1,23 @@
+## Status (audited 2026-04-21)
+
+Done:
+- Zig CLI scaffold with arg parsing and subcommand dispatch (`libsmithers/cli/src/main.zig:28`, commands at `libsmithers/cli/src/commands/`: info, cwd, workspace, slash, palette, session, client, persistence, event).
+- `session-connect` companion binary speaks to a daemon socket via `--socket` / `--spawn-daemon` (`libsmithers/cli/session-connect.zig:17`), commit `b3f54703` ("feat(cli): add smithers cli frontend").
+- DevTools streaming routed through the CLI (commit `105c9616`).
+- `SurfaceNotificationStore` exists and tracks per-surface notifications/unread/errored/focus state (`SurfaceNotificationStore.swift:14`).
+
+Remaining:
+- No Unix-domain socket server in-app at `~/.cmux/smithers-<uid>.sock` / `$XDG_RUNTIME_DIR/smithers.sock`; no JSON-RPC v2 line protocol handler. No `SocketServer.swift` / `SocketProtocol.swift`.
+- No env injection of `SMITHERS_SOCKET_PATH` / `SMITHERS_WINDOW_ID` / `SMITHERS_WORKSPACE_ID` / `SMITHERS_SURFACE_ID` for spawned PTYs (grep finds zero hits in `TerminalView.swift` / session store).
+- Missing command surface: `identify`, `capabilities`, `ping`, `notify`, `set-status`, `clear-status`, `set-progress`, `clear-progress`, `log`, `list-log`, `read-screen`, `trigger-flash`, `list-workspaces`/`list-panes`/`list-surfaces`, `send`, `send-key`.
+- No agent-hook wrappers (`claude-hook`, `codex-hook`, `cursor-hook`, `gemini-hook`).
+- `SurfaceNotificationStore` not extended with `statusByKey`, `progress`, or bounded log ring buffer (grep: no matches for `statusByKey`/`progress`/ring buffer).
+- No sidebar rendering of status chips / progress / log.
+- No bundled CLI install path (`Contents/Resources/smithers-cli/smithers`) or "Install smithers CLI" Settings action.
+- No focus-steal policy implementation, no agent-cli docs at `.smithers/docs/agent-cli.md`.
+
+---
+
 # Add smithers CLI with Socket Control and Env Injection
 
 ## Problem
