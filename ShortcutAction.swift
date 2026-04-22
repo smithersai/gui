@@ -63,6 +63,32 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Hashable {
         return ordered
     }
 
+    static var directDispatchOrder: [ShortcutAction] {
+        dispatchOrder.filter { !$0.isPrefixOnly }
+    }
+
+    static var terminalFocusedDispatchOrder: [ShortcutAction] {
+        directDispatchOrder.filter(\.dispatchesWhenTerminalFocused)
+    }
+
+    // These shortcuts should still route through the app while a terminal
+    // surface has first responder status.
+    var dispatchesWhenTerminalFocused: Bool {
+        switch self {
+        case .commandPalette,
+             .commandPaletteCommandMode,
+             .commandPaletteAskAI,
+             .nextSidebarTab,
+             .prevSidebarTab,
+             .selectWorkspaceByNumber,
+             .toggleSidebar,
+             .showNotifications:
+            return true
+        default:
+            return false
+        }
+    }
+
     var label: String {
         switch self {
         case .commandPalette:

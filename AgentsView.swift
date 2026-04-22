@@ -30,11 +30,21 @@ struct AgentsView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         if !availableAgents.isEmpty {
-                            section(title: "Available (\(availableAgents.count))", agents: availableAgents, faded: false)
+                            section(
+                                title: "Available (\(availableAgents.count))",
+                                identifier: "agents.section.available",
+                                agents: availableAgents,
+                                faded: false
+                            )
                         }
 
                         if !unavailableAgents.isEmpty {
-                            section(title: "Not Detected (\(unavailableAgents.count))", agents: unavailableAgents, faded: true)
+                            section(
+                                title: "Not Detected (\(unavailableAgents.count))",
+                                identifier: "agents.section.notDetected",
+                                agents: unavailableAgents,
+                                faded: true
+                            )
                         }
                     }
                     .padding(20)
@@ -69,11 +79,12 @@ struct AgentsView: View {
         .border(Theme.border, edges: [.bottom])
     }
 
-    private func section(title: String, agents: [SmithersAgent], faded: Bool) -> some View {
+    private func section(title: String, identifier: String, agents: [SmithersAgent], faded: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(Theme.textTertiary)
+                .accessibilityIdentifier(identifier)
 
             ForEach(agents) { agent in
                 agentCard(agent, faded: faded)
@@ -95,7 +106,9 @@ struct AgentsView: View {
                 Spacer()
 
                 statusTag("Availability", value: agent.usable ? "Detected" : "Not Detected")
+                    .accessibilityIdentifier("agents.tag.availability.\(agent.id)")
                 statusTag("Usable", value: agent.usable ? "Yes" : "No")
+                    .accessibilityIdentifier("agents.tag.usable.\(agent.id)")
             }
 
             infoRow("Status", value: agent.status)

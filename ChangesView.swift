@@ -145,7 +145,9 @@ struct ChangesView: View {
 
             Picker("Mode", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { currentMode in
-                    Text(currentMode.rawValue).tag(currentMode)
+                    Text(currentMode.rawValue)
+                        .tag(currentMode)
+                        .accessibilityIdentifier("changes.mode.\(currentMode.rawValue.lowercased())")
                 }
             }
             .pickerStyle(.segmented)

@@ -94,7 +94,6 @@ targets:
       - SmithersModels.swift
       - SurfaceNotificationStore.swift
       - TerminalProcessTracker.swift
-      - RecentWorkspaceStore.swift
       - WelcomeView.swift
       - TerminalView.swift
       - StoredShortcut.swift

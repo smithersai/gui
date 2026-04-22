@@ -195,21 +195,26 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
     var title: String
     var subtitle: String
     var createdAt: Date
+    var hasCustomTitle: Bool = false
     var browserURLString: String?
     var terminalWorkingDirectory: String?
     var terminalCommand: String?
+    var runId: String? = nil
     var terminalBackend: TerminalBackend
     var tmuxSocketName: String?
     var tmuxSessionName: String?
+    var sessionId: String? = nil
     var markdownFilePath: String?
 
     static func terminal(
         id: SurfaceID = SurfaceID(),
         workingDirectory: String? = nil,
         command: String? = nil,
-        backend: TerminalBackend = .tmux,
+        runId: String? = nil,
+        backend: TerminalBackend = .native,
         tmuxSocketName: String? = nil,
-        tmuxSessionName: String? = nil
+        tmuxSessionName: String? = nil,
+        sessionId: String? = nil
     ) -> WorkspaceSurface {
         WorkspaceSurface(
             id: id,
@@ -220,14 +225,20 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             browserURLString: nil,
             terminalWorkingDirectory: workingDirectory,
             terminalCommand: command,
+            runId: runId,
             terminalBackend: backend,
             tmuxSocketName: tmuxSocketName,
             tmuxSessionName: tmuxSessionName,
+            sessionId: sessionId,
             markdownFilePath: nil
         )
     }
 
-    static func browser(id: SurfaceID = SurfaceID(), urlString: String? = nil) -> WorkspaceSurface {
+    static func browser(
+        id: SurfaceID = SurfaceID(),
+        urlString: String? = nil,
+        sessionId: String? = nil
+    ) -> WorkspaceSurface {
         WorkspaceSurface(
             id: id,
             kind: .browser,
@@ -237,14 +248,20 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             browserURLString: urlString,
             terminalWorkingDirectory: nil,
             terminalCommand: nil,
+            runId: nil,
             terminalBackend: .ghostty,
             tmuxSocketName: nil,
             tmuxSessionName: nil,
+            sessionId: sessionId,
             markdownFilePath: nil
         )
     }
 
-    static func markdown(id: SurfaceID = SurfaceID(), filePath: String) -> WorkspaceSurface {
+    static func markdown(
+        id: SurfaceID = SurfaceID(),
+        filePath: String,
+        sessionId: String? = nil
+    ) -> WorkspaceSurface {
         let normalizedPath = (filePath as NSString).standardizingPath
         let fileName = (normalizedPath as NSString).lastPathComponent
         return WorkspaceSurface(
@@ -256,9 +273,11 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             browserURLString: nil,
             terminalWorkingDirectory: nil,
             terminalCommand: nil,
+            runId: nil,
             terminalBackend: .ghostty,
             tmuxSocketName: nil,
             tmuxSessionName: nil,
+            sessionId: sessionId,
             markdownFilePath: normalizedPath
         )
     }
@@ -291,6 +310,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     private let defaultWorkingDirectory: String?
     private let backend: TerminalBackend
     private let tmuxSocketName: String?
+    private let sessionId: String?
     weak var changeDelegate: TerminalWorkspaceChangeDelegate?
 
     init(
@@ -299,11 +319,13 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         title: String,
         workingDirectory: String? = nil,
         command: String? = nil,
+        runId: String? = nil,
         rootSurfaceId: SurfaceID? = nil,
         rootKind: WorkspaceSurfaceKind = .terminal,
         browserURLString: String? = nil,
-        backend: TerminalBackend = .tmux,
-        tmuxSocketName: String? = nil
+        backend: TerminalBackend = .native,
+        tmuxSocketName: String? = nil,
+        sessionId: String? = nil
     ) {
         self.id = id
         self.windowID = windowID
@@ -311,39 +333,44 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         self.defaultWorkingDirectory = workingDirectory
         self.backend = backend
         self.tmuxSocketName = tmuxSocketName
+        self.sessionId = sessionId
 
         let surfaceId = rootSurfaceId ?? SurfaceID()
         var initialSurface: WorkspaceSurface
         switch rootKind {
         case .terminal:
-            let target = Self.tmuxTarget(
+            let target = backend == .tmux ? Self.tmuxTarget(
                 surfaceId: surfaceId,
                 workingDirectory: workingDirectory,
                 socketName: tmuxSocketName
-            )
+            ) : nil
             initialSurface = WorkspaceSurface.terminal(
                 id: surfaceId,
                 workingDirectory: workingDirectory,
                 command: command,
+                runId: runId,
                 backend: backend,
                 tmuxSocketName: target?.socketName,
-                tmuxSessionName: target?.sessionName
+                tmuxSessionName: target?.sessionName,
+                sessionId: sessionId
             )
         case .browser:
-            initialSurface = WorkspaceSurface.browser(id: surfaceId, urlString: browserURLString)
+            initialSurface = WorkspaceSurface.browser(id: surfaceId, urlString: browserURLString, sessionId: nil)
         case .markdown:
-            let target = Self.tmuxTarget(
+            let target = backend == .tmux ? Self.tmuxTarget(
                 surfaceId: surfaceId,
                 workingDirectory: workingDirectory,
                 socketName: tmuxSocketName
-            )
+            ) : nil
             initialSurface = WorkspaceSurface.terminal(
                 id: surfaceId,
                 workingDirectory: workingDirectory,
                 command: command,
+                runId: runId,
                 backend: backend,
                 tmuxSocketName: target?.socketName,
-                tmuxSessionName: target?.sessionName
+                tmuxSessionName: target?.sessionName,
+                sessionId: sessionId
             )
         }
         initialSurface.title = title
@@ -362,8 +389,10 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         windowID: WindowID = WindowID(),
         snapshot: TerminalWorkspaceSnapshot,
         workingDirectory: String? = nil,
-        backend: TerminalBackend = .tmux,
-        tmuxSocketName: String? = nil
+        runId: String? = nil,
+        backend: TerminalBackend = .native,
+        tmuxSocketName: String? = nil,
+        sessionId: String? = nil
     ) {
         self.id = id
         self.windowID = windowID
@@ -372,6 +401,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         self.defaultWorkingDirectory = workingDirectory
         self.backend = backend
         self.tmuxSocketName = tmuxSocketName
+        self.sessionId = sessionId
 
         var nextSurfaces: [SurfaceID: WorkspaceSurface] = [:]
         for var surface in snapshot.surfaces {
@@ -391,17 +421,19 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
 
         if nextSurfaces.isEmpty {
             let fallbackSurfaceId = SurfaceID()
-            let target = Self.tmuxTarget(
+            let target = backend == .tmux ? Self.tmuxTarget(
                 surfaceId: fallbackSurfaceId,
                 workingDirectory: workingDirectory,
                 socketName: tmuxSocketName
-            )
+            ) : nil
             var fallback = WorkspaceSurface.terminal(
                 id: fallbackSurfaceId,
                 workingDirectory: workingDirectory,
+                runId: runId,
                 backend: backend,
                 tmuxSocketName: target?.socketName,
-                tmuxSessionName: target?.sessionName
+                tmuxSessionName: target?.sessionName,
+                sessionId: sessionId
             )
             fallback.title = snapshot.title
             nextSurfaces[fallback.id] = fallback
@@ -439,8 +471,8 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         let browserCount = surfaces.values.filter { $0.kind == .browser }.count
         let markdownCount = surfaces.values.filter { $0.kind == .markdown }.count
         var parts: [String] = []
-        if terminalCount > 0 {
-            parts.append("\(terminalCount) terminal\(terminalCount == 1 ? "" : "s")")
+        if terminalCount > 1 {
+            parts.append("\(terminalCount) terminals")
         }
         if browserCount > 0 {
             parts.append("\(browserCount) browser\(browserCount == 1 ? "" : "s")")
@@ -592,23 +624,24 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         switch kind {
         case .terminal:
             let surfaceId = SurfaceID()
-            let target = Self.tmuxTarget(
+            let target = backend == .tmux ? Self.tmuxTarget(
                 surfaceId: surfaceId,
                 workingDirectory: defaultWorkingDirectory,
                 socketName: tmuxSocketName
-            )
+            ) : nil
             newSurface = .terminal(
                 id: surfaceId,
                 workingDirectory: defaultWorkingDirectory,
                 backend: backend,
                 tmuxSocketName: target?.socketName,
-                tmuxSessionName: target?.sessionName
+                tmuxSessionName: target?.sessionName,
+                sessionId: nil
             )
         case .browser:
-            newSurface = .browser(urlString: "https://smithers.sh")
+            newSurface = .browser(urlString: "https://smithers.sh", sessionId: nil)
         case .markdown:
             assertionFailure("Use addMarkdown(filePath:splitAxis:) for markdown surfaces.")
-            newSurface = .markdown(filePath: "")
+            newSurface = .markdown(filePath: "", sessionId: nil)
         }
 
         return insertSurface(newSurface, splitAxis: axis)
@@ -692,10 +725,17 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
 
         if removed?.kind == .terminal {
             TerminalSurfaceRegistry.shared.deregister(sessionId: surfaceId.rawValue)
-            TmuxController.terminateSession(
-                socketName: removed?.tmuxSocketName,
-                sessionName: removed?.tmuxSessionName
-            )
+            if removed?.terminalBackend == .tmux {
+                TmuxController.terminateSession(
+                    socketName: removed?.tmuxSocketName,
+                    sessionName: removed?.tmuxSessionName
+                )
+            } else if removed?.terminalBackend == .native, let sid = removed?.sessionId {
+                // Fire-and-forget: the controller is an actor, so hop.
+                Task.detached {
+                    try? await SessionController.shared.terminate(sessionId: PTYSessionID(sid))
+                }
+            }
         } else if removed?.kind == .browser {
             BrowserSurfaceRegistry.shared.remove(surfaceId: surfaceId.rawValue)
         } else if removed?.kind == .markdown {
@@ -720,6 +760,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
            var surface = surfaces[firstSurfaceId],
            surface.kind == .terminal {
             surface.title = trimmed
+            surface.hasCustomTitle = true
             surfaces[firstSurfaceId] = surface
         }
         notifyChanged()
@@ -732,11 +773,42 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     func updateTerminalTitle(surfaceId: SurfaceID, title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, var surface = surfaces[surfaceId] else { return }
+        // Don't override manually renamed surface titles
+        guard !surface.hasCustomTitle else { return }
         surface.title = trimmed
         surface.subtitle = "Shell session"
         surfaces[surfaceId] = surface
         if !hasCustomTitle, layout.firstSurfaceId == surfaceId {
             self.title = trimmed
+        }
+        notifyChanged()
+    }
+
+    /// Update surface title automatically (e.g., from terminal escape sequences).
+    /// Will not override manually renamed surfaces.
+    func updateSurfaceTitle(surfaceId: SurfaceID, title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, var surface = surfaces[surfaceId] else { return }
+        // Don't override manually renamed surface titles
+        guard !surface.hasCustomTitle else { return }
+        surface.title = trimmed
+        surfaces[surfaceId] = surface
+        if !hasCustomTitle, layout.firstSurfaceId == surfaceId {
+            self.title = trimmed
+        }
+        notifyChanged()
+    }
+
+    /// Manually rename a surface. This prevents automatic title updates from overriding.
+    func renameSurface(surfaceId: SurfaceID, title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, var surface = surfaces[surfaceId] else { return }
+        surface.title = trimmed
+        surface.hasCustomTitle = true
+        surfaces[surfaceId] = surface
+        if layout.firstSurfaceId == surfaceId {
+            self.title = trimmed
+            self.hasCustomTitle = true
         }
         notifyChanged()
     }
@@ -755,6 +827,13 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
             surface.title = resolved
             surfaces[surfaceId] = surface
         }
+        notifyChanged()
+    }
+
+    func setSurfaceSessionId(surfaceId: SurfaceID, sessionId: String) {
+        guard var surface = surfaces[surfaceId] else { return }
+        surface.sessionId = sessionId
+        surfaces[surfaceId] = surface
         notifyChanged()
     }
 

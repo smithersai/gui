@@ -696,6 +696,8 @@ private extension String {
 extension NavDestination {
     var debugRouteDescription: String {
         switch self {
+        case .home:
+            return "home"
         case .dashboard:
             return "dashboard"
         case .vcsDashboard:

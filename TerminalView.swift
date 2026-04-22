@@ -544,6 +544,31 @@ class GhosttyApp: ObservableObject {
 
 // MARK: - Terminal Surface NSView
 
+#if os(macOS)
+struct TerminalWorkspaceShortcutDispatcher {
+    var shortcutProvider: (ShortcutAction) -> StoredShortcut = KeyboardShortcutSettings.current(for:)
+
+    init(shortcutProvider: @escaping (ShortcutAction) -> StoredShortcut = KeyboardShortcutSettings.current(for:)) {
+        self.shortcutProvider = shortcutProvider
+    }
+
+    func command(for event: NSEvent) -> KeyboardShortcutCommand? {
+        guard event.type == .keyDown else { return nil }
+        return DirectKeyboardShortcutMatcher(shortcutProvider: shortcutProvider)
+            .command(for: event, matching: ShortcutAction.terminalFocusedDispatchOrder)
+    }
+
+    func dispatch(
+        event: NSEvent,
+        onCommand: (KeyboardShortcutCommand) -> Void
+    ) -> Bool {
+        guard let command = command(for: event) else { return false }
+        onCommand(command)
+        return true
+    }
+}
+#endif
+
 class TerminalSurfaceView: NSView {
     var surface: ghostty_surface_t?
     private(set) var sessionId: String?
@@ -565,6 +590,7 @@ class TerminalSurfaceView: NSView {
     var onSplitDown: (() -> Void)?
     var onOpenBrowser: (() -> Void)?
     var onJumpToUnread: (() -> Void)?
+    var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)?
 
     // Keep C strings alive for the lifetime of the surface
     private var commandCString: UnsafeMutablePointer<CChar>?
@@ -767,6 +793,52 @@ class TerminalSurfaceView: NSView {
         }
     }
 
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard event.type == .rightMouseDown || event.type == .rightMouseUp else {
+            return super.menu(for: event)
+        }
+
+        onFocus?()
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        if onSplitRight != nil {
+            let item = NSMenuItem(title: "Split Right", action: #selector(contextMenuSplitRight(_:)), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+
+        if onSplitDown != nil {
+            let item = NSMenuItem(title: "Split Down", action: #selector(contextMenuSplitDown(_:)), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+
+        if onClose != nil {
+            if menu.items.count > 0 {
+                menu.addItem(.separator())
+            }
+            let item = NSMenuItem(title: "Close", action: #selector(contextMenuClose(_:)), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+
+        return menu.items.isEmpty ? nil : menu
+    }
+
+    @objc private func contextMenuSplitRight(_ sender: Any?) {
+        onSplitRight?()
+    }
+
+    @objc private func contextMenuSplitDown(_ sender: Any?) {
+        onSplitDown?()
+    }
+
+    @objc private func contextMenuClose(_ sender: Any?) {
+        onClose?()
+    }
+
     override func rightMouseUp(with event: NSEvent) {
         if !forwardMouseButton(
             with: event,
@@ -812,20 +884,23 @@ class TerminalSurfaceView: NSView {
     override func otherMouseDragged(with event: NSEvent) { sendMousePos(event) }
 
     override func scrollWheel(with event: NSEvent) {
-        guard let surface else { return }
+        guard let surface else {
+            AppLogger.terminal.debug("scrollWheel: no surface; dropping event")
+            return
+        }
         sendMousePos(event)
         var x = event.scrollingDeltaX
         var y = event.scrollingDeltaY
-        if event.hasPreciseScrollingDeltas {
+        let precision = event.hasPreciseScrollingDeltas
+        if precision {
             x *= 2
             y *= 2
         }
-        ghostty_surface_mouse_scroll(
-            surface,
-            x,
-            y,
-            scrollModsFromEvent(event)
+        let mods = scrollModsFromEvent(event)
+        AppLogger.terminal.debug(
+            "scrollWheel dx=\(x) dy=\(y) precision=\(precision) phase=\(event.phase.rawValue) momentum=\(event.momentumPhase.rawValue) mods=\(mods)"
         )
+        ghostty_surface_mouse_scroll(surface, x, y, mods)
     }
 
     // MARK: - Clipboard
@@ -1384,6 +1459,11 @@ class TerminalSurfaceView: NSView {
             return true
         }
 
+        if let onAppShortcutCommand,
+           TerminalWorkspaceShortcutDispatcher().dispatch(event: event, onCommand: onAppShortcutCommand) {
+            return true
+        }
+
         return false
     }
 
@@ -1613,6 +1693,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
     var onSplitDown: (() -> Void)? = nil
     var onOpenBrowser: (() -> Void)? = nil
     var onJumpToUnread: (() -> Void)? = nil
+    var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     func makeNSView(context: Context) -> TerminalSurfaceView {
         let view: TerminalSurfaceView
@@ -1652,6 +1733,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
         view.onSplitDown = onSplitDown
         view.onOpenBrowser = onOpenBrowser
         view.onJumpToUnread = onJumpToUnread
+        view.onAppShortcutCommand = onAppShortcutCommand
     }
 
     static func dismantleNSView(_ nsView: TerminalSurfaceView, coordinator: ()) {
@@ -1681,6 +1763,7 @@ struct TerminalView: View {
     var onSplitDown: (() -> Void)? = nil
     var onOpenBrowser: (() -> Void)? = nil
     var onJumpToUnread: (() -> Void)? = nil
+    var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1727,7 +1810,8 @@ struct TerminalView: View {
                         onSplitRight: onSplitRight,
                         onSplitDown: onSplitDown,
                         onOpenBrowser: onOpenBrowser,
-                        onJumpToUnread: onJumpToUnread
+                        onJumpToUnread: onJumpToUnread,
+                        onAppShortcutCommand: onAppShortcutCommand
                     )
                 }
             } else {

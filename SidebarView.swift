@@ -7,6 +7,7 @@ import AppKit
 // MARK: - Navigation Destination
 
 enum NavDestination: Hashable {
+    case home
     case dashboard
     case vcsDashboard
     case agents
@@ -41,6 +42,7 @@ enum NavDestination: Hashable {
 
     var label: String {
         switch self {
+        case .home: return "Home"
         case .terminal: return "Terminal"
         case .terminalCommand(binary: _, workingDirectory: _, name: let name): return name
         case .liveRun: return "Live Run"
@@ -71,6 +73,7 @@ enum NavDestination: Hashable {
 
     var icon: String {
         switch self {
+        case .home: return "house"
         case .terminal: return "terminal.fill"
         case .terminalCommand(binary: _, workingDirectory: _, name: _): return "terminal.fill"
         case .liveRun: return "dot.radiowaves.left.and.right"
@@ -107,10 +110,7 @@ struct SidebarView: View {
     @ObservedObject private var surfaceNotifications = SurfaceNotificationStore.shared
     @Binding var destination: NavDestination
     @Binding private var developerDebugPanelVisible: Bool
-    @State private var searchText: String = ""
     @State private var smithersVersion: String?
-    @AppStorage(AppPreferenceKeys.smithersFeatureEnabled) private var smithersFeatureEnabled = false
-    @AppStorage(AppPreferenceKeys.vcsFeatureEnabled) private var vcsFeatureEnabled = false
     @State private var renameTerminalID: String?
     @State private var renameTerminalTitle: String = ""
     @State private var terminateTerminalID: String?
@@ -118,6 +118,11 @@ struct SidebarView: View {
     private let developerDebugAvailable: Bool
     private let onOpenNewTabPicker: () -> Void
     private let versionProvider: (() async -> String?)?
+
+    fileprivate static let guiVersion: String = {
+        let info = Bundle.main.infoDictionary
+        return (info?["CFBundleShortVersionString"] as? String) ?? "0.0.1"
+    }()
 
     init(
         store: SessionStore,
@@ -135,58 +140,12 @@ struct SidebarView: View {
         self.versionProvider = versionProvider
     }
 
-    private static let smithersNav: Set<NavDestination> = [
-        .dashboard, .agents, .runs, .snapshots, .workflows, .triggers, .approvals,
-        .prompts, .scores, .memory, .search, .sql, .workspaces, .logs
-    ]
-
-    private static let vcsNav: Set<NavDestination> = [
-        .vcsDashboard, .changes, .jjhubWorkflows, .landings, .tickets, .issues
-    ]
-
     var body: some View {
         VStack(spacing: 0) {
-            // App title
-            HStack {
-                Text("Smithers")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(Theme.textPrimary)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 40)
-            .border(Theme.border, edges: [.bottom])
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if smithersFeatureEnabled || vcsFeatureEnabled {
-                        VStack(alignment: .leading, spacing: 2) {
-                            if smithersFeatureEnabled {
-                                NavRow(
-                                    icon: "square.grid.2x2",
-                                    label: "Smithers",
-                                    isSelected: SidebarView.smithersNav.contains(destination)
-                                ) {
-                                    destination = .dashboard
-                                }
-                            }
-
-                            if vcsFeatureEnabled {
-                                NavRow(
-                                    icon: "point.3.connected.trianglepath.dotted",
-                                    label: "VCS",
-                                    isSelected: SidebarView.vcsNav.contains(destination)
-                                ) {
-                                    destination = .vcsDashboard
-                                }
-                            }
-                        }
-                        .padding(.top, 14)
-                        .padding(.bottom, 8)
-                    }
-
                     SidebarSection(
-                        title: "WORKSPACES",
+                        title: "Smithers",
                         trailingAccessory: {
                             Button(action: onOpenNewTabPicker) {
                                 Image(systemName: "plus")
@@ -231,12 +190,12 @@ struct SidebarView: View {
                 }
                 .padding(.vertical, 8)
 
-                if let smithersVersion {
-                    let meetsMin = SmithersClient.versionAtLeast(
-                        smithersVersion,
-                        minimum: SmithersClient.minimumOrchestratorVersion
-                    )
-                    VStack(spacing: 2) {
+                VStack(spacing: 2) {
+                    if let smithersVersion {
+                        let meetsMin = SmithersClient.versionAtLeast(
+                            smithersVersion,
+                            minimum: SmithersClient.minimumOrchestratorVersion
+                        )
                         Text("Smithers \(smithersVersion)")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(meetsMin ? Theme.textTertiary : Theme.danger)
@@ -248,9 +207,13 @@ struct SidebarView: View {
                                 .accessibilityIdentifier("sidebar.smithersVersionWarning")
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.bottom, 6)
+                    Text("GUI \(Self.guiVersion)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(Theme.textTertiary)
+                        .accessibilityIdentifier("sidebar.guiVersion")
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.bottom, 6)
             }
         }
         .task {
@@ -295,30 +258,10 @@ struct SidebarView: View {
 
     private var workspaceList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(Theme.textTertiary)
-                    .font(.system(size: 10))
-                TextField("Search workspaces...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-                    .accessibilityIdentifier("sidebar.workspaceSearch")
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(Theme.inputBg)
-            .cornerRadius(6)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Theme.border, lineWidth: 1)
-            )
-            .padding(.horizontal, 8)
-            .padding(.bottom, 4)
-
             let groups = ["Pinned", "Today", "Yesterday", "Older"]
             let _ = surfaceNotifications.unreadSurfaceIds
             let _ = surfaceNotifications.focusedIndicatorSurfaceIds
-            let allTabs = store.sidebarWorkspaces(matching: searchText)
+            let allTabs = store.sidebarWorkspaces(matching: "")
 
             if allTabs.isEmpty {
                 Text("No workspaces yet")
@@ -353,6 +296,13 @@ struct SidebarView: View {
                                 Button("Rename terminal") {
                                     beginRenameTerminal(terminalID: terminalId, currentTitle: tab.title)
                                 }
+                                if tab.agentKind?.supportsResume == true {
+                                    Button("Fork chat") {
+                                        store.forkTerminalTab(terminalId)
+                                    }
+                                    .disabled(!store.canForkTerminalTab(terminalId))
+                                    .accessibilityIdentifier("sidebar.contextMenu.forkChat")
+                                }
                                 Divider()
                                 Button("Copy working directory") {
                                     copyTextToClipboard(tab.workingDirectory ?? store.terminalWorkingDirectory(terminalId) ?? "")
@@ -361,6 +311,10 @@ struct SidebarView: View {
                                 Button("Copy workspace ID") {
                                     copyTextToClipboard(terminalId)
                                 }
+                                Button("Copy session ID") {
+                                    copyTextToClipboard(tab.agentSessionId ?? "")
+                                }
+                                .disabled(tab.agentSessionId == nil)
                                 Button("Copy tmux attach command") {
                                     copyTextToClipboard(store.terminalAttachCommand(terminalId) ?? "")
                                 }
@@ -558,11 +512,6 @@ struct SidebarWorkspaceRow: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
-                    Image(systemName: tab.kind.icon)
-                        .font(.system(size: 10))
-                        .foregroundColor(isSelected ? Theme.accent : Theme.textTertiary)
-                        .frame(width: 14)
-
                     Text(tab.title)
                         .font(.system(size: 11, weight: tab.isUnread ? .semibold : .medium))
                         .foregroundColor(Theme.textPrimary)
@@ -594,7 +543,6 @@ struct SidebarWorkspaceRow: View {
                         .font(.system(size: 10))
                         .foregroundColor(Theme.textTertiary)
                         .lineLimit(1)
-                        .padding(.leading, 21)
                 }
             }
             .padding(.horizontal, 8)
@@ -614,6 +562,8 @@ struct SidebarTerminalPaneChildren: View {
     let tabId: String
     let isParentSelected: Bool
     let onSelectPane: (SurfaceID) -> Void
+    @State private var renameSurfaceId: SurfaceID?
+    @State private var renameSurfaceTitle: String = ""
 
     var body: some View {
         let surfaceIds = workspace.layout.surfaceIds
@@ -625,7 +575,35 @@ struct SidebarTerminalPaneChildren: View {
                     }
                 }
             }
+            .alert("Rename surface", isPresented: renameSurfaceAlertBinding) {
+                TextField("Surface title", text: $renameSurfaceTitle)
+                Button("Cancel", role: .cancel) {
+                    renameSurfaceId = nil
+                    renameSurfaceTitle = ""
+                }
+                Button("Save") {
+                    if let surfaceId = renameSurfaceId {
+                        workspace.updateSurfaceTitle(surfaceId: surfaceId, title: renameSurfaceTitle)
+                    }
+                    renameSurfaceId = nil
+                    renameSurfaceTitle = ""
+                }
+            } message: {
+                Text("Enter a new title for this surface.")
+            }
         }
+    }
+
+    private var renameSurfaceAlertBinding: Binding<Bool> {
+        Binding(
+            get: { renameSurfaceId != nil },
+            set: { presented in
+                if !presented {
+                    renameSurfaceId = nil
+                    renameSurfaceTitle = ""
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -639,10 +617,6 @@ struct SidebarTerminalPaneChildren: View {
                     .fill(Theme.border)
                     .frame(width: 1, height: 14)
                     .padding(.leading, 10)
-                Image(systemName: surface.kind.icon)
-                    .font(.system(size: 10))
-                    .foregroundColor(isHighlighted ? Theme.accent : Theme.textTertiary)
-                    .frame(width: 14)
                 Text(surface.title)
                     .font(.system(size: 11, weight: isHighlighted ? .semibold : .regular))
                     .foregroundColor(Theme.textPrimary)
@@ -655,6 +629,12 @@ struct SidebarTerminalPaneChildren: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
+        .contextMenu {
+            Button("Rename surface") {
+                renameSurfaceId = surface.id
+                renameSurfaceTitle = surface.title
+            }
+        }
         .accessibilityIdentifier("workspace.pane.\(tabId).\(surface.id.rawValue)")
     }
 }
@@ -706,24 +686,64 @@ struct EdgeBorder: Shape {
 
 struct SmithersVersionWarningBanner: View {
     let installed: String
+    let onUpgrade: () -> Void
+    var upgradeStatus: SmithersUpgrader.Status = .idle
+
     private let required = SmithersClient.minimumOrchestratorVersion
+
+    private var statusText: String? {
+        switch upgradeStatus {
+        case .idle: return nil
+        case .running(let step): return step
+        case .failed(let msg): return "Update failed: \(msg)"
+        case .succeeded(let summary): return summary
+        }
+    }
+
+    private var isRunning: Bool {
+        if case .running = upgradeStatus { return true }
+        return false
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundColor(.white)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Smithers \(installed) is too old — update to ≥ \(required)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-                Text("Run lifecycle and heartbeat status will be inaccurate until you upgrade smithers-orchestrator.")
+                .font(.system(size: 12))
+            Text("Smithers \(installed) is too old — update to ≥ \(required).")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            if let statusText {
+                Text("· \(statusText)")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(.white.opacity(0.9))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+            Button(action: onUpgrade) {
+                HStack(spacing: 4) {
+                    if isRunning {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(.white)
+                    }
+                    Text(isRunning ? "Updating…" : "Update")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(Color.white.opacity(isRunning ? 0.15 : 0.22))
+                .foregroundColor(.white)
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(isRunning)
+            .accessibilityIdentifier("smithersVersion.upgradeButton")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.danger)
         .accessibilityIdentifier("smithersVersion.banner")

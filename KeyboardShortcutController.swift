@@ -155,54 +155,15 @@ struct KeyboardChordParser {
 }
 
 #if os(macOS)
-struct KeyboardShortcutDispatcher {
+struct DirectKeyboardShortcutMatcher {
     var shortcutProvider: (ShortcutAction) -> StoredShortcut = KeyboardShortcutSettings.current(for:)
-    private var parser = KeyboardChordParser()
 
     init(shortcutProvider: @escaping (ShortcutAction) -> StoredShortcut = KeyboardShortcutSettings.current(for:)) {
         self.shortcutProvider = shortcutProvider
     }
 
-    mutating func dispatch(
-        event: NSEvent,
-        focusState: KeyboardShortcutFocusState
-    ) -> KeyboardShortcutDispatchOutcome {
-        if focusState.paletteVisible {
-            return .ignored
-        }
-
-        if focusState.textInputFocused || focusState.terminalFocused {
-            return .ignored
-        }
-
-        if let direct = directCommand(for: event) {
-            return .command(direct)
-        }
-
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        let shiftedKey = event.characters?.lowercased() ?? key
-        let outcome = parser.handle(
-            key: key,
-            shiftedKey: shiftedKey,
-            modifiers: KeyboardChordModifiers(flags),
-            isTextInputFocused: focusState.textInputFocused,
-            isTerminalFocused: focusState.terminalFocused,
-            shortcutProvider: shortcutProvider
-        )
-
-        switch outcome {
-        case .ignored:
-            return .ignored
-        case .consumed:
-            return .consumed
-        case .action(let action):
-            return .command(.palette(action))
-        }
-    }
-
-    private func directCommand(for event: NSEvent) -> KeyboardShortcutCommand? {
-        for action in ShortcutAction.dispatchOrder where !action.isPrefixOnly {
+    func command(for event: NSEvent, matching actions: [ShortcutAction]) -> KeyboardShortcutCommand? {
+        for action in actions {
             let shortcut = shortcutProvider(action)
             if action.isNumbered {
                 if let digit = numberedShortcutDigit(event: event, shortcut: shortcut) {
@@ -268,6 +229,68 @@ struct KeyboardShortcutDispatcher {
         case 25: return 9
         default: return nil
         }
+    }
+}
+
+struct KeyboardShortcutDispatcher {
+    var shortcutProvider: (ShortcutAction) -> StoredShortcut = KeyboardShortcutSettings.current(for:)
+    private var parser = KeyboardChordParser()
+
+    init(shortcutProvider: @escaping (ShortcutAction) -> StoredShortcut = KeyboardShortcutSettings.current(for:)) {
+        self.shortcutProvider = shortcutProvider
+    }
+
+    mutating func dispatch(
+        event: NSEvent,
+        focusState: KeyboardShortcutFocusState
+    ) -> KeyboardShortcutDispatchOutcome {
+        if focusState.paletteVisible {
+            return .ignored
+        }
+
+        if focusState.textInputFocused {
+            return .ignored
+        }
+
+        if focusState.terminalFocused {
+            if let direct = directCommand(for: event, matching: ShortcutAction.terminalFocusedDispatchOrder) {
+                return .command(direct)
+            }
+            return .ignored
+        }
+
+        if let direct = directCommand(for: event, matching: ShortcutAction.directDispatchOrder) {
+            return .command(direct)
+        }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let shiftedKey = event.characters?.lowercased() ?? key
+        let outcome = parser.handle(
+            key: key,
+            shiftedKey: shiftedKey,
+            modifiers: KeyboardChordModifiers(flags),
+            isTextInputFocused: focusState.textInputFocused,
+            isTerminalFocused: focusState.terminalFocused,
+            shortcutProvider: shortcutProvider
+        )
+
+        switch outcome {
+        case .ignored:
+            return .ignored
+        case .consumed:
+            return .consumed
+        case .action(let action):
+            return .command(.palette(action))
+        }
+    }
+
+    private func directCommand(
+        for event: NSEvent,
+        matching actions: [ShortcutAction]
+    ) -> KeyboardShortcutCommand? {
+        DirectKeyboardShortcutMatcher(shortcutProvider: shortcutProvider)
+            .command(for: event, matching: actions)
     }
 }
 

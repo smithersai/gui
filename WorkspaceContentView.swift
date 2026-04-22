@@ -4,6 +4,7 @@ struct TerminalTabsLayer: View {
     @ObservedObject var store: SessionStore
     let activeTerminalId: String?
     var onRequestClose: (String) -> Void
+    var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
         ZStack {
@@ -11,7 +12,8 @@ struct TerminalTabsLayer: View {
                 TerminalWorkspaceRouteView(
                     store: store,
                     terminalId: tab.terminalId,
-                    onClose: { onRequestClose(tab.terminalId) }
+                    onClose: { onRequestClose(tab.terminalId) },
+                    onAppShortcutCommand: onAppShortcutCommand
                 )
                 .id(tab.terminalId)
                 .opacity(tab.terminalId == activeTerminalId ? 1 : 0)
@@ -26,6 +28,7 @@ struct TerminalWorkspaceRouteView: View {
     @ObservedObject var store: SessionStore
     let terminalId: String
     var onClose: () -> Void
+    var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     @State private var workspace: TerminalWorkspace?
 
@@ -38,7 +41,8 @@ struct TerminalWorkspaceRouteView: View {
             if let currentWorkspace {
                 TerminalWorkspaceView(
                     workspace: currentWorkspace,
-                    onCloseWorkspace: onClose
+                    onCloseWorkspace: onClose,
+                    onAppShortcutCommand: onAppShortcutCommand
                 )
             } else {
                 VStack(spacing: 8) {
@@ -61,13 +65,15 @@ struct TerminalWorkspaceView: View {
     @ObservedObject var workspace: TerminalWorkspace
     @ObservedObject private var notifications = SurfaceNotificationStore.shared
     var onCloseWorkspace: () -> Void
+    var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
             WorkspaceSplitNodeView(
                 workspace: workspace,
                 node: workspace.layout,
-                onCloseWorkspace: onCloseWorkspace
+                onCloseWorkspace: onCloseWorkspace,
+                onAppShortcutCommand: onAppShortcutCommand
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -85,6 +91,7 @@ private struct WorkspaceSplitNodeView: View {
     @ObservedObject var workspace: TerminalWorkspace
     let node: WorkspaceLayoutNode
     var onCloseWorkspace: () -> Void
+    var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
         switch node {
@@ -93,7 +100,8 @@ private struct WorkspaceSplitNodeView: View {
                 WorkspaceSurfaceContainer(
                     workspace: workspace,
                     surface: surface,
-                    onCloseWorkspace: onCloseWorkspace
+                    onCloseWorkspace: onCloseWorkspace,
+                    onAppShortcutCommand: onAppShortcutCommand
                 )
             } else {
                 EmptyView()
@@ -101,16 +109,36 @@ private struct WorkspaceSplitNodeView: View {
         case .split(_, let axis, let first, let second):
             if axis == .horizontal {
                 HSplitView {
-                    WorkspaceSplitNodeView(workspace: workspace, node: first, onCloseWorkspace: onCloseWorkspace)
+                    WorkspaceSplitNodeView(
+                        workspace: workspace,
+                        node: first,
+                        onCloseWorkspace: onCloseWorkspace,
+                        onAppShortcutCommand: onAppShortcutCommand
+                    )
                         .frame(minWidth: 280, minHeight: 180)
-                    WorkspaceSplitNodeView(workspace: workspace, node: second, onCloseWorkspace: onCloseWorkspace)
+                    WorkspaceSplitNodeView(
+                        workspace: workspace,
+                        node: second,
+                        onCloseWorkspace: onCloseWorkspace,
+                        onAppShortcutCommand: onAppShortcutCommand
+                    )
                         .frame(minWidth: 280, minHeight: 180)
                 }
             } else {
                 VSplitView {
-                    WorkspaceSplitNodeView(workspace: workspace, node: first, onCloseWorkspace: onCloseWorkspace)
+                    WorkspaceSplitNodeView(
+                        workspace: workspace,
+                        node: first,
+                        onCloseWorkspace: onCloseWorkspace,
+                        onAppShortcutCommand: onAppShortcutCommand
+                    )
                         .frame(minWidth: 280, minHeight: 180)
-                    WorkspaceSplitNodeView(workspace: workspace, node: second, onCloseWorkspace: onCloseWorkspace)
+                    WorkspaceSplitNodeView(
+                        workspace: workspace,
+                        node: second,
+                        onCloseWorkspace: onCloseWorkspace,
+                        onAppShortcutCommand: onAppShortcutCommand
+                    )
                         .frame(minWidth: 280, minHeight: 180)
                 }
             }
@@ -123,139 +151,53 @@ private struct WorkspaceSurfaceContainer: View {
     @ObservedObject private var notifications = SurfaceNotificationStore.shared
     let surface: WorkspaceSurface
     var onCloseWorkspace: () -> Void
-
-    private var isFocused: Bool {
-        workspace.focusedSurfaceId == surface.id
-    }
-
-    private var needsAttention: Bool {
-        notifications.hasVisibleIndicator(surfaceId: surface.id.rawValue)
-    }
-
-    private var hasError: Bool {
-        notifications.hasError(surfaceId: surface.id.rawValue)
-    }
-
-    private var accentColor: Color {
-        if hasError {
-            return Theme.danger
-        }
-        if needsAttention {
-            return Theme.accent
-        }
-        if isFocused {
-            return Theme.success
-        }
-        return Theme.textTertiary
-    }
-
-    private var ringColor: Color {
-        if hasError {
-            return Theme.danger
-        }
-        if needsAttention {
-            return Theme.accent
-        }
-        if isFocused {
-            return Theme.success
-        }
-        return Theme.border
-    }
-
-    private var ringWidth: CGFloat {
-        if hasError { return 3 }
-        if needsAttention { return 3 }
-        if isFocused { return 2 }
-        return 1
-    }
+    var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
-        VStack(spacing: 0) {
-            paneHeader
-            paneContent
-        }
+        paneContent
         .background(Theme.base)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(ringColor, lineWidth: ringWidth)
-                .padding(2)
-                .animation(.easeInOut(duration: 0.16), value: needsAttention)
-                .animation(.easeInOut(duration: 0.16), value: hasError)
-                .animation(.easeInOut(duration: 0.16), value: isFocused)
-        )
         .contentShape(Rectangle())
         .onTapGesture {
             workspace.focusSurface(surface.id)
         }
         .accessibilityIdentifier("surface.\(surface.id.rawValue)")
+        .contextMenu {
+            surfaceContextMenu
+        }
     }
 
-    private var paneHeader: some View {
-        HStack(spacing: 6) {
-            Image(systemName: surface.kind.icon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(accentColor)
-                .frame(width: 14)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(surface.title)
-                    .font(.system(size: 11, weight: (needsAttention || hasError) ? .bold : .semibold))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(1)
-                if !surface.subtitle.isEmpty {
-                    Text(surface.subtitle)
-                        .font(.system(size: 9))
-                        .foregroundColor(Theme.textTertiary)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer()
-
-            if hasError || needsAttention {
-                Circle()
-                    .fill(hasError ? Theme.danger : Theme.accent)
-                    .frame(width: 7, height: 7)
-                    .accessibilityIdentifier("surface.unread.\(surface.id.rawValue)")
-            }
-
-            WorkspaceToolbarButton(title: "Split Right", systemName: "rectangle.split.1x2") {
+    @ViewBuilder
+    private var surfaceContextMenu: some View {
+            Button("Split Right") {
                 workspace.focusSurface(surface.id)
                 workspace.splitFocused(axis: .horizontal, kind: .terminal)
             }
             .appKeyboardShortcut(.splitRight)
-            .accessibilityIdentifier("workspace.surface.splitRight.\(surface.id)")
 
-            WorkspaceToolbarButton(title: "Split Down", systemName: "rectangle.split.2x1") {
+            Button("Split Down") {
                 workspace.focusSurface(surface.id)
                 workspace.splitFocused(axis: .vertical, kind: .terminal)
             }
             .appKeyboardShortcut(.splitDown)
-            .accessibilityIdentifier("workspace.surface.splitDown.\(surface.id)")
 
-            WorkspaceToolbarButton(title: "Unread", systemName: "bell.badge") {
-                jumpToLatestUnread()
+            Divider()
+
+            if notifications.latestUnreadSurface(in: workspace.id.rawValue) != nil {
+                Button("Jump to Latest Unread") {
+                    jumpToLatestUnread()
+                }
+                .appKeyboardShortcut(.jumpToUnread)
+
+                Divider()
             }
-            .disabled(notifications.latestUnreadSurface(in: workspace.id.rawValue) == nil)
-            .appKeyboardShortcut(.jumpToUnread)
-            .accessibilityIdentifier("workspace.surface.unreadBtn.\(surface.id)")
 
-            WorkspaceToolbarButton(title: "Close", systemName: "xmark") {
+            Button("Close", role: .destructive) {
                 if workspace.orderedSurfaces.count <= 1 {
                     onCloseWorkspace()
                 } else {
                     workspace.closeSurface(surface.id)
                 }
             }
-            .accessibilityIdentifier("workspace.surface.close.\(surface.id.rawValue)")
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 38)
-        .background(isFocused ? Theme.surface1 : Theme.base)
-        .border(Theme.border, edges: [.bottom])
-        .onTapGesture {
-            workspace.focusSurface(surface.id)
-        }
     }
 
     private func jumpToLatestUnread() {
@@ -310,7 +252,8 @@ private struct WorkspaceSurfaceContainer: View {
                     if let surfaceId = SurfaceNotificationStore.shared.latestUnreadSurface(in: workspace.id.rawValue) {
                         workspace.focusSurface(surfaceId)
                     }
-                }
+                },
+                onAppShortcutCommand: onAppShortcutCommand
             )
             .onAppear {
                 let surfaceIdString = surface.id.rawValue
@@ -344,38 +287,24 @@ private struct WorkspaceSurfaceContainer: View {
     }
 
     private func terminalCommand(for surface: WorkspaceSurface) -> String? {
-        guard surface.terminalBackend == .tmux else {
+        switch surface.terminalBackend {
+        case .tmux:
+            return TmuxController.attachCommand(
+                socketName: surface.tmuxSocketName,
+                sessionName: surface.tmuxSessionName
+            ) ?? surface.terminalCommand
+        case .native:
+            // Wrap ghostty's spawn around smithers-session-connect so the
+            // terminal surface mirrors the native daemon's PTY. If the
+            // session id hasn't landed yet, let ghostty spawn a plain shell
+            // — the SessionStore will replace the surface when the id
+            // arrives via `setSurfaceSessionId`.
+            if let cmd = SessionStore.buildNativeAttachCommand(for: surface.sessionId) {
+                return cmd
+            }
+            return surface.terminalCommand
+        case .ghostty:
             return surface.terminalCommand
         }
-
-        return TmuxController.attachCommand(
-            socketName: surface.tmuxSocketName,
-            sessionName: surface.tmuxSessionName
-        ) ?? surface.terminalCommand
-    }
-}
-
-private struct WorkspaceToolbarButton: View {
-    let title: String
-    let systemName: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: systemName)
-                    .font(.system(size: 10, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(Theme.textSecondary)
-            .padding(.horizontal, 9)
-            .frame(height: 26)
-            .background(Theme.inputBg)
-            .cornerRadius(6)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .help(title)
     }
 }

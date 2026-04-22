@@ -563,7 +563,7 @@ enum WorkflowStatus: String, Codable {
     }
 }
 
-struct Workflow: Identifiable, Codable {
+struct Workflow: Identifiable, Codable, Hashable {
     let id: String
     let workspaceId: String?
     let name: String

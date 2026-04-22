@@ -5,6 +5,53 @@ import UniformTypeIdentifiers
 import AppKit
 #endif
 
+private struct WorkspaceToolbarTitleView: View {
+    @ObservedObject var workspace: TerminalWorkspace
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(workspace.orderedSurfaces) { surface in
+                WorkspaceToolbarSurfaceChip(
+                    surface: surface,
+                    isFocused: workspace.focusedSurfaceId == surface.id,
+                    onSelect: { workspace.focusSurface(surface.id) }
+                )
+            }
+        }
+        .accessibilityIdentifier("toolbar.workspace.title")
+    }
+}
+
+private struct WorkspaceToolbarSurfaceChip: View {
+    let surface: WorkspaceSurface
+    let isFocused: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 6) {
+                Text(surface.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(isFocused ? Theme.textPrimary : Theme.textSecondary)
+                    .lineLimit(1)
+                if !surface.subtitle.isEmpty {
+                    Text(surface.subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(isFocused ? Theme.surface1 : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("toolbar.workspace.chip.\(surface.id.rawValue)")
+    }
+}
+
 private struct RunSnapshotsSelection: Identifiable, Equatable {
     let runId: String
     let workflowName: String?
@@ -301,8 +348,6 @@ struct SettingsView: View {
     @AppStorage(AppPreferenceKeys.vimModeEnabled) private var vimModeEnabled = false
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
     @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
-    @AppStorage(AppPreferenceKeys.smithersFeatureEnabled) private var smithersFeatureEnabled = false
-    @AppStorage(AppPreferenceKeys.vcsFeatureEnabled) private var vcsFeatureEnabled = false
     @AppStorage(AppPreferenceKeys.externalAgentUnsafeFlagsEnabled) private var externalAgentUnsafeFlagsEnabled = false
     @AppStorage(AppPreferenceKeys.browserSearchEngine) private var browserSearchEngine = BrowserSearchEngine.duckDuckGo.rawValue
     @StateObject private var shortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
@@ -329,8 +374,6 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     developerToolsSection
                     operatorFeatureSection
-                    smithersFeatureSection
-                    vcsFeatureSection
                     externalAgentSafetySection
                     browserSearchSection
                     neovimSection
@@ -404,7 +447,7 @@ struct SettingsView: View {
                     Text("Smithers operator")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Theme.textPrimary)
-                    Text("Show the Smithers Operator feature in the right sidebar.")
+                    Text("Work in progress: let an agent control the Smithers UI itself for you.")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textTertiary)
                 }
@@ -422,70 +465,6 @@ struct SettingsView: View {
         .cornerRadius(8)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
         .accessibilityIdentifier("settings.guiControlSidebar.section")
-    }
-
-    private var smithersFeatureSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 18))
-                    .foregroundColor(Theme.accent)
-                    .frame(width: 28)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Smithers")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                    Text("Show the Smithers navigation section in the left sidebar.")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textTertiary)
-                }
-
-                Spacer()
-
-                Toggle("", isOn: $smithersFeatureEnabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .accessibilityIdentifier("settings.smithersFeature.toggle")
-            }
-        }
-        .padding(16)
-        .background(Theme.surface2)
-        .cornerRadius(8)
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
-        .accessibilityIdentifier("settings.smithersFeature.section")
-    }
-
-    private var vcsFeatureSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 18))
-                    .foregroundColor(Theme.accent)
-                    .frame(width: 28)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("VCS")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                    Text("Show the VCS navigation section in the left sidebar.")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textTertiary)
-                }
-
-                Spacer()
-
-                Toggle("", isOn: $vcsFeatureEnabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .accessibilityIdentifier("settings.vcsFeature.toggle")
-            }
-        }
-        .padding(16)
-        .background(Theme.surface2)
-        .cornerRadius(8)
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
-        .accessibilityIdentifier("settings.vcsFeature.section")
     }
 
     private var neovimSection: some View {
@@ -560,7 +539,7 @@ struct SettingsView: View {
                     Text("External agent unsafe flags")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Theme.textPrimary)
-                    Text("Opt in to append --dangerously-skip-permissions / --yolo when launching external agent CLIs.")
+                    Text("Opt in to append --dangerously-skip-permissions / --yolo when launching external agent CLIs (Claude, Codex, Gemini, Kimi).")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textTertiary)
                 }
@@ -750,17 +729,18 @@ struct ContentView: View {
     @StateObject private var store: SessionStore
     @StateObject private var smithers: SmithersClient
     @StateObject private var fileSearchIndex: WorkspaceFileSearchIndex
+    @StateObject private var smithersUpgrader: SmithersUpgrader
 
     init(workspacePath: String? = nil) {
         let resolved = Smithers.CWD.resolve(workspacePath)
         _store = StateObject(wrappedValue: SessionStore(workingDirectory: resolved))
         _smithers = StateObject(wrappedValue: SmithersClient(cwd: resolved))
         _fileSearchIndex = StateObject(wrappedValue: WorkspaceFileSearchIndex(rootPath: resolved))
+        _smithersUpgrader = StateObject(wrappedValue: SmithersUpgrader(cwd: resolved))
     }
 
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
     @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
-    @AppStorage(AppPreferenceKeys.smithersFeatureEnabled) private var smithersFeatureEnabled = false
     @State private var destination: NavDestination = .dashboard
     @State private var navHistory: [NavDestination] = [.dashboard]
     @State private var navHistoryIndex: Int = 0
@@ -776,7 +756,6 @@ struct ContentView: View {
     @State private var pendingTerminalCloseTitle: String = ""
     @State private var commandPaletteVisible = false
     @State private var commandPaletteSeedQuery = ""
-    @State private var newTabPickerVisible = false
     @State private var detailRefreshNonce = 0
     @State private var keyboardShortcutController = KeyboardShortcutController()
     @StateObject private var shortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
@@ -785,8 +764,10 @@ struct ContentView: View {
     @State private var paletteIssues: [SmithersIssue] = []
     @State private var paletteTickets: [Ticket] = []
     @State private var paletteLandings: [Landing] = []
+    @State private var paletteAgents: [SmithersAgent] = []
     @State private var paletteDataLastRefreshAt: Date = .distantPast
     @State private var paletteDataRefreshTask: Task<Void, Never>?
+    @State private var commandPaletteItemsRevision = 0
     @State private var quickLaunchState: QuickLaunchState?
 
     private struct QuickLaunchState: Identifiable {
@@ -802,7 +783,7 @@ struct ContentView: View {
     }
 
     private var defaultDestination: NavDestination {
-        .dashboard
+        .home
     }
 
     private var activeTerminalId: String? {
@@ -818,6 +799,30 @@ struct ContentView: View {
         return SlashCommandRegistry.builtInCommands + dynamic.workflows + dynamic.prompts
     }
 
+    private var shouldShowSmithersVersionWarning: Bool {
+        switch destination {
+        case .dashboard,
+             .agents,
+             .runs,
+             .snapshots,
+             .workflows,
+             .triggers,
+             .approvals,
+             .prompts,
+             .scores,
+             .memory,
+             .search,
+             .sql,
+             .workspaces,
+             .logs,
+             .liveRun,
+             .runInspect:
+            return true
+        default:
+            return false
+        }
+    }
+
     @ViewBuilder
     private var detailContent: some View {
         switch destination {
@@ -827,13 +832,23 @@ struct ContentView: View {
                 terminalId: id,
                 onClose: {
                     requestTerminalClose(id)
+                },
+                onAppShortcutCommand: { command in
+                    handleKeyboardShortcutCommand(command)
                 }
             )
                 .id(id)
                 .logLifecycle("TerminalWorkspaceView")
                 .accessibilityIdentifier("view.terminal")
         case .terminalCommand(let binary, let workingDirectory, let name):
-            TerminalView(command: binary, workingDirectory: workingDirectory, onClose: { destination = defaultDestination })
+            TerminalView(
+                command: binary,
+                workingDirectory: workingDirectory,
+                onClose: { destination = defaultDestination },
+                onAppShortcutCommand: { command in
+                    handleKeyboardShortcutCommand(command)
+                }
+            )
                 .id("\(binary)-\(workingDirectory)")
                 .accessibilityIdentifier("view.terminalCommand.\(name)")
         case .liveRun(let runId, let nodeId):
@@ -867,6 +882,14 @@ struct ContentView: View {
             .id("run-inspect-\(runId)")
             .logLifecycle("RunInspectView")
             .accessibilityIdentifier("view.runinspect")
+        case .home:
+            HomeView(
+                itemsProvider: { query in commandPaletteItems(for: query) },
+                onExecute: { item, query in executePaletteItem(item, rawQuery: query) }
+            )
+            .id("home")
+            .logLifecycle("HomeView")
+            .accessibilityIdentifier("view.home")
         case .dashboard:
             DashboardView(
                 smithers: smithers,
@@ -1042,7 +1065,9 @@ struct ContentView: View {
                         destination: $destination,
                         developerDebugPanelVisible: $developerDebugPanelVisible,
                         developerDebugAvailable: developerToolsEnabled,
-                        onOpenNewTabPicker: { newTabPickerVisible = true },
+                        onOpenNewTabPicker: {
+                            openCommandPalette(prefill: NewTabPaletteCatalog.expandedQuery)
+                        },
                         versionProvider: { await smithers.getOrchestratorVersion() }
                     )
                     .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
@@ -1051,7 +1076,10 @@ struct ContentView: View {
                         TerminalTabsLayer(
                             store: store,
                             activeTerminalId: activeTerminalId,
-                            onRequestClose: { id in requestTerminalClose(id) }
+                            onRequestClose: { id in requestTerminalClose(id) },
+                            onAppShortcutCommand: { command in
+                                handleKeyboardShortcutCommand(command)
+                            }
                         )
                         .opacity(activeTerminalId != nil ? 1 : 0)
                         .allowsHitTesting(activeTerminalId != nil)
@@ -1059,10 +1087,19 @@ struct ContentView: View {
 
                         if activeTerminalId == nil {
                             VStack(spacing: 0) {
-                                if smithersFeatureEnabled,
+                                if shouldShowSmithersVersionWarning,
                                    let installed = smithers.orchestratorVersion,
                                    smithers.orchestratorVersionMeetsMinimum == false {
-                                    SmithersVersionWarningBanner(installed: installed)
+                                    SmithersVersionWarningBanner(
+                                        installed: installed,
+                                        onUpgrade: {
+                                            Task {
+                                                await smithersUpgrader.upgrade()
+                                                _ = await smithers.getOrchestratorVersion()
+                                            }
+                                        },
+                                        upgradeStatus: smithersUpgrader.status
+                                    )
                                 }
                                 detailContent
                             }
@@ -1085,6 +1122,11 @@ struct ContentView: View {
                                 .disabled(!canGoForward)
                                 .help("Forward (⌘])")
                                 .accessibilityIdentifier("nav.forward")
+
+                                if let terminalId = activeTerminalId,
+                                   let workspace = store.terminalWorkspaceIfAvailable(terminalId) {
+                                    WorkspaceToolbarTitleView(workspace: workspace)
+                                }
                             }
                         }
                 }
@@ -1142,6 +1184,7 @@ struct ContentView: View {
                 if commandPaletteVisible {
                     CommandPaletteView(
                         initialQuery: commandPaletteSeedQuery,
+                        itemsRevision: commandPaletteItemsRevision,
                         itemsProvider: { query in
                             commandPaletteItems(for: query)
                         },
@@ -1151,19 +1194,6 @@ struct ContentView: View {
                         onDismiss: {
                             commandPaletteVisible = false
                         }
-                    )
-                    .transition(.opacity)
-                }
-            }
-            .overlay {
-                if newTabPickerVisible {
-                    NewTabPicker(
-                        smithers: smithers,
-                        onSelect: { selection in
-                            newTabPickerVisible = false
-                            handleNewTabSelection(selection)
-                        },
-                        onDismiss: { newTabPickerVisible = false }
                     )
                     .transition(.opacity)
                 }
@@ -1210,32 +1240,28 @@ struct ContentView: View {
             }
             .appKeyboardShortcut(.commandPalette)
             .accessibilityIdentifier("shortcut.openLauncher")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Open Command Palette") {
                 openCommandPalette(prefill: ">")
             }
             .appKeyboardShortcut(.commandPaletteCommandMode)
             .accessibilityIdentifier("shortcut.commandPalette")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Open Ask AI Launcher") {
                 openCommandPalette(prefill: "?")
             }
             .appKeyboardShortcut(.commandPaletteAskAI)
             .accessibilityIdentifier("shortcut.askAI")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("New Terminal Workspace") {
                 createNewTerminalTab()
             }
             .appKeyboardShortcut(.newTerminal)
             .accessibilityIdentifier("shortcut.newTerminal")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Reopen Closed Workspace") {
                 AppNotifications.shared.post(
@@ -1246,8 +1272,7 @@ struct ContentView: View {
             }
             .appKeyboardShortcut(.reopenClosedTab)
             .accessibilityIdentifier("shortcut.reopenWorkspace")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Navigate Back") {
                 goBack()
@@ -1255,8 +1280,7 @@ struct ContentView: View {
             .keyboardShortcut("[", modifiers: [.command])
             .disabled(!canGoBack)
             .accessibilityIdentifier("shortcut.navBack")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Navigate Forward") {
                 goForward()
@@ -1264,64 +1288,56 @@ struct ContentView: View {
             .keyboardShortcut("]", modifiers: [.command])
             .disabled(!canGoForward)
             .accessibilityIdentifier("shortcut.navForward")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Previous Visible Workspace") {
                 moveVisibleTab(offset: -1)
             }
             .appKeyboardShortcut(.prevSidebarTab)
             .accessibilityIdentifier("shortcut.previousWorkspace")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Next Visible Workspace") {
                 moveVisibleTab(offset: 1)
             }
             .appKeyboardShortcut(.nextSidebarTab)
             .accessibilityIdentifier("shortcut.nextWorkspace")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Find in Context") {
                 handleFindShortcut()
             }
             .appKeyboardShortcut(.find)
             .accessibilityIdentifier("shortcut.find")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Global Search") {
                 destination = .search
             }
             .appKeyboardShortcut(.globalSearch)
             .accessibilityIdentifier("shortcut.globalSearch")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Refresh Current View") {
                 refreshCurrentView()
             }
             .appKeyboardShortcut(.refreshCurrentView)
             .accessibilityIdentifier("shortcut.refresh")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Cancel Current Operation") {
                 cancelCurrentOperation()
             }
             .appKeyboardShortcut(.cancelCurrentOperation)
             .accessibilityIdentifier("shortcut.cancel")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             Button("Shortcut Cheat Sheet") {
                 openCommandPalette(prefill: ">shortcut")
             }
             .appKeyboardShortcut(.showShortcutCheatSheet)
             .accessibilityIdentifier("shortcut.cheatSheet")
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
+            .uiTestShortcutAnchor()
 
             ForEach(1...9, id: \.self) { index in
                 Button("Switch to Workspace \(index)") {
@@ -1329,8 +1345,7 @@ struct ContentView: View {
                 }
                 .appNumberedKeyboardShortcut(.selectWorkspaceByNumber, digit: index)
                 .accessibilityIdentifier("shortcut.switchWorkspace.\(index)")
-                .frame(width: 1, height: 1)
-                .opacity(0.01)
+                .uiTestShortcutAnchor()
             }
 
             if developerToolsEnabled {
@@ -1339,8 +1354,7 @@ struct ContentView: View {
                 }
                 .appKeyboardShortcut(.toggleDeveloperDebug)
                 .accessibilityIdentifier("shortcut.toggleDeveloperDebug")
-                .frame(width: 1, height: 1)
-                .opacity(0.01)
+                .uiTestShortcutAnchor()
             }
 
             if UITestSupport.isEnabled {
@@ -1349,8 +1363,7 @@ struct ContentView: View {
                         destination = item.destination
                     }
                     .accessibilityIdentifier("nav.\(item.label.replacingOccurrences(of: " ", with: ""))")
-                    .frame(width: 1, height: 1)
-                    .opacity(0.01)
+                    .uiTestShortcutAnchor()
                 }
             }
         }
@@ -1359,6 +1372,7 @@ struct ContentView: View {
 
     private var uiTestNavDestinations: [(label: String, destination: NavDestination)] {
         [
+            ("Home", .home),
             ("Dashboard", .dashboard),
             ("VCSDashboard", .vcsDashboard),
             ("Agents", .agents),
@@ -1424,11 +1438,11 @@ struct ContentView: View {
     private func handleShortcutAction(_ action: ShortcutAction) {
         switch action {
         case .commandPalette:
-            openCommandPalette(prefill: "")
+            if destination != .home { openCommandPalette(prefill: "") }
         case .commandPaletteCommandMode:
-            openCommandPalette(prefill: ">")
+            if destination != .home { openCommandPalette(prefill: ">") }
         case .commandPaletteAskAI:
-            openCommandPalette(prefill: "?")
+            if destination != .home { openCommandPalette(prefill: "?") }
         case .newTerminal:
             createNewTerminalTab()
         case .reopenClosedTab:
@@ -1536,12 +1550,14 @@ struct ContentView: View {
             async let issuesTask = smithers.listIssues(state: "open")
             async let ticketsTask = smithers.listTickets()
             async let landingsTask = smithers.listLandings(state: "open")
+            async let agentsTask = smithers.listAgents()
 
             let workflows = (try? await workflowsTask) ?? []
             let prompts = (try? await promptsTask) ?? []
             let issues = (try? await issuesTask) ?? []
             let tickets = (try? await ticketsTask) ?? []
             let landings = (try? await landingsTask) ?? []
+            let agents = (try? await agentsTask) ?? []
 
             guard !Task.isCancelled else { return }
             paletteWorkflows = workflows
@@ -1549,6 +1565,8 @@ struct ContentView: View {
             paletteIssues = issues
             paletteTickets = tickets
             paletteLandings = landings
+            paletteAgents = agents
+            commandPaletteItemsRevision += 1
         }
     }
 
@@ -1571,44 +1589,24 @@ struct ContentView: View {
             developerToolsEnabled: developerToolsEnabled
         )
 
-        return CommandPaletteBuilder.items(for: rawQuery, context: context)
+        let baseItems = CommandPaletteBuilder.items(for: rawQuery, context: context)
+        return ContentViewCommandPaletteModel.items(
+            for: rawQuery,
+            baseItems: baseItems,
+            agents: paletteAgents
+        )
     }
 
     private func executePaletteItem(_ item: CommandPaletteItem, rawQuery: String) {
-        commandPaletteVisible = false
-        // If the user selected a workflow item and typed trailing prompt text
-        // (e.g. "implement add a /health endpoint"), route through quick-launch
-        // instead of the default "type /name in chat" hint.
-        if case .slashCommand(let name) = item.action,
-           let cmd = paletteSlashCommands.first(where: { $0.name == name }),
-           case .runWorkflow(let workflow) = cmd.action,
-           let trailing = trailingPrompt(from: rawQuery, matchedTokens: [name, item.title, cmd.title] + cmd.aliases),
-           !trailing.isEmpty {
-            startQuickLaunch(workflow: workflow, prompt: trailing)
+        if let followUpQuery = ContentViewCommandPaletteModel.followUpQuery(
+            afterSelecting: item,
+            rawQuery: rawQuery
+        ) {
+            openCommandPalette(prefill: followUpQuery)
             return
         }
+        commandPaletteVisible = false
         executePaletteAction(item.action, rawQuery: rawQuery)
-    }
-
-    private func trailingPrompt(from rawQuery: String, matchedTokens: [String]) -> String? {
-        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        // Strip leading sigils like `/` or `>` the palette uses for command modes.
-        let stripped: String = {
-            if trimmed.hasPrefix("/") || trimmed.hasPrefix(">") {
-                return String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
-            }
-            return trimmed
-        }()
-        guard let firstSpace = stripped.firstIndex(of: " ") else { return nil }
-        let first = String(stripped[..<firstSpace])
-        let rest = stripped[firstSpace...].trimmingCharacters(in: .whitespaces)
-        guard !rest.isEmpty else { return nil }
-        let lowered = first.lowercased()
-        for token in matchedTokens {
-            if token.lowercased() == lowered { return rest }
-        }
-        return nil
     }
 
     @ViewBuilder
@@ -1698,6 +1696,18 @@ struct ContentView: View {
     }
 
     private func executePaletteAction(_ action: CommandPaletteAction, rawQuery: String) {
+        if let request = CommandPaletteQuickLaunchResolver.request(
+            for: action,
+            rawQuery: rawQuery,
+            slashCommands: paletteSlashCommands
+        ) {
+            startQuickLaunch(workflow: request.workflow, prompt: request.prompt)
+            if !rawQuery.isEmpty {
+                commandPaletteSeedQuery = ""
+            }
+            return
+        }
+
         switch action {
         case .navigate(let next):
             navigateFromPalette(to: next)
@@ -1705,6 +1715,10 @@ struct ContentView: View {
             activateSidebarTab(withID: id)
         case .newTerminal:
             createNewTerminalTab()
+        case .newTab(let selection):
+            handleNewTabSelection(selection)
+        case .expandNewTabs:
+            openCommandPalette(prefill: NewTabPaletteCatalog.expandedQuery)
         case .openMarkdownFilePicker:
             openMarkdownFilePicker()
         case .closeCurrentTab:
@@ -1718,6 +1732,8 @@ struct ContentView: View {
             }
         case .slashCommand(let name):
             executeSlashCommandFromPalette(name)
+        case .runWorkflow(let workflow):
+            startQuickLaunch(workflow: workflow, prompt: "")
         case .openFile(let path):
             openFileFromPalette(path)
         case .globalSearch(let query):
@@ -2097,13 +2113,8 @@ struct ContentView: View {
             openCommandPalette(prefill: ">")
         case .quit:
             NSApplication.shared.terminate(nil)
-        case .runWorkflow(_):
-            destination = .workflows
-            AppNotifications.shared.post(
-                title: "Workflow Command",
-                message: "Use /\(name) from an external agent terminal to run this workflow with arguments.",
-                level: .info
-            )
+        case .runWorkflow(let workflow):
+            startQuickLaunch(workflow: workflow, prompt: "")
         case .runSmithersPrompt(_):
             destination = .prompts
             AppNotifications.shared.post(
@@ -2285,6 +2296,17 @@ struct ContentView: View {
     }
 }
 
+private extension View {
+    func uiTestShortcutAnchor() -> some View {
+        frame(width: 1, height: 1)
+            // Keep shortcut anchors effectively invisible in production while
+            // making them visible enough for XCUITest to expose them in the
+            // accessibility tree.
+            .opacity(UITestSupport.isEnabled ? 1 : 0.01)
+            .clipped()
+    }
+}
+
 @main
 struct SmithersApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -2392,5 +2414,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             GhosttyApp.shared.shutdown()
         }
         AppLogger.lifecycle.info("Application will terminate")
+    }
+}
+
+struct HomeView: View {
+    let itemsProvider: (String) -> [CommandPaletteItem]
+    let onExecute: (CommandPaletteItem, String) -> Void
+
+    var body: some View {
+        VStack {
+            Spacer()
+            CommandPaletteView(
+                initialQuery: "",
+                isInline: true,
+                itemsProvider: itemsProvider,
+                onExecute: onExecute,
+                onDismiss: {}
+            )
+            Spacer().frame(maxHeight: .infinity).layoutPriority(1)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.surface1)
     }
 }

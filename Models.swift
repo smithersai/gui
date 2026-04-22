@@ -7,8 +7,6 @@ enum AppPreferenceKeys {
     static let guiControlSidebarEnabled = "settings.guiControlSidebarEnabled"
     static let externalAgentUnsafeFlagsEnabled = "settings.externalAgentUnsafeFlagsEnabled"
     static let browserSearchEngine = "settings.browserSearchEngine"
-    static let smithersFeatureEnabled = "settings.smithersFeatureEnabled"
-    static let vcsFeatureEnabled = "settings.vcsFeatureEnabled"
 }
 
 enum NeovimDetector {
@@ -27,7 +25,7 @@ enum NeovimDetector {
     }
 }
 
-struct RunWorkspace: Identifiable, Hashable {
+struct RunWorkspace: Identifiable, Hashable, Codable {
     let runId: String
     var title: String
     var preview: String
@@ -43,9 +41,16 @@ typealias RunTab = RunWorkspace
 enum TerminalBackend: String, Hashable, Codable {
     case ghostty
     case tmux
+    case native
 }
 
-struct TerminalWorkspaceRecord: Identifiable, Hashable {
+struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
+    struct HijackBinding: Hashable, Codable {
+        let agent: String
+        let autoHijacked: Bool
+        let resumeToken: String?
+    }
+
     let terminalId: String
     var title: String
     var preview: String
@@ -57,10 +62,125 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable {
     var rootSurfaceId: String? = nil
     var tmuxSocketName: String? = nil
     var tmuxSessionName: String? = nil
+    var sessionId: String? = nil
+    var runId: String? = nil
+    var hijack: HijackBinding? = nil
     var isPinned: Bool = false
+    var rootKind: WorkspaceSurfaceKind = .terminal
+    var browserURLString: String? = nil
+    var agentKind: ExternalAgentKind? = nil
+    var agentSessionId: String? = nil
 
     var id: String { terminalId }
     var workspaceID: WorkspaceID { WorkspaceID(terminalId) }
+
+    enum CodingKeys: String, CodingKey {
+        case terminalId
+        case title
+        case preview
+        case timestamp
+        case createdAt
+        case workingDirectory
+        case command
+        case backend
+        case rootSurfaceId
+        case tmuxSocketName
+        case tmuxSessionName
+        case runId
+        case hijack
+        case isPinned
+        case rootKind
+        case browserURLString
+        case agentKind
+        case agentSessionId
+    }
+
+    init(
+        terminalId: String,
+        title: String,
+        preview: String,
+        timestamp: Date,
+        createdAt: Date,
+        workingDirectory: String? = nil,
+        command: String? = nil,
+        backend: TerminalBackend = .tmux,
+        rootSurfaceId: String? = nil,
+        tmuxSocketName: String? = nil,
+        tmuxSessionName: String? = nil,
+        sessionId: String? = nil,
+        runId: String? = nil,
+        hijack: HijackBinding? = nil,
+        isPinned: Bool = false,
+        rootKind: WorkspaceSurfaceKind = .terminal,
+        browserURLString: String? = nil,
+        agentKind: ExternalAgentKind? = nil,
+        agentSessionId: String? = nil
+    ) {
+        self.terminalId = terminalId
+        self.title = title
+        self.preview = preview
+        self.timestamp = timestamp
+        self.createdAt = createdAt
+        self.workingDirectory = workingDirectory
+        self.command = command
+        self.backend = backend
+        self.rootSurfaceId = rootSurfaceId
+        self.tmuxSocketName = tmuxSocketName
+        self.tmuxSessionName = tmuxSessionName
+        self.sessionId = sessionId
+        self.runId = runId
+        self.hijack = hijack
+        self.isPinned = isPinned
+        self.rootKind = rootKind
+        self.browserURLString = browserURLString
+        self.agentKind = agentKind
+        self.agentSessionId = agentSessionId
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        terminalId = try container.decode(String.self, forKey: .terminalId)
+        title = try container.decode(String.self, forKey: .title)
+        preview = try container.decode(String.self, forKey: .preview)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
+        command = try container.decodeIfPresent(String.self, forKey: .command)
+        backend = try container.decodeIfPresent(TerminalBackend.self, forKey: .backend) ?? .tmux
+        rootSurfaceId = try container.decodeIfPresent(String.self, forKey: .rootSurfaceId)
+        tmuxSocketName = try container.decodeIfPresent(String.self, forKey: .tmuxSocketName)
+        tmuxSessionName = try container.decodeIfPresent(String.self, forKey: .tmuxSessionName)
+        sessionId = nil
+        runId = try container.decodeIfPresent(String.self, forKey: .runId)
+        hijack = try container.decodeIfPresent(HijackBinding.self, forKey: .hijack)
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        rootKind = try container.decodeIfPresent(WorkspaceSurfaceKind.self, forKey: .rootKind) ?? .terminal
+        browserURLString = try container.decodeIfPresent(String.self, forKey: .browserURLString)
+        agentKind = try container.decodeIfPresent(ExternalAgentKind.self, forKey: .agentKind)
+        agentSessionId = try container.decodeIfPresent(String.self, forKey: .agentSessionId)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(terminalId, forKey: .terminalId)
+        try container.encode(title, forKey: .title)
+        try container.encode(preview, forKey: .preview)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(workingDirectory, forKey: .workingDirectory)
+        try container.encodeIfPresent(command, forKey: .command)
+        try container.encode(backend, forKey: .backend)
+        try container.encodeIfPresent(rootSurfaceId, forKey: .rootSurfaceId)
+        try container.encodeIfPresent(tmuxSocketName, forKey: .tmuxSocketName)
+        try container.encodeIfPresent(tmuxSessionName, forKey: .tmuxSessionName)
+        try container.encodeIfPresent(runId, forKey: .runId)
+        try container.encodeIfPresent(hijack, forKey: .hijack)
+        try container.encode(isPinned, forKey: .isPinned)
+        try container.encode(rootKind, forKey: .rootKind)
+        try container.encodeIfPresent(browserURLString, forKey: .browserURLString)
+        try container.encodeIfPresent(agentKind, forKey: .agentKind)
+        try container.encodeIfPresent(agentSessionId, forKey: .agentSessionId)
+    }
 }
 
 typealias TerminalTab = TerminalWorkspaceRecord
@@ -201,6 +321,8 @@ struct SidebarWorkspace: Identifiable, Hashable {
     var isUnread: Bool = false
     var workingDirectory: String? = nil
     var sessionIdentifier: String? = nil
+    var agentKind: ExternalAgentKind? = nil
+    var agentSessionId: String? = nil
 
     var workspaceID: WorkspaceID {
         if let terminalId {

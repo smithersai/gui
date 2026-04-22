@@ -2,6 +2,8 @@ import SwiftUI
 
 struct CommandPaletteView: View {
     let initialQuery: String
+    let itemsRevision: Int
+    let isInline: Bool
     let itemsProvider: (String) -> [CommandPaletteItem]
     let onExecute: (CommandPaletteItem, String) -> Void
     let onDismiss: () -> Void
@@ -16,11 +18,15 @@ struct CommandPaletteView: View {
 
     init(
         initialQuery: String,
+        itemsRevision: Int = 0,
+        isInline: Bool = false,
         itemsProvider: @escaping (String) -> [CommandPaletteItem],
         onExecute: @escaping (CommandPaletteItem, String) -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.initialQuery = initialQuery
+        self.itemsRevision = itemsRevision
+        self.isInline = isInline
         self.itemsProvider = itemsProvider
         self.onExecute = onExecute
         self.onDismiss = onDismiss
@@ -37,25 +43,35 @@ struct CommandPaletteView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.35)
-                .ignoresSafeArea()
-                .onTapGesture(perform: onDismiss)
+        Group {
+            if isInline {
+                VStack(spacing: 0) {
+                    header
+                    Divider().background(Theme.border)
+                    resultList
+                }
+                .frame(minWidth: 560, maxWidth: 760)
+            } else {
+                ZStack {
+                    Color.black.opacity(0.35)
+                        .ignoresSafeArea()
+                        .onTapGesture(perform: onDismiss)
 
-            VStack(spacing: 0) {
-                header
-                Divider().background(Theme.border)
-                resultList
+                    VStack(spacing: 0) {
+                        header
+                        Divider().background(Theme.border)
+                        resultList
+                    }
+                    .frame(minWidth: 560, maxWidth: 760)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 88)
+                    .padding(.horizontal, 24)
+                    .background(Color.clear)
+                }
             }
-            .frame(minWidth: 560, maxWidth: 760)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.top, 88)
-            .padding(.horizontal, 24)
-            .background(Color.clear)
         }
         .onAppear {
-            selectedIndex = 0
-            items = itemsProvider(query)
+            refreshItems(for: query, resetSelection: true)
             DispatchQueue.main.async {
                 isInputFocused = true
             }
@@ -65,8 +81,15 @@ struct CommandPaletteView: View {
             debounceTask = nil
         }
         .onChange(of: query) { _, newQuery in
-            selectedIndex = 0
+            selectedIndex = ContentViewCommandPaletteModel.preferredSelectionIndex(for: newQuery)
             scheduleItemsRefresh(for: newQuery)
+        }
+        .onChange(of: initialQuery) { _, newQuery in
+            query = newQuery
+            refreshItems(for: newQuery, resetSelection: true)
+        }
+        .onChange(of: itemsRevision) { _, _ in
+            refreshItems(for: query, resetSelection: false)
         }
         .onKeyPress(.escape) {
             onDismiss()
@@ -258,14 +281,29 @@ struct CommandPaletteView: View {
         debounceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: Self.debounceNanoseconds)
             if Task.isCancelled { return }
-            let refreshed = itemsProvider(newQuery)
-            if Task.isCancelled { return }
-            items = refreshed
-            if refreshed.isEmpty {
-                selectedIndex = 0
-            } else if selectedIndex >= refreshed.count {
-                selectedIndex = max(0, refreshed.count - 1)
-            }
+            refreshItems(for: newQuery, resetSelection: true)
+        }
+    }
+
+    private func refreshItems(for currentQuery: String, resetSelection: Bool) {
+        let refreshed = itemsProvider(currentQuery)
+        items = refreshed
+
+        let preferredIndex = ContentViewCommandPaletteModel.preferredSelectionIndex(for: currentQuery)
+        if refreshed.isEmpty {
+            selectedIndex = preferredIndex
+            return
+        }
+        if preferredIndex < 0 {
+            selectedIndex = preferredIndex
+            return
+        }
+        if resetSelection || selectedIndex < 0 {
+            selectedIndex = preferredIndex
+            return
+        }
+        if selectedIndex >= refreshed.count {
+            selectedIndex = max(0, refreshed.count - 1)
         }
     }
 
@@ -287,6 +325,8 @@ struct CommandPaletteView: View {
             query = "?"
         case .slashCommand(let name):
             query = "/\(name) "
+        case .runWorkflow:
+            query = "\(item.title) "
         case .openFile(let path):
             query = "@\(path)"
         default:
