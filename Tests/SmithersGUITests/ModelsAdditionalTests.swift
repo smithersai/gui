@@ -169,3 +169,94 @@ final class SidebarTabTests: XCTestCase {
         XCTAssertEqual(set.count, 2)
     }
 }
+
+final class CommandPaletteNewTabIntegrationTests: XCTestCase {
+    func testNewSpaceReturnsExactlyCanonicalNewTabItems() {
+        let agents = makeAgents()
+        let canonicalTitles = NewTabPaletteCatalog.commandPaletteItems(agents: agents, query: "")
+            .map(\.title)
+
+        let items = ContentViewCommandPaletteModel.items(
+            for: "new ",
+            baseItems: sampleBaseItems(),
+            agents: agents
+        )
+
+        XCTAssertEqual(items.map(\.title), canonicalTitles)
+    }
+
+    func testEmptyQueryIncludesSingleTopLevelNewEntryWithoutFlatteningNewTabItems() {
+        let items = ContentViewCommandPaletteModel.items(
+            for: "",
+            baseItems: sampleBaseItems(),
+            agents: makeAgents()
+        )
+
+        XCTAssertEqual(items.filter { $0.title == "New" }.count, 1)
+        XCTAssertFalse(items.contains { $0.title == "New Terminal" })
+        XCTAssertFalse(items.contains { $0.title == "New Browser" })
+        XCTAssertTrue(items.contains { $0.title == "Dashboard" })
+    }
+
+    func testTopLevelQueryMatchingAgentNameSurfacesNewTabEntry() {
+        let items = ContentViewCommandPaletteModel.items(
+            for: "claude",
+            baseItems: sampleBaseItems(),
+            agents: makeAgents()
+        )
+
+        XCTAssertTrue(items.contains { $0.title == "Claude Code" })
+    }
+
+    func testSelectingTopLevelNewRequestsNewSpaceFollowUpQuery() {
+        let followUp = ContentViewCommandPaletteModel.followUpQuery(
+            afterSelecting: NewTabPaletteCatalog.rootCommandItem,
+            rawQuery: "new"
+        )
+
+        XCTAssertEqual(followUp, "new ")
+    }
+
+    private func sampleBaseItems() -> [CommandPaletteItem] {
+        [
+            CommandPaletteItem(
+                id: "route:dashboard",
+                title: "Dashboard",
+                subtitle: "Navigate to Dashboard.",
+                icon: "square.grid.2x2",
+                section: "Destinations",
+                keywords: ["dashboard"],
+                shortcut: nil,
+                action: .navigate(.dashboard),
+                isEnabled: true
+            )
+        ]
+    }
+
+    private func makeAgents() -> [SmithersAgent] {
+        [
+            makeAgent(id: "claude", name: "Claude Code", status: "likely-subscription"),
+            makeAgent(id: "codex", name: "Codex", status: "api-key"),
+            makeAgent(id: "opencode", name: "OpenCode", status: "binary-only"),
+            makeAgent(id: "gemini", name: "Gemini", status: "api-key"),
+            makeAgent(id: "kimi", name: "Kimi", status: "api-key"),
+            makeAgent(id: "amp", name: "Amp", status: "binary-only"),
+        ]
+    }
+
+    private func makeAgent(id: String, name: String, status: String) -> SmithersAgent {
+        SmithersAgent(
+            id: id,
+            name: name,
+            command: id,
+            binaryPath: "/usr/local/bin/\(id)",
+            status: status,
+            hasAuth: status == "likely-subscription",
+            hasAPIKey: status == "api-key",
+            usable: true,
+            roles: ["coding"],
+            version: nil,
+            authExpired: nil
+        )
+    }
+}

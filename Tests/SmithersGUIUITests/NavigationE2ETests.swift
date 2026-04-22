@@ -1,22 +1,17 @@
 import XCTest
 
 final class NavigationE2ETests: SmithersGUIUITestCase {
-    func testSidebarShowsTopLevelDestinations() {
-        let topLevel: [(label: String, view: String)] = [
-            ("Smithers", "view.dashboard"),
-            ("VCS", "view.vcsDashboard"),
+    func testTopLevelDashboardsAreAvailableViaPalette() {
+        let dashboards: [(query: String, view: String)] = [
+            ("dashboard", "view.dashboard"),
+            ("vcs dashboard", "view.vcsDashboard"),
         ]
 
-        for destination in topLevel {
-            let nav = app.buttons["nav.\(destination.label)"]
-            XCTAssertTrue(
-                nav.waitForExistence(timeout: 5),
-                "Missing sidebar destination \(destination.label)"
+        for destination in dashboards {
+            navigateViaPalette(
+                query: destination.query,
+                expectedViewIdentifier: destination.view
             )
-        }
-
-        for destination in topLevel {
-            navigate(to: destination.label, expectedViewIdentifier: destination.view)
         }
     }
 

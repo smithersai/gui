@@ -166,6 +166,57 @@ final class KeyboardShortcutDispatcherTests: XCTestCase {
         XCTAssertEqual(outcome, .command(.numbered(.selectWorkspaceByNumber, 7)))
     }
 
+    func testDispatcherFiresPaletteShortcutsWhenTerminalFocused() throws {
+        var dispatcher = KeyboardShortcutDispatcher { action in
+            action.defaultShortcut
+        }
+        let focus = KeyboardShortcutFocusState(textInputFocused: false, terminalFocused: true, paletteVisible: false)
+
+        XCTAssertEqual(
+            dispatcher.dispatch(
+                event: try keyEvent(characters: "p", keyCode: 35, modifiers: [.command]),
+                focusState: focus
+            ),
+            .command(.shortcut(.commandPalette))
+        )
+        XCTAssertEqual(
+            dispatcher.dispatch(
+                event: try keyEvent(characters: "P", keyCode: 35, modifiers: [.command, .shift]),
+                focusState: focus
+            ),
+            .command(.shortcut(.commandPaletteCommandMode))
+        )
+        XCTAssertEqual(
+            dispatcher.dispatch(
+                event: try keyEvent(characters: "k", keyCode: 40, modifiers: [.command]),
+                focusState: focus
+            ),
+            .command(.shortcut(.commandPaletteAskAI))
+        )
+    }
+
+    func testDispatcherFiresOtherAppGlobalShortcutsWhenTerminalFocused() throws {
+        var dispatcher = KeyboardShortcutDispatcher { action in
+            action.defaultShortcut
+        }
+        let focus = KeyboardShortcutFocusState(textInputFocused: false, terminalFocused: true, paletteVisible: false)
+
+        XCTAssertEqual(
+            dispatcher.dispatch(
+                event: try keyEvent(characters: "b", keyCode: 11, modifiers: [.command]),
+                focusState: focus
+            ),
+            .command(.shortcut(.toggleSidebar))
+        )
+        XCTAssertEqual(
+            dispatcher.dispatch(
+                event: try keyEvent(characters: "7", keyCode: 26, modifiers: [.command]),
+                focusState: focus
+            ),
+            .command(.numbered(.selectWorkspaceByNumber, 7))
+        )
+    }
+
     func testDispatcherFiresConfiguredTmuxChord() throws {
         var dispatcher = KeyboardShortcutDispatcher { action in
             action == .tmuxPrefix
@@ -190,7 +241,7 @@ final class KeyboardShortcutDispatcherTests: XCTestCase {
         )
     }
 
-    func testDispatcherDoesNotFireInsideTextFieldOrTerminal() throws {
+    func testDispatcherDoesNotFireInsideTextField() throws {
         var dispatcher = KeyboardShortcutDispatcher { action in
             action.defaultShortcut
         }
@@ -203,6 +254,14 @@ final class KeyboardShortcutDispatcherTests: XCTestCase {
             ),
             .ignored
         )
+    }
+
+    func testDispatcherDoesNotFireNonGlobalShortcutInsideTerminal() throws {
+        var dispatcher = KeyboardShortcutDispatcher { action in
+            action.defaultShortcut
+        }
+        let event = try keyEvent(characters: "n", keyCode: 45, modifiers: [.command])
+
         XCTAssertEqual(
             dispatcher.dispatch(
                 event: event,

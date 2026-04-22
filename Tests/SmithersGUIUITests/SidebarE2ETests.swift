@@ -5,16 +5,44 @@ import XCTest
 
 final class SidebarE2ETests: SmithersGUIUITestCase {
 
-    func testSidebarShowsTopLevelDestinations() {
-        XCTAssertTrue(app.buttons["nav.Smithers"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["nav.VCS"].waitForExistence(timeout: 5))
+    func testSidebarHidesSmithersAndVCSButtons() {
+        XCTAssertFalse(app.buttons["nav.Smithers"].exists)
+        XCTAssertFalse(app.buttons["nav.VCS"].exists)
     }
 
-    func testNavigateToSmithersDashboard() {
-        navigate(to: "Smithers", expectedViewIdentifier: "view.dashboard")
+    func testCommandPaletteNavigatesToSmithersDashboard() {
+        navigateViaPalette(
+            query: "dashboard",
+            expectedViewIdentifier: "view.dashboard"
+        )
     }
 
-    func testNavigateToVCSDashboard() {
-        navigate(to: "VCS", expectedViewIdentifier: "view.vcsDashboard")
+    func testCommandPaletteNavigatesToVCSDashboard() {
+        navigateViaPalette(
+            query: "vcs dashboard",
+            expectedViewIdentifier: "view.vcsDashboard"
+        )
+    }
+
+    func testSidebarPlusOpensCommandPaletteWithNewTabItems() {
+        waitForElement("sidebar.newTabPlus").click()
+
+        XCTAssertTrue(element("commandPalette.root").waitForExistence(timeout: 3))
+        XCTAssertFalse(element("newTabPicker.root").exists)
+        XCTAssertTrue(element("commandPalette.item.new-tab.terminal").waitForExistence(timeout: 3))
+        XCTAssertTrue(element("commandPalette.item.new-tab.browser").waitForExistence(timeout: 3))
+    }
+
+    func testCommandPaletteNewEntryExpandsInPlaceToNewTabItems() {
+        app.typeKey("p", modifierFlags: .command)
+
+        XCTAssertTrue(element("commandPalette.root").waitForExistence(timeout: 3))
+        let newItem = waitForElement("commandPalette.item.command.new", timeout: 3)
+        newItem.click()
+
+        XCTAssertTrue(element("commandPalette.root").waitForExistence(timeout: 3))
+        XCTAssertFalse(element("newTabPicker.root").exists)
+        XCTAssertTrue(element("commandPalette.item.new-tab.terminal").waitForExistence(timeout: 3))
+        XCTAssertTrue(element("commandPalette.item.new-tab.browser").waitForExistence(timeout: 3))
     }
 }

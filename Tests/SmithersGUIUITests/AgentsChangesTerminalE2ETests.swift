@@ -12,16 +12,13 @@ final class AgentsE2ETests: SmithersGUIUITestCase {
     func testAgentsViewShowsAvailableSection() {
         navigate(to: "Agents", expectedViewIdentifier: "view.agents")
 
-        // UI test fixtures mark claude-code, codex, gemini, amp as usable
-        // The available section header should contain a count
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Available")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("agents.section.available").waitForExistence(timeout: 5))
     }
 
     func testAgentsViewShowsUnavailableSection() {
         navigate(to: "Agents", expectedViewIdentifier: "view.agents")
 
-        // Agents not detected section should also exist
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Not Detected")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("agents.section.notDetected").waitForExistence(timeout: 5))
     }
 
     func testAgentsViewShowsAgentCards() {
@@ -48,8 +45,8 @@ final class AgentsE2ETests: SmithersGUIUITestCase {
         XCTAssertTrue(app.staticTexts["API Key"].exists)
 
         // Status tags should appear
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Availability:")).firstMatch.exists)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Usable:")).firstMatch.exists)
+        XCTAssertTrue(element("agents.tag.availability.claude-code").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("agents.tag.usable.claude-code").waitForExistence(timeout: 5))
     }
 }
 
@@ -67,14 +64,10 @@ final class ChangesE2ETests: SmithersGUIUITestCase {
     func testChangesViewShowsModeToggle() {
         navigate(to: "Changes", expectedViewIdentifier: "view.changes")
 
-        // The segmented picker should show Changes and Status modes
         XCTAssertTrue(app.staticTexts["Changes"].waitForExistence(timeout: 5))
-
-        // The mode picker items should exist
-        let changesModeButton = app.buttons.matching(NSPredicate(format: "label == %@", "Changes")).firstMatch
-        let statusModeButton = app.buttons.matching(NSPredicate(format: "label == %@", "Status")).firstMatch
-        XCTAssertTrue(changesModeButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(statusModeButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("changes.modePicker").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("changes.mode.changes").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("changes.mode.status").waitForExistence(timeout: 5))
     }
 
     func testChangesViewShowsSelectAChangePromptWhenNothingSelected() {
@@ -83,15 +76,12 @@ final class ChangesE2ETests: SmithersGUIUITestCase {
         // If no changes loaded (jjhub not available), the view should show either
         // an error state, empty state, or the "Select a change" placeholder.
         // We verify the view is at least rendered.
-        let selectPrompt = app.staticTexts["Select a change"]
-        let noChanges = app.staticTexts["No recent changes found."]
         let changesHeader = app.staticTexts["Changes"]
 
         XCTAssertTrue(changesHeader.waitForExistence(timeout: 5))
 
-        // At least one of these states should be present
-        let hasExpectedState = selectPrompt.waitForExistence(timeout: 5)
-            || noChanges.exists
+        let hasExpectedState = element("changes.noSelection").waitForExistence(timeout: 5)
+            || element("changes.emptyState").exists
             || app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Error")).firstMatch.exists
 
         XCTAssertTrue(hasExpectedState, "Changes view should show either a placeholder, empty state, or error")
@@ -100,8 +90,7 @@ final class ChangesE2ETests: SmithersGUIUITestCase {
     func testChangesViewCanSwitchToStatusMode() {
         navigate(to: "Changes", expectedViewIdentifier: "view.changes")
 
-        let statusButton = app.buttons.matching(NSPredicate(format: "label == %@", "Status")).firstMatch
-        XCTAssertTrue(statusButton.waitForExistence(timeout: 5))
+        let statusButton = waitForElement("changes.mode.status")
         statusButton.click()
 
         // In status mode, we should see either loading, status text, an error, or "Clean working copy."

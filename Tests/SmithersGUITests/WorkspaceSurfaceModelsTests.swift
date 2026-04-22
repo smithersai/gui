@@ -1,5 +1,8 @@
 import XCTest
 @testable import SmithersGUI
+#if os(macOS)
+import AppKit
+#endif
 
 final class WorkspaceLayoutNodeTests: XCTestCase {
     func testRemovingLeafKeepsSplitIDWhenBranchStillHasTwoChildren() {
@@ -213,6 +216,44 @@ final class WorkspaceSurfaceIdentityTests: XCTestCase {
 
         XCTAssertEqual(reorderResult.workspaceID, firstID)
         XCTAssertEqual(store.terminalTabs.map(\.terminalId).prefix(2), [firstWorkspaceId, secondWorkspaceId])
+    }
+
+    func testTerminalTabsPersistAcrossSessionStoreRelaunch() throws {
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SessionStorePersistenceTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let workspacePath = tmpDir.appendingPathComponent("workspace", isDirectory: true).path
+        try FileManager.default.createDirectory(
+            at: URL(fileURLWithPath: workspacePath, isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let databasePath = tmpDir.appendingPathComponent("app.sqlite").path
+
+        let firstStore = SessionStore(
+            workingDirectory: workspacePath,
+            app: Smithers.App(databasePath: databasePath)
+        )
+        let terminalId = firstStore.addTerminalTab(
+            title: "Claude Code",
+            workingDirectory: workspacePath,
+            command: "claude"
+        )
+
+        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+
+        let reloadedStore = SessionStore(
+            workingDirectory: workspacePath,
+            app: Smithers.App(databasePath: databasePath)
+        )
+
+        XCTAssertEqual(reloadedStore.terminalTabs.count, 1)
+        XCTAssertEqual(reloadedStore.terminalTabs.first?.terminalId, terminalId)
+        XCTAssertEqual(reloadedStore.terminalTabs.first?.title, "Claude Code")
+        XCTAssertEqual(reloadedStore.terminalTabs.first?.command, "claude")
+        XCTAssertNil(reloadedStore.terminalTabs.first?.sessionId)
     }
 }
 
