@@ -27,6 +27,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private var nativeSurfaceOperationsInFlight: Set<NativeSurfaceKey> = []
 
     private static let persistenceSaveDebounceNanoseconds: UInt64 = 500_000_000
+    private static let nativeTerminalTERM = "xterm-256color"
+    private static let nativeTerminalColorTerm = "truecolor"
     private static let persistenceEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
@@ -242,7 +244,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                     shell: shell,
                     command: command,
                     cwd: workingDirectory,
-                    env: nil,
+                    env: Self.nativeSessionEnvironment(),
                     rows: 24,
                     cols: 80
                 )
@@ -604,6 +606,18 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         let escapedBin = binary.replacingOccurrences(of: "'", with: "'\"'\"'")
         let escapedSocket = socketPath.replacingOccurrences(of: "'", with: "'\"'\"'")
         return "'\(escapedBin)' '\(escapedId)' --socket '\(escapedSocket)'"
+    }
+
+    nonisolated static func nativeSessionEnvironment(
+        baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        var env = baseEnvironment
+        env["TERM"] = nativeTerminalTERM
+        env["COLORTERM"] = nativeTerminalColorTerm
+        if env["TERM_PROGRAM"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            env["TERM_PROGRAM"] = "Smithers"
+        }
+        return env
     }
 
     func removeTerminalTab(_ terminalId: String) {

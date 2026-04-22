@@ -534,6 +534,19 @@ final class SessionControllerTests: XCTestCase {
         )
     }
 
+    func testNativeSessionEnvironmentUsesColorCapableDefaults() {
+        let env = SessionStore.nativeSessionEnvironment(baseEnvironment: [
+            "PATH": "/usr/bin:/bin",
+            "HOME": "/tmp/demo",
+        ])
+
+        XCTAssertEqual(env["TERM"], "xterm-256color")
+        XCTAssertEqual(env["COLORTERM"], "truecolor")
+        XCTAssertEqual(env["TERM_PROGRAM"], "Smithers")
+        XCTAssertEqual(env["PATH"], "/usr/bin:/bin")
+        XCTAssertEqual(env["HOME"], "/tmp/demo")
+    }
+
     func testEnsureDaemonLaunchesOnSocketOverride() async throws {
         guard SessionController.locateDaemonBinary() != nil else {
             throw XCTSkip("smithers-session-daemon binary not found in bundle, env, PATH, or local checkout")

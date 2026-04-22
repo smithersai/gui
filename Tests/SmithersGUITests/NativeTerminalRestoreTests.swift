@@ -224,6 +224,33 @@ final class NativeTerminalRestoreTests: XCTestCase {
         XCTAssertEqual(info.id, created.id)
     }
 
+    func testNewNativeSessionStartsWithColorCapableEnvironment() async throws {
+        let daemon = try IsolatedSessionDaemon()
+        try daemon.start()
+        defer { daemon.cleanup() }
+
+        let context = try makeStoreContext(name: "env")
+        defer { context.cleanup() }
+
+        let store = context.makeStore()
+        let terminalId = store.addTerminalTab(
+            title: "Env",
+            workingDirectory: context.workspacePath,
+            command: "printf '%s|%s\\n' \"$TERM\" \"$COLORTERM\"; exec sleep 30"
+        )
+        defer { store.removeTerminalTab(terminalId) }
+
+        let workspace = store.ensureTerminalWorkspace(terminalId)
+        let rootId = try XCTUnwrap(workspace.layout.firstSurfaceId)
+        let sessionId = try await waitForReadyNativeSession(in: workspace, surfaceId: rootId)
+        let output = try await waitForCapture(
+            sessionId: sessionId,
+            contains: "xterm-256color|truecolor"
+        )
+
+        XCTAssertTrue(output.contains("xterm-256color|truecolor"))
+    }
+
     func testStoreLeavesMissingRestoredSessionUnavailableInsteadOfRespawning() async throws {
         let daemon = try IsolatedSessionDaemon()
         try daemon.start()
@@ -367,6 +394,28 @@ final class NativeTerminalRestoreTests: XCTestCase {
         )
     }
 
+    private func waitForCapture(
+        sessionId: String,
+        contains needle: String,
+        timeout: TimeInterval = 5
+    ) async throws -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let text = try await SessionController.shared.capture(
+                sessionId: PTYSessionID(sessionId),
+                lines: 200
+            )
+            if text.contains(needle) {
+                return text
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        throw NSError(
+            domain: "NativeTerminalRestoreTests",
+            code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "timed out waiting for capture containing \(needle)"]
+        )
+    }
 }
 
 private struct StoreContext {
