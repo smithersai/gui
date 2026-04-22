@@ -11,12 +11,18 @@ pub const QueuedEvent = struct {
 
 pub const EventStream = @This();
 
+pub const ProducerCleanup = *const fn (ctx: *anyopaque) void;
+
 allocator: Allocator,
 mutex: std.Thread.Mutex = .{},
 ref_count: usize = 1,
 events: std.ArrayList(QueuedEvent) = .empty,
 closed: bool = false,
 end_emitted: bool = false,
+stop_flag: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+producer_thread: ?std.Thread = null,
+producer_ctx: ?*anyopaque = null,
+producer_cleanup: ?ProducerCleanup = null,
 
 pub fn create(allocator: Allocator) !*EventStream {
     const stream = try allocator.create(EventStream);
@@ -36,6 +42,23 @@ pub fn retain(self: *EventStream) *EventStream {
     return self;
 }
 
+pub fn attachProducer(
+    self: *EventStream,
+    thread: std.Thread,
+    ctx: *anyopaque,
+    cleanup: ProducerCleanup,
+) void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    self.producer_thread = thread;
+    self.producer_ctx = ctx;
+    self.producer_cleanup = cleanup;
+}
+
+pub fn stopRequested(self: *EventStream) bool {
+    return self.stop_flag.load(.acquire);
+}
+
 pub fn release(self: *EventStream) void {
     var should_destroy = false;
     self.mutex.lock();
@@ -45,6 +68,21 @@ pub fn release(self: *EventStream) void {
     self.mutex.unlock();
 
     if (!should_destroy) return;
+
+    self.stop_flag.store(true, .release);
+    self.mutex.lock();
+    self.closed = true;
+    const thread = self.producer_thread;
+    self.producer_thread = null;
+    const ctx = self.producer_ctx;
+    self.producer_ctx = null;
+    const cleanup = self.producer_cleanup;
+    self.producer_cleanup = null;
+    self.mutex.unlock();
+
+    if (thread) |t| t.join();
+    if (cleanup) |fn_ptr| if (ctx) |c| fn_ptr(c);
+
     for (self.events.items) |event| self.allocator.free(event.payload);
     self.events.deinit(self.allocator);
     self.allocator.destroy(self);

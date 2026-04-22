@@ -154,10 +154,22 @@ pub const NativeSession = struct {
         return self.state_value;
     }
 
-    pub fn attachFd(self: *NativeSession) !std.posix.fd_t {
+    pub const AttachResult = struct {
+        fd: std.posix.fd_t,
+        /// Snapshot of the scrollback at attach time so the client can replay
+        /// prior terminal state (tmux-style reattach). Owned by the caller's
+        /// allocator. Empty on first attach if nothing has been captured yet.
+        scrollback: []u8,
+    };
+
+    pub fn attachFd(self: *NativeSession, allocator: std.mem.Allocator) !AttachResult {
         self.mutex.lock();
         switch (self.state_value) {
             .creating, .detached => {
+                // Snapshot scrollback under the same lock that guards state
+                // so we don't race with the reader thread appending to it.
+                const scrollback = try self.scrollback.snapshot(allocator);
+                errdefer allocator.free(scrollback);
                 self.state_value = .running;
                 self.mutex.unlock();
 
@@ -167,7 +179,7 @@ pub const NativeSession = struct {
                 while (!self.reader_paused.load(.seq_cst) and waits < 50) : (waits += 1) {
                     std.Thread.sleep(10 * std.time.ns_per_ms);
                 }
-                return self.handle.master_fd;
+                return .{ .fd = self.handle.master_fd, .scrollback = scrollback };
             },
             .running => {
                 self.mutex.unlock();

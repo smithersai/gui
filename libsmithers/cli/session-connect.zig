@@ -6,7 +6,10 @@ const posix = std.posix;
 const fd_passing = @import("fd_passing");
 
 const buffer_size: usize = 32 * 1024;
-const attach_payload_max: usize = 64 * 1024;
+// Attach payload now carries a base64-encoded scrollback replay so the
+// client can restore prior terminal state (tmux-style). Size the buffer
+// to fit ~256 KiB of raw scrollback plus base64 overhead and JSON wrapping.
+const attach_payload_max: usize = 512 * 1024;
 
 var g_saved_termios: ?posix.termios = null;
 var g_saved_termios_fd: posix.fd_t = 0;
@@ -90,6 +93,11 @@ pub fn main() !void {
     g_session_id_for_signals = sid;
     installSigwinchHandler();
     installExitRestoreHandlers();
+
+    // Replay any prior scrollback the daemon captured while we were
+    // detached. This is what makes reattach feel tmux-like: the previously
+    // rendered Claude Code / shell output is redrawn instead of disappearing.
+    replayScrollbackFromAttach(allocator, received.payload, stdout_fd) catch {};
 
     // Send an initial resize from our terminal's current size, if known.
     sendResize(allocator, path, sid, stdout_fd) catch {};
@@ -351,6 +359,31 @@ fn writeAllFd(fd: posix.fd_t, bytes: []const u8) !void {
 
 fn findJsonField(haystack: []const u8, needle: []const u8) ?usize {
     return std.mem.indexOf(u8, haystack, needle);
+}
+
+/// Pull the `replayBase64` field out of the attach response JSON, decode
+/// it, and write the raw bytes to `out_fd` so the terminal redraws the
+/// prior session state.
+fn replayScrollbackFromAttach(
+    allocator: std.mem.Allocator,
+    payload: []const u8,
+    out_fd: posix.fd_t,
+) !void {
+    const marker = "\"replayBase64\":\"";
+    const start = std.mem.indexOf(u8, payload, marker) orelse return;
+    const value_start = start + marker.len;
+    if (value_start >= payload.len) return;
+    const value_end = std.mem.indexOfScalarPos(u8, payload, value_start, '"') orelse return;
+    const encoded = payload[value_start..value_end];
+    if (encoded.len == 0) return;
+
+    const decoder = std.base64.standard.Decoder;
+    const decoded_len = decoder.calcSizeForSlice(encoded) catch return;
+    if (decoded_len == 0) return;
+    const decoded = try allocator.alloc(u8, decoded_len);
+    defer allocator.free(decoded);
+    decoder.decode(decoded, encoded) catch return;
+    try writeAllFd(out_fd, decoded);
 }
 
 fn stderrWrite(bytes: []const u8) !void {

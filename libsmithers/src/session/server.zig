@@ -12,6 +12,12 @@ const posix = std.posix;
 
 const max_request_bytes = 1024 * 1024;
 
+/// Cap the raw scrollback replay delivered on attach. 256 KiB comfortably
+/// covers a TUI's visible state + a few screenfuls of history while keeping
+/// the attach payload bounded. When scrollback is larger, only the tail
+/// (most recent bytes) is replayed.
+const attach_replay_max_bytes: usize = 256 * 1024;
+
 const ClientConnection = struct {
     allocator: Allocator,
     fd: posix.fd_t,
@@ -408,13 +414,24 @@ pub const Server = struct {
         };
         defer active.release();
 
-        const fd = active.attachFd() catch |err| {
+        const attach_result = active.attachFd(self.allocator) catch |err| {
             return self.writeError(connection, req.id_json, protocol.ErrorCode.session_error, @errorName(err));
         };
+        defer self.allocator.free(attach_result.scrollback);
+        const fd = attach_result.fd;
 
         const info = try active.infoJson(self.allocator);
         defer self.allocator.free(info);
-        const response = try protocol.resultRaw(self.allocator, req.id_json, info);
+        // Splice an extra `replayBase64` field into the info JSON so the
+        // client can restore prior terminal output on reattach (tmux-style).
+        // We cap the replay to keep the attach payload bounded; older bytes
+        // beyond the cap are simply dropped.
+        const replay_bytes = truncatedReplay(attach_result.scrollback, attach_replay_max_bytes);
+        const replay_b64 = try base64Encode(self.allocator, replay_bytes);
+        defer self.allocator.free(replay_b64);
+        const info_with_replay = try spliceReplayField(self.allocator, info, replay_b64);
+        defer self.allocator.free(info_with_replay);
+        const response = try protocol.resultRaw(self.allocator, req.id_json, info_with_replay);
         defer self.allocator.free(response);
         connection.sendJsonWithFd(fd, response) catch |err| {
             active.detach() catch {};
@@ -772,8 +789,53 @@ fn freeStringSlice(allocator: Allocator, entries: []const []const u8) void {
     allocator.free(entries);
 }
 
+fn truncatedReplay(scrollback: []const u8, max_bytes: usize) []const u8 {
+    if (scrollback.len <= max_bytes) return scrollback;
+    return scrollback[scrollback.len - max_bytes ..];
+}
+
+fn base64Encode(allocator: Allocator, bytes: []const u8) ![]u8 {
+    const encoder = std.base64.standard.Encoder;
+    const out = try allocator.alloc(u8, encoder.calcSize(bytes.len));
+    _ = encoder.encode(out, bytes);
+    return out;
+}
+
+/// The info JSON produced by `NativeSession.infoJson` ends with a closing
+/// `}`. We splice a `replayBase64` field in right before the brace so the
+/// client can reconstruct prior terminal state on reattach.
+fn spliceReplayField(allocator: Allocator, info_json: []const u8, replay_b64: []const u8) ![]u8 {
+    if (info_json.len == 0 or info_json[info_json.len - 1] != '}') {
+        return allocator.dupe(u8, info_json);
+    }
+    const body = info_json[0 .. info_json.len - 1];
+    // `body` always already contains at least `{"id":"..."` so a leading
+    // comma is always safe.
+    return std.fmt.allocPrint(
+        allocator,
+        "{s},\"replayBase64\":\"{s}\"}}",
+        .{ body, replay_b64 },
+    );
+}
+
 test "server parses aliases for session id" {
     var parsed = try std.json.parseFromSlice(Value, std.testing.allocator, "{\"id\":\"sess-1\"}", .{});
     defer parsed.deinit();
     try std.testing.expectEqualStrings("sess-1", sessionIdParam(parsed.value).?);
+}
+
+test "truncatedReplay keeps tail when larger than cap" {
+    const full = "abcdefghij";
+    try std.testing.expectEqualStrings("ghij", truncatedReplay(full, 4));
+    try std.testing.expectEqualStrings("abcdefghij", truncatedReplay(full, 128));
+}
+
+test "spliceReplayField inserts field before closing brace" {
+    const info = "{\"id\":\"sess-1\",\"state\":\"detached\"}";
+    const spliced = try spliceReplayField(std.testing.allocator, info, "QUJD");
+    defer std.testing.allocator.free(spliced);
+    try std.testing.expectEqualStrings(
+        "{\"id\":\"sess-1\",\"state\":\"detached\",\"replayBase64\":\"QUJD\"}",
+        spliced,
+    );
 }
