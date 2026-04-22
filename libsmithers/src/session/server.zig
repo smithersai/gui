@@ -22,8 +22,10 @@ const ClientConnection = struct {
     allocator: Allocator,
     fd: posix.fd_t,
     write_mutex: std.Thread.Mutex = .{},
+    attachment_mutex: std.Thread.Mutex = .{},
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    attached_sessions: std.ArrayList(*NativeSession) = .empty,
 
     fn create(allocator: Allocator, fd: posix.fd_t) !*ClientConnection {
         const connection = try allocator.create(ClientConnection);
@@ -41,7 +43,12 @@ const ClientConnection = struct {
 
     fn release(self: *ClientConnection) void {
         const prev = self.ref_count.fetchSub(1, .seq_cst);
-        if (prev == 1) self.allocator.destroy(self);
+        if (prev == 1) {
+            var attached = self.takeAttachedSessions();
+            defer attached.deinit(self.allocator);
+            for (attached.items) |session| session.release();
+            self.allocator.destroy(self);
+        }
     }
 
     fn isClosed(self: *const ClientConnection) bool {
@@ -74,6 +81,40 @@ const ClientConnection = struct {
             self.close();
             return err;
         };
+    }
+
+    fn trackAttachedSession(self: *ClientConnection, session: *NativeSession) !void {
+        self.attachment_mutex.lock();
+        defer self.attachment_mutex.unlock();
+
+        for (self.attached_sessions.items) |active| {
+            if (active == session) return;
+        }
+
+        session.retain();
+        errdefer session.release();
+        try self.attached_sessions.append(self.allocator, session);
+    }
+
+    fn untrackAttachedSession(self: *ClientConnection, session_id: []const u8) ?*NativeSession {
+        self.attachment_mutex.lock();
+        defer self.attachment_mutex.unlock();
+
+        for (self.attached_sessions.items, 0..) |active, index| {
+            if (std.mem.eql(u8, active.id, session_id)) {
+                return self.attached_sessions.swapRemove(index);
+            }
+        }
+        return null;
+    }
+
+    fn takeAttachedSessions(self: *ClientConnection) std.ArrayList(*NativeSession) {
+        self.attachment_mutex.lock();
+        defer self.attachment_mutex.unlock();
+
+        const attached = self.attached_sessions;
+        self.attached_sessions = .empty;
+        return attached;
     }
 };
 
@@ -433,7 +474,10 @@ pub const Server = struct {
         defer self.allocator.free(info_with_replay);
         const response = try protocol.resultRaw(self.allocator, req.id_json, info_with_replay);
         defer self.allocator.free(response);
+        try connection.trackAttachedSession(active);
+        errdefer if (connection.untrackAttachedSession(active.id)) |tracked| tracked.release();
         connection.sendJsonWithFd(fd, response) catch |err| {
+            if (connection.untrackAttachedSession(active.id)) |tracked| tracked.release();
             active.detach() catch {};
             return err;
         };
@@ -446,6 +490,7 @@ pub const Server = struct {
         active.detach() catch |err| {
             return self.writeError(connection, req.id_json, protocol.ErrorCode.session_error, @errorName(err));
         };
+        self.clearAttachedSession(active.id);
         const response = try protocol.result(self.allocator, req.id_json, .{ .ok = true, .state = "detached" });
         defer self.allocator.free(response);
         try connection.write(response);
@@ -455,6 +500,7 @@ pub const Server = struct {
         const id = sessionIdParam(req.params()) orelse {
             return self.writeError(connection, req.id_json, protocol.ErrorCode.invalid_params, "sessionId is required");
         };
+        self.clearAttachedSession(id);
         if (!self.manager.terminate(id)) {
             return self.writeError(connection, req.id_json, protocol.ErrorCode.session_error, "session not found");
         }
@@ -559,6 +605,8 @@ pub const Server = struct {
     }
 
     fn unregisterConnection(self: *Server, connection: *ClientConnection) void {
+        self.detachConnectionSessions(connection);
+
         self.mutex.lock();
         defer self.mutex.unlock();
         for (self.connections.items, 0..) |active, index| {
@@ -567,6 +615,36 @@ pub const Server = struct {
                 removed.release();
                 break;
             }
+        }
+    }
+
+    fn clearAttachedSession(self: *Server, session_id: []const u8) void {
+        self.mutex.lock();
+        const snapshot = self.allocator.alloc(*ClientConnection, self.connections.items.len) catch {
+            self.mutex.unlock();
+            return;
+        };
+        for (self.connections.items, 0..) |connection, index| {
+            snapshot[index] = connection.retain();
+        }
+        self.mutex.unlock();
+        defer self.allocator.free(snapshot);
+
+        for (snapshot) |connection| {
+            defer connection.release();
+            if (connection.untrackAttachedSession(session_id)) |tracked| {
+                tracked.release();
+            }
+        }
+    }
+
+    fn detachConnectionSessions(self: *Server, connection: *ClientConnection) void {
+        var attached = connection.takeAttachedSessions();
+        defer attached.deinit(self.allocator);
+
+        for (attached.items) |session| {
+            session.detach() catch {};
+            session.release();
         }
     }
 

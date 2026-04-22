@@ -128,6 +128,53 @@ fn waitForSocket(path: []const u8, timeout_ms: i64) !void {
     return error.SocketNotReady;
 }
 
+fn waitForSessionState(
+    allocator: std.mem.Allocator,
+    socket_path: []const u8,
+    session_id: []const u8,
+    expected_state: []const u8,
+    timeout_ms: i64,
+) !void {
+    const deadline = std.time.milliTimestamp() + timeout_ms;
+    while (std.time.milliTimestamp() < deadline) {
+        const client = connectClient(socket_path) catch {
+            std.Thread.sleep(10 * std.time.ns_per_ms);
+            continue;
+        };
+        defer posix.close(client);
+
+        const req = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":99,\"method\":\"session.info\",\"params\":{{\"sessionId\":\"{s}\"}}}}\n",
+            .{session_id},
+        );
+        defer allocator.free(req);
+        try writeAll(client, req);
+
+        const line = readLineAlloc(allocator, client, 64 * 1024) catch {
+            std.Thread.sleep(10 * std.time.ns_per_ms);
+            continue;
+        };
+        defer allocator.free(line);
+
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, line, .{});
+        defer parsed.deinit();
+        const result_val = parsed.value.object.get("result") orelse {
+            std.Thread.sleep(10 * std.time.ns_per_ms);
+            continue;
+        };
+        const state_val = result_val.object.get("state") orelse {
+            std.Thread.sleep(10 * std.time.ns_per_ms);
+            continue;
+        };
+        if (state_val == .string and std.mem.eql(u8, state_val.string, expected_state)) {
+            return;
+        }
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
+    return error.SessionStateTimeout;
+}
+
 const RunServerCtx = struct {
     server: *server_mod.Server,
     run_error: ?anyerror = null,
@@ -483,6 +530,124 @@ test "session.attach replays scrollback on reattach so reopened sessions keep th
         const client = try connectClient(socket_path);
         defer posix.close(client);
         try writeAll(client, "{\"id\":7,\"method\":\"daemon.shutdown\",\"params\":{}}\n");
+        const line = try readLineAlloc(allocator, client, 64 * 1024);
+        defer allocator.free(line);
+    }
+
+    thread.join();
+    server.deinit();
+    server_stopped = true;
+    try std.testing.expect(ctx.run_error == null);
+}
+
+test "session auto-detaches when attached client disconnects so a reopened tab can reattach" {
+    if (!(builtin.os.tag == .linux or builtin.os.tag.isDarwin())) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const socket_path = try tempSocketPath(allocator);
+    defer allocator.free(socket_path);
+    std.fs.deleteFileAbsolute(socket_path) catch {};
+    defer std.fs.deleteFileAbsolute(socket_path) catch {};
+
+    var server = try server_mod.Server.init(allocator, socket_path, 0);
+    var ctx = RunServerCtx{ .server = &server };
+    const thread = try std.Thread.spawn(.{}, RunServerCtx.run, .{&ctx});
+    var server_stopped = false;
+    errdefer {
+        if (!server_stopped) {
+            server.running.store(false, .seq_cst);
+            thread.join();
+            server.deinit();
+        }
+    }
+
+    try waitForSocket(socket_path, 2_000);
+
+    var session_id_owned: []u8 = &.{};
+    defer if (session_id_owned.len > 0) allocator.free(session_id_owned);
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        try writeAll(
+            client,
+            "{\"id\":1,\"method\":\"session.create\",\"params\":" ++
+                "{\"shell\":\"/bin/sh\",\"command\":\"echo AUTO_DETACH_SENTINEL; cat\"," ++
+                "\"cwd\":\"/tmp\",\"rows\":24,\"cols\":80}}\n",
+        );
+        const line = try readLineAlloc(allocator, client, 64 * 1024);
+        defer allocator.free(line);
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, line, .{});
+        defer parsed.deinit();
+        const result_val = parsed.value.object.get("result") orelse return error.MissingResult;
+        const id_val = result_val.object.get("id") orelse return error.MissingSessionId;
+        session_id_owned = try allocator.dupe(u8, id_val.string);
+    }
+
+    std.Thread.sleep(500 * std.time.ns_per_ms);
+
+    {
+        const client = try connectClient(socket_path);
+        const attach_req = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":2,\"method\":\"session.attach\",\"params\":{{\"sessionId\":\"{s}\"}}}}\n",
+            .{session_id_owned},
+        );
+        defer allocator.free(attach_req);
+        try writeAll(client, attach_req);
+
+        const resp = try recvAttachResponse(allocator, client, 1024 * 1024);
+        defer allocator.free(resp.payload);
+        try std.testing.expect(resp.pty_fd != null);
+        if (resp.pty_fd) |pfd| posix.close(pfd);
+
+        // Simulate app/process death without an explicit detach RPC.
+        posix.close(client);
+    }
+
+    try waitForSessionState(allocator, socket_path, session_id_owned, "detached", 2_000);
+
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        const attach_req = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":3,\"method\":\"session.attach\",\"params\":{{\"sessionId\":\"{s}\"}}}}\n",
+            .{session_id_owned},
+        );
+        defer allocator.free(attach_req);
+        try writeAll(client, attach_req);
+
+        const resp = try recvAttachResponse(allocator, client, 1024 * 1024);
+        defer allocator.free(resp.payload);
+        try std.testing.expect(resp.pty_fd != null);
+        if (resp.pty_fd) |pfd| posix.close(pfd);
+
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, resp.payload, .{});
+        defer parsed.deinit();
+        const result_val = parsed.value.object.get("result") orelse return error.MissingResult;
+        const replay_val = result_val.object.get("replayBase64") orelse return error.MissingReplayField;
+        const decoded = try decodeBase64(allocator, replay_val.string);
+        defer allocator.free(decoded);
+        try std.testing.expect(std.mem.indexOf(u8, decoded, "AUTO_DETACH_SENTINEL") != null);
+    }
+
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        const req = try std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":4,\"method\":\"session.terminate\",\"params\":{{\"sessionId\":\"{s}\"}}}}\n",
+            .{session_id_owned},
+        );
+        defer allocator.free(req);
+        try writeAll(client, req);
+        const line = try readLineAlloc(allocator, client, 64 * 1024);
+        defer allocator.free(line);
+    }
+    {
+        const client = try connectClient(socket_path);
+        defer posix.close(client);
+        try writeAll(client, "{\"id\":5,\"method\":\"daemon.shutdown\",\"params\":{}}\n");
         const line = try readLineAlloc(allocator, client, 64 * 1024);
         defer allocator.free(line);
     }
