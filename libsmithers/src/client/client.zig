@@ -4,6 +4,8 @@ const structs = @import("../apprt/structs.zig");
 const EventStream = @import("../session/event_stream.zig");
 const App = @import("../App.zig");
 const devtools = @import("../devtools/DevToolsClient.zig");
+const devtools_snapshot = @import("../devtools/Snapshot.zig");
+const devtools_stream = @import("../devtools/Stream.zig");
 const models = @import("../models/mod.zig");
 const terminal = @import("../terminal/tmux.zig");
 const agents = @import("agents.zig");
@@ -81,6 +83,15 @@ fn callImpl(self: *Client, method: []const u8, args_json: []const u8) !structs.S
         defer self.allocator.free(json);
         return ffi.stringDup(json);
     }
+    if (std.mem.eql(u8, method, "getDevToolsSnapshot")) {
+        const run_id = ffi.jsonObjectString(parsed.value, "runId") orelse return error.MissingRunId;
+        const frame_no = ffi.jsonObjectInteger(parsed.value, "frameNo");
+        const db_path = try self.resolveDbPath() orelse return error.SmithersDbNotFound;
+        defer self.allocator.free(db_path);
+        const json = try devtools_snapshot.loadSnapshotJson(self.allocator, db_path, run_id, frame_no);
+        defer self.allocator.free(json);
+        return ffi.stringDup(json);
+    }
     if (try models.call(self.allocator, method, parsed.value)) |json| {
         defer self.allocator.free(json);
         return ffi.stringDup(json);
@@ -115,6 +126,17 @@ fn streamImpl(self: *Client, method: []const u8, args_json: []const u8) !*EventS
         }
     }
 
+    if (std.mem.eql(u8, method, "streamDevTools")) {
+        const run_id = ffi.jsonObjectString(parsed.value, "runId") orelse return error.MissingRunId;
+        const from_seq = ffi.jsonObjectInteger(parsed.value, "fromSeq");
+        const db_path = try self.resolveDbPath() orelse return error.SmithersDbNotFound;
+        defer self.allocator.free(db_path);
+        const event_stream = try EventStream.create(self.allocator);
+        errdefer event_stream.destroy();
+        try devtools_stream.start(self.allocator, event_stream, run_id, db_path, from_seq);
+        return event_stream;
+    }
+
     const event_stream = try EventStream.create(self.allocator);
     errdefer event_stream.destroy();
     var out: std.Io.Writer.Allocating = .init(self.allocator);
@@ -126,6 +148,37 @@ fn streamImpl(self: *Client, method: []const u8, args_json: []const u8) !*EventS
     try event_stream.pushJson(out.written());
     event_stream.close();
     return event_stream;
+}
+
+fn resolveDbPath(self: *Client) !?[]u8 {
+    if (try envDbPath(self.allocator, "SMITHERS_DB_PATH")) |p| return p;
+    if (try envDbPath(self.allocator, "SMITHERS_DB")) |p| return p;
+
+    const cwd = try self.app.activeWorkspacePathDup(self.allocator) orelse
+        try std.process.getCwdAlloc(self.allocator);
+    defer self.allocator.free(cwd);
+
+    const direct = try std.fs.path.join(self.allocator, &.{ cwd, "smithers.db" });
+    if (pathExists(direct)) return direct;
+    self.allocator.free(direct);
+
+    const nested = try std.fs.path.join(self.allocator, &.{ cwd, ".smithers", "smithers.db" });
+    if (pathExists(nested)) return nested;
+    self.allocator.free(nested);
+    return null;
+}
+
+fn envDbPath(allocator: std.mem.Allocator, key: []const u8) !?[]u8 {
+    const raw = std.posix.getenv(key) orelse return null;
+    const trimmed = std.mem.trim(u8, raw, &std.ascii.whitespace);
+    if (trimmed.len == 0) return null;
+    if (!pathExists(trimmed)) return null;
+    return try allocator.dupe(u8, trimmed);
+}
+
+fn pathExists(path: []const u8) bool {
+    std.fs.accessAbsolute(path, .{}) catch return false;
+    return true;
 }
 
 fn parseArgs(args_json: []const u8) !std.json.Parsed(std.json.Value) {
@@ -481,7 +534,23 @@ fn localFallback(self: *Client, method: []const u8, args: std.json.Value) !?[]u8
         const source = ffi.jsonObjectString(args, "source") orelse return null;
         return try parseWorkflowImportsAlloc(self.allocator, source);
     }
+    if (std.mem.eql(u8, method, "runQuickLaunchParser")) {
+        return try quickLaunchParserResult(self.allocator, args);
+    }
     return null;
+}
+
+fn quickLaunchParserResult(allocator: std.mem.Allocator, args: std.json.Value) ![]u8 {
+    const prompt = ffi.jsonObjectString(args, "prompt") orelse "";
+    const trimmed = std.mem.trim(u8, prompt, &std.ascii.whitespace);
+    if (trimmed.len == 0) {
+        return try allocator.dupe(u8, "{\"inputs\":{},\"notes\":\"\",\"parseRunId\":\"\"}");
+    }
+    return try std.fmt.allocPrint(
+        allocator,
+        "{{\"inputs\":{{\"prompt\":{f}}},\"notes\":\"\",\"parseRunId\":\"\"}}",
+        .{std.json.fmt(trimmed, .{})},
+    );
 }
 
 fn workspaceRoot(self: *Client, args: std.json.Value) ![]u8 {
