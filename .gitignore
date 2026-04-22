@@ -2,6 +2,8 @@
 build/
 .zig-cache/
 zig-out/
+*.o
+/io_check
 node_modules/
 .alchemy/
 .env
