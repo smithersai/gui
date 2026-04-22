@@ -123,6 +123,7 @@
 		80EC3607D5A77491B892D850 /* FrameScrubberView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F4227C1F0056998020E51A9 /* FrameScrubberView.swift */; };
 		8156C99FD4A20C119D33694F /* MarkdownEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97F1B7F9CACBD9C80D193894 /* MarkdownEditorView.swift */; };
 		8316327AFAB5C6D773679E29 /* LastLogPerNodeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13299BDC182386D996E7127C /* LastLogPerNodeStore.swift */; };
+		A1B2C3D4E5F600000000C001 /* LiveRunTreeExpansionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F600000000D001 /* LiveRunTreeExpansionStore.swift */; };
 		833F93A04F824C6BA9E44D35 /* ViewLifecycleLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09D41EE2CAB846A0A15FA10 /* ViewLifecycleLogger.swift */; };
 		837BB432CBD8DF8D14A93BB0 /* RunInspectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8CDE6436EE63BE626BD050B /* RunInspectView.swift */; };
 		856D986364FA527F979E7F89 /* SessionStoreHijackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E0D23E643ED2DC3DAA9AEE4 /* SessionStoreHijackTests.swift */; };
@@ -248,6 +249,7 @@
 		10F823F3026A4A2F724105D8 /* OutputPendingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputPendingView.swift; sourceTree = "<group>"; };
 		12B6A0B98CFB227DDFE73E29 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		13299BDC182386D996E7127C /* LastLogPerNodeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LastLogPerNodeStore.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F600000000D001 /* LiveRunTreeExpansionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunTreeExpansionStore.swift; sourceTree = "<group>"; };
 		13A52186284C07DDD756A191 /* LogViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogViewerView.swift; sourceTree = "<group>"; };
 		16292EFDD24FFD9D4B7E65A4 /* Smithers.Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Palette.swift; sourceTree = "<group>"; };
 		16451FA4A98F26A5BE264533 /* LiveRunTreeE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunTreeE2ETests.swift; sourceTree = "<group>"; };
@@ -590,6 +592,7 @@
 				E61A819BC2A10CA792DE8373 /* LiveRunDevToolsStore.swift */,
 				D98A79EE333E4C68340B7BD2 /* LiveRunHeaderView.swift */,
 				354E0E3297B6BD5ED8EB3280 /* LiveRunLayout.swift */,
+				A1B2C3D4E5F600000000D001 /* LiveRunTreeExpansionStore.swift */,
 				62D97266A86BB52E256401BB /* LiveRunTreeView.swift */,
 				BA94C08B9AE20EECDA056EDF /* LiveRunView.swift */,
 				56F5DF31B8A840E4B4D85C2F /* LogsTab.swift */,
@@ -961,6 +964,7 @@
 				351FB31EF5C28073B6F85C94 /* LiveRunDevToolsStore.swift in Sources */,
 				43E33178F10FDA0EDD2BC457 /* LiveRunHeaderView.swift in Sources */,
 				D558E267156E2332DFBB1181 /* LiveRunLayout.swift in Sources */,
+				A1B2C3D4E5F600000000C001 /* LiveRunTreeExpansionStore.swift in Sources */,
 				787EF02204A67B1569DDE93B /* LiveRunTreeView.swift in Sources */,
 				5C4D6EE62CCAFC44BAF4CC6F /* LiveRunView.swift in Sources */,
 				0776D3D27BE945896D0CEEE3 /* LogViewerView.swift in Sources */,

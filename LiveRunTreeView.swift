@@ -7,10 +7,9 @@ import AppKit
 struct LiveRunTreeView: View {
     @ObservedObject var store: LiveRunDevToolsStore
     @ObservedObject var lastLogStore: LastLogPerNodeStore
+    @ObservedObject private var expansionStore: LiveRunTreeExpansionStore
     var onInspectNode: ((Int) -> Void)?
 
-    @State private var expandedIds: Set<Int> = []
-    @State private var userCollapsedIds: Set<Int> = []
     @State private var searchQuery: String = ""
     @State private var errorIndex = AncestorErrorIndex(root: nil, seq: 0)
     @State private var searchIndex = TreeSearchIndex(root: nil, query: "")
@@ -18,6 +17,26 @@ struct LiveRunTreeView: View {
 
     @FocusState private var isSearchFieldFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(
+        store: LiveRunDevToolsStore,
+        lastLogStore: LastLogPerNodeStore,
+        expansionStore: LiveRunTreeExpansionStore = .shared,
+        onInspectNode: ((Int) -> Void)? = nil
+    ) {
+        self.store = store
+        self.lastLogStore = lastLogStore
+        self.expansionStore = expansionStore
+        self.onInspectNode = onInspectNode
+    }
+
+    private var expandedIds: Set<Int> {
+        expansionStore.expandedIds(runId: store.runId)
+    }
+
+    private var userCollapsedIds: Set<Int> {
+        expansionStore.userCollapsedIds(runId: store.runId)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -192,17 +211,17 @@ struct LiveRunTreeView: View {
     // MARK: - Expand / Collapse
 
     private func toggleExpanded(_ nodeId: Int) {
-        if expandedIds.contains(nodeId) {
-            expandedIds.remove(nodeId)
-            userCollapsedIds.insert(nodeId)
-        } else {
-            expandedIds.insert(nodeId)
-            userCollapsedIds.remove(nodeId)
-        }
+        expansionStore.toggle(nodeId: nodeId, runId: store.runId)
     }
 
     private func autoExpandRunningPaths(root: DevToolsNode) {
-        expandedIds.formUnion(runningPathExpansionIDs(root: root, userCollapsedIds: userCollapsedIds))
+        let ids = runningPathExpansionIDs(root: root, userCollapsedIds: userCollapsedIds)
+        expansionStore.expandAll(ids, runId: store.runId)
+    }
+
+    private func autoExpandFailedPaths(root: DevToolsNode) {
+        let ids = failedPathExpansionIDs(root: root, userCollapsedIds: userCollapsedIds)
+        expansionStore.expandAll(ids, runId: store.runId)
     }
 
     private func expandPathToSelectedNode(_ nodeId: Int) {
@@ -211,8 +230,7 @@ struct LiveRunTreeView: View {
         guard collectPathToNode(nodeId, in: tree, path: &path) else { return }
 
         let idsToExpand = Set(path.dropLast())
-        expandedIds.formUnion(idsToExpand)
-        userCollapsedIds.subtract(idsToExpand)
+        expansionStore.expandAll(idsToExpand, runId: store.runId)
     }
 
     private func collectPathToNode(_ targetId: Int, in node: DevToolsNode, path: inout [Int]) -> Bool {
@@ -251,6 +269,7 @@ struct LiveRunTreeView: View {
 
         if let tree = store.tree {
             autoExpandRunningPaths(root: tree)
+            autoExpandFailedPaths(root: tree)
             logUnknownStates(root: tree)
         }
 
@@ -318,11 +337,9 @@ struct LiveRunTreeView: View {
         if let change = result.expandedChange {
             switch change {
             case .collapse(let id):
-                expandedIds.remove(id)
-                userCollapsedIds.insert(id)
+                expansionStore.collapse(nodeId: id, runId: store.runId)
             case .expand(let id):
-                expandedIds.insert(id)
-                userCollapsedIds.remove(id)
+                expansionStore.expand(nodeId: id, runId: store.runId)
             }
         }
 
@@ -383,6 +400,28 @@ private func collectRunningPathExpansionIDs(
     let newPath = currentPath + [node.id]
     for child in node.children {
         collectRunningPathExpansionIDs(node: child, currentPath: newPath, ids: &ids)
+    }
+}
+
+func failedPathExpansionIDs(root: DevToolsNode, userCollapsedIds: Set<Int>) -> Set<Int> {
+    var ids = Set<Int>()
+    collectFailedPathExpansionIDs(node: root, currentPath: [], ids: &ids)
+    return ids.subtracting(userCollapsedIds)
+}
+
+private func collectFailedPathExpansionIDs(
+    node: DevToolsNode,
+    currentPath: [Int],
+    ids: inout Set<Int>
+) {
+    if extractState(from: node).isFailed {
+        ids.formUnion(currentPath)
+        ids.insert(node.id)
+    }
+
+    let newPath = currentPath + [node.id]
+    for child in node.children {
+        collectFailedPathExpansionIDs(node: child, currentPath: newPath, ids: &ids)
     }
 }
 
