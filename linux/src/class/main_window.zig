@@ -108,6 +108,7 @@ pub const MainWindow = extern struct {
         workspace_handle: smithers.c.smithers_workspace_t = null,
         active_workspace: ?[]u8 = null,
         opening_workspace: bool = false,
+        opening_session: bool = false,
         closing_workspace: bool = false,
         sidebar_hidden: bool = false,
         active_session_index: ?usize = null,
@@ -405,6 +406,10 @@ pub const MainWindow = extern struct {
         return self.private().active_workspace;
     }
 
+    pub fn isOpeningSession(self: *Self) bool {
+        return self.private().opening_session;
+    }
+
     pub fn focusSidebar(self: *Self) void {
         const priv = self.private();
         priv.sidebar_hidden = false;
@@ -475,9 +480,24 @@ pub const MainWindow = extern struct {
         target_id: ?[]const u8,
     ) !void {
         const workspace = self.private().active_workspace;
+        self.private().opening_session = true;
+        defer self.private().opening_session = false;
         const session = try SessionWidget.new(self.private().app, kind, workspace, target_id);
         errdefer session.unref();
+        try self.appendSessionWidget(session);
+    }
 
+    pub fn adoptSessionHandle(self: *Self, handle: smithers.c.smithers_session_t) !bool {
+        if (handle == null) return false;
+        if (self.showSessionHandle(handle)) return true;
+
+        const session = try SessionWidget.fromHandle(self.private().app, handle);
+        errdefer session.unref();
+        try self.appendSessionWidget(session);
+        return true;
+    }
+
+    fn appendSessionWidget(self: *Self, session: *SessionWidget) !void {
         const next_index = self.private().sessions.items.len;
         const name = try std.fmt.allocPrintSentinel(self.allocator(), "session-{d}", .{next_index + 1}, 0);
         defer self.allocator().free(name);
@@ -602,10 +622,6 @@ pub const MainWindow = extern struct {
         priv.title_label = ui.heading("Welcome");
         header.setTitleWidget(priv.title_label.as(gtk.Widget));
 
-        const new_tab = ui.iconButton("tab-new-symbolic", "New tab");
-        _ = gtk.Button.signals.clicked.connect(new_tab, *Self, newTabClicked, self, .{});
-        header.packStart(new_tab.as(gtk.Widget));
-
         const palette = ui.iconButton("system-search-symbolic", "Command palette");
         _ = gtk.Button.signals.clicked.connect(palette, *Self, paletteClicked, self, .{});
         header.packEnd(palette.as(gtk.Widget));
@@ -613,10 +629,6 @@ pub const MainWindow = extern struct {
         const refresh = ui.iconButton("view-refresh-symbolic", "Refresh");
         _ = gtk.Button.signals.clicked.connect(refresh, *Self, refreshClicked, self, .{});
         header.packEnd(refresh.as(gtk.Widget));
-
-        const settings = ui.iconButton("emblem-system-symbolic", "Settings");
-        _ = gtk.Button.signals.clicked.connect(settings, *Self, settingsClicked, self, .{});
-        header.packEnd(settings.as(gtk.Widget));
 
         toolbar.addTopBar(header.as(gtk.Widget));
         priv.stack = gtk.Stack.new();
@@ -1160,20 +1172,12 @@ pub const MainWindow = extern struct {
         return "view-list-symbolic";
     }
 
-    fn newTabClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.presentNewTabPicker();
-    }
-
     fn paletteClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.presentCommandPalette();
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.refreshVisible();
-    }
-
-    fn settingsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.showNav(.settings);
     }
 
     fn workspacesClicked(_: *gtk.Button, self: *Self) callconv(.c) void {

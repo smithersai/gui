@@ -21,38 +21,12 @@ pub const Sidebar = extern struct {
     const Private = struct {
         window: *MainWindow = undefined,
         workspace_label: *gtk.Label = undefined,
-        nav_list: *gtk.ListBox = undefined,
+        dashboard_list: *gtk.ListBox = undefined,
         session_list: *gtk.ListBox = undefined,
+        settings_list: *gtk.ListBox = undefined,
         did_dispose: bool = false,
 
         pub var offset: c_int = 0;
-    };
-
-    const NavEntry = struct {
-        nav: MainWindow.Nav,
-        title: [:0]const u8,
-        icon: [:0]const u8,
-    };
-
-    const nav_entries = [_]NavEntry{
-        .{ .nav = .dashboard, .title = "Dashboard", .icon = "view-grid-symbolic" },
-        .{ .nav = .vcs_dashboard, .title = "VCS Dashboard", .icon = "view-list-symbolic" },
-        .{ .nav = .workflows, .title = "Workflows", .icon = "media-playlist-shuffle-symbolic" },
-        .{ .nav = .jjhub_workflows, .title = "JJHub Workflows", .icon = "media-playlist-repeat-symbolic" },
-        .{ .nav = .runs, .title = "Runs", .icon = "media-playback-start-symbolic" },
-        .{ .nav = .run_inspect, .title = "Run Inspector", .icon = "view-dual-symbolic" },
-        .{ .nav = .approvals, .title = "Approvals", .icon = "security-high-symbolic" },
-        .{ .nav = .tickets, .title = "Tickets", .icon = "text-x-generic-symbolic" },
-        .{ .nav = .changes, .title = "Changes", .icon = "document-edit-symbolic" },
-        .{ .nav = .issues, .title = "Issues", .icon = "emblem-documents-symbolic" },
-        .{ .nav = .landings, .title = "Landings", .icon = "emblem-system-symbolic" },
-        .{ .nav = .agents, .title = "Agents", .icon = "system-users-symbolic" },
-        .{ .nav = .prompts, .title = "Prompts", .icon = "text-x-generic-symbolic" },
-        .{ .nav = .scores, .title = "Scores", .icon = "emblem-ok-symbolic" },
-        .{ .nav = .memory, .title = "Memory", .icon = "document-open-recent-symbolic" },
-        .{ .nav = .triggers, .title = "Triggers", .icon = "appointment-new-symbolic" },
-        .{ .nav = .workspaces, .title = "Workspaces", .icon = "folder-symbolic" },
-        .{ .nav = .settings, .title = "Settings", .icon = "emblem-system-symbolic" },
     };
 
     pub fn new(window: *MainWindow) !*Self {
@@ -76,12 +50,13 @@ pub const Sidebar = extern struct {
             priv.workspace_label.setText("No workspace");
         }
 
-        ui.clearList(priv.nav_list);
-        for (nav_entries, 0..) |entry, index| {
-            const row = ui.row(alloc, entry.icon, entry.title, null) catch continue;
-            ui.setIndex(row.as(gobject.Object), index);
-            priv.nav_list.append(row.as(gtk.Widget));
-        }
+        ui.clearList(priv.dashboard_list);
+        const dash_row = ui.row(alloc, "view-grid-symbolic", "Dashboard", null) catch return;
+        priv.dashboard_list.append(dash_row.as(gtk.Widget));
+
+        ui.clearList(priv.settings_list);
+        const set_row = ui.row(alloc, "emblem-system-symbolic", "Settings", null) catch return;
+        priv.settings_list.append(set_row.as(gtk.Widget));
 
         ui.clearList(priv.session_list);
         const count = priv.window.sessionCount();
@@ -105,8 +80,11 @@ pub const Sidebar = extern struct {
     }
 
     fn build(self: *Self) !void {
+        const outer = gtk.Box.new(.vertical, 0);
+
         const root = gtk.Box.new(.vertical, 12);
         ui.margin(root.as(gtk.Widget), 12);
+        root.as(gtk.Widget).setVexpand(1);
 
         const header = gtk.Box.new(.horizontal, 6);
         const title = ui.heading("Smithers");
@@ -121,19 +99,17 @@ pub const Sidebar = extern struct {
         self.private().workspace_label.setEllipsize(.middle);
         root.append(self.private().workspace_label.as(gtk.Widget));
 
-        const nav_title = ui.dim("NAVIGATION");
-        root.append(nav_title.as(gtk.Widget));
-        self.private().nav_list = gtk.ListBox.new();
-        self.private().nav_list.as(gtk.Widget).addCssClass("navigation-sidebar");
-        self.private().nav_list.setSelectionMode(.none);
+        self.private().dashboard_list = gtk.ListBox.new();
+        self.private().dashboard_list.as(gtk.Widget).addCssClass("navigation-sidebar");
+        self.private().dashboard_list.setSelectionMode(.none);
         _ = gtk.ListBox.signals.row_activated.connect(
-            self.private().nav_list,
+            self.private().dashboard_list,
             *Self,
-            navActivated,
+            dashboardActivated,
             self,
             .{},
         );
-        root.append(self.private().nav_list.as(gtk.Widget));
+        root.append(self.private().dashboard_list.as(gtk.Widget));
 
         const sessions_title = ui.dim("SESSIONS");
         root.append(sessions_title.as(gtk.Widget));
@@ -147,15 +123,40 @@ pub const Sidebar = extern struct {
             self,
             .{},
         );
-        root.append(self.private().session_list.as(gtk.Widget));
+        
+        const scroll = gtk.ScrolledWindow.new();
+        scroll.setPolicy(.never, .automatic);
+        scroll.as(gtk.Widget).setVexpand(1);
+        scroll.setChild(self.private().session_list.as(gtk.Widget));
+        root.append(scroll.as(gtk.Widget));
 
-        self.as(adw.Bin).setChild(root.as(gtk.Widget));
+        outer.append(root.as(gtk.Widget));
+
+        const sep = gtk.Separator.new(.horizontal);
+        outer.append(sep.as(gtk.Widget));
+
+        self.private().settings_list = gtk.ListBox.new();
+        self.private().settings_list.as(gtk.Widget).addCssClass("navigation-sidebar");
+        self.private().settings_list.setSelectionMode(.none);
+        ui.margin4(self.private().settings_list.as(gtk.Widget), 12, 12, 12, 12);
+        _ = gtk.ListBox.signals.row_activated.connect(
+            self.private().settings_list,
+            *Self,
+            settingsActivated,
+            self,
+            .{},
+        );
+        outer.append(self.private().settings_list.as(gtk.Widget));
+
+        self.as(adw.Bin).setChild(outer.as(gtk.Widget));
     }
 
-    fn navActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
-        const index = ui.getIndex(row.as(gobject.Object)) orelse return;
-        if (index >= nav_entries.len) return;
-        self.private().window.showNav(nav_entries[index].nav);
+    fn dashboardActivated(_: *gtk.ListBox, _: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.dashboard);
+    }
+
+    fn settingsActivated(_: *gtk.ListBox, _: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
+        self.private().window.showNav(.settings);
     }
 
     fn sessionActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {

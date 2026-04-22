@@ -142,6 +142,17 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Build and run SmithersGUI (debug)");
     run_step.dependOn(&run_cmd.step);
 
+    // ---- gtk (Linux shell) --------------------------------------------------
+    const gtk_build = b.addSystemCommand(&.{ "zig", "build" });
+    gtk_build.setCwd(b.path("linux"));
+    const gtk_build_step = b.step("gtk", "Build the GTK/libadwaita Linux shell");
+    gtk_build_step.dependOn(&gtk_build.step);
+
+    const gtk_run = b.addSystemCommand(&.{ "zig", "build", "run" });
+    gtk_run.setCwd(b.path("linux"));
+    const gtk_run_step = b.step("gtk-run", "Build and run the GTK Linux shell");
+    gtk_run_step.dependOn(&gtk_run.step);
+
     // ---- clean --------------------------------------------------------------
     const swift_clean = b.addSystemCommand(&.{ "swift", "package", "clean" });
     const clean_step = b.step("clean", "Remove build artifacts");

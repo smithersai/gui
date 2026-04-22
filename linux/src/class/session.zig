@@ -64,20 +64,40 @@ pub const SessionWidget = extern struct {
             .session = smithers.c.smithers_session_new(app.core(), opts),
         };
         if (priv.session == null) return error.SessionCreateFailed;
+        try self.initWithHandle(target_id);
+        return self;
+    }
+
+    pub fn fromHandle(app: *Application, handle: smithers.c.smithers_session_t) !*Self {
+        const self = gobject.ext.newInstance(Self, .{});
+        errdefer self.unref();
+
+        const kind = smithers.c.smithers_session_kind(handle);
+        const priv = self.private();
+        priv.* = .{
+            .app = app,
+            .kind = kind,
+            .session = handle,
+        };
+        try self.initWithHandle(null);
+        return self;
+    }
+
+    fn initWithHandle(self: *Self, target_id: ?[]const u8) !void {
+        const priv = self.private();
         priv.stream = smithers.c.smithers_session_events(priv.session);
 
-        if (kind == smithers.c.SMITHERS_SESSION_KIND_RUN_INSPECT) {
+        if (priv.kind == smithers.c.SMITHERS_SESSION_KIND_RUN_INSPECT) {
             const stream = priv.stream orelse return error.EventStreamCreateFailed;
-            const live = try LiveRunView.newForSession(app, priv.session, false, stream, target_id orelse "");
+            const live = try LiveRunView.newForSession(priv.app, priv.session, false, stream, target_id orelse "");
             _ = live.ref();
             priv.live_run = live;
             priv.stream = null;
             self.as(adw.Bin).setChild(live.as(gtk.Widget));
-            return self;
+            return;
         }
 
         try self.build();
-        return self;
     }
 
     pub fn title(self: *Self, alloc: std.mem.Allocator) ![]u8 {
@@ -278,7 +298,6 @@ pub const SessionWidget = extern struct {
         if (self.private().session) |session| {
             smithers.c.smithers_session_send_text(session, text.ptr, text.len);
         }
-        self.appendMarkdown(text) catch |err| log.warn("failed to append sent text: {}", .{err});
         entry.as(gtk.Editable).setText("");
     }
 

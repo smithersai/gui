@@ -88,6 +88,17 @@ pub const Application = extern struct {
             priv.shortcut_bindings = .{ .allocator = alloc };
         }
 
+        const css = 
+            \\ list.navigation-sidebar { background-color: transparent; }
+            \\ row.navigation-sidebar { border-radius: 6px; margin: 2px 8px; }
+        ;
+        const provider = gtk.CssProvider.new();
+        provider.loadFromString(css);
+        if (gdk.Display.getDefault()) |display| {
+            gtk.StyleContext.addProviderForDisplay(display, provider.as(gtk.StyleProvider), 600);
+        }
+        provider.unref();
+
         self.installActions();
         _ = gio.Application.signals.activate.connect(
             self.as(gio.Application),
@@ -328,8 +339,9 @@ pub const Application = extern struct {
             smithers.c.SMITHERS_ACTION_NEW_SESSION => {
                 if (self.private().main_window) |win| {
                     if (targetSession(target)) |session| {
-                        _ = win.showSessionHandle(session);
-                        return true;
+                        if (win.showSessionHandle(session)) return true;
+                        if (win.isOpeningSession()) return true;
+                        return (win.adoptSessionHandle(session) catch return false);
                     }
                     win.openSession(action.u.new_session.kind, null) catch return false;
                     return true;

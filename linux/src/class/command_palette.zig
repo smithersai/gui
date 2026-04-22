@@ -227,13 +227,7 @@ pub const CommandPalette = extern struct {
         }
 
         _ = priv.dialog.close();
-        if (std.mem.eql(u8, item.id, "nav:dashboard")) return priv.window.showNav(.dashboard);
-        if (std.mem.eql(u8, item.id, "nav:workflows")) return priv.window.showNav(.workflows);
-        if (std.mem.eql(u8, item.id, "nav:runs")) return priv.window.showNav(.runs);
-        if (std.mem.eql(u8, item.id, "nav:approvals")) return priv.window.showNav(.approvals);
-        if (std.mem.eql(u8, item.id, "nav:agents")) return priv.window.showNav(.agents);
-        if (std.mem.eql(u8, item.id, "nav:workspaces")) return priv.window.showNav(.workspaces);
-        if (std.mem.eql(u8, item.id, "nav:settings")) return priv.window.showNav(.settings);
+        if (paletteRoute(item.id)) |route| return priv.window.showNav(route);
         if (std.mem.eql(u8, item.id, "new:terminal")) return priv.window.openSession(smithers.c.SMITHERS_SESSION_KIND_TERMINAL, null) catch {};
         if (std.mem.eql(u8, item.id, "new:chat")) return priv.window.openSession(smithers.c.SMITHERS_SESSION_KIND_CHAT, null) catch {};
         if (std.mem.startsWith(u8, item.id, "workflow:")) return priv.window.showNav(.workflows);
@@ -241,6 +235,23 @@ pub const CommandPalette = extern struct {
     }
 
     fn paletteIcon(kind: []const u8, id: []const u8) [:0]const u8 {
+        if (paletteRoute(id)) |route| {
+            return switch (route) {
+                .dashboard => "view-grid-symbolic",
+                .workflows => "media-playlist-shuffle-symbolic",
+                .runs => "media-playback-start-symbolic",
+                .approvals => "object-select-symbolic",
+                .agents => "system-users-symbolic",
+                .prompts => "text-x-generic-symbolic",
+                .scores => "view-statistics-symbolic",
+                .memory => "document-open-recent-symbolic",
+                .triggers => "alarm-symbolic",
+                .workspaces => "folder-symbolic",
+                .settings => "emblem-system-symbolic",
+                .changes, .landings, .issues, .tickets, .jjhub_workflows => "view-list-symbolic",
+                else => "system-search-symbolic",
+            };
+        }
         if (std.mem.startsWith(u8, id, "new:")) return "tab-new-symbolic";
         if (std.mem.startsWith(u8, id, "workflow:") or std.ascii.eqlIgnoreCase(kind, "workflow")) return "media-playlist-shuffle-symbolic";
         if (std.mem.startsWith(u8, id, "file:") or std.ascii.eqlIgnoreCase(kind, "file")) return "text-x-generic-symbolic";
@@ -248,6 +259,33 @@ pub const CommandPalette = extern struct {
         if (std.ascii.eqlIgnoreCase(kind, "run")) return "media-playback-start-symbolic";
         if (std.ascii.eqlIgnoreCase(kind, "session")) return "utilities-terminal-symbolic";
         return "system-search-symbolic";
+    }
+
+    fn paletteRoute(id: []const u8) ?MainWindow.Nav {
+        const token = if (std.mem.startsWith(u8, id, "route:"))
+            id["route:".len..]
+        else if (std.mem.startsWith(u8, id, "nav:"))
+            id["nav:".len..]
+        else
+            return null;
+
+        if (std.mem.eql(u8, token, "dashboard")) return .dashboard;
+        if (std.mem.eql(u8, token, "workflows")) return .workflows;
+        if (std.mem.eql(u8, token, "runs")) return .runs;
+        if (std.mem.eql(u8, token, "approvals")) return .approvals;
+        if (std.mem.eql(u8, token, "agents")) return .agents;
+        if (std.mem.eql(u8, token, "prompts")) return .prompts;
+        if (std.mem.eql(u8, token, "scores")) return .scores;
+        if (std.mem.eql(u8, token, "memory")) return .memory;
+        if (std.mem.eql(u8, token, "triggers")) return .triggers;
+        if (std.mem.eql(u8, token, "workspaces")) return .workspaces;
+        if (std.mem.eql(u8, token, "changes")) return .changes;
+        if (std.mem.eql(u8, token, "jjhub-workflows")) return .jjhub_workflows;
+        if (std.mem.eql(u8, token, "landings")) return .landings;
+        if (std.mem.eql(u8, token, "tickets")) return .tickets;
+        if (std.mem.eql(u8, token, "issues")) return .issues;
+        if (std.mem.eql(u8, token, "settings")) return .settings;
+        return null;
     }
 
     fn searchChanged(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
