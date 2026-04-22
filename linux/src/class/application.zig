@@ -91,47 +91,147 @@ pub const Application = extern struct {
         adw.StyleManager.getDefault().setColorScheme(.force_dark);
 
         const css = 
-            \\ window {
-            \\     background-color: #0C0E16;
-            \\     --window-bg-color: #0C0E16;
-            \\     --window-fg-color: rgba(255, 255, 255, 0.88);
-            \\     --view-bg-color: #141826;
-            \\     --view-fg-color: rgba(255, 255, 255, 0.88);
-            \\     --headerbar-bg-color: #141826;
-            \\     --headerbar-fg-color: rgba(255, 255, 255, 0.70);
-            \\     --popover-bg-color: #1A2030;
-            \\     --popover-fg-color: rgba(255, 255, 255, 0.88);
-            \\     --accent-color: #4C8DFF;
-            \\     --accent-bg-color: #4C8DFF;
-            \\     --card-bg-color: #1A2030;
-            \\     --card-fg-color: rgba(255, 255, 255, 0.88);
-            \\     --card-border-color: rgba(255, 255, 255, 0.08);
-            \\     --border-color: rgba(255, 255, 255, 0.08);
+            \\ @define-color base_bg_color #0C0E16;
+            \\ @define-color surface1_color #141826;
+            \\ @define-color surface2_color #1A2030;
+            \\ @define-color accent_color #4C8DFF;
+            \\ @define-color success_color #34D399;
+            \\ @define-color warning_color #FBBF24;
+            \\ @define-color error_color #F87171;
+            \\ @define-color info_color #60A5FA;
+            \\ @define-color border_color rgba(255, 255, 255, 0.08);
+            \\ @define-color border_hover_color rgba(255, 255, 255, 0.12);
+            \\ @define-color window_bg_color @base_bg_color;
+            \\ @define-color window_fg_color rgba(255, 255, 255, 0.88);
+            \\ @define-color view_bg_color @surface1_color;
+            \\ @define-color view_fg_color rgba(255, 255, 255, 0.88);
+            \\ @define-color headerbar_bg_color @surface1_color;
+            \\ @define-color headerbar_fg_color rgba(255, 255, 255, 0.70);
+            \\ @define-color popover_bg_color @surface2_color;
+            \\ @define-color popover_fg_color rgba(255, 255, 255, 0.88);
+            \\ @define-color card_bg_color @surface2_color;
+            \\ @define-color card_fg_color rgba(255, 255, 255, 0.88);
+            \\ 
+            \\ window, dialog, .background {
+            \\     background-color: @base_bg_color;
+            \\     color: @window_fg_color;
             \\ }
-            \\ .navigation-sidebar { 
-            \\     background-color: #0C0E16; 
+            \\ headerbar {
+            \\     background-color: @surface1_color;
+            \\     box-shadow: none;
+            \\     border-bottom: 1px solid @border_color;
             \\ }
-            \\ list.navigation-sidebar { 
-            \\     background-color: transparent; 
+            \\ headerbar title {
+            \\     font-weight: 600;
             \\ }
-            \\ row.navigation-sidebar { 
-            \\     border-radius: 6px; 
-            \\     margin: 2px 8px; 
+            \\ .navigation-sidebar {
+            \\     background-color: @base_bg_color;
+            \\     border-right: 1px solid @border_color;
             \\ }
-            \\ row.navigation-sidebar:selected, row.navigation-sidebar.selected {
+            \\ .navigation-sidebar > list {
+            \\     background-color: transparent;
+            \\ }
+            \\ .navigation-sidebar row {
+            \\     border-radius: 6px;
+            \\     margin: 2px 8px;
+            \\     padding: 2px;
+            \\     transition: background-color 0.15s ease-out, color 0.15s ease-out;
+            \\     color: rgba(255, 255, 255, 0.60);
+            \\ }
+            \\ .navigation-sidebar row:hover {
+            \\     background-color: rgba(255, 255, 255, 0.04);
+            \\     color: rgba(255, 255, 255, 0.88);
+            \\ }
+            \\ .navigation-sidebar row:selected, .navigation-sidebar row.selected {
             \\     background-color: rgba(76, 141, 255, 0.12);
-            \\     color: #4C8DFF;
+            \\     color: @accent_color;
             \\ }
-            \\ row.navigation-sidebar:hover {
+            \\ button {
+            \\     background-color: rgba(255, 255, 255, 0.06);
+            \\     color: rgba(255, 255, 255, 0.88);
+            \\     border: 1px solid rgba(255, 255, 255, 0.10);
+            \\     border-radius: 6px;
+            \\     transition: all 0.12s ease-out;
+            \\ }
+            \\ button:hover {
+            \\     background-color: rgba(255, 255, 255, 0.10);
+            \\     border-color: @border_hover_color;
+            \\     color: #FFFFFF;
+            \\ }
+            \\ button:active {
             \\     background-color: rgba(255, 255, 255, 0.04);
             \\ }
+            \\ button.suggested-action {
+            \\     background-color: @accent_color;
+            \\     color: #FFFFFF;
+            \\ }
+            \\ button.destructive-action {
+            \\     background-color: @error_color;
+            \\     color: #FFFFFF;
+            \\ }
+            \\ button.flat, button.image-button {
+            \\     background-color: transparent;
+            \\     border-color: transparent;
+            \\ }
+            \\ button.flat:hover, button.image-button:hover {
+            \\     background-color: rgba(255, 255, 255, 0.06);
+            \\ }
+            \\ entry {
+            \\     background-color: rgba(255, 255, 255, 0.06);
+            \\     color: rgba(255, 255, 255, 0.88);
+            \\     border: 1px solid @border_color;
+            \\     border-radius: 6px;
+            \\     transition: all 0.15s ease-out;
+            \\ }
+            \\ entry:focus-within {
+            \\     border-color: @accent_color;
+            \\     background-color: rgba(255, 255, 255, 0.08);
+            \\ }
             \\ .boxed-list {
-            \\     background-color: #1A2030;
+            \\     background-color: @surface2_color;
             \\     border-radius: 8px;
-            \\     border: 1px solid rgba(255, 255, 255, 0.08);
+            \\     border: 1px solid @border_color;
+            \\     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
             \\ }
             \\ list row {
             \\     background-color: transparent;
+            \\     border-bottom: 1px solid @border_color;
+            \\     transition: background-color 0.15s ease-out;
+            \\ }
+            \\ list row:last-child {
+            \\     border-bottom: none;
+            \\ }
+            \\ list row.activatable:hover {
+            \\     background-color: rgba(255, 255, 255, 0.04);
+            \\ }
+            \\ list row:selected {
+            \\     background-color: rgba(76, 141, 255, 0.12);
+            \\ }
+            \\ .dim-label {
+            \\     color: rgba(255, 255, 255, 0.60);
+            \\ }
+            \\ scrollbar slider {
+            \\     background-color: rgba(255, 255, 255, 0.15);
+            \\     border-radius: 4px;
+            \\ }
+            \\ scrollbar slider:hover {
+            \\     background-color: rgba(255, 255, 255, 0.25);
+            \\ }
+            \\ popover > contents {
+            \\     background-color: @surface2_color;
+            \\     border: 1px solid @border_color;
+            \\     border-radius: 8px;
+            \\     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+            \\ }
+            \\ tooltip {
+            \\     background-color: @surface2_color;
+            \\     color: rgba(255, 255, 255, 0.88);
+            \\     border: 1px solid @border_color;
+            \\     border-radius: 6px;
+            \\     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            \\ }
+            \\ splitview > separator {
+            \\     background-color: @border_color;
             \\ }
         ;
         const provider = gtk.CssProvider.new();
