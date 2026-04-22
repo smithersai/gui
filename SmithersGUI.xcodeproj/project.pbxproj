@@ -169,6 +169,7 @@
 		B7DE77E393B6581AB70E2DFC /* DefaultTabPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CCEB2A1283A77BEFEB62F60 /* DefaultTabPicker.swift */; };
 		B801A5F12D68217EB94F9687 /* LiveRunDevToolsAccessibilityE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8D72B50429C971EA0FAB6EE /* LiveRunDevToolsAccessibilityE2ETests.swift */; };
 		B9164AE66102549CF45B109C /* Smithers.ExternalAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D3AB31B7862904444B9CF0 /* Smithers.ExternalAgent.swift */; };
+		BB574C26603DD44C8215BD9A /* WorkflowFrontendResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61AB9B67D4C840038ED9F6B6 /* WorkflowFrontendResolverTests.swift */; };
 		BB606C8374FC969069B4A87F /* TreeSearchIndexTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BAF892C1C0D8A04F2FCEFF5 /* TreeSearchIndexTests.swift */; };
 		BC238D57E2DB273640B149C3 /* StoreScrubTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFC8441EAEBD8BD8EB49546B /* StoreScrubTests.swift */; };
 		C097CE832D33DB8E92B6558F /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE09D1B654EB6E252EB15120 /* IOKit.framework */; };
@@ -210,6 +211,7 @@
 		F1BD3C24524F3FEA4A3F2349 /* Smithers.Terminal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44D94BBD0E48CBCBE8F93699 /* Smithers.Terminal.swift */; };
 		F494F0E663A500B127B69886 /* FrameScrubberTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98672C5D1554EEAC2A0B1419 /* FrameScrubberTests.swift */; };
 		F4A0661523912D5F0C2300DC /* CommandPaletteWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63FA22436051E28C7B2C15D1 /* CommandPaletteWorkflowTests.swift */; };
+		F4AF68B67E4178B36782054D /* WorkflowFrontendView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24FDA72CE6C7DF5BAC7EA36B /* WorkflowFrontendView.swift */; };
 		F72DF3F7E7AEEF647ED4F51E /* LogsTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81708C8F351548996C60CA6 /* LogsTabTests.swift */; };
 		F742B759992C5DCE1278E1E2 /* OutputTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C0D1D16B0D589031300F30 /* OutputTabTests.swift */; };
 		F8907CA3F2B945D6C12F4E6D /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 17F017DCB3D690AAEC40A72C /* SystemConfiguration.framework */; };
@@ -271,6 +273,7 @@
 		1E9879F0E36EB69E3C34575B /* LandingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingsView.swift; sourceTree = "<group>"; };
 		21E09F47B97A3312134C4629 /* ApprovalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsView.swift; sourceTree = "<group>"; };
 		222BBAD1B7A3D2D98EAAE607 /* Smithers.SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.SessionStore.swift; sourceTree = "<group>"; };
+		24FDA72CE6C7DF5BAC7EA36B /* WorkflowFrontendView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowFrontendView.swift; sourceTree = "<group>"; };
 		2959640581AF7E41AA2617AE /* SessionPersistenceE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPersistenceE2ETests.swift; sourceTree = "<group>"; };
 		2BC8F51D9407A4AF34C5262D /* Smithers.Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Workspace.swift; sourceTree = "<group>"; };
 		2C6D9A7C3644EB54DAECAEE0 /* Smithers.Error.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Error.swift; sourceTree = "<group>"; };
@@ -318,6 +321,7 @@
 		601F75B73DED151991A03455 /* ExternalAgentKindTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalAgentKindTests.swift; sourceTree = "<group>"; };
 		60661F637E190B01E6933B42 /* SmithersGUI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SmithersGUI.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		618B233151E620C348F5B982 /* UnifiedDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDiffView.swift; sourceTree = "<group>"; };
+		61AB9B67D4C840038ED9F6B6 /* WorkflowFrontendResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowFrontendResolverTests.swift; sourceTree = "<group>"; };
 		620B5F99CFCBC8ADE7B08F39 /* Smithers.Upgrader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Upgrader.swift; sourceTree = "<group>"; };
 		6271E01551F64DF581EE86ED /* ScrubberDebounceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberDebounceTests.swift; sourceTree = "<group>"; };
 		6294F7B3AB91AB50DA97C578 /* LiveRunDevToolsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunDevToolsStoreTests.swift; sourceTree = "<group>"; };
@@ -659,6 +663,7 @@
 				084DCDF8CB360AEC7497D0DC /* VCSDashboardView.swift */,
 				E09D41EE2CAB846A0A15FA10 /* ViewLifecycleLogger.swift */,
 				06983F229A9AA5A68E65C689 /* WelcomeView.swift */,
+				24FDA72CE6C7DF5BAC7EA36B /* WorkflowFrontendView.swift */,
 				D32A03BC85254A825EFA32FE /* WorkflowsView.swift */,
 				3F66E5ACCD5C8094B0D436FC /* WorkspaceContentView.swift */,
 				01BCA6B4521AB9972F0876DC /* WorkspaceSurfaceModels.swift */,
@@ -727,6 +732,7 @@
 				5BAF892C1C0D8A04F2FCEFF5 /* TreeSearchIndexTests.swift */,
 				C24885533E0CF98ACF1806FB /* UITestSupportTests.swift */,
 				BCC7E241B37104CAD6295A37 /* UnifiedDiffParserTests.swift */,
+				61AB9B67D4C840038ED9F6B6 /* WorkflowFrontendResolverTests.swift */,
 				FE2278AE13CDB2E2F79E6FA3 /* WorkspaceSurfaceModelsTests.swift */,
 			);
 			name = SmithersGUITests;
@@ -935,6 +941,7 @@
 				BB606C8374FC969069B4A87F /* TreeSearchIndexTests.swift in Sources */,
 				E3F7E11015E3A7C71D209FFE /* UITestSupportTests.swift in Sources */,
 				1BC4DC0720B2102CE2D0C917 /* UnifiedDiffParserTests.swift in Sources */,
+				BB574C26603DD44C8215BD9A /* WorkflowFrontendResolverTests.swift in Sources */,
 				E2C373E8E47F69BA99E9A778 /* WorkspaceSurfaceModelsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1053,6 +1060,7 @@
 				AB2A2BE85C1744B214C7D0FE /* VCSDashboardView.swift in Sources */,
 				833F93A04F824C6BA9E44D35 /* ViewLifecycleLogger.swift in Sources */,
 				015E82549F67A9B08355D515 /* WelcomeView.swift in Sources */,
+				F4AF68B67E4178B36782054D /* WorkflowFrontendView.swift in Sources */,
 				4FB813BE6E42240C2EC29322 /* WorkflowsView.swift in Sources */,
 				317B0AA5863A99D5238A929A /* WorkspaceContentView.swift in Sources */,
 				5345A5A795C5D0E94938381A /* WorkspaceSurfaceModels.swift in Sources */,

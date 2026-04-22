@@ -44,11 +44,15 @@ struct WorkflowsView: View {
     // Runs state
     @State private var workflowRuns: [RunSummary] = []
     @State private var isLoadingRuns = false
+    @State private var workflowFrontend: WorkflowFrontendDescriptor?
+    @State private var isLoadingFrontend = false
+    @State private var frontendLoadError: String?
 
     enum DetailTab: String, CaseIterable {
         case source = "Workflow"
         case imports = "Imports"
         case runs = "Runs"
+        case app = "App"
         case launch = "Launch"
     }
 
@@ -153,6 +157,15 @@ struct WorkflowsView: View {
     private var selectedRunError: String? {
         guard let workflowID = selectedWorkflow?.id else { return nil }
         return runErrorByWorkflowID[workflowID]
+    }
+
+    private var availableTabs: [DetailTab] {
+        var tabs: [DetailTab] = [.source, .imports, .runs]
+        if workflowFrontend != nil || isLoadingFrontend {
+            tabs.append(.app)
+        }
+        tabs.append(.launch)
+        return tabs
     }
 
     var body: some View {
@@ -358,7 +371,7 @@ struct WorkflowsView: View {
 
                     // Tab bar + save
                     HStack(spacing: 0) {
-                        ForEach(DetailTab.allCases, id: \.self) { t in
+                        ForEach(availableTabs, id: \.self) { t in
                             Button(action: { tab = t }) {
                                 HStack(spacing: 4) {
                                     Text(t.rawValue)
@@ -438,6 +451,8 @@ struct WorkflowsView: View {
                         importsPane
                     case .runs:
                         runsPane
+                    case .app:
+                        frontendPane(for: workflow)
                     case .launch:
                         launchPane
                     }
@@ -1272,6 +1287,9 @@ struct WorkflowsView: View {
         saveError = nil
         workflowRuns = []
         isLoadingRuns = false
+        workflowFrontend = nil
+        isLoadingFrontend = false
+        frontendLoadError = nil
         tab = .source
         refreshNvimSession(for: workflow)
 
@@ -1279,6 +1297,7 @@ struct WorkflowsView: View {
             await loadDAG(workflow)
             await loadWorkflowSource(workflow)
             await loadWorkflowRuns()
+            await loadWorkflowFrontend(workflow)
         }
     }
 
@@ -1374,6 +1393,9 @@ struct WorkflowsView: View {
                 launchInputs = [:]
                 launchValidationErrors = [:]
                 doctorIssues = []
+                workflowFrontend = nil
+                isLoadingFrontend = false
+                frontendLoadError = nil
             }
         } catch {
             self.error = error.localizedDescription
@@ -1447,6 +1469,32 @@ struct WorkflowsView: View {
         } catch {
             // Silently fail — runs are supplementary info
             workflowRuns = []
+        }
+    }
+
+    private func loadWorkflowFrontend(_ workflow: Workflow) async {
+        isLoadingFrontend = true
+        frontendLoadError = nil
+        defer {
+            if selectedWorkflow?.id == workflow.id {
+                isLoadingFrontend = false
+            }
+        }
+
+        do {
+            let descriptor = try WorkflowFrontendResolver.loadDescriptor(for: workflow, smithers: smithers)
+            guard selectedWorkflow?.id == workflow.id else { return }
+            workflowFrontend = descriptor
+            if descriptor == nil, tab == .app {
+                tab = .source
+            }
+        } catch {
+            guard selectedWorkflow?.id == workflow.id else { return }
+            workflowFrontend = nil
+            frontendLoadError = error.localizedDescription
+            if tab == .app {
+                tab = .source
+            }
         }
     }
 
@@ -1822,6 +1870,42 @@ struct WorkflowsView: View {
         if let id = nvimImportSessionId {
             TerminalSurfaceRegistry.shared.deregister(sessionId: id)
             nvimImportSessionId = nil
+        }
+    }
+
+    @ViewBuilder
+    private func frontendPane(for workflow: Workflow) -> some View {
+        if let descriptor = workflowFrontend {
+            WorkflowFrontendView(
+                workflow: workflow,
+                descriptor: descriptor,
+                workingDirectory: smithers.workingDirectory
+            )
+            .id(descriptor.manifestPath)
+        } else if isLoadingFrontend {
+            VStack(spacing: 10) {
+                ProgressView()
+                    .scaleEffect(0.8)
+                Text("Checking for workflow frontend...")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(spacing: 10) {
+                Image(systemName: "rectangle.on.rectangle.slash")
+                    .font(.system(size: 26))
+                    .foregroundColor(Theme.textTertiary)
+                Text("No custom frontend")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(Theme.textPrimary)
+                Text(frontendLoadError ?? "Add a `<workflow>.frontend/manifest.json` bundle next to the workflow to expose an app here.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

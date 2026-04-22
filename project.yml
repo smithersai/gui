@@ -111,6 +111,7 @@ targets:
       - VCSDashboardView.swift
       - ViewLifecycleLogger.swift
       - WorkspaceContentView.swift
+      - WorkflowFrontendView.swift
       - WorkspaceSurfaceModels.swift
       - WorkflowsView.swift
       - WorkspacesView.swift
