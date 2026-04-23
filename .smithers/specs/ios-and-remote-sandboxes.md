@@ -172,6 +172,8 @@ Desktop-local is structurally different enough from the iOS-and-remote-sandboxes
 
 `libsmithers-core` (Zig) is the client runtime. It owns three network surfaces and one local store, and it exposes a single FFI for platform UIs.
 
+> Failure modes across all four surfaces (auth expiry, shape ACL deny, WebSocket origin reject, network transient, schema mismatch) map to the error taxonomy in [`ios-and-remote-sandboxes-observability.md` §4](ios-and-remote-sandboxes-observability.md#4-error-taxonomy). The client metrics called out below (shape count, WS reconnect, SQLite bytes, etc.) are defined in [observability §2.1](ios-and-remote-sandboxes-observability.md#21-client-side-libsmithers-core).
+
 ### Network surfaces
 
 1. **Electric shape client.** HTTP client for plue's `/v1/shape` auth-proxied endpoint. Implements the ElectricSQL shape protocol (initial snapshot + long-poll for deltas, offset/shape-handle tokens for resume). DIY Zig, ~500–800 LOC, referenced against `@electric-sql/client` and the TS sync code in `oss/packages/sdk/src/services/sync.ts`. Handles its own reconnection — no platform-visible "offline" state beyond what the UI chooses to show.

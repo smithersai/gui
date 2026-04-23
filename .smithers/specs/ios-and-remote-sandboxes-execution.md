@@ -100,6 +100,7 @@ Each is its own ticket. Ordered within groups, but groups can progress in parall
 - Error taxonomy: network transient vs. auth hard-fail vs. quota exceeded vs. sandbox unavailable vs. schema mismatch. Which errors show to user, which retry silently.
 - Rate limits (per-user shape subscription count, WS open rate).
 - *Done when:* doc lives at `.smithers/specs/ios-and-remote-sandboxes-observability.md`, reviewed.
+- *Status:* landed. The doc is at [`ios-and-remote-sandboxes-observability.md`](ios-and-remote-sandboxes-observability.md) and is the source of truth for metric and error-code additions for every ticket in this initiative (referenced by validation universal checks #4 and #5).
 
 **D3: Independent validation checklist.**
 - For each ticket, what does a reviewing agent check to independently confirm "done" beyond "tests pass"?
