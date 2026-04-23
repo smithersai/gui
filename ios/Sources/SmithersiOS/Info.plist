@@ -68,11 +68,34 @@
             </array>
         </dict>
     </array>
-    <!-- Explicit app transport security: only talk to plue over https. -->
+    <!-- Explicit app transport security: only talk to plue over https
+         in production. The NSExceptionDomains entries below narrowly
+         whitelist `localhost` + `127.0.0.1` for the iOS E2E harness
+         (ticket ios-e2e-harness) so XCUITest can exercise the runtime
+         against a plue docker-compose stack on the developer's machine
+         without globally disabling ATS. No production host is listed
+         here — the production API stays https-only. -->
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>
         <false/>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <key>localhost</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSIncludesSubdomains</key>
+                <false/>
+            </dict>
+            <key>127.0.0.1</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSIncludesSubdomains</key>
+                <false/>
+            </dict>
+        </dict>
     </dict>
 </dict>
 </plist>

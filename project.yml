@@ -253,6 +253,11 @@ targets:
       # full-screen presenter. Compiles for iOS. Remote-only surface;
       # desktop's Local-recents section stays on the macOS side.
       - WorkspaceSwitcherView.swift
+      # ticket ios-e2e-harness — env-var-gated test hooks. In production
+      # builds the whole module is dormant (E2EEnvironment.parse()
+      # returns nil when PLUE_E2E_MODE is unset), so it is safe to ship
+      # in the App Store binary.
+      - path: Shared/Sources/SmithersE2ESupport
     settings:
       base:
         # Ticket 0125: bundle id is the canonical App Store Connect identifier.
@@ -354,6 +359,33 @@ targets:
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
+  # ---------------------------------------------------------------------------
+  # iOS E2E test target (ticket ios-e2e-harness). Full-stack XCUITest bundle
+  # that talks to a real plue backend on localhost:4000 via the PLUE_E2E_MODE
+  # env-var bypass in SmithersE2ESupport. See ios/scripts/run-e2e.sh for the
+  # orchestration. DISTINCT from SmithersiOSUITests (which is the unit-y
+  # launch smoke bundle from 0121) — keep them separate so the cheap launch
+  # test runs on every PR but the expensive e2e suite only runs on main.
+  # ---------------------------------------------------------------------------
+  SmithersiOSE2ETests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ios/Tests/SmithersiOSE2ETests
+    dependencies:
+      - target: SmithersiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOSE2ETests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: SmithersiOS
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
 schemes:
   SmithersGUI:
     build:
@@ -376,4 +408,49 @@ schemes:
       targets:
         - SmithersiOSTests
         - SmithersiOSUITests
+      gatherCoverageData: false
+  # Dedicated scheme for the full-stack E2E bundle. Kept separate from
+  # the `SmithersiOS` scheme so `xcodebuild -scheme SmithersiOSE2ETests test`
+  # runs ONLY the e2e bundle and does not re-run the launch smoke test.
+  #
+  # The scheme points at `SmithersiOSE2ETests.xctestplan` whose
+  # `environmentVariableEntries` use `$(SMITHERS_E2E_BEARER)` etc. so
+  # values come from the xcodebuild invocation's process environment.
+  # This is the only reliable way to thread env vars into an XCUITest
+  # runner process — direct `-env` or shell env inheritance does not
+  # propagate through the test host on iOS.
+  SmithersiOSE2ETests:
+    build:
+      targets:
+        SmithersiOS: all
+        SmithersiOSE2ETests: [test]
+    test:
+      # Scheme-level environment variables are the reliable path to
+      # thread values into the XCUITest runner's `ProcessInfo`. Values
+      # use `${...}` macros that xcodebuild resolves at test time from
+      # the invoking process environment — so `ios/scripts/run-e2e.sh`
+      # just exports these and calls xcodebuild. No xctestplan needed
+      # (xcodegen 2.43's testPlans wiring emits an empty block on our
+      # machine; this path is known-good).
+      environmentVariables:
+        - variable: SMITHERS_E2E_BEARER
+          value: $(SMITHERS_E2E_BEARER)
+          isEnabled: true
+        - variable: PLUE_BASE_URL
+          value: $(PLUE_BASE_URL)
+          isEnabled: true
+        - variable: PLUE_E2E_SEEDED
+          value: $(PLUE_E2E_SEEDED)
+          isEnabled: true
+        - variable: PLUE_E2E_SEEDED_WORKSPACE_TITLE
+          value: $(PLUE_E2E_SEEDED_WORKSPACE_TITLE)
+          isEnabled: true
+        - variable: PLUE_E2E_WORKSPACE_ID
+          value: $(PLUE_E2E_WORKSPACE_ID)
+          isEnabled: true
+        - variable: SMITHERS_E2E_REFRESH
+          value: $(SMITHERS_E2E_REFRESH)
+          isEnabled: true
+      targets:
+        - SmithersiOSE2ETests
       gatherCoverageData: false

@@ -21,6 +21,7 @@ let package = Package(
         .library(name: "SmithersAuth", targets: ["SmithersAuth"]),
         .library(name: "SmithersRuntime", targets: ["SmithersRuntime"]),
         .library(name: "SmithersStore", targets: ["SmithersStore"]),
+        .library(name: "SmithersE2ESupport", targets: ["SmithersE2ESupport"]),
     ],
     targets: [
         .target(
@@ -66,6 +67,13 @@ let package = Package(
             name: "SmithersStoreTests",
             dependencies: ["SmithersStore"],
             path: "Tests/SmithersStoreTests"
+        ),
+        // Ticket ios-e2e-harness — env-var-gated test hooks. Depends on
+        // SmithersAuth for OAuth2Tokens / TokenStore.
+        .target(
+            name: "SmithersE2ESupport",
+            dependencies: ["SmithersAuth"],
+            path: "Sources/SmithersE2ESupport"
         ),
     ]
 )
