@@ -1,0 +1,14 @@
+.{
+    .name = .ws_pty,
+    .version = "0.0.1",
+    .fingerprint = 0xbc82040b1c721ee8,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "test",
+        "README.md",
+    },
+}
