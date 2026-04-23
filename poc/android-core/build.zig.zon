@@ -1,0 +1,15 @@
+.{
+    .name = .smithers_android_core,
+    .version = "0.0.0",
+    .fingerprint = 0xff48fe7052ae2e56,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        // The canary depends on the 0095 FFI file directly by relative
+        // path; `zig build` refuses to resolve paths outside `.paths`.
+        "../zig-swift-ffi/src/ffi_poc.zig",
+    },
+}

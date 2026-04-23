@@ -145,6 +145,89 @@ jobs:
             test
 
   # ---------------------------------------------------------------------------
+  # Android core canary (ticket 0104).
+  #
+  # Builds `libsmithers_core.so` for `aarch64-linux-android` via Zig and
+  # then assembles the minimal Kotlin app under `poc/android-core/` via
+  # the Android Gradle Plugin. This is a CONTINUOUS BUILD CANARY — it
+  # exists to fail loudly when a Stage-0/1 change forecloses Android
+  # compilation. Required, not advisory: a failure here blocks the PR.
+  #
+  # No emulator run: spec accepts build-only in CI (emulator runs are
+  # dev-local). Runtime smoke is documented in poc/android-core/README.md.
+  #
+  # NDK version is pinned via the Android SDK manager invocation; bumping
+  # it is a real code review event (it can change libc symbols the Zig
+  # core links against).
+  # ---------------------------------------------------------------------------
+  android-core-canary:
+    name: Android core canary (build-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_NDK_VERSION: "26.3.11579264"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # Do not pass `packages:` here — the action installs the latest
+          # commandlinetools by default. We install the pinned components
+          # explicitly below so the NDK version is auditable in this file.
+          log-accepted-android-sdk-licenses: false
+      - name: Install pinned NDK + platforms
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK_ROOT=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+      - name: Install Zig (pinned)
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.15.2
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+      - name: Zig cross-compile sanity check (aarch64-linux-android)
+        # Independent verification that the Zig source cross-compiles
+        # even before Gradle orchestrates it. Fast-fails when a Zig-side
+        # regression breaks the core.
+        working-directory: poc/android-core
+        run: zig build --release=small
+      - name: Report .so size
+        working-directory: poc/android-core
+        run: |
+          if [ -f zig-out/lib/libsmithers_core.so ]; then
+            ls -l zig-out/lib/libsmithers_core.so
+            echo "size_bytes=$(stat -c%s zig-out/lib/libsmithers_core.so)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::libsmithers_core.so not emitted (NDK may not have been picked up)."
+            ls -l zig-out/lib/ || true
+          fi
+      - name: Assemble debug APK
+        working-directory: poc/android-core
+        # Use `gradle` directly — no wrapper jar is checked in; the
+        # setup-gradle action provides the binary on PATH.
+        run: gradle --no-daemon assembleDebug
+      - name: Upload APK artifact (diagnostic)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-core-canary-apk
+          path: poc/android-core/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
   # iOS device-slice build (no signing, no deploy). Proves the project is
   # shaped correctly for App Store builds ahead of 0125's signing work.
   # ---------------------------------------------------------------------------
