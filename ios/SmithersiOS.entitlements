@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ticket 0125: entitlements for the releasable iOS target.
+
+  Keep this file minimal. Entitlements here are REQUIRED by the auth +
+  runtime path, not speculative. Adding an entitlement the App Store
+  Connect provisioning profile does not grant will break signing.
+
+  Keychain Access Group
+  ---------------------
+  `keychain-access-groups` is declared so the `SmithersAuth` token
+  store (`Shared/Sources/SmithersAuth/TokenStore.swift`) can opt into a
+  shared group later without a profile change. The group is prefixed
+  with `$(AppIdentifierPrefix)` (the user's Team ID) so Apple's signing
+  machinery substitutes it at build time. Today `TokenStore` passes an
+  empty access group and strips it, so nothing requires this entry at
+  runtime — it is present so a future opt-in does not need a new
+  provisioning profile round-trip with Apple.
+
+  Associated Domains (universal links)
+  -------------------------------------
+  Intentionally OMITTED for the TestFlight phase. The OAuth2 callback
+  uses the custom URL scheme `smithers://auth/callback` registered in
+  `Info.plist` (see 0109). Universal links are a later concern (App
+  Store phase) and require serving an `apple-app-site-association`
+  file from the plue origin — out of scope for 0125.
+
+  App Sandbox / Hardened Runtime
+  ------------------------------
+  These are macOS-only entitlements and are not included here. iOS apps
+  are sandboxed by the OS; no opt-in entitlement is required.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.smithers.ios</string>
+    </array>
+</dict>
+</plist>

@@ -249,18 +249,60 @@ targets:
           - README.md
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOS
+        # Ticket 0125: bundle id is the canonical App Store Connect identifier.
+        # Registering a different id in ASC will break upload; this value is
+        # the knob the user plugs into https://appstoreconnect.apple.com/.
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.ios
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: ios/Sources/SmithersiOS/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
-        # Manual placeholder signing. 0125 replaces this with real identities.
+        CODE_SIGN_ENTITLEMENTS: ios/SmithersiOS.entitlements
+        # Ticket 0125: versioning.
+        #   MARKETING_VERSION      = CFBundleShortVersionString (e.g. 0.1.0).
+        #   CURRENT_PROJECT_VERSION = CFBundleVersion           (monotonic int).
+        # Both are overridden from CI: see .github/workflows/ios-testflight.yml
+        # which passes MARKETING_VERSION + CURRENT_PROJECT_VERSION on the
+        # xcodebuild archive command line. The defaults below are for
+        # developer-local archives when CI is not driving the build.
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        # Ticket 0125: signing knobs.
+        #
+        # Debug (simulator + CI device-slice): signing disabled. The
+        # `configs` overrides below flip `CODE_SIGNING_ALLOWED=NO` back on
+        # for Debug so `xcodebuild build` on the simulator continues to
+        # work without a provisioning profile.
+        #
+        # Release (archive/TestFlight): manual signing, team + profile
+        # supplied by the user (see ios/RELEASE.md). DEVELOPMENT_TEAM is
+        # intentionally empty by default — overridden on the xcodebuild
+        # command line in CI, or via `xcconfig` locally. An empty value
+        # surfaces as a signing failure (loud), not a simulator-slice
+        # archive (silent wrong behavior).
         CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: ""
+        CODE_SIGN_IDENTITY: "Apple Distribution"
+        DEVELOPMENT_TEAM: ""
+        PROVISIONING_PROFILE_SPECIFIER: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
-        DEVELOPMENT_TEAM: ""
+      configs:
+        Debug:
+          # Developer + CI simulator builds: no signing at all. The
+          # `ios-simulator-build` and `ios-device-build` jobs in ci.yml
+          # rely on this to produce an unsigned .app.
+          CODE_SIGNING_REQUIRED: NO
+          CODE_SIGNING_ALLOWED: NO
+          CODE_SIGN_IDENTITY: ""
+        Release:
+          # Archive + TestFlight path. Enable signing and require it so a
+          # misconfigured archive fails early instead of shipping an
+          # unsigned .ipa. DEVELOPMENT_TEAM / PROVISIONING_PROFILE_SPECIFIER
+          # are supplied by CI or by the user's local build command.
+          CODE_SIGNING_REQUIRED: YES
+          CODE_SIGNING_ALLOWED: YES
+          CODE_SIGN_IDENTITY: "Apple Distribution"
     dependencies:
       - sdk: Foundation.framework
       - sdk: UIKit.framework
