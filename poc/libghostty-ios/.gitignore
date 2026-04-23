@@ -1,0 +1,10 @@
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+
+# xcodegen generates these; regenerate with `xcodegen generate`.
+LibGhosttyIOS.xcodeproj/

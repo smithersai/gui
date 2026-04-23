@@ -1,0 +1,121 @@
+# xcodegen project spec for the libghostty-ios PoC.
+#
+# This is NOT the root Smithers macOS project (see ticket 0121 for that work).
+# It's a self-contained iOS PoC that links ghostty's prebuilt
+# `ghostty-vt.xcframework` (libghostty-vt static library, Apple universal).
+#
+# Key discovery during 0092: ghostty's `GhosttyKit.xcframework` (apprt API)
+# does NOT export the VT C API symbols (`ghostty_terminal_new`, etc.). The
+# VT exports only activate when `src/lib_vt.zig` is the root module — which
+# ghostty builds as a separate product called `ghostty-vt.xcframework` at
+# `ghostty/zig-out/lib/ghostty-vt.xcframework`. That's the library this PoC
+# links against. The VT xcframework ships its own Clang module `GhosttyVt`,
+# so no custom modulemap is needed.
+#
+# To regenerate the Xcode project:
+#   brew install xcodegen   # if not already installed
+#   cd poc/libghostty-ios && xcodegen generate
+#
+# The `ghostty-vt.xcframework` at ../../ghostty/zig-out/lib/ MUST exist and
+# contain ios-arm64 + ios-arm64-simulator slices before building. Run
+# `./scripts/build-xcframework.sh` to produce it.
+
+name: LibGhosttyIOS
+options:
+  bundleIdPrefix: com.smithers.libghostty-ios-poc
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+  defaultConfig: Debug
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: NO
+
+targets:
+  LibGhosttyWrapper:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Sources/LibGhosttyWrapper
+    dependencies:
+      # Static-library xcframework — link, don't embed (there's no dylib).
+      - framework: ../../ghostty/zig-out/lib/ghostty-vt.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.libghostty-ios-poc.wrapper
+        DEFINES_MODULE: YES
+        BUILD_LIBRARY_FOR_DISTRIBUTION: NO
+        ENABLE_MODULE_VERIFIER: NO
+        GENERATE_INFOPLIST_FILE: YES
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1
+        CODE_SIGNING_ALLOWED: NO
+        # Force-load the iOS slice of libghostty-vt.a (copied into
+        # BUILT_PRODUCTS_DIR by Xcode's xcframework resolution) so its
+        # C API is re-exported from LibGhosttyWrapper.framework. The
+        # dynamic framework would otherwise dead-strip these since they
+        # have no static references in the Swift wrapper.
+        OTHER_LDFLAGS:
+          - "-force_load"
+          - "$(BUILT_PRODUCTS_DIR)/libghostty-vt.a"
+          # libghostty-vt bundles utfcpp (C++) for Unicode width tables.
+          - "-lc++"
+
+  PoC:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/PoC
+    resources:
+      - path: Tests/PoCTests/Fixtures/ls-la.vt
+    dependencies:
+      - target: LibGhosttyWrapper
+        embed: true
+    info:
+      path: Sources/PoC/Info.plist
+      properties:
+        UILaunchScreen: {}
+        CFBundleDisplayName: LibGhosttyIOS PoC
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.libghostty-ios-poc.app
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+
+  PoCTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/PoCTests
+    resources:
+      - path: Tests/PoCTests/Fixtures
+        type: folder
+    dependencies:
+      - target: LibGhosttyWrapper
+      - target: PoC
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.libghostty-ios-poc.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/PoC.app/PoC"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+
+schemes:
+  PoC:
+    build:
+      targets:
+        PoC: all
+        PoCTests: [test]
+    test:
+      targets:
+        - PoCTests
+    run:
+      config: Debug

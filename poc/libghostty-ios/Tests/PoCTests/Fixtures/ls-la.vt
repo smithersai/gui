@@ -1,0 +1,16 @@
+# libghostty-ios PoC — canned PTY fixture
+#
+# Format: readable VT-encoded text. The fixture loader strips lines beginning
+# with `#`, joins the rest verbatim (no added newlines beyond what's present),
+# then replaces the two-character sequence \e with a single 0x1B byte and the
+# sequence \r with 0x0D. All other characters are written as-is.
+#
+# This gives a simulated `ls -la` output with colors, on an 80x24 terminal,
+# starting from a fresh clear + cursor-home.
+
+\e[2J\e[H\e[1;34mtotal\e[0m 48\r\n
+\e[1;34mdrwxr-xr-x\e[0m   6 willc  staff   192 Apr 22 12:00 .\r\n
+\e[1;34mdrwxr-xr-x\e[0m   7 willc  staff   224 Apr 22 11:59 ..\r\n
+-rw-r--r--   1 willc  staff  1024 Apr 22 12:00 README.md\r\n
+\e[1;32m-rwxr-xr-x\e[0m   1 willc  staff   512 Apr 22 12:00 run.sh\r\n
+\e[1;34mdrwxr-xr-x\e[0m   3 willc  staff    96 Apr 22 12:00 src\r\n

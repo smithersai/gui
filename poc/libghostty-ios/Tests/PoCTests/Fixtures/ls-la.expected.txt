@@ -1,0 +1,6 @@
+total 48
+drwxr-xr-x   6 willc  staff   192 Apr 22 12:00 .
+drwxr-xr-x   7 willc  staff   224 Apr 22 11:59 ..
+-rw-r--r--   1 willc  staff  1024 Apr 22 12:00 README.md
+-rwxr-xr-x   1 willc  staff   512 Apr 22 12:00 run.sh
+drwxr-xr-x   3 willc  staff    96 Apr 22 12:00 src
