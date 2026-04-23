@@ -215,12 +215,22 @@ final class LiveRunDevToolsStore: ObservableObject {
     // MARK: - Event Handling (pure, unit-testable)
 
     func applyEvent(_ event: DevToolsEvent) {
+        let eventType: String
         switch event {
         case .snapshot(let snapshot):
+            eventType = "snapshot"
             applySnapshot(snapshot)
         case .delta(let delta):
+            eventType = "delta"
             applyDeltaEvent(delta)
         }
+
+        AppLogger.network.debug("DevTools applyEvent", metadata: [
+            "run_id": runId ?? "",
+            "event_type": eventType,
+            "seq": String(seq),
+            "mode": mode.isHistorical ? "historical" : "live",
+        ])
 
         lastEventAt = Date()
         eventsApplied += 1
@@ -404,15 +414,24 @@ final class LiveRunDevToolsStore: ObservableObject {
     }
 
     func setRunStatus(_ status: RunStatus) {
+        let previous = runStatus
         runStatus = status
         if isRunFinished, case .historical(let frameNo) = mode {
             mode = .historical(frameNo: frameNo)
+        }
+        if previous != status {
+            AppLogger.state.info("DevTools runStatus changed", metadata: [
+                "run_id": runId ?? "",
+                "previous": String(describing: previous),
+                "next": String(describing: status),
+            ])
         }
     }
 
     // MARK: - Selection & Ghost
 
     func selectNode(_ nodeId: Int?) {
+        let previousId = selectedNodeId
         if let nodeId {
             if let node = tree?.findNode(byId: nodeId) {
                 ghostNode = node.deepCopy()
@@ -420,12 +439,25 @@ final class LiveRunDevToolsStore: ObservableObject {
         }
         selectedNodeId = nodeId
         updateGhostState()
+
+        AppLogger.state.info("DevTools selectNode", metadata: [
+            "run_id": runId ?? "",
+            "node_id": nodeId.map(String.init) ?? "nil",
+            "previous_node_id": previousId.map(String.init) ?? "nil",
+            "is_ghost": String(isGhost),
+        ])
     }
 
     func clearSelection() {
+        let previousId = selectedNodeId
         selectedNodeId = nil
         isGhost = false
         ghostNode = nil
+
+        AppLogger.state.info("DevTools clearSelection", metadata: [
+            "run_id": runId ?? "",
+            "previous_node_id": previousId.map(String.init) ?? "nil",
+        ])
     }
 
     func retryNode(nodeId: String) {
@@ -485,6 +517,12 @@ final class LiveRunDevToolsStore: ObservableObject {
     }
 
     private func handleStreamEnd(runId: String) {
+        AppLogger.network.info("DevTools stream_end", metadata: [
+            "run_id": runId,
+            "should_reconnect": String(shouldReconnect),
+            "events_applied": String(eventsApplied),
+            "last_seq": String(liveSeq),
+        ])
         guard shouldReconnect else {
             connectionState = .disconnected
             return
@@ -514,15 +552,32 @@ final class LiveRunDevToolsStore: ObservableObject {
         reconnectCount += 1
         let delay = backoff.currentDelay
 
+        let plannedFromSeq: Int?
+        if case .error(let err) = connectionState, case .malformedEvent = err {
+            plannedFromSeq = nil
+        } else {
+            plannedFromSeq = liveSeq > 0 ? liveSeq : nil
+        }
+
         AppLogger.network.warning("DevTools reconnect scheduled", metadata: [
             "run_id": runId,
             "attempt": String(backoff.attempt),
+            "retry_count": String(reconnectCount),
             "delay_s": String(format: "%.1f", delay),
+            "from_seq": plannedFromSeq.map(String.init) ?? "nil",
         ])
 
         streamTask?.cancel()
         streamTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                AppLogger.network.debug("DevTools reconnect sleep interrupted", metadata: [
+                    "run_id": runId,
+                    "error": error.localizedDescription,
+                ])
+                return
+            }
             guard !Task.isCancelled else { return }
             guard let self, self.shouldReconnect else { return }
 

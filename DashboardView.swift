@@ -148,7 +148,13 @@ struct DashboardView: View {
         }
         .background(Theme.surface1)
         .accessibilityIdentifier("dashboard.root")
-        .task { await loadAll() }
+        .task {
+            AppLogger.lifecycle.info("DashboardView appeared")
+            await loadAll()
+        }
+        .onDisappear {
+            AppLogger.lifecycle.info("DashboardView disappeared")
+        }
     }
 
     // MARK: - Header
@@ -517,18 +523,25 @@ struct DashboardView: View {
         sourceErrors = [:]
         var nextSourceErrors: [DashboardDataSource: String] = [:]
 
+        AppLogger.ui.info("DashboardView.loadAll start", metadata: ["generation": String(generation)])
+        let startTime = CFAbsoluteTimeGetCurrent()
+
         hasSmithersProject = smithers.hasSmithersProject()
         if !hasSmithersProject {
             runs = []
             workflows = []
             approvals = []
+            AppLogger.state.info("DashboardView no smithers project; cleared core data")
         } else {
             async let runsResult = loadRuns()
             async let workflowsResult = loadWorkflows()
             async let approvalsResult = loadApprovals()
 
             let (loadedRuns, loadedWorkflows, loadedApprovals) = await (runsResult, workflowsResult, approvalsResult)
-            guard generation == loadGeneration else { return }
+            guard generation == loadGeneration else {
+                AppLogger.ui.debug("DashboardView.loadAll superseded after smithers fetch", metadata: ["generation": String(generation)])
+                return
+            }
             runs = loadedRuns.value
             workflows = loadedWorkflows.value
             approvals = loadedApprovals.value
@@ -538,15 +551,32 @@ struct DashboardView: View {
             recordSourceError(loadedApprovals.error, source: .approvals, into: &nextSourceErrors)
             sourceErrors = nextSourceErrors
 
+            AppLogger.ui.info("DashboardView smithers sources loaded", metadata: [
+                "runs_count": String(loadedRuns.value.count),
+                "workflows_count": String(loadedWorkflows.value.count),
+                "approvals_count": String(loadedApprovals.value.count),
+                "runs_failed": loadedRuns.error == nil ? "false" : "true",
+                "workflows_failed": loadedWorkflows.error == nil ? "false" : "true",
+                "approvals_failed": loadedApprovals.error == nil ? "false" : "true",
+            ])
+
             let allSmithersFailed = loadedRuns.error != nil && loadedWorkflows.error != nil && loadedApprovals.error != nil
             if allSmithersFailed, let firstError = loadedRuns.error ?? loadedWorkflows.error ?? loadedApprovals.error {
                 error = firstError.localizedDescription
+                AppLogger.error.error("DashboardView all smithers sources failed", metadata: [
+                    "error": String(describing: firstError),
+                ])
             }
         }
 
         do {
-            let repo = try await smithers.getCurrentRepo()
-            guard generation == loadGeneration else { return }
+            let repo = try await AppLogger.measure("DashboardView.getCurrentRepo") {
+                try await smithers.getCurrentRepo()
+            }
+            guard generation == loadGeneration else {
+                AppLogger.ui.debug("DashboardView.loadAll superseded after getCurrentRepo", metadata: ["generation": String(generation)])
+                return
+            }
             repoName = repo.fullName ?? repo.name
             hasJJHubTransport = true
 
@@ -554,7 +584,10 @@ struct DashboardView: View {
             async let issuesResult = loadIssues()
             async let workspacesResult = loadWorkspaces()
             let (loadedLandings, loadedIssues, loadedWorkspaces) = await (landingsResult, issuesResult, workspacesResult)
-            guard generation == loadGeneration else { return }
+            guard generation == loadGeneration else {
+                AppLogger.ui.debug("DashboardView.loadAll superseded after jjhub fetch", metadata: ["generation": String(generation)])
+                return
+            }
             landings = loadedLandings.value
             issues = loadedIssues.value
             workspaces = loadedWorkspaces.value
@@ -562,6 +595,15 @@ struct DashboardView: View {
             recordSourceError(loadedIssues.error, source: .issues, into: &nextSourceErrors)
             recordSourceError(loadedWorkspaces.error, source: .workspaces, into: &nextSourceErrors)
             sourceErrors = nextSourceErrors
+
+            AppLogger.ui.info("DashboardView jjhub sources loaded", metadata: [
+                "landings_count": String(loadedLandings.value.count),
+                "issues_count": String(loadedIssues.value.count),
+                "workspaces_count": String(loadedWorkspaces.value.count),
+                "landings_failed": loadedLandings.error == nil ? "false" : "true",
+                "issues_failed": loadedIssues.error == nil ? "false" : "true",
+                "workspaces_failed": loadedWorkspaces.error == nil ? "false" : "true",
+            ])
         } catch {
             guard generation == loadGeneration else { return }
             hasJJHubTransport = false
@@ -569,12 +611,22 @@ struct DashboardView: View {
             landings = []
             issues = []
             workspaces = []
+            AppLogger.network.warning("DashboardView getCurrentRepo failed; jjhub transport disabled", metadata: [
+                "error": String(describing: error),
+            ])
         }
 
         if !visibleTabs.contains(tab) {
+            AppLogger.state.info("DashboardView tab reset to overview", metadata: ["previous_tab": tab.rawValue])
             tab = .overview
         }
         isLoading = false
+
+        let durationMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
+        AppLogger.performance.info("DashboardView.loadAll complete", metadata: [
+            "duration_ms": String(durationMs),
+            "failed_sources": String(nextSourceErrors.count),
+        ])
     }
 
     // MARK: - Helpers
@@ -641,49 +693,90 @@ struct DashboardView: View {
 
     private func loadRuns() async -> DashboardLoadResult<[RunSummary]> {
         do {
-            let loadedRuns = try await smithers.listRuns()
+            let loadedRuns = try await AppLogger.measure("DashboardView.listRuns") {
+                try await smithers.listRuns()
+            }
             return DashboardLoadResult(value: loadedRuns.sortedByStartedAtDescending(), error: nil)
         } catch {
+            AppLogger.error.error("DashboardView.loadRuns failed", metadata: [
+                "source": "runs",
+                "error": String(describing: error),
+            ])
             return DashboardLoadResult(value: [], error: error)
         }
     }
 
     private func loadWorkflows() async -> DashboardLoadResult<[Workflow]> {
         do {
-            return DashboardLoadResult(value: try await smithers.listWorkflows(), error: nil)
+            let loaded = try await AppLogger.measure("DashboardView.listWorkflows") {
+                try await smithers.listWorkflows()
+            }
+            return DashboardLoadResult(value: loaded, error: nil)
         } catch {
+            AppLogger.error.error("DashboardView.loadWorkflows failed", metadata: [
+                "source": "workflows",
+                "error": String(describing: error),
+            ])
             return DashboardLoadResult(value: [], error: error)
         }
     }
 
     private func loadApprovals() async -> DashboardLoadResult<[Approval]> {
         do {
-            return DashboardLoadResult(value: try await smithers.listPendingApprovals(), error: nil)
+            let loaded = try await AppLogger.measure("DashboardView.listPendingApprovals") {
+                try await smithers.listPendingApprovals()
+            }
+            return DashboardLoadResult(value: loaded, error: nil)
         } catch {
+            AppLogger.error.error("DashboardView.loadApprovals failed", metadata: [
+                "source": "approvals",
+                "error": String(describing: error),
+            ])
             return DashboardLoadResult(value: [], error: error)
         }
     }
 
     private func loadLandings() async -> DashboardLoadResult<[Landing]> {
         do {
-            return DashboardLoadResult(value: try await smithers.listLandings(), error: nil)
+            let loaded = try await AppLogger.measure("DashboardView.listLandings") {
+                try await smithers.listLandings()
+            }
+            return DashboardLoadResult(value: loaded, error: nil)
         } catch {
+            AppLogger.error.error("DashboardView.loadLandings failed", metadata: [
+                "source": "landings",
+                "error": String(describing: error),
+            ])
             return DashboardLoadResult(value: [], error: error)
         }
     }
 
     private func loadIssues() async -> DashboardLoadResult<[SmithersIssue]> {
         do {
-            return DashboardLoadResult(value: try await smithers.listIssues(state: "open"), error: nil)
+            let loaded = try await AppLogger.measure("DashboardView.listIssues") {
+                try await smithers.listIssues(state: "open")
+            }
+            return DashboardLoadResult(value: loaded, error: nil)
         } catch {
+            AppLogger.error.error("DashboardView.loadIssues failed", metadata: [
+                "source": "issues",
+                "error": String(describing: error),
+            ])
             return DashboardLoadResult(value: [], error: error)
         }
     }
 
     private func loadWorkspaces() async -> DashboardLoadResult<[Workspace]> {
         do {
-            return DashboardLoadResult(value: try await smithers.listWorkspaces(), error: nil)
+            let loaded = try await AppLogger.measure("DashboardView.listWorkspaces") {
+                try await smithers.listWorkspaces()
+            }
+            return DashboardLoadResult(value: loaded, error: nil)
         } catch {
+            AppLogger.error.error("DashboardView.loadWorkspaces failed", metadata: [
+                "source": "workspaces",
+                "error": String(describing: error),
+            ])
             return DashboardLoadResult(value: [], error: error)
         }
     }
@@ -1180,7 +1273,7 @@ struct StatusPill: View {
     private var statusColor: Color {
         switch status {
         case .running: return Theme.accent
-        case .waitingApproval: return Theme.warning
+        case .waitingApproval, .waitingEvent, .waitingTimer: return Theme.warning
         case .finished: return Theme.success
         case .failed: return Theme.danger
         case .stale, .orphaned: return Theme.warning

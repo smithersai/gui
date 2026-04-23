@@ -1,6 +1,7 @@
 const std = @import("std");
 const structs = @import("structs.zig");
 const ffi = @import("../ffi.zig");
+const logx = @import("../log.zig");
 const App = @import("../App.zig");
 const Session = @import("../session/session.zig");
 const EventStream = @import("../session/event_stream.zig");
@@ -9,6 +10,8 @@ const Palette = @import("../commands/palette.zig");
 const slash = @import("../commands/slash.zig");
 const cwd = @import("../workspace/cwd.zig");
 const Persistence = @import("../persistence/sqlite.zig");
+
+const log = std.log.scoped(.smithers_core_embedded);
 
 pub export fn smithers_string_free(s: structs.String) void {
     ffi.stringFree(s);
@@ -37,8 +40,12 @@ pub export fn smithers_info() structs.Info {
 }
 
 pub export fn smithers_app_new(cfg: ?*const structs.RuntimeConfig) ?*App {
+    log.debug("ffi smithers_app_new", .{});
     const runtime = if (cfg) |ptr| ptr.* else structs.RuntimeConfig{};
-    return App.create(ffi.allocator, runtime) catch null;
+    return App.create(ffi.allocator, runtime) catch |err| {
+        logx.catchErr(log, "smithers_app_new", err);
+        return null;
+    };
 }
 
 pub export fn smithers_app_free(app: ?*App) void {
@@ -58,9 +65,16 @@ pub export fn smithers_app_set_color_scheme(app: ?*App, scheme: structs.ColorSch
 }
 
 pub export fn smithers_app_open_workspace(app: ?*App, path: ?[*:0]const u8) ?*App.Workspace {
-    const ptr = app orelse return null;
+    const ptr = app orelse {
+        log.warn("smithers_app_open_workspace: app is null", .{});
+        return null;
+    };
     const raw = ffi.spanZ(path);
-    return ptr.openWorkspace(raw) catch null;
+    log.debug("ffi smithers_app_open_workspace path={s}", .{raw});
+    return ptr.openWorkspace(raw) catch |err| {
+        logx.catchWarn(log, "smithers_app_open_workspace", err);
+        return null;
+    };
 }
 
 pub export fn smithers_app_close_workspace(app: ?*App, ws: ?*App.Workspace) void {
@@ -81,8 +95,15 @@ pub export fn smithers_app_remove_recent_workspace(app: ?*App, path: ?[*:0]const
 }
 
 pub export fn smithers_session_new(app: ?*App, opts: structs.SessionOptions) ?*Session {
-    const ptr = app orelse return null;
-    return Session.create(ptr, opts) catch null;
+    const ptr = app orelse {
+        log.warn("smithers_session_new: app is null", .{});
+        return null;
+    };
+    log.debug("ffi smithers_session_new kind={}", .{@intFromEnum(opts.kind)});
+    return Session.create(ptr, opts) catch |err| {
+        logx.catchWarn(log, "smithers_session_new", err);
+        return null;
+    };
 }
 
 pub export fn smithers_session_free(session: ?*Session) void {
@@ -124,8 +145,15 @@ pub export fn smithers_event_stream_free(stream: ?*EventStream) void {
 }
 
 pub export fn smithers_client_new(app: ?*App) ?*Client {
-    const ptr = app orelse return null;
-    return Client.create(ptr) catch null;
+    const ptr = app orelse {
+        log.warn("smithers_client_new: app is null", .{});
+        return null;
+    };
+    log.debug("ffi smithers_client_new", .{});
+    return Client.create(ptr) catch |err| {
+        logx.catchWarn(log, "smithers_client_new", err);
+        return null;
+    };
 }
 
 pub export fn smithers_client_free(client: ?*Client) void {
@@ -139,10 +167,13 @@ pub export fn smithers_client_call(
     out_err: ?*structs.Error,
 ) structs.String {
     const ptr = client orelse {
+        log.warn("smithers_client_call: client is null", .{});
         if (out_err) |err| err.* = ffi.errorMessage(1, "client is null");
         return ffi.stringDup("null");
     };
-    return ptr.call(ffi.spanZ(method), ffi.spanZ(args_json), out_err);
+    const method_slice = ffi.spanZ(method);
+    log.debug("ffi smithers_client_call method={s}", .{method_slice});
+    return ptr.call(method_slice, ffi.spanZ(args_json), out_err);
 }
 
 pub export fn smithers_client_stream(
@@ -152,15 +183,25 @@ pub export fn smithers_client_stream(
     out_err: ?*structs.Error,
 ) ?*EventStream {
     const ptr = client orelse {
+        log.warn("smithers_client_stream: client is null", .{});
         if (out_err) |err| err.* = ffi.errorMessage(1, "client is null");
         return null;
     };
-    return ptr.stream(ffi.spanZ(method), ffi.spanZ(args_json), out_err);
+    const method_slice = ffi.spanZ(method);
+    log.debug("ffi smithers_client_stream method={s}", .{method_slice});
+    return ptr.stream(method_slice, ffi.spanZ(args_json), out_err);
 }
 
 pub export fn smithers_palette_new(app: ?*App) ?*Palette {
-    const ptr = app orelse return null;
-    return Palette.create(ptr) catch null;
+    const ptr = app orelse {
+        log.warn("smithers_palette_new: app is null", .{});
+        return null;
+    };
+    log.debug("ffi smithers_palette_new", .{});
+    return Palette.create(ptr) catch |err| {
+        logx.catchWarn(log, "smithers_palette_new", err);
+        return null;
+    };
 }
 
 pub export fn smithers_palette_free(palette: ?*Palette) void {
@@ -180,24 +221,42 @@ pub export fn smithers_palette_items_json(palette: ?*Palette) structs.String {
 }
 
 pub export fn smithers_palette_activate(palette: ?*Palette, item_id: ?[*:0]const u8) structs.Error {
-    return if (palette) |ptr| ptr.activate(ffi.spanZ(item_id)) else ffi.errorMessage(1, "palette is null");
+    const ptr = palette orelse {
+        log.warn("smithers_palette_activate: palette is null", .{});
+        return ffi.errorMessage(1, "palette is null");
+    };
+    const id_slice = ffi.spanZ(item_id);
+    log.debug("ffi smithers_palette_activate item_id={s}", .{id_slice});
+    return ptr.activate(id_slice);
 }
 
 pub export fn smithers_slashcmd_parse(input: ?[*:0]const u8) structs.String {
-    const json = slash.parseJson(ffi.spanZ(input)) catch return ffi.stringDup("{\"command\":null,\"args\":[],\"mode\":\"error\"}");
+    const input_slice = ffi.spanZ(input);
+    log.debug("ffi smithers_slashcmd_parse input_len={d}", .{input_slice.len});
+    const json = slash.parseJson(input_slice) catch |err| {
+        logx.catchWarn(log, "smithers_slashcmd_parse", err);
+        return ffi.stringDup("{\"command\":null,\"args\":[],\"mode\":\"error\"}");
+    };
     defer ffi.allocator.free(json);
     return ffi.stringDup(json);
 }
 
 pub export fn smithers_cwd_resolve(requested: ?[*:0]const u8) structs.String {
-    const resolved = cwd.resolveC(requested) catch return ffi.stringDup("");
+    log.debug("ffi smithers_cwd_resolve", .{});
+    const resolved = cwd.resolveC(requested) catch |err| {
+        logx.catchWarn(log, "smithers_cwd_resolve", err);
+        return ffi.stringDup("");
+    };
     defer ffi.allocator.free(resolved);
     return ffi.stringDup(resolved);
 }
 
 pub export fn smithers_persistence_open(db_path: ?[*:0]const u8, out_err: ?*structs.Error) ?*Persistence {
     if (out_err) |err| err.* = ffi.errorSuccess();
-    const p = Persistence.open(ffi.allocator, ffi.spanZ(db_path)) catch |err| {
+    const path_slice = ffi.spanZ(db_path);
+    log.info("ffi smithers_persistence_open path={s}", .{path_slice});
+    const p = Persistence.open(ffi.allocator, path_slice) catch |err| {
+        logx.catchErr(log, "smithers_persistence_open", err);
         if (out_err) |out| out.* = ffi.errorFrom("persistence open", err);
         return null;
     };

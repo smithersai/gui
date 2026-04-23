@@ -62,7 +62,7 @@ struct RunInspectView: View {
         guard let status = inspection?.run.status else { return Theme.textTertiary }
         switch status {
         case .running: return Theme.accent
-        case .waitingApproval: return Theme.warning
+        case .waitingApproval, .waitingEvent, .waitingTimer: return Theme.warning
         case .finished: return Theme.success
         case .failed: return Theme.danger
         case .stale, .orphaned: return Theme.warning

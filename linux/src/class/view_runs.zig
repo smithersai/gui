@@ -10,6 +10,8 @@ const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const vh = @import("../features/view_helpers.zig");
 const MainWindow = @import("main_window.zig").MainWindow;
+const logx = @import("../log.zig");
+const log = std.log.scoped(.smithers_gtk_view_runs);
 
 pub const RunsView = extern struct {
     const Self = @This();
@@ -71,9 +73,13 @@ pub const RunsView = extern struct {
     }
 
     pub fn refresh(self: *Self) void {
+        logx.event(log, "refresh_start", "view=runs", .{});
+        const t = logx.startTimer();
         self.loadRuns() catch |err| {
+            logx.catchWarn(log, "refresh loadRuns", err);
             vh.setStatus(self.allocator(), self.private().detail, "dialog-error-symbolic", "Runs unavailable", @errorName(err));
         };
+        logx.endTimer(log, "refresh", t);
     }
 
     fn allocator(self: *Self) std.mem.Allocator {
@@ -160,9 +166,12 @@ pub const RunsView = extern struct {
         else
             null;
         defer if (selected_run_id) |run_id| alloc.free(run_id);
+        log.debug("calling method=listRuns args={s}", .{"{}"});
+        const t = logx.startTimer();
         const json = try smithers.callJson(alloc, self.client(), "listRuns", "{}");
         defer alloc.free(json);
         const parsed = try models.parseRuns(alloc, json);
+        log.info("method=listRuns rows={d} duration_ms={d}", .{ parsed.items.len, t.elapsedMs() });
         models.clearList(models.RunSummary, alloc, &self.private().runs);
         self.private().runs = parsed;
         self.sortRuns();
@@ -173,11 +182,13 @@ pub const RunsView = extern struct {
             for (self.private().runs.items, 0..) |run, index| {
                 if (std.mem.eql(u8, run.run_id, run_id)) {
                     self.private().selected_index = index;
-                    self.loadInspection(index) catch {};
+                    logx.event(log, "reselect_run", "run_id={s} index={d}", .{ run.run_id, index });
+                    self.loadInspection(index) catch |err| logx.catchWarn(log, "loadRuns.reselect loadInspection", err);
                     return;
                 }
             }
         }
+        logx.event(log, "refresh_done", "view=runs rows={d}", .{self.private().runs.items.len});
         vh.setStatus(alloc, self.private().detail, "view-list-symbolic", "Select a run", "Run tasks and actions appear here.");
     }
 
@@ -278,8 +289,11 @@ pub const RunsView = extern struct {
 
     fn selectRun(self: *Self, index: usize) void {
         if (index >= self.private().runs.items.len) return;
+        const run = self.private().runs.items[index];
+        logx.event(log, "row_selected", "view=runs index={d} run_id={s}", .{ index, run.run_id });
         self.private().selected_index = index;
         self.loadInspection(index) catch |err| {
+            logx.catchErr(log, "selectRun loadInspection", err);
             vh.setStatus(self.allocator(), self.private().detail, "dialog-error-symbolic", "Run inspection failed", @errorName(err));
         };
     }
@@ -289,11 +303,20 @@ pub const RunsView = extern struct {
         const alloc = self.allocator();
         const args = try vh.jsonObject(alloc, &.{.{ .key = "runId", .value = .{ .string = run.run_id } }});
         defer alloc.free(args);
-        const json = try smithers.callJson(alloc, self.client(), "inspectRun", args);
+        log.debug("calling method=inspectRun run_id={s} index={d} args={s}", .{ run.run_id, index, args });
+        const t = logx.startTimer();
+        const json = smithers.callJson(alloc, self.client(), "inspectRun", args) catch |err| {
+            log.err("method=inspectRun run_id={s} failed: {s}", .{ run.run_id, @errorName(err) });
+            return err;
+        };
         defer alloc.free(json);
+        log.info("method=inspectRun run_id={s} duration_ms={d}", .{ run.run_id, t.elapsedMs() });
 
         self.clearInspection();
-        self.private().inspection = try models.parseRunInspection(alloc, json);
+        self.private().inspection = models.parseRunInspection(alloc, json) catch |err| {
+            log.err("parseRunInspection run_id={s} failed: {s} json_len={d}", .{ run.run_id, @errorName(err), json.len });
+            return err;
+        };
         try self.renderDetail();
     }
 
@@ -389,15 +412,22 @@ pub const RunsView = extern struct {
             .{ .key = "runId", .value = .{ .string = inspection.run.run_id } },
             .{ .key = "nodeId", .value = .{ .string = task.node_id } },
             .{ .key = "iteration", .value = if (task.iteration) |iteration| .{ .integer = iteration } else .null },
-        }) catch return;
+        }) catch |err| {
+            logx.catchWarn(log, "completeApproval jsonObject", err);
+            return;
+        };
         defer alloc.free(args);
+        log.debug("calling method={s} run_id={s} node_id={s} args={s}", .{ method, inspection.run.run_id, task.node_id, args });
+        const t = logx.startTimer();
         const json = smithers.callJson(alloc, self.client(), method, args) catch |err| {
+            log.warn("method={s} run_id={s} node_id={s} failed: {s}", .{ method, inspection.run.run_id, task.node_id, @errorName(err) });
             self.private().window.showToastFmt("{s} failed: {}", .{ toast_prefix, err });
             return;
         };
         defer alloc.free(json);
+        log.info("method={s} run_id={s} node_id={s} duration_ms={d}", .{ method, inspection.run.run_id, task.node_id, t.elapsedMs() });
         self.private().window.showToastFmt("{s} {s}", .{ toast_prefix, task.node_id });
-        if (self.private().selected_index) |index| self.loadInspection(index) catch {};
+        if (self.private().selected_index) |index| self.loadInspection(index) catch |err| logx.catchWarn(log, "completeApproval reload", err);
     }
 
     fn cancelSelectedRun(self: *Self) void {
@@ -405,13 +435,20 @@ pub const RunsView = extern struct {
         if (index >= self.private().runs.items.len) return;
         const run = self.private().runs.items[index];
         const alloc = self.allocator();
-        const args = vh.jsonObject(alloc, &.{.{ .key = "runId", .value = .{ .string = run.run_id } }}) catch return;
+        const args = vh.jsonObject(alloc, &.{.{ .key = "runId", .value = .{ .string = run.run_id } }}) catch |err| {
+            logx.catchWarn(log, "cancelSelectedRun jsonObject", err);
+            return;
+        };
         defer alloc.free(args);
+        log.debug("calling method=cancelRun run_id={s} args={s}", .{ run.run_id, args });
+        const t = logx.startTimer();
         const json = smithers.callJson(alloc, self.client(), "cancelRun", args) catch |err| {
+            log.warn("method=cancelRun run_id={s} failed: {s}", .{ run.run_id, @errorName(err) });
             self.private().window.showToastFmt("Cancel failed: {}", .{err});
             return;
         };
         defer alloc.free(json);
+        log.info("method=cancelRun run_id={s} duration_ms={d}", .{ run.run_id, t.elapsedMs() });
         self.private().window.showToastFmt("Cancelled {s}", .{run.run_id});
         self.refresh();
     }
@@ -422,7 +459,10 @@ pub const RunsView = extern struct {
         self.private().pending_cancel_index = index;
         const run = self.private().runs.items[index];
         const alloc = self.allocator();
-        const body = std.fmt.allocPrintSentinel(alloc, "Cancel run {s}? This run is still active and will stop immediately.", .{run.run_id}, 0) catch return;
+        const body = std.fmt.allocPrintSentinel(alloc, "Cancel run {s}? This run is still active and will stop immediately.", .{run.run_id}, 0) catch |err| {
+            logx.catchWarn(log, "confirmCancelSelectedRun allocPrint", err);
+            return;
+        };
         defer alloc.free(body);
         const dialog = adw.AlertDialog.new("Cancel Run", body.ptr);
         dialog.addResponse("keep", "Keep Running");
@@ -440,11 +480,20 @@ pub const RunsView = extern struct {
         const alloc = self.allocator();
         if (self.private().pending_deny) |*pending| pending.deinit(alloc);
         self.private().pending_deny = .{
-            .run_id = alloc.dupe(u8, inspection.run.run_id) catch return,
-            .node_id = alloc.dupe(u8, task.node_id) catch return,
+            .run_id = alloc.dupe(u8, inspection.run.run_id) catch |err| {
+                logx.catchWarn(log, "confirmDenySelectedNode dupe run_id", err);
+                return;
+            },
+            .node_id = alloc.dupe(u8, task.node_id) catch |err| {
+                logx.catchWarn(log, "confirmDenySelectedNode dupe node_id", err);
+                return;
+            },
             .iteration = task.iteration,
         };
-        const body = std.fmt.allocPrintSentinel(alloc, "Deny approval for {s} on run {s}? This will fail the waiting gate.", .{ task.node_id, inspection.run.run_id }, 0) catch return;
+        const body = std.fmt.allocPrintSentinel(alloc, "Deny approval for {s} on run {s}? This will fail the waiting gate.", .{ task.node_id, inspection.run.run_id }, 0) catch |err| {
+            logx.catchWarn(log, "confirmDenySelectedNode allocPrint", err);
+            return;
+        };
         defer alloc.free(body);
         const dialog = adw.AlertDialog.new("Deny Approval", body.ptr);
         dialog.addResponse("keep", "Cancel");
@@ -461,15 +510,25 @@ pub const RunsView = extern struct {
         if (index >= self.private().runs.items.len) return;
         const run = self.private().runs.items[index];
         const alloc = self.allocator();
-        const args = vh.jsonObject(alloc, &.{.{ .key = "runId", .value = .{ .string = run.run_id } }}) catch return;
+        const args = vh.jsonObject(alloc, &.{.{ .key = "runId", .value = .{ .string = run.run_id } }}) catch |err| {
+            logx.catchWarn(log, "simpleRunAction jsonObject", err);
+            return;
+        };
         defer alloc.free(args);
+        log.debug("calling method={s} run_id={s} args={s}", .{ method, run.run_id, args });
+        const t = logx.startTimer();
         const json = smithers.callJson(alloc, self.client(), method, args) catch |err| {
+            log.warn("method={s} run_id={s} failed: {s}", .{ method, run.run_id, @errorName(err) });
             self.private().window.showToastFmt("{s} failed: {}", .{ label, err });
             return;
         };
         defer alloc.free(json);
+        log.info("method={s} run_id={s} duration_ms={d}", .{ method, run.run_id, t.elapsedMs() });
         self.private().window.showToastFmt("{s} {s}", .{ label, run.run_id });
-        if (self.private().selected_index) |selected| self.loadInspection(selected) catch self.refresh();
+        if (self.private().selected_index) |selected| self.loadInspection(selected) catch |err| {
+            logx.catchWarn(log, "simpleRunAction reload", err);
+            self.refresh();
+        };
     }
 
     fn snapshotRunAction(self: *Self, method: []const u8, label: []const u8) void {
@@ -477,7 +536,10 @@ pub const RunsView = extern struct {
         if (index >= self.private().runs.items.len) return;
         const run = self.private().runs.items[index];
         const alloc = self.allocator();
+        log.debug("calling method=listSnapshots run_id={s}", .{run.run_id});
+        const list_t = logx.startTimer();
         const snapshots_json = vh.callJson(alloc, self.client(), "listSnapshots", &.{.{ .key = "runId", .value = .{ .string = run.run_id } }}) catch |err| {
+            log.warn("method=listSnapshots run_id={s} failed: {s}", .{ run.run_id, @errorName(err) });
             self.private().window.showToastFmt("{s} failed: {}", .{ label, err });
             return;
         };
@@ -486,22 +548,33 @@ pub const RunsView = extern struct {
             .id = &.{"id"},
             .title = &.{ "label", "id" },
             .subtitle = &.{ "nodeId", "node_id", "createdAtMs", "created_at_ms" },
-        }) catch std.ArrayList(vh.Item).empty;
+        }) catch |err| blk: {
+            logx.catchWarn(log, "snapshotRunAction parseItems", err);
+            break :blk std.ArrayList(vh.Item).empty;
+        };
         defer {
             vh.clearItems(alloc, &snapshots);
             snapshots.deinit(alloc);
         }
+        log.info("method=listSnapshots run_id={s} rows={d} duration_ms={d}", .{ run.run_id, snapshots.items.len, list_t.elapsedMs() });
         if (snapshots.items.len == 0) {
             self.private().window.showToast("No snapshots available for this run");
             return;
         }
-        const args = vh.jsonObject(alloc, &.{.{ .key = "snapshotId", .value = .{ .string = snapshots.items[0].id } }}) catch return;
+        const args = vh.jsonObject(alloc, &.{.{ .key = "snapshotId", .value = .{ .string = snapshots.items[0].id } }}) catch |err| {
+            logx.catchWarn(log, "snapshotRunAction jsonObject", err);
+            return;
+        };
         defer alloc.free(args);
+        log.debug("calling method={s} snapshot_id={s} args={s}", .{ method, snapshots.items[0].id, args });
+        const t = logx.startTimer();
         const json = smithers.callJson(alloc, self.client(), method, args) catch |err| {
+            log.warn("method={s} snapshot_id={s} failed: {s}", .{ method, snapshots.items[0].id, @errorName(err) });
             self.private().window.showToastFmt("{s} failed: {}", .{ label, err });
             return;
         };
         defer alloc.free(json);
+        log.info("method={s} snapshot_id={s} duration_ms={d}", .{ method, snapshots.items[0].id, t.elapsedMs() });
         self.private().window.showToastFmt("{s} from {s}", .{ label, snapshots.items[0].id });
         self.private().window.showNav(.runs);
     }
@@ -511,7 +584,10 @@ pub const RunsView = extern struct {
         if (index >= self.private().runs.items.len) return;
         const run = self.private().runs.items[index];
         const alloc = self.allocator();
+        log.debug("calling method=listSnapshots run_id={s}", .{run.run_id});
+        const t = logx.startTimer();
         const snapshots_json = vh.callJson(alloc, self.client(), "listSnapshots", &.{.{ .key = "runId", .value = .{ .string = run.run_id } }}) catch |err| {
+            log.warn("method=listSnapshots run_id={s} failed: {s}", .{ run.run_id, @errorName(err) });
             self.private().window.showToastFmt("Snapshots failed: {}", .{err});
             return;
         };
@@ -520,12 +596,19 @@ pub const RunsView = extern struct {
             .id = &.{"id"},
             .title = &.{ "label", "id" },
             .subtitle = &.{ "nodeId", "node_id", "createdAtMs", "created_at_ms" },
-        }) catch std.ArrayList(vh.Item).empty;
+        }) catch |err| blk: {
+            logx.catchWarn(log, "showSnapshots parseItems", err);
+            break :blk std.ArrayList(vh.Item).empty;
+        };
         defer {
             vh.clearItems(alloc, &snapshots);
             snapshots.deinit(alloc);
         }
-        const message = std.fmt.allocPrintSentinel(alloc, "{d} snapshot(s) are available for run {s}. Use Fork or Replay to branch from the newest snapshot.", .{ snapshots.items.len, run.run_id }, 0) catch return;
+        log.info("method=listSnapshots run_id={s} rows={d} duration_ms={d}", .{ run.run_id, snapshots.items.len, t.elapsedMs() });
+        const message = std.fmt.allocPrintSentinel(alloc, "{d} snapshot(s) are available for run {s}. Use Fork or Replay to branch from the newest snapshot.", .{ snapshots.items.len, run.run_id }, 0) catch |err| {
+            logx.catchWarn(log, "showSnapshots allocPrint", err);
+            return;
+        };
         defer alloc.free(message);
         const dialog = adw.AlertDialog.new("Run Snapshots", message.ptr);
         dialog.addResponse("close", "Close");
@@ -621,21 +704,21 @@ pub const RunsView = extern struct {
     }
 
     fn searchActivated(_: *gtk.Entry, self: *Self) callconv(.c) void {
-        self.renderList() catch {};
+        self.renderList() catch |err| logx.catchWarn(log, "searchActivated renderList", err);
     }
 
     fn searchChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
-        self.renderList() catch {};
+        self.renderList() catch |err| logx.catchWarn(log, "searchChanged renderList", err);
     }
 
     fn workflowChanged(_: *gtk.Editable, self: *Self) callconv(.c) void {
-        self.renderList() catch {};
+        self.renderList() catch |err| logx.catchWarn(log, "workflowChanged renderList", err);
     }
 
     fn sortClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.private().sort_desc = !self.private().sort_desc;
         self.sortRuns();
-        self.renderList() catch {};
+        self.renderList() catch |err| logx.catchWarn(log, "sortClicked renderList", err);
         self.private().window.showToast(if (self.private().sort_desc) "Sorted newest first" else "Sorted oldest first");
     }
 
@@ -644,7 +727,7 @@ pub const RunsView = extern struct {
         const label: [*:0]const u8 = @ptrCast(raw);
         const text = std.mem.span(label);
         self.private().status_filter = if (std.mem.eql(u8, text, "All")) null else text;
-        self.renderList() catch {};
+        self.renderList() catch |err| logx.catchWarn(log, "statusFilterClicked renderList", err);
     }
 
     fn dateFilterClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
@@ -655,7 +738,7 @@ pub const RunsView = extern struct {
             4 => .month,
             else => .all,
         };
-        self.renderList() catch {};
+        self.renderList() catch |err| logx.catchWarn(log, "dateFilterClicked renderList", err);
     }
 
     fn clearFiltersClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -663,7 +746,7 @@ pub const RunsView = extern struct {
         self.private().date_filter = .all;
         self.private().search_entry.as(gtk.Editable).setText("");
         self.private().workflow_entry.as(gtk.Editable).setText("");
-        self.renderList() catch {};
+        self.renderList() catch |err| logx.catchWarn(log, "clearFiltersClicked renderList", err);
     }
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
@@ -717,15 +800,25 @@ pub const RunsView = extern struct {
             .{ .key = "runId", .value = .{ .string = pending.run_id } },
             .{ .key = "nodeId", .value = .{ .string = pending.node_id } },
             .{ .key = "iteration", .value = if (pending.iteration) |iteration| .{ .integer = iteration } else .null },
-        }) catch return;
+        }) catch |err| {
+            logx.catchWarn(log, "denyDialogResponse jsonObject", err);
+            return;
+        };
         defer alloc.free(args);
+        log.debug("calling method=denyNode run_id={s} node_id={s} args={s}", .{ pending.run_id, pending.node_id, args });
+        const t = logx.startTimer();
         const json = smithers.callJson(alloc, self.client(), "denyNode", args) catch |err| {
+            log.warn("method=denyNode run_id={s} node_id={s} failed: {s}", .{ pending.run_id, pending.node_id, @errorName(err) });
             self.private().window.showToastFmt("Deny failed: {}", .{err});
             return;
         };
         defer alloc.free(json);
+        log.info("method=denyNode run_id={s} node_id={s} duration_ms={d}", .{ pending.run_id, pending.node_id, t.elapsedMs() });
         self.private().window.showToastFmt("Denied {s}", .{pending.node_id});
-        if (self.private().selected_index) |index| self.loadInspection(index) catch self.refresh();
+        if (self.private().selected_index) |index| self.loadInspection(index) catch |err| {
+            logx.catchWarn(log, "denyDialogResponse reload", err);
+            self.refresh();
+        };
         if (self.private().pending_deny) |*cleanup| {
             cleanup.deinit(alloc);
             self.private().pending_deny = null;
@@ -733,7 +826,10 @@ pub const RunsView = extern struct {
     }
 
     fn refreshStatusClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        if (self.private().selected_index) |index| self.loadInspection(index) catch self.refresh();
+        if (self.private().selected_index) |index| self.loadInspection(index) catch |err| {
+            logx.catchWarn(log, "refreshStatusClicked reload", err);
+            self.refresh();
+        };
     }
 
     fn rerunClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
@@ -759,7 +855,7 @@ pub const RunsView = extern struct {
     fn pollRuns(data: ?*anyopaque) callconv(.c) c_int {
         const ptr = data orelse return 0;
         const self: *Self = @ptrCast(@alignCast(ptr));
-        self.loadRuns() catch {};
+        self.loadRuns() catch |err| logx.catchDebug(log, "pollRuns loadRuns", err);
         return 1;
     }
 

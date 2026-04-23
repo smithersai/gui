@@ -6,6 +6,8 @@ import CryptoKit
 enum RunStatus: String, Codable, CaseIterable {
     case running
     case waitingApproval = "waiting-approval"
+    case waitingEvent = "waiting-event"
+    case waitingTimer = "waiting-timer"
     case finished
     case failed
     case cancelled
@@ -17,6 +19,8 @@ enum RunStatus: String, Codable, CaseIterable {
         switch self {
         case .running: return "RUNNING"
         case .waitingApproval: return "APPROVAL"
+        case .waitingEvent: return "WAITING"
+        case .waitingTimer: return "WAITING"
         case .finished: return "FINISHED"
         case .failed: return "FAILED"
         case .cancelled: return "CANCELLED"
@@ -138,7 +142,11 @@ extension RunStatus {
         switch normalizedInspectToken(value) {
         case "waiting-approval", "waitingapproval", "blocked", "paused":
             return .waitingApproval
-        case "finished", "complete", "completed", "success", "succeeded", "done":
+        case "waiting-event", "waitingevent":
+            return .waitingEvent
+        case "waiting-timer", "waitingtimer":
+            return .waitingTimer
+        case "finished", "complete", "completed", "success", "succeeded", "done", "continued":
             return .finished
         case "failed", "failure", "error", "errored":
             return .failed

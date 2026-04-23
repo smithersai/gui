@@ -1,6 +1,9 @@
 const std = @import("std");
+const logx = @import("../log.zig");
 const EventStream = @import("../session/event_stream.zig");
 const chat_output = @import("ChatOutput.zig");
+
+const log = std.log.scoped(.smithers_core_chat_stream);
 
 pub const Ctx = struct {
     allocator: std.mem.Allocator,
@@ -33,10 +36,12 @@ pub fn start(
 
     const thread = try std.Thread.spawn(.{}, loop, .{ctx});
     stream.attachProducer(thread, @ptrCast(ctx), cleanup);
+    logx.event(log, "chat_stream_open", "run_id={s} poll_ms={d}", .{ ctx.run_id, ctx.poll_ms });
 }
 
 fn cleanup(raw: *anyopaque) void {
     const ctx: *Ctx = @ptrCast(@alignCast(raw));
+    logx.event(log, "chat_stream_close", "run_id={s}", .{ctx.run_id});
     ctx.stream.release();
     ctx.allocator.free(ctx.run_id);
     ctx.allocator.free(ctx.db_path);
@@ -66,24 +71,32 @@ fn loop(ctx: *Ctx) void {
     }
 
     // Initial emission: push all current blocks.
-    pushNewBlocks(ctx, &emitted) catch {};
+    pushNewBlocks(ctx, &emitted) catch |err| logx.catchWarn(log, "pushNewBlocks(initial)", err);
 
     while (!ctx.stream.stopRequested()) {
         sleepSlices(ctx);
         if (ctx.stream.stopRequested()) break;
-        pushNewBlocks(ctx, &emitted) catch {};
+        pushNewBlocks(ctx, &emitted) catch |err| logx.catchWarn(log, "pushNewBlocks", err);
     }
 }
 
 fn pushNewBlocks(ctx: *Ctx, emitted: *std.StringHashMap(void)) !void {
-    const blocks = chat_output.loadBlocks(ctx.allocator, ctx.db_path, ctx.run_id, -1) catch return;
+    const blocks = chat_output.loadBlocks(ctx.allocator, ctx.db_path, ctx.run_id, -1) catch |err| {
+        logx.catchWarn(log, "loadBlocks", err);
+        return;
+    };
     defer chat_output.freeBlocks(ctx.allocator, blocks);
 
     for (blocks) |b| {
         if (emitted.contains(b.stable_id)) continue;
         const json = try blockToJson(ctx.allocator, b);
         defer ctx.allocator.free(json);
-        ctx.stream.pushJson(json) catch {};
+        ctx.stream.pushJson(json) catch |err| {
+            logx.catchErr(log, "stream.pushJson(chat_block)", err);
+            log.warn("backpressure drop: chat block stable_id={s}", .{b.stable_id});
+            continue;
+        };
+        log.debug("event sent type=chat_block stable_id={s} role={s}", .{ b.stable_id, b.role });
         const key_copy = try ctx.allocator.dupe(u8, b.stable_id);
         try emitted.put(key_copy, {});
     }

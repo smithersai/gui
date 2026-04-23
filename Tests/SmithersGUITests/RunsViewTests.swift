@@ -861,7 +861,7 @@ final class StatusPillColorMappingTests: XCTestCase {
             let color: String = {
                 switch status {
                 case .running: return "accent"
-                case .waitingApproval: return "warning"
+                case .waitingApproval, .waitingEvent, .waitingTimer: return "warning"
                 case .finished: return "success"
                 case .failed: return "danger"
                 case .stale, .orphaned: return "warning"

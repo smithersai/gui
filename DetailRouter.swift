@@ -288,7 +288,7 @@ struct SnapshotsRouteView: View {
         switch status {
         case .running:
             return Theme.info
-        case .waitingApproval:
+        case .waitingApproval, .waitingEvent, .waitingTimer:
             return Theme.warning
         case .finished:
             return Theme.success

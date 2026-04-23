@@ -725,7 +725,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 runTabs[idx].title = runTabTitle(runId: run.runId, title: run.workflowName)
                 runTabs[idx].preview = runPreview(for: run)
                 didMutate = true
-            } else if run.status == .running || run.status == .waitingApproval {
+            } else if run.status == .running || run.status == .waitingApproval || run.status == .waitingEvent || run.status == .waitingTimer {
                 addRunTab(runId: run.runId, title: run.workflowName, preview: runPreview(for: run))
                 didMutate = true
             }

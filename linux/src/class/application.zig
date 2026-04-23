@@ -7,6 +7,7 @@ const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const smithers = @import("../smithers.zig");
+const logx = @import("../log.zig");
 const App = @import("../App.zig");
 const Common = @import("../class.zig").Common;
 const shortcuts = @import("../features/shortcuts.zig");
@@ -80,90 +81,141 @@ pub const Application = extern struct {
         if (shortcuts.defaultPath(alloc)) |path| {
             defer alloc.free(path);
             priv.shortcut_bindings = shortcuts.load(alloc, path) catch |err| loaded: {
-                log.warn("failed to load keyboard shortcuts from {s}: {}", .{ path, err });
+                log.warn("shortcuts.load from {s} failed: {s}", .{ path, @errorName(err) });
                 break :loaded .{ .allocator = alloc };
             };
         } else |err| {
-            log.warn("failed to resolve keyboard shortcut path: {}", .{err});
+            logx.catchWarn(log, "shortcuts.defaultPath", err);
             priv.shortcut_bindings = .{ .allocator = alloc };
         }
 
         adw.StyleManager.getDefault().setColorScheme(.force_dark);
 
-        const css = 
-            \\ @define-color base_bg_color #0C0E16;
-            \\ @define-color surface1_color #141826;
-            \\ @define-color surface2_color #1A2030;
+        const css =
+            \\ @define-color base_bg_color #0B0D14;
+            \\ @define-color surface1_color #11141F;
+            \\ @define-color surface2_color #161A28;
             \\ @define-color accent_color #4C8DFF;
             \\ @define-color success_color #34D399;
             \\ @define-color warning_color #FBBF24;
             \\ @define-color error_color #F87171;
             \\ @define-color info_color #60A5FA;
-            \\ @define-color border_color rgba(255, 255, 255, 0.08);
+            \\ @define-color border_color rgba(255, 255, 255, 0.06);
             \\ @define-color border_hover_color rgba(255, 255, 255, 0.12);
             \\ @define-color window_bg_color @base_bg_color;
-            \\ @define-color window_fg_color rgba(255, 255, 255, 0.88);
+            \\ @define-color window_fg_color rgba(255, 255, 255, 0.90);
             \\ @define-color view_bg_color @surface1_color;
-            \\ @define-color view_fg_color rgba(255, 255, 255, 0.88);
-            \\ @define-color headerbar_bg_color @surface1_color;
-            \\ @define-color headerbar_fg_color rgba(255, 255, 255, 0.70);
+            \\ @define-color view_fg_color rgba(255, 255, 255, 0.90);
+            \\ @define-color headerbar_bg_color @base_bg_color;
+            \\ @define-color headerbar_fg_color rgba(255, 255, 255, 0.75);
             \\ @define-color popover_bg_color @surface2_color;
-            \\ @define-color popover_fg_color rgba(255, 255, 255, 0.88);
-            \\ @define-color card_bg_color @surface2_color;
-            \\ @define-color card_fg_color rgba(255, 255, 255, 0.88);
-            \\ 
+            \\ @define-color popover_fg_color rgba(255, 255, 255, 0.90);
+            \\ @define-color card_bg_color @surface1_color;
+            \\ @define-color card_fg_color rgba(255, 255, 255, 0.90);
+            \\
             \\ window, dialog, .background {
             \\     background-color: @base_bg_color;
             \\     color: @window_fg_color;
             \\ }
             \\ headerbar {
-            \\     background-color: @surface1_color;
+            \\     background-color: @base_bg_color;
             \\     box-shadow: none;
             \\     border-bottom: 1px solid @border_color;
+            \\     min-height: 44px;
             \\ }
             \\ headerbar title {
             \\     font-weight: 600;
+            \\     font-size: 13px;
+            \\ }
+            \\ .title-1 {
+            \\     font-size: 26px;
+            \\     font-weight: 700;
+            \\     letter-spacing: -0.01em;
+            \\ }
+            \\ .title-2 {
+            \\     font-size: 16px;
+            \\     font-weight: 600;
+            \\ }
+            \\ .caption {
+            \\     font-size: 10px;
+            \\     font-weight: 600;
+            \\     letter-spacing: 0.08em;
+            \\     text-transform: uppercase;
+            \\     color: rgba(255, 255, 255, 0.45);
             \\ }
             \\ .navigation-sidebar {
-            \\     background-color: @base_bg_color;
+            \\     background-color: @surface1_color;
             \\     border-right: 1px solid @border_color;
+            \\     padding: 0;
             \\ }
-            \\ .navigation-sidebar > list {
+            \\ .navigation-sidebar > list,
+            \\ .navigation-sidebar list {
             \\     background-color: transparent;
             \\ }
             \\ .navigation-sidebar row {
+            \\     background-color: transparent;
+            \\     background-image: none;
+            \\     border: none;
             \\     border-radius: 6px;
-            \\     margin: 2px 8px;
-            \\     padding: 2px;
-            \\     transition: background-color 0.15s ease-out, color 0.15s ease-out;
-            \\     color: rgba(255, 255, 255, 0.60);
+            \\     margin: 1px 4px;
+            \\     padding: 0;
+            \\     min-height: 30px;
+            \\     transition: background-color 0.12s ease-out, color 0.12s ease-out;
+            \\     color: rgba(255, 255, 255, 0.70);
+            \\ }
+            \\ .navigation-sidebar row > box,
+            \\ .navigation-sidebar row .header,
+            \\ .navigation-sidebar row.activatable {
+            \\     padding: 4px 8px;
+            \\     min-height: 30px;
+            \\ }
+            \\ .navigation-sidebar row.activatable {
+            \\     box-shadow: none;
+            \\ }
+            \\ .navigation-sidebar row .title {
+            \\     font-weight: 500;
+            \\     font-size: 13px;
+            \\ }
+            \\ .navigation-sidebar row .subtitle {
+            \\     font-size: 11px;
+            \\     opacity: 0.7;
+            \\ }
+            \\ .navigation-sidebar row image {
+            \\     -gtk-icon-size: 16px;
+            \\     margin-right: 4px;
             \\ }
             \\ .navigation-sidebar row:hover {
-            \\     background-color: rgba(255, 255, 255, 0.04);
-            \\     color: rgba(255, 255, 255, 0.88);
+            \\     background-color: rgba(255, 255, 255, 0.05);
+            \\     color: rgba(255, 255, 255, 0.95);
             \\ }
             \\ .navigation-sidebar row:selected, .navigation-sidebar row.selected {
-            \\     background-color: rgba(76, 141, 255, 0.12);
-            \\     color: @accent_color;
+            \\     background-color: rgba(76, 141, 255, 0.15);
+            \\     color: #FFFFFF;
             \\ }
             \\ button {
-            \\     background-color: rgba(255, 255, 255, 0.06);
+            \\     background-color: rgba(255, 255, 255, 0.04);
             \\     color: rgba(255, 255, 255, 0.88);
-            \\     border: 1px solid rgba(255, 255, 255, 0.10);
+            \\     border: 1px solid transparent;
             \\     border-radius: 6px;
             \\     transition: all 0.12s ease-out;
+            \\     min-height: 28px;
+            \\     padding: 4px 12px;
             \\ }
             \\ button:hover {
-            \\     background-color: rgba(255, 255, 255, 0.10);
-            \\     border-color: @border_hover_color;
+            \\     background-color: rgba(255, 255, 255, 0.08);
             \\     color: #FFFFFF;
             \\ }
             \\ button:active {
-            \\     background-color: rgba(255, 255, 255, 0.04);
+            \\     background-color: rgba(255, 255, 255, 0.12);
             \\ }
             \\ button.suggested-action {
             \\     background-color: @accent_color;
             \\     color: #FFFFFF;
+            \\     border-color: transparent;
+            \\     font-weight: 600;
+            \\ }
+            \\ button.suggested-action:hover {
+            \\     background-color: shade(@accent_color, 1.1);
             \\ }
             \\ button.destructive-action {
             \\     background-color: @error_color;
@@ -176,43 +228,121 @@ pub const Application = extern struct {
             \\ button.flat:hover, button.image-button:hover {
             \\     background-color: rgba(255, 255, 255, 0.06);
             \\ }
+            \\ button.dash-tab {
+            \\     background-color: transparent;
+            \\     border: none;
+            \\     border-bottom: 2px solid transparent;
+            \\     border-radius: 0;
+            \\     padding: 8px 14px;
+            \\     color: rgba(255, 255, 255, 0.55);
+            \\     font-weight: 500;
+            \\     min-height: 32px;
+            \\ }
+            \\ button.dash-tab:hover {
+            \\     background-color: transparent;
+            \\     color: rgba(255, 255, 255, 0.90);
+            \\ }
+            \\ button.dash-tab.active {
+            \\     color: #FFFFFF;
+            \\     border-bottom-color: @accent_color;
+            \\ }
+            \\ .dash-tabs {
+            \\     border-bottom: 1px solid @border_color;
+            \\     padding: 0 8px;
+            \\ }
+            \\ button.link-button {
+            \\     background-color: transparent;
+            \\     border: none;
+            \\     color: rgba(255, 255, 255, 0.60);
+            \\     padding: 4px 8px;
+            \\ }
+            \\ button.link-button:hover {
+            \\     background-color: transparent;
+            \\     color: @accent_color;
+            \\ }
             \\ entry {
-            \\     background-color: rgba(255, 255, 255, 0.06);
-            \\     color: rgba(255, 255, 255, 0.88);
+            \\     background-color: rgba(255, 255, 255, 0.04);
+            \\     color: rgba(255, 255, 255, 0.92);
             \\     border: 1px solid @border_color;
             \\     border-radius: 6px;
+            \\     padding: 6px 10px;
             \\     transition: all 0.15s ease-out;
             \\ }
             \\ entry:focus-within {
             \\     border-color: @accent_color;
-            \\     background-color: rgba(255, 255, 255, 0.08);
+            \\     background-color: rgba(255, 255, 255, 0.06);
             \\ }
             \\ .boxed-list {
-            \\     background-color: @surface2_color;
-            \\     border-radius: 8px;
+            \\     background-color: @surface1_color;
+            \\     border-radius: 10px;
             \\     border: 1px solid @border_color;
-            \\     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            \\     box-shadow: none;
             \\ }
-            \\ list row {
+            \\ .boxed-list row, list.boxed-list row {
             \\     background-color: transparent;
             \\     border-bottom: 1px solid @border_color;
-            \\     transition: background-color 0.15s ease-out;
+            \\     transition: background-color 0.12s ease-out;
+            \\     min-height: 44px;
             \\ }
-            \\ list row:last-child {
+            \\ .boxed-list row:last-child, list.boxed-list row:last-child {
             \\     border-bottom: none;
             \\ }
-            \\ list row.activatable:hover {
-            \\     background-color: rgba(255, 255, 255, 0.04);
+            \\ .boxed-list row.activatable:hover {
+            \\     background-color: rgba(255, 255, 255, 0.03);
             \\ }
-            \\ list row:selected {
-            \\     background-color: rgba(76, 141, 255, 0.12);
+            \\ .boxed-list row:selected {
+            \\     background-color: rgba(76, 141, 255, 0.10);
+            \\ }
+            \\ .card {
+            \\     background-color: @surface1_color;
+            \\     border-radius: 10px;
+            \\     border: 1px solid @border_color;
+            \\     box-shadow: none;
+            \\ }
+            \\ .metric-card {
+            \\     background-color: @surface1_color;
+            \\     border-radius: 10px;
+            \\     border: 1px solid @border_color;
+            \\     padding: 14px 16px;
+            \\     transition: border-color 0.15s ease-out;
+            \\ }
+            \\ .metric-card:hover {
+            \\     border-color: @border_hover_color;
+            \\ }
+            \\ .metric-card.primary .metric-value {
+            \\     color: #FFFFFF;
+            \\ }
+            \\ .metric-card.secondary {
+            \\     background-color: transparent;
+            \\     border-color: @border_color;
+            \\     padding: 10px 14px;
+            \\ }
+            \\ .metric-value {
+            \\     font-size: 28px;
+            \\     font-weight: 700;
+            \\     color: rgba(255, 255, 255, 0.95);
+            \\     letter-spacing: -0.02em;
+            \\ }
+            \\ .metric-value.compact {
+            \\     font-size: 20px;
+            \\ }
+            \\ .metric-label {
+            \\     font-size: 12px;
+            \\     font-weight: 600;
+            \\     color: rgba(255, 255, 255, 0.85);
+            \\ }
+            \\ .metric-detail {
+            \\     font-size: 11px;
+            \\     color: rgba(255, 255, 255, 0.50);
             \\ }
             \\ .dim-label {
-            \\     color: rgba(255, 255, 255, 0.60);
+            \\     color: rgba(255, 255, 255, 0.55);
             \\ }
             \\ scrollbar slider {
-            \\     background-color: rgba(255, 255, 255, 0.15);
+            \\     background-color: rgba(255, 255, 255, 0.12);
             \\     border-radius: 4px;
+            \\     min-width: 6px;
+            \\     min-height: 6px;
             \\ }
             \\ scrollbar slider:hover {
             \\     background-color: rgba(255, 255, 255, 0.25);
@@ -220,18 +350,22 @@ pub const Application = extern struct {
             \\ popover > contents {
             \\     background-color: @surface2_color;
             \\     border: 1px solid @border_color;
-            \\     border-radius: 8px;
-            \\     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+            \\     border-radius: 10px;
+            \\     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
             \\ }
             \\ tooltip {
             \\     background-color: @surface2_color;
-            \\     color: rgba(255, 255, 255, 0.88);
+            \\     color: rgba(255, 255, 255, 0.90);
             \\     border: 1px solid @border_color;
             \\     border-radius: 6px;
-            \\     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            \\     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.30);
             \\ }
             \\ splitview > separator {
             \\     background-color: @border_color;
+            \\     min-width: 1px;
+            \\ }
+            \\ statuspage > scrolledwindow > viewport > box {
+            \\     margin: 0;
             \\ }
         ;
         const provider = gtk.CssProvider.new();
@@ -296,8 +430,12 @@ pub const Application = extern struct {
     }
 
     pub fn run(self: *Self) !void {
+        logx.event(log, "application_run_start", "", .{});
         const ctx = glib.MainContext.default();
-        if (glib.MainContext.acquire(ctx) == 0) return error.ContextAcquireFailed;
+        if (glib.MainContext.acquire(ctx) == 0) {
+            log.err("glib MainContext acquire failed", .{});
+            return error.ContextAcquireFailed;
+        }
         defer glib.MainContext.release(ctx);
 
         var err: ?*glib.Error = null;
@@ -326,6 +464,7 @@ pub const Application = extern struct {
     }
 
     pub fn quit(self: *Self) void {
+        logx.event(log, "application_quit", "", .{});
         self.private().running = false;
         self.as(gio.Application).quit();
     }
@@ -369,8 +508,9 @@ pub const Application = extern struct {
     }
 
     fn activateCallback(_: *gio.Application, self: *Self) callconv(.c) void {
+        logx.event(log, "application_activate", "", .{});
         const win = self.ensureWindow() catch |err| {
-            log.err("failed to create main window: {}", .{err});
+            logx.catchErr(log, "ensureWindow", err);
             self.quit();
             return;
         };
@@ -483,9 +623,15 @@ pub const Application = extern struct {
                     if (targetSession(target)) |session| {
                         if (win.showSessionHandle(session)) return true;
                         if (win.isOpeningSession()) return true;
-                        return (win.adoptSessionHandle(session) catch return false);
+                        return (win.adoptSessionHandle(session) catch |err| {
+                            logx.catchWarn(log, "adoptSessionHandle", err);
+                            return false;
+                        });
                     }
-                    win.openSession(action.u.new_session.kind, null) catch return false;
+                    win.openSession(action.u.new_session.kind, null) catch |err| {
+                        logx.catchWarn(log, "openSession from core action", err);
+                        return false;
+                    };
                     return true;
                 }
                 return false;

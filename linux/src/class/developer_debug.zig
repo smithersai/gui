@@ -5,10 +5,13 @@ const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const browser_surface = @import("browser_surface.zig");
+const logx = @import("../log.zig");
 const smithers = @import("../smithers.zig");
 const terminal = @import("terminal.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
+
+const log = std.log.scoped(.smithers_gtk_developer_debug);
 
 pub const DeveloperDebugView = extern struct {
     const Self = @This();
@@ -121,16 +124,18 @@ pub const DeveloperDebugView = extern struct {
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.refresh() catch {};
+        self.refresh() catch |err| logx.catchWarn(log, "refreshClicked", err);
     }
 
     fn clearCachesClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         if (self.private().client) |client| {
-            const json = smithers.callJson(self.private().alloc, client, "clearCaches", "{}") catch {
+            const json = smithers.callJson(self.private().alloc, client, "clearCaches", "{}") catch |err| {
+                logx.catchWarn(log, "clearCaches", err);
                 self.private().event_buffer.setText("clearCaches unavailable", -1);
                 return;
             };
             defer self.private().alloc.free(json);
+            logx.event(log, "caches_cleared", "bytes={d}", .{json.len});
             self.private().event_buffer.setText("caches cleared", -1);
         } else {
             self.private().event_buffer.setText("clearCaches requires a libsmithers client", -1);
@@ -143,11 +148,13 @@ pub const DeveloperDebugView = extern struct {
             priv.event_buffer.setText("No client attached.", -1);
             return;
         }
-        const json = smithers.callJson(priv.alloc, priv.client, "debugEventDump", "{}") catch {
+        const json = smithers.callJson(priv.alloc, priv.client, "debugEventDump", "{}") catch |err| {
+            logx.catchWarn(log, "debugEventDump", err);
             priv.event_buffer.setText("debugEventDump unavailable.", -1);
             return;
         };
         defer priv.alloc.free(json);
+        log.debug("debugEventDump bytes={d}", .{json.len});
         const z = try priv.alloc.dupeZ(u8, json);
         defer priv.alloc.free(z);
         priv.event_buffer.setText(z.ptr, @intCast(json.len));

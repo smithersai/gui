@@ -307,7 +307,7 @@ final class AppNotifications: ObservableObject {
         let shortID = String(runEvent.runId.prefix(8))
 
         switch status {
-        case .running, .unknown:
+        case .running, .unknown, .waitingEvent, .waitingTimer:
             break
         case .waitingApproval:
             await notifyApprovalNeeded(runId: runEvent.runId, shortID: shortID, smithers: smithers)

@@ -4,9 +4,12 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const tree_state = @import("../features/tree_state.zig");
+
+const log = std.log.scoped(.smithers_gtk_logs_viewer);
 
 pub const LogsViewer = extern struct {
     const Self = @This();
@@ -65,22 +68,31 @@ pub const LogsViewer = extern struct {
         var out: std.Io.Writer.Allocating = .init(priv.alloc);
         defer out.deinit();
 
+        const t = logx.startTimer();
         var rendered: usize = 0;
         for (state.logs.items) |block| {
-            if (!(tree_state.logMatches(block, node_id, filter, query, priv.alloc) catch false)) continue;
+            if (!(tree_state.logMatches(block, node_id, filter, query, priv.alloc) catch |err| blk: {
+                logx.catchDebug(log, "logMatches", err);
+                break :blk false;
+            })) continue;
             if (block.timestamp_ms) |ts| {
-                out.writer.print("[{d}] ", .{ts}) catch {};
+                out.writer.print("[{d}] ", .{ts}) catch |err| logx.catchDebug(log, "logs render timestamp", err);
             }
-            out.writer.print("{s}: {s}\n\n", .{ tree_state.logBlockLevel(block).label(), block.content }) catch {};
+            out.writer.print("{s}: {s}\n\n", .{ tree_state.logBlockLevel(block).label(), block.content }) catch |err| logx.catchDebug(log, "logs render block", err);
             rendered += 1;
         }
+        logx.endTimerDebug(log, "logs_viewer render", t);
+        logx.event(log, "logs_refreshed", "total={d} rendered={d}", .{ state.logs.items.len, rendered });
 
         const header_text = std.fmt.allocPrintSentinel(
             priv.alloc,
             "{d} log block{s}",
             .{ rendered, if (rendered == 1) "" else "s" },
             0,
-        ) catch return;
+        ) catch |err| {
+            logx.catchWarn(log, "logs header allocPrintSentinel", err);
+            return;
+        };
         defer priv.alloc.free(header_text);
         priv.header.setText(header_text.ptr);
 
@@ -88,7 +100,10 @@ pub const LogsViewer = extern struct {
         if (written.len == 0) {
             priv.buffer.setText("No transcript yet.", -1);
         } else {
-            const z = priv.alloc.dupeZ(u8, written) catch return;
+            const z = priv.alloc.dupeZ(u8, written) catch |err| {
+                logx.catchWarn(log, "logs buffer dupeZ", err);
+                return;
+            };
             defer priv.alloc.free(z);
             priv.buffer.setText(z.ptr, @intCast(written.len));
         }

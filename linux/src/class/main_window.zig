@@ -6,6 +6,7 @@ const gtk = @import("gtk");
 const smithers = @import("../smithers.zig");
 const models = @import("../models.zig");
 const ui = @import("../ui.zig");
+const logx = @import("../log.zig");
 const Common = @import("../class.zig").Common;
 const Application = @import("application.zig").Application;
 const Sidebar = @import("sidebar.zig").Sidebar;
@@ -147,19 +148,19 @@ pub const MainWindow = extern struct {
 
     pub fn tick(self: *Self) void {
         const priv = self.private();
-        for (priv.sessions.items) |session| session.drainEvents() catch |err| {
-            log.warn("session event drain failed: {}", .{err});
-        };
+        for (priv.sessions.items) |session| session.drainEvents() catch |err| logx.catchWarn(log, "session.drainEvents", err);
     }
 
     pub fn presentCommandPalette(self: *Self) void {
         const priv = self.private();
         if (priv.command_palette == null) {
             priv.command_palette = CommandPalette.new(self) catch |err| {
+                logx.catchWarn(log, "CommandPalette.new", err);
                 self.showToastFmt("Unable to open command palette: {}", .{err});
                 return;
             };
         }
+        logx.event(log, "command_palette_present", "", .{});
         priv.command_palette.?.present();
     }
 
@@ -171,16 +172,21 @@ pub const MainWindow = extern struct {
         const priv = self.private();
         if (priv.new_tab_picker == null) {
             priv.new_tab_picker = NewTabPicker.new(self) catch |err| {
+                logx.catchWarn(log, "NewTabPicker.new", err);
                 self.showToastFmt("Unable to open new tab picker: {}", .{err});
                 return;
             };
         }
+        logx.event(log, "new_tab_picker_present", "", .{});
         priv.new_tab_picker.?.present();
     }
 
     pub fn showToast(self: *Self, title: []const u8) void {
         const alloc = self.allocator();
-        const title_z = alloc.dupeZ(u8, title) catch return;
+        const title_z = alloc.dupeZ(u8, title) catch |err| {
+            logx.catchWarn(log, "showToast dupeZ", err);
+            return;
+        };
         defer alloc.free(title_z);
         const toast = adw.Toast.new(title_z.ptr);
         self.private().toast_overlay.addToast(toast);
@@ -188,7 +194,10 @@ pub const MainWindow = extern struct {
 
     pub fn showToastFmt(self: *Self, comptime fmt: []const u8, args: anytype) void {
         const alloc = self.allocator();
-        const msg = std.fmt.allocPrint(alloc, fmt, args) catch return;
+        const msg = std.fmt.allocPrint(alloc, fmt, args) catch |err| {
+            logx.catchWarn(log, "showToastFmt allocPrint", err);
+            return;
+        };
         defer alloc.free(msg);
         self.showToast(msg);
     }
@@ -198,11 +207,15 @@ pub const MainWindow = extern struct {
         const z = try alloc.dupeZ(u8, path);
         defer alloc.free(z);
 
+        logx.event(log, "workspace_open", "path={s}", .{path});
         self.private().opening_workspace = true;
         defer self.private().opening_workspace = false;
 
         const ws = smithers.c.smithers_app_open_workspace(self.private().app.core(), z.ptr);
-        if (ws == null) return error.OpenWorkspaceFailed;
+        if (ws == null) {
+            log.err("smithers_app_open_workspace returned null path={s}", .{path});
+            return error.OpenWorkspaceFailed;
+        }
         errdefer smithers.c.smithers_app_close_workspace(self.private().app.core(), ws);
 
         try self.adoptWorkspace(path, ws);
@@ -210,8 +223,9 @@ pub const MainWindow = extern struct {
 
     pub fn workspaceOpenedFromCore(self: *Self, path: []const u8) bool {
         if (self.private().opening_workspace) return true;
+        logx.event(log, "workspace_opened_from_core", "path={s}", .{path});
         self.adoptWorkspace(path, null) catch |err| {
-            log.warn("workspace action adoption failed: {}", .{err});
+            logx.catchWarn(log, "adoptWorkspace from core", err);
             self.showToastFmt("Workspace refresh failed: {}", .{err});
             return false;
         };
@@ -220,6 +234,7 @@ pub const MainWindow = extern struct {
 
     pub fn closeWorkspace(self: *Self) void {
         const priv = self.private();
+        logx.event(log, "workspace_close", "path={s}", .{priv.active_workspace orelse ""});
         if (priv.workspace_handle) |ws| {
             priv.workspace_handle = null;
             priv.closing_workspace = true;
@@ -231,6 +246,7 @@ pub const MainWindow = extern struct {
 
     pub fn workspaceClosedFromCore(self: *Self) void {
         if (self.private().closing_workspace) return;
+        logx.event(log, "workspace_closed_from_core", "", .{});
         self.clearWorkspaceUi();
     }
 
@@ -249,7 +265,7 @@ pub const MainWindow = extern struct {
         self.private().active_workspace = owned_path;
         self.private().sidebar.refresh();
         self.refreshAll() catch |err| {
-            log.warn("refresh after workspace open failed: {}", .{err});
+            logx.catchWarn(log, "refreshAll after workspace open", err);
             self.showToast("Workspace opened, but some data could not be loaded");
         };
         self.showNav(.dashboard);
@@ -283,6 +299,9 @@ pub const MainWindow = extern struct {
 
     pub fn showNav(self: *Self, nav: Nav) void {
         const priv = self.private();
+        if (priv.visible != nav) {
+            log.info("nav change from={s} to={s}", .{ @tagName(priv.visible), @tagName(nav) });
+        }
         priv.visible = nav;
         switch (nav) {
             .welcome => {
@@ -370,7 +389,10 @@ pub const MainWindow = extern struct {
                 priv.stack.setVisibleChildName("triggers");
             },
             .workspaces => {
-                self.refreshWorkspacesPage() catch |err| self.showToastFmt("Workspace refresh failed: {}", .{err});
+                self.refreshWorkspacesPage() catch |err| {
+                    logx.catchWarn(log, "refreshWorkspacesPage", err);
+                    self.showToastFmt("Workspace refresh failed: {}", .{err});
+                };
                 self.setTitle("Workspaces");
                 priv.stack.setVisibleChildName("workspaces");
             },
@@ -452,6 +474,7 @@ pub const MainWindow = extern struct {
     pub fn openRecentWorkspace(self: *Self, index: usize) void {
         if (self.private().workspaces.items.len <= index) {
             self.loadWorkspaces() catch |err| {
+                logx.catchWarn(log, "loadWorkspaces for openRecentWorkspace", err);
                 self.showToastFmt("Workspace refresh failed: {}", .{err});
                 return;
             };
@@ -461,6 +484,7 @@ pub const MainWindow = extern struct {
             return;
         }
         self.openWorkspace(self.private().workspaces.items[index].id) catch |err| {
+            logx.catchWarn(log, "openWorkspace from recent", err);
             self.showToastFmt("Open workspace failed: {}", .{err});
         };
     }
@@ -480,6 +504,7 @@ pub const MainWindow = extern struct {
         target_id: ?[]const u8,
     ) !void {
         const workspace = self.private().active_workspace;
+        logx.event(log, "session_open", "kind={d} target_id={s}", .{ kind, target_id orelse "" });
         self.private().opening_session = true;
         defer self.private().opening_session = false;
         const session = try SessionWidget.new(self.private().app, kind, workspace, target_id);
@@ -525,7 +550,8 @@ pub const MainWindow = extern struct {
         if (session.titleZ(self.allocator())) |title_z| {
             defer self.allocator().free(title_z);
             self.setTitle(title_z);
-        } else |_| {
+        } else |err| {
+            logx.catchWarn(log, "session.titleZ", err);
             self.setTitle("Session");
         }
         self.private().sidebar.refresh();
@@ -570,6 +596,7 @@ pub const MainWindow = extern struct {
         const priv = self.private();
         if (index >= priv.sessions.items.len) return;
 
+        logx.event(log, "session_close", "index={d}", .{index});
         const session = priv.sessions.orderedRemove(index);
         priv.stack.remove(session.as(gtk.Widget));
         session.unref();
@@ -595,7 +622,9 @@ pub const MainWindow = extern struct {
     }
 
     pub fn inspectRun(self: *Self, run_id: []const u8) void {
+        logx.event(log, "inspect_run", "run_id={s}", .{run_id});
         self.openSession(smithers.c.SMITHERS_SESSION_KIND_RUN_INSPECT, run_id) catch |err| {
+            logx.catchWarn(log, "openSession for inspectRun", err);
             self.showToastFmt("Run inspector failed: {}", .{err});
             self.private().run_inspect_view.setRun(run_id);
             self.showNav(.run_inspect);
@@ -719,14 +748,17 @@ pub const MainWindow = extern struct {
 
     fn buildWelcome(self: *Self) !*gtk.Widget {
         const alloc = self.allocator();
-        const box = gtk.Box.new(.vertical, 18);
-        ui.margin(box.as(gtk.Widget), 32);
-        box.as(gtk.Widget).setValign(.center);
-        box.as(gtk.Widget).setHalign(.center);
-        box.as(gtk.Widget).setSizeRequest(520, -1);
 
-        box.append(ui.heading("Smithers").as(gtk.Widget));
-        box.append(ui.dim("Open a workspace to inspect workflows, runs, approvals, agents, and durable sessions.").as(gtk.Widget));
+        const status = adw.StatusPage.new();
+        status.setIconName("view-grid-symbolic");
+        status.setTitle("Smithers");
+        status.setDescription("Open a workspace to inspect workflows, runs, approvals, agents, and durable sessions.");
+        status.as(gtk.Widget).setVexpand(1);
+        status.as(gtk.Widget).setHexpand(1);
+
+        const form = gtk.Box.new(.vertical, 10);
+        form.as(gtk.Widget).setHalign(.center);
+        form.as(gtk.Widget).setSizeRequest(420, -1);
 
         const path_row = gtk.Box.new(.horizontal, 8);
         const cwd = smithers.cwdResolve(alloc, null) catch try alloc.dupe(u8, ".");
@@ -743,12 +775,16 @@ pub const MainWindow = extern struct {
         const open = ui.textButton("Open", true);
         _ = gtk.Button.signals.clicked.connect(open, *Self, openWorkspaceClicked, self, .{});
         path_row.append(open.as(gtk.Widget));
-        box.append(path_row.as(gtk.Widget));
+        form.append(path_row.as(gtk.Widget));
 
-        const recent_button = ui.textButton("Recent Workspaces", false);
+        const recent_button = ui.textButton("Recent workspaces", false);
+        recent_button.as(gtk.Widget).addCssClass("link-button");
+        recent_button.as(gtk.Widget).setHalign(.center);
         _ = gtk.Button.signals.clicked.connect(recent_button, *Self, workspacesClicked, self, .{});
-        box.append(recent_button.as(gtk.Widget));
-        return box.as(gtk.Widget);
+        form.append(recent_button.as(gtk.Widget));
+
+        status.setChild(form.as(gtk.Widget));
+        return status.as(gtk.Widget);
     }
 
     fn loadInitialWorkspace(self: *Self) !void {
@@ -756,12 +792,13 @@ pub const MainWindow = extern struct {
         if (smithers.activeWorkspacePath(alloc, self.private().app.core())) |path| {
             defer alloc.free(path);
             if (path.len > 0) {
+                log.info("initial workspace path={s}", .{path});
                 self.private().active_workspace = try alloc.dupe(u8, path);
                 try self.refreshAll();
                 self.showNav(.dashboard);
                 return;
             }
-        } else |_| {}
+        } else |err| logx.catchDebug(log, "activeWorkspacePath", err);
         self.showNav(.welcome);
     }
 
@@ -775,7 +812,11 @@ pub const MainWindow = extern struct {
 
     fn loadWorkflows(self: *Self) !void {
         const alloc = self.allocator();
-        const json = try smithers.callJson(alloc, self.private().app.client(), "listWorkflows", "{}");
+        log.info("rpc call method=listWorkflows", .{});
+        const json = smithers.callJson(alloc, self.private().app.client(), "listWorkflows", "{}") catch |err| {
+            logx.catchWarn(log, "rpc listWorkflows", err);
+            return err;
+        };
         defer alloc.free(json);
         const parsed = try models.parseWorkflows(alloc, json);
         models.clearList(models.Workflow, alloc, &self.private().workflows);
@@ -784,7 +825,11 @@ pub const MainWindow = extern struct {
 
     fn loadRuns(self: *Self) !void {
         const alloc = self.allocator();
-        const json = try smithers.callJson(alloc, self.private().app.client(), "listRuns", "{}");
+        log.info("rpc call method=listRuns", .{});
+        const json = smithers.callJson(alloc, self.private().app.client(), "listRuns", "{}") catch |err| {
+            logx.catchWarn(log, "rpc listRuns", err);
+            return err;
+        };
         defer alloc.free(json);
         const parsed = try models.parseRuns(alloc, json);
         models.clearList(models.RunSummary, alloc, &self.private().runs);
@@ -793,7 +838,11 @@ pub const MainWindow = extern struct {
 
     fn loadApprovals(self: *Self) !void {
         const alloc = self.allocator();
-        const json = try smithers.callJson(alloc, self.private().app.client(), "listPendingApprovals", "{}");
+        log.info("rpc call method=listPendingApprovals", .{});
+        const json = smithers.callJson(alloc, self.private().app.client(), "listPendingApprovals", "{}") catch |err| {
+            logx.catchWarn(log, "rpc listPendingApprovals", err);
+            return err;
+        };
         defer alloc.free(json);
         const parsed = try models.parseApprovals(alloc, json);
         models.clearList(models.Approval, alloc, &self.private().approvals);
@@ -802,7 +851,11 @@ pub const MainWindow = extern struct {
 
     fn loadAgents(self: *Self) !void {
         const alloc = self.allocator();
-        const json = try smithers.callJson(alloc, self.private().app.client(), "listAgents", "{}");
+        log.info("rpc call method=listAgents", .{});
+        const json = smithers.callJson(alloc, self.private().app.client(), "listAgents", "{}") catch |err| {
+            logx.catchWarn(log, "rpc listAgents", err);
+            return err;
+        };
         defer alloc.free(json);
         const parsed = try models.parseAgents(alloc, json);
         models.clearList(models.Agent, alloc, &self.private().agents);
@@ -811,8 +864,11 @@ pub const MainWindow = extern struct {
 
     fn loadWorkspaces(self: *Self) !void {
         const alloc = self.allocator();
-        const json = smithers.callJson(alloc, self.private().app.client(), "listWorkspaces", "{}") catch
-            try smithers.recentWorkspacesJson(alloc, self.private().app.core());
+        log.info("rpc call method=listWorkspaces", .{});
+        const json = smithers.callJson(alloc, self.private().app.client(), "listWorkspaces", "{}") catch |err| fallback: {
+            logx.catchDebug(log, "rpc listWorkspaces (falling back to recent)", err);
+            break :fallback try smithers.recentWorkspacesJson(alloc, self.private().app.core());
+        };
         defer alloc.free(json);
         const parsed = try models.parseWorkspaces(alloc, json);
         models.clearList(models.Workspace, alloc, &self.private().workspaces);
@@ -1054,7 +1110,11 @@ pub const MainWindow = extern struct {
         const alloc = self.allocator();
         const args = try jsonObject1(alloc, "runId", run_id);
         defer alloc.free(args);
-        const json = try smithers.callJson(alloc, self.private().app.client(), "inspectRun", args);
+        log.info("rpc call method=inspectRun run_id={s}", .{run_id});
+        const json = smithers.callJson(alloc, self.private().app.client(), "inspectRun", args) catch |err| {
+            logx.catchWarn(log, "rpc inspectRun", err);
+            return err;
+        };
         defer alloc.free(json);
         var inspection = try models.parseRunInspection(alloc, json);
         defer inspection.deinit(alloc);
@@ -1093,12 +1153,16 @@ pub const MainWindow = extern struct {
         if (index >= self.private().workflows.items.len) return;
         const workflow = self.private().workflows.items[index];
         const path = workflow.relative_path orelse workflow.id;
-        const args = jsonObject1(self.allocator(), "workflowPath", path) catch {
+        logx.event(log, "workflow_launch", "workflow_id={s} path={s}", .{ workflow.id, path });
+        const args = jsonObject1(self.allocator(), "workflowPath", path) catch |err| {
+            logx.catchWarn(log, "jsonObject1 workflowPath", err);
             self.showToast("Unable to encode workflow launch");
             return;
         };
         defer self.allocator().free(args);
+        log.info("rpc call method=runWorkflow workflow_id={s}", .{workflow.id});
         const json = smithers.callJson(self.allocator(), self.private().app.client(), "runWorkflow", args) catch |err| {
+            logx.catchWarn(log, "rpc runWorkflow", err);
             self.showToastFmt("Workflow launch failed: {}", .{err});
             return;
         };
@@ -1110,18 +1174,25 @@ pub const MainWindow = extern struct {
     fn completeApproval(self: *Self, index: usize, method: []const u8, verb: []const u8) void {
         if (index >= self.private().approvals.items.len) return;
         const approval = self.private().approvals.items[index];
-        const args = approvalArgs(self.allocator(), approval) catch {
+        logx.event(log, "approval_action", "verb={s} run_id={s} node_id={s}", .{ verb, approval.run_id, approval.node_id });
+        const args = approvalArgs(self.allocator(), approval) catch |err| {
+            logx.catchWarn(log, "approvalArgs encode", err);
             self.showToast("Unable to encode approval action");
             return;
         };
         defer self.allocator().free(args);
+        log.info("rpc call method={s} run_id={s} node_id={s}", .{ method, approval.run_id, approval.node_id });
         const json = smithers.callJson(self.allocator(), self.private().app.client(), method, args) catch |err| {
+            logx.catchWarn(log, "rpc approval", err);
             self.showToastFmt("{s} failed: {}", .{ verb, err });
             return;
         };
         defer self.allocator().free(json);
         self.showToastFmt("{s} {s}", .{ verb, approval.gate orelse approval.node_id });
-        self.refreshApprovals() catch |err| self.showToastFmt("Approval refresh failed: {}", .{err});
+        self.refreshApprovals() catch |err| {
+            logx.catchWarn(log, "refreshApprovals after approval", err);
+            self.showToastFmt("Approval refresh failed: {}", .{err});
+        };
     }
 
     fn setTitle(self: *Self, text: [:0]const u8) void {
@@ -1186,7 +1257,10 @@ pub const MainWindow = extern struct {
 
     fn openWorkspaceClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         const text = std.mem.span(self.private().workspace_entry.as(gtk.Editable).getText());
-        self.openWorkspace(text) catch |err| self.showToastFmt("Open workspace failed: {}", .{err});
+        self.openWorkspace(text) catch |err| {
+            logx.catchWarn(log, "openWorkspace from entry", err);
+            self.showToastFmt("Open workspace failed: {}", .{err});
+        };
     }
 
     fn workflowRunClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
@@ -1219,6 +1293,7 @@ pub const MainWindow = extern struct {
         const index = ui.getIndex(row.as(gobject.Object)) orelse return;
         if (index >= self.private().workspaces.items.len) return;
         self.openWorkspace(self.private().workspaces.items[index].id) catch |err| {
+            logx.catchWarn(log, "openWorkspace from row", err);
             self.showToastFmt("Open workspace failed: {}", .{err});
         };
     }

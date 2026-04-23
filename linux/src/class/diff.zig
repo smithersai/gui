@@ -6,8 +6,11 @@ const gtk = @import("gtk");
 
 const diff_hunk = @import("diff_hunk.zig");
 const diff_parser = @import("../features/diff_parser.zig");
+const logx = @import("../log.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
+
+const log = std.log.scoped(.smithers_gtk_diff);
 
 pub const UnifiedDiffView = extern struct {
     const Self = @This();
@@ -109,7 +112,19 @@ pub const UnifiedDiffView = extern struct {
     fn parseAndRender(self: *Self, path: []const u8) !void {
         const priv = self.private();
         if (priv.parsed) |*parsed| parsed.deinit(priv.alloc);
+        const t = logx.startTimer();
         priv.parsed = try diff_parser.parse(priv.alloc, priv.diff_text, .{ .path = path, .strict = false });
+        logx.endTimerDebug(log, "diff parse", t);
+        if (priv.parsed) |parsed| {
+            log.debug("diff parsed path={s} hunks={d} additions={d} deletions={d} binary={} partial={}", .{
+                parsed.file.path,
+                parsed.file.hunks.items.len,
+                parsed.file.additions(),
+                parsed.file.deletions(),
+                parsed.file.is_binary,
+                parsed.file.partial_parse,
+            });
+        }
         priv.focused_hunk = 0;
         try self.render();
     }
@@ -122,6 +137,12 @@ pub const UnifiedDiffView = extern struct {
             self.updateToolbar();
             return;
         };
+        logx.event(log, "diff_shown", "path={s} hunks={d} side_by_side={} context_limit={?d}", .{
+            parsed.file.path,
+            parsed.file.hunks.items.len,
+            priv.side_by_side,
+            priv.context_limit,
+        });
 
         if (parsed.file.hunks.items.len == 0 and !parsed.file.is_binary) {
             priv.body.append(ui.dim("(no changes)").as(gtk.Widget));
@@ -167,7 +188,10 @@ pub const UnifiedDiffView = extern struct {
         const hunk_text = std.fmt.allocPrintSentinel(priv.alloc, "Hunk {d}/{d}", .{
             if (total == 0) 0 else priv.focused_hunk + 1,
             total,
-        }, 0) catch return;
+        }, 0) catch |err| {
+            logx.catchWarn(log, "updateToolbar allocPrintSentinel", err);
+            return;
+        };
         defer priv.alloc.free(hunk_text);
         priv.hunk_label.setText(hunk_text.ptr);
 
@@ -189,17 +213,20 @@ pub const UnifiedDiffView = extern struct {
         } else {
             priv.focused_hunk = (priv.focused_hunk + 1) % total;
         }
-        self.render() catch {};
+        logx.event(log, "hunk_focused", "index={d}/{d}", .{ priv.focused_hunk + 1, total });
+        self.render() catch |err| logx.catchWarn(log, "focusDelta render", err);
     }
 
     fn setContext(self: *Self, limit: ?usize) void {
         self.private().context_limit = limit;
-        self.render() catch {};
+        logx.event(log, "diff_context_set", "limit={?d}", .{limit});
+        self.render() catch |err| logx.catchWarn(log, "setContext render", err);
     }
 
     fn sideBySideClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         self.private().side_by_side = !self.private().side_by_side;
-        self.render() catch {};
+        logx.event(log, "diff_side_by_side", "enabled={}", .{self.private().side_by_side});
+        self.render() catch |err| logx.catchWarn(log, "sideBySideClicked render", err);
     }
 
     fn nextHunkClicked(_: *gtk.Button, self: *Self) callconv(.c) void {

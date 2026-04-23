@@ -1,6 +1,22 @@
 const std = @import("std");
+const logx = @import("../log.zig");
+
+const log = std.log.scoped(.smithers_core_chat_output);
 
 const Value = std.json.Value;
+
+/// Truncate a JSON fragment to `max_len` bytes, replacing CR/LF with spaces,
+/// so it is safe to embed in a single-line log message.
+fn jsonSnippet(buf: []u8, src: []const u8) []const u8 {
+    const n = @min(buf.len, src.len);
+    for (src[0..n], 0..) |c, i| {
+        buf[i] = switch (c) {
+            '\n', '\r', '\t' => ' ',
+            else => c,
+        };
+    }
+    return buf[0..n];
+}
 
 const SQLITE_OK = 0;
 const SQLITE_ROW = 100;
@@ -110,7 +126,10 @@ pub fn loadBlocks(
         keys_with_events.deinit();
     }
     for (events) |ev| {
-        var parsed = (parseEvent(allocator, ev) catch continue) orelse continue;
+        var parsed = (parseEvent(allocator, ev) catch |err| {
+            logx.catchDebug(log, "parseEvent(key-pass)", err);
+            continue;
+        }) orelse continue;
         defer parsed.deinit(allocator);
         const key = try std.fmt.allocPrint(allocator, "{s}:{}:{}", .{ parsed.node_id, parsed.iteration, parsed.attempt });
         if (!keys_with_events.contains(key)) {
@@ -161,7 +180,10 @@ pub fn loadBlocks(
 
     // Second pass: emit event-derived blocks.
     for (events) |ev| {
-        var parsed = (parseEvent(allocator, ev) catch continue) orelse continue;
+        var parsed = (parseEvent(allocator, ev) catch |err| {
+            logx.catchDebug(log, "parseEvent(emit-pass)", err);
+            continue;
+        }) orelse continue;
         defer parsed.deinit(allocator);
         const role: []const u8 = if (std.mem.eql(u8, parsed.stream, "stderr")) "stderr" else "assistant";
         if (std.mem.eql(u8, parsed.stream, "stdout")) {
@@ -378,7 +400,12 @@ const ParsedEvent = struct {
 };
 
 fn parseEvent(allocator: std.mem.Allocator, ev: EventRow) !?ParsedEvent {
-    var parsed = std.json.parseFromSlice(Value, allocator, ev.payload_json, .{}) catch return null;
+    var parsed = std.json.parseFromSlice(Value, allocator, ev.payload_json, .{}) catch |err| {
+        var buf: [80]u8 = undefined;
+        const snippet = jsonSnippet(&buf, ev.payload_json);
+        log.warn("parseEvent json failed seq={d} type={s} err={s} snippet=\"{s}\"", .{ ev.seq, ev.type_str, @errorName(err), snippet });
+        return null;
+    };
     defer parsed.deinit();
     if (parsed.value != .object) return null;
     const obj = parsed.value.object;
@@ -446,7 +473,10 @@ fn parseEvent(allocator: std.mem.Allocator, ev: EventRow) !?ParsedEvent {
             break :blk null;
         };
 
-        const text = buildAgentActionText(allocator, kind, phase, title, message, entry_type, detail_obj) catch return null;
+        const text = buildAgentActionText(allocator, kind, phase, title, message, entry_type, detail_obj) catch |err| {
+            logx.catchWarn(log, "buildAgentActionText", err);
+            return null;
+        };
         if (text.len == 0) {
             allocator.free(text);
             return null;
@@ -596,7 +626,12 @@ fn metaKindIsAgent(meta: ?[]const u8) bool {
     if (m.len == 0) return false;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    var parsed = std.json.parseFromSlice(Value, arena.allocator(), m, .{}) catch return false;
+    var parsed = std.json.parseFromSlice(Value, arena.allocator(), m, .{}) catch |err| {
+        var buf: [80]u8 = undefined;
+        const snippet = jsonSnippet(&buf, m);
+        log.debug("metaKindIsAgent parse failed err={s} snippet=\"{s}\"", .{ @errorName(err), snippet });
+        return false;
+    };
     defer parsed.deinit();
     if (parsed.value != .object) return false;
     const kind = parsed.value.object.get("kind") orelse return false;
@@ -659,7 +694,12 @@ threadlocal var prompt_scratch_len: usize = 0;
 fn extractWithParser(json: []const u8, field: []const u8) ?[]const u8 {
     var fba = std.heap.FixedBufferAllocator.init(&prompt_scratch);
     const alloc = fba.allocator();
-    var parsed = std.json.parseFromSlice(Value, alloc, json, .{}) catch return null;
+    var parsed = std.json.parseFromSlice(Value, alloc, json, .{}) catch |err| {
+        var buf: [80]u8 = undefined;
+        const snippet = jsonSnippet(&buf, json);
+        log.debug("extractWithParser field={s} err={s} snippet=\"{s}\"", .{ field, @errorName(err), snippet });
+        return null;
+    };
     defer parsed.deinit();
     if (parsed.value != .object) return null;
     const v = parsed.value.object.get(field) orelse return null;

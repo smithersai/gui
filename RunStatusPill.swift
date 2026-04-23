@@ -6,7 +6,7 @@ extension RunStatus {
         switch self {
         case .running: return Theme.accent
         case .finished: return Theme.success
-        case .waitingApproval: return Theme.warning
+        case .waitingApproval, .waitingEvent, .waitingTimer: return Theme.warning
         case .failed: return Theme.danger
         case .stale, .orphaned: return Theme.warning
         case .cancelled: return Theme.textTertiary

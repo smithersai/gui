@@ -7,6 +7,9 @@ const gtk = @import("gtk");
 
 const smithers = @import("../smithers.zig");
 const ui = @import("../ui.zig");
+const logx = @import("../log.zig");
+
+const log = std.log.scoped(.smithers_gtk_view_helpers);
 
 const Value = std.json.Value;
 
@@ -364,7 +367,10 @@ pub fn makeHeader(title: [:0]const u8, subtitle: ?[]const u8) *gtk.Box {
     title_box.append(ui.heading(title).as(gtk.Widget));
     if (subtitle) |text| {
         const alloc = std.heap.c_allocator;
-        const z = alloc.dupeZ(u8, text) catch null;
+        const z = alloc.dupeZ(u8, text) catch |err| blk: {
+            logx.catchWarn(log, "makeHeader subtitle dupeZ", err);
+            break :blk null;
+        };
         if (z) |owned| {
             defer alloc.free(owned);
             title_box.append(ui.dim(owned).as(gtk.Widget));
@@ -392,7 +398,7 @@ pub fn splitPane(left_width: c_int) struct { root: *gtk.Paned, left: *gtk.Box, r
     return .{ .root = paned, .left = left, .right = right };
 }
 
-pub fn itemRow(alloc: std.mem.Allocator, item: Item, icon_name: [:0]const u8) !*gtk.ListBoxRow {
+pub fn itemRow(alloc: std.mem.Allocator, item: Item, icon_name: [:0]const u8) !*adw.ActionRow {
     const subtitle = subtitle: {
         if (item.subtitle) |s| {
             if (item.status) |status| {
@@ -436,7 +442,10 @@ pub fn setStatus(
     description: []const u8,
 ) void {
     ui.clearBox(box);
-    const page = statusPage(alloc, icon_name, title, description) catch return;
+    const page = statusPage(alloc, icon_name, title, description) catch |err| {
+        logx.catchWarn(log, "setStatus statusPage", err);
+        return;
+    };
     box.append(page.as(gtk.Widget));
 }
 
@@ -447,19 +456,50 @@ pub fn appendMetric(
     value: usize,
     detail: []const u8,
 ) !void {
+    return appendMetricPrimary(alloc, parent, title, value, detail);
+}
+
+pub fn appendMetricPrimary(
+    alloc: std.mem.Allocator,
+    parent: *gtk.Box,
+    title: []const u8,
+    value: usize,
+    detail: []const u8,
+) !void {
     const card = gtk.Box.new(.vertical, 4);
     card.as(gtk.Widget).setHexpand(1);
-    card.as(gtk.Widget).addCssClass("card");
-    ui.margin(card.as(gtk.Widget), 12);
+    card.as(gtk.Widget).addCssClass("metric-card");
+    card.as(gtk.Widget).addCssClass("primary");
     const value_z = try std.fmt.allocPrintSentinel(alloc, "{d}", .{value}, 0);
     defer alloc.free(value_z);
     const title_z = try alloc.dupeZ(u8, title);
     defer alloc.free(title_z);
     const detail_z = try alloc.dupeZ(u8, detail);
     defer alloc.free(detail_z);
-    card.append(ui.heading(value_z).as(gtk.Widget));
-    card.append(ui.label(title_z, "heading").as(gtk.Widget));
-    card.append(ui.dim(detail_z).as(gtk.Widget));
+    card.append(ui.label(value_z, "metric-value").as(gtk.Widget));
+    card.append(ui.label(title_z, "metric-label").as(gtk.Widget));
+    card.append(ui.label(detail_z, "metric-detail").as(gtk.Widget));
+    parent.append(card.as(gtk.Widget));
+}
+
+pub fn appendMetricSecondary(
+    alloc: std.mem.Allocator,
+    parent: *gtk.Box,
+    title: []const u8,
+    value: usize,
+) !void {
+    const card = gtk.Box.new(.vertical, 2);
+    card.as(gtk.Widget).setHexpand(1);
+    card.as(gtk.Widget).addCssClass("metric-card");
+    card.as(gtk.Widget).addCssClass("secondary");
+    const value_z = try std.fmt.allocPrintSentinel(alloc, "{d}", .{value}, 0);
+    defer alloc.free(value_z);
+    const title_z = try alloc.dupeZ(u8, title);
+    defer alloc.free(title_z);
+    const value_label = ui.label(value_z, "metric-value");
+    value_label.as(gtk.Widget).addCssClass("compact");
+    card.append(value_label.as(gtk.Widget));
+    card.append(ui.label(title_z, "metric-detail").as(gtk.Widget));
     parent.append(card.as(gtk.Widget));
 }
 

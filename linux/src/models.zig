@@ -1,4 +1,7 @@
 const std = @import("std");
+const logx = @import("log.zig");
+
+const log = std.log.scoped(.smithers_gtk_models);
 
 const Value = std.json.Value;
 
@@ -133,7 +136,10 @@ pub fn clearList(comptime T: type, alloc: std.mem.Allocator, list: *std.ArrayLis
 }
 
 pub fn parseWorkflows(alloc: std.mem.Allocator, json: []const u8) !std.ArrayList(Workflow) {
-    var parsed = try std.json.parseFromSlice(Value, alloc, json, .{});
+    var parsed = std.json.parseFromSlice(Value, alloc, json, .{}) catch |err| {
+        log.err("parseWorkflows decode failed bytes={d} err={s}", .{ json.len, @errorName(err) });
+        return err;
+    };
     defer parsed.deinit();
     var result: std.ArrayList(Workflow) = .empty;
     errdefer clearList(Workflow, alloc, &result);
@@ -160,7 +166,10 @@ pub fn parseWorkflows(alloc: std.mem.Allocator, json: []const u8) !std.ArrayList
 }
 
 pub fn parseRuns(alloc: std.mem.Allocator, json: []const u8) !std.ArrayList(RunSummary) {
-    var parsed = try std.json.parseFromSlice(Value, alloc, json, .{});
+    var parsed = std.json.parseFromSlice(Value, alloc, json, .{}) catch |err| {
+        log.err("parseRuns decode failed bytes={d} err={s}", .{ json.len, @errorName(err) });
+        return err;
+    };
     defer parsed.deinit();
     var result: std.ArrayList(RunSummary) = .empty;
     errdefer clearList(RunSummary, alloc, &result);
@@ -176,14 +185,23 @@ pub fn parseRuns(alloc: std.mem.Allocator, json: []const u8) !std.ArrayList(RunS
 }
 
 pub fn parseRunInspection(alloc: std.mem.Allocator, json: []const u8) !RunInspection {
-    var parsed = try std.json.parseFromSlice(Value, alloc, json, .{});
+    var parsed = std.json.parseFromSlice(Value, alloc, json, .{}) catch |err| {
+        log.err("parseRunInspection decode failed bytes={d} err={s}", .{ json.len, @errorName(err) });
+        return err;
+    };
     defer parsed.deinit();
-    const root = object(&parsed.value) orelse return error.InvalidRunInspection;
+    const root = object(&parsed.value) orelse {
+        log.err("parseRunInspection: root is not an object (contract drift?) bytes={d}", .{json.len});
+        return error.InvalidRunInspection;
+    };
 
     var run_copy = root.get("run");
     const run_value = if (run_copy) |*value| value else &parsed.value;
     var inspection = RunInspection{
-        .run = (try runFromValue(alloc, @constCast(run_value))) orelse return error.InvalidRunInspection,
+        .run = (try runFromValue(alloc, @constCast(run_value))) orelse {
+            log.err("parseRunInspection: missing run summary (contract drift?)", .{});
+            return error.InvalidRunInspection;
+        },
     };
     errdefer inspection.deinit(alloc);
 
@@ -206,7 +224,10 @@ pub fn parseRunInspection(alloc: std.mem.Allocator, json: []const u8) !RunInspec
 }
 
 pub fn parseApprovals(alloc: std.mem.Allocator, json: []const u8) !std.ArrayList(Approval) {
-    var parsed = try std.json.parseFromSlice(Value, alloc, json, .{});
+    var parsed = std.json.parseFromSlice(Value, alloc, json, .{}) catch |err| {
+        log.err("parseApprovals decode failed bytes={d} err={s}", .{ json.len, @errorName(err) });
+        return err;
+    };
     defer parsed.deinit();
     var result: std.ArrayList(Approval) = .empty;
     errdefer clearList(Approval, alloc, &result);
@@ -238,7 +259,10 @@ pub fn parseApprovals(alloc: std.mem.Allocator, json: []const u8) !std.ArrayList
 }
 
 pub fn parseAgents(alloc: std.mem.Allocator, json: []const u8) !std.ArrayList(Agent) {
-    var parsed = try std.json.parseFromSlice(Value, alloc, json, .{});
+    var parsed = std.json.parseFromSlice(Value, alloc, json, .{}) catch |err| {
+        log.err("parseAgents decode failed bytes={d} err={s}", .{ json.len, @errorName(err) });
+        return err;
+    };
     defer parsed.deinit();
     var result: std.ArrayList(Agent) = .empty;
     errdefer clearList(Agent, alloc, &result);

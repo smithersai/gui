@@ -1,4 +1,7 @@
 const std = @import("std");
+const logx = @import("../log.zig");
+
+const log = std.log.scoped(.smithers_gtk_diff_parser);
 
 pub const Operation = enum {
     add,
@@ -143,6 +146,8 @@ pub const Options = struct {
 };
 
 pub fn parseFiles(alloc: std.mem.Allocator, diff: []const u8, options: Options) !FileList {
+    log.debug("parseFiles start bytes={d}", .{diff.len});
+    const t = logx.startTimer();
     var starts = std.ArrayList(usize).empty;
     defer starts.deinit(alloc);
     try starts.append(alloc, 0);
@@ -169,6 +174,8 @@ pub fn parseFiles(alloc: std.mem.Allocator, diff: []const u8, options: Options) 
         parsed.warnings.deinit(alloc);
     }
 
+    log.debug("parseFiles done files={d}", .{list.files.items.len});
+    logx.endTimerDebug(log, "parseFiles", t);
     return list;
 }
 
@@ -188,6 +195,8 @@ const ParsedHeader = struct {
 };
 
 pub fn parse(alloc: std.mem.Allocator, diff: []const u8, options: Options) !Result {
+    log.debug("parse start path={s} bytes={d} strict={}", .{ options.path, diff.len, options.strict });
+    const t = logx.startTimer();
     const normalized = try normalizeLineEndings(alloc, diff);
     defer alloc.free(normalized);
 
@@ -363,6 +372,13 @@ pub fn parse(alloc: std.mem.Allocator, diff: []const u8, options: Options) !Resu
     if (result.file.old_path) |old| alloc.free(old);
     result.file.old_path = if (rename_from orelse inferred_old_path) |old| try alloc.dupe(u8, old) else null;
     result.file.partial_parse = result.warnings.items.len > 0;
+    log.debug("parse done path={s} hunks={d} lines={d} warnings={d}", .{
+        result.file.path,
+        result.file.hunks.items.len,
+        result.file.renderedLineCount(),
+        result.warnings.items.len,
+    });
+    logx.endTimerDebug(log, "parse", t);
     return result;
 }
 

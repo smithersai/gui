@@ -1,4 +1,7 @@
 const std = @import("std");
+const logx = @import("../log.zig");
+
+const log = std.log.scoped(.smithers_gtk_tree_state);
 
 const Value = std.json.Value;
 
@@ -431,10 +434,16 @@ pub const LiveState = struct {
     pub fn applyPayload(self: *LiveState, payload: []const u8) !void {
         var parsed = std.json.parseFromSlice(Value, self.allocator, payload, .{}) catch |err| {
             self.decode_error_count += 1;
+            log.err("applyPayload decode failed run_id={s} bytes={d} err={s} total_errs={d}", .{
+                self.run_id, payload.len, @errorName(err), self.decode_error_count,
+            });
             return err;
         };
         defer parsed.deinit();
-        try self.applyValue(&parsed.value);
+        self.applyValue(&parsed.value) catch |err| {
+            log.warn("applyPayload applyValue failed run_id={s} err={s}", .{ self.run_id, @errorName(err) });
+            return err;
+        };
         self.last_event_ms = nowMs();
     }
 
@@ -590,6 +599,9 @@ pub const LiveState = struct {
         }
         self.status = RunStatus.fromExecution(self.live_root.?.state());
         self.selectFirstIfNeeded();
+        log.debug("snapshot applied run_id={s} seq={d} frame={d} nodes={d}", .{
+            self.run_id, self.seq, self.latest_frame_no, self.live_root.?.count(),
+        });
     }
 
     fn applyDelta(self: *LiveState, obj: *std.json.ObjectMap) !void {
@@ -611,6 +623,11 @@ pub const LiveState = struct {
         try self.recordFrame(self.latest_frame_no, seq);
         if (self.mode == .live and self.live_root != null) {
             try self.replaceDisplayedRoot(try self.live_root.?.clone(self.allocator));
+        }
+        if (self.live_root) |root| {
+            log.debug("delta applied run_id={s} seq={d} frame={d} nodes={d}", .{
+                self.run_id, self.seq, self.latest_frame_no, root.count(),
+            });
         }
     }
 

@@ -383,9 +383,10 @@ pub const ApprovalsView = extern struct {
         const title = try std.fmt.allocPrint(alloc, "Run {s}", .{run_id});
         defer alloc.free(title);
         const row = try ui.row(alloc, "folder-symbolic", title, null);
-        row.setActivatable(0);
-        row.setSelectable(0);
-        return row;
+        const lb_row = row.as(gtk.ListBoxRow);
+        lb_row.setActivatable(0);
+        lb_row.setSelectable(0);
+        return lb_row;
     }
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {

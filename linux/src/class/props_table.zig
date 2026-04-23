@@ -3,9 +3,12 @@ const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const tree_state = @import("../features/tree_state.zig");
+
+const log = std.log.scoped(.smithers_gtk_props_table);
 
 pub const PropsTable = extern struct {
     const Self = @This();
@@ -68,13 +71,22 @@ pub const PropsTable = extern struct {
         }
 
         const query = std.mem.span(priv.search.as(gtk.Editable).getText());
+        const t = logx.startTimer();
         var rendered: usize = 0;
         for (target.props.items, 0..) |prop, index| {
-            if (!(tree_state.propMatchesSearch(prop, query, priv.alloc) catch false)) continue;
-            const row = self.propRow(prop, index) catch continue;
+            if (!(tree_state.propMatchesSearch(prop, query, priv.alloc) catch |err| blk: {
+                logx.catchDebug(log, "propMatchesSearch", err);
+                break :blk false;
+            })) continue;
+            const row = self.propRow(prop, index) catch |err| {
+                logx.catchWarn(log, "propRow", err);
+                continue;
+            };
             priv.list.append(row.as(gtk.Widget));
             rendered += 1;
         }
+        logx.endTimerDebug(log, "props_table render", t);
+        log.debug("props rendered total={d} shown={d}", .{ target.props.items.len, rendered });
 
         if (rendered == 0) {
             priv.empty.setText("No props match search");

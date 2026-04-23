@@ -4,6 +4,7 @@ const gdk = @import("gdk");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const smithers = @import("../smithers.zig");
 const models = @import("../models.zig");
 const ui = @import("../ui.zig");
@@ -64,14 +65,14 @@ pub const CommandPalette = extern struct {
     }
 
     pub fn present(self: *Self) void {
-        self.refresh() catch |err| {
-            log.warn("palette refresh failed: {}", .{err});
-        };
+        logx.event(log, "palette_opened", "mode={d}", .{self.private().mode});
+        self.refresh() catch |err| logx.catchWarn(log, "palette.present refresh", err);
         self.private().dialog.present(self.private().window.as(gtk.Widget));
         _ = self.private().search.as(gtk.Widget).grabFocus();
     }
 
     pub fn dismiss(self: *Self) void {
+        logx.event(log, "palette_closed", "", .{});
         _ = self.private().dialog.close();
     }
 
@@ -147,7 +148,7 @@ pub const CommandPalette = extern struct {
             const json = try smithers.paletteItemsJson(alloc, palette);
             defer alloc.free(json);
             priv.items = models.parsePaletteItems(alloc, json) catch |err| parsed: {
-                log.warn("palette JSON parse failed: {}", .{err});
+                logx.catchWarn(log, "palette.refresh parsePaletteItems", err);
                 break :parsed .empty;
             };
         }
@@ -216,20 +217,31 @@ pub const CommandPalette = extern struct {
         const priv = self.private();
         if (index >= priv.items.items.len) return;
         const item = priv.items.items[index];
-        rememberRecent(self, item.id) catch {};
+        logx.event(log, "palette_activate", "index={d} id={s}", .{ index, item.id });
+        rememberRecent(self, item.id) catch |err| logx.catchDebug(log, "palette.activateIndex rememberRecent", err);
 
         if (priv.window.app().palette()) |palette| {
-            const id_z = priv.window.allocator().dupeZ(u8, item.id) catch return;
+            const id_z = priv.window.allocator().dupeZ(u8, item.id) catch |err| {
+                logx.catchWarn(log, "palette.activateIndex dupeZ", err);
+                return;
+            };
             defer priv.window.allocator().free(id_z);
             const err = smithers.c.smithers_palette_activate(palette, id_z.ptr);
             defer smithers.c.smithers_error_free(err);
-            if (err.code != 0) log.warn("palette activation returned error code {d}", .{err.code});
+            if (err.code != 0) {
+                const msg: []const u8 = if (err.msg != null) std.mem.sliceTo(err.msg, 0) else "(no message)";
+                log.warn("palette_activate rpc failed code={d} msg=\"{s}\" id={s}", .{
+                    err.code, msg, item.id,
+                });
+            }
         }
 
         _ = priv.dialog.close();
         if (paletteRoute(item.id)) |route| return priv.window.showNav(route);
-        if (std.mem.eql(u8, item.id, "new:terminal")) return priv.window.openSession(smithers.c.SMITHERS_SESSION_KIND_TERMINAL, null) catch {};
-        if (std.mem.eql(u8, item.id, "new:chat")) return priv.window.openSession(smithers.c.SMITHERS_SESSION_KIND_CHAT, null) catch {};
+        if (std.mem.eql(u8, item.id, "new:terminal")) return priv.window.openSession(smithers.c.SMITHERS_SESSION_KIND_TERMINAL, null) catch |err|
+            logx.catchWarn(log, "palette.activateIndex openSession terminal", err);
+        if (std.mem.eql(u8, item.id, "new:chat")) return priv.window.openSession(smithers.c.SMITHERS_SESSION_KIND_CHAT, null) catch |err|
+            logx.catchWarn(log, "palette.activateIndex openSession chat", err);
         if (std.mem.startsWith(u8, item.id, "workflow:")) return priv.window.showNav(.workflows);
         if (std.mem.startsWith(u8, item.id, "file:")) return priv.window.showToastFmt("File selected: {s}", .{item.title});
     }
@@ -289,7 +301,7 @@ pub const CommandPalette = extern struct {
     }
 
     fn searchChanged(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
-        self.refresh() catch |err| log.warn("palette search failed: {}", .{err});
+        self.refresh() catch |err| logx.catchWarn(log, "palette.searchChanged refresh", err);
     }
 
     fn searchActivated(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
@@ -297,6 +309,7 @@ pub const CommandPalette = extern struct {
     }
 
     fn stopSearch(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
+        logx.event(log, "palette_stop_search", "", .{});
         _ = self.private().dialog.close();
     }
 
@@ -310,8 +323,9 @@ pub const CommandPalette = extern struct {
             5 => smithers.c.SMITHERS_PALETTE_MODE_RUNS,
             else => smithers.c.SMITHERS_PALETTE_MODE_ALL,
         };
-        self.rebuildModes() catch {};
-        self.refresh() catch |err| log.warn("palette mode refresh failed: {}", .{err});
+        logx.event(log, "palette_mode_changed", "mode={d}", .{self.private().mode});
+        self.rebuildModes() catch |err| logx.catchWarn(log, "palette.modeClicked rebuildModes", err);
+        self.refresh() catch |err| logx.catchWarn(log, "palette.modeClicked refresh", err);
     }
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
@@ -353,8 +367,9 @@ pub const CommandPalette = extern struct {
         else
             (current + 1) % modes.len;
         self.private().mode = modes[next];
-        self.rebuildModes() catch {};
-        self.refresh() catch |err| log.warn("palette mode refresh failed: {}", .{err});
+        logx.event(log, "palette_mode_cycled", "mode={d}", .{self.private().mode});
+        self.rebuildModes() catch |err| logx.catchWarn(log, "palette.cycleMode rebuildModes", err);
+        self.refresh() catch |err| logx.catchWarn(log, "palette.cycleMode refresh", err);
     }
 
     fn keyPressed(
@@ -384,8 +399,9 @@ pub const CommandPalette = extern struct {
                     smithers.c.SMITHERS_PALETTE_MODE_RUNS,
                 };
                 self.private().mode = modes[index];
-                self.rebuildModes() catch {};
-                self.refresh() catch |err| log.warn("palette mode refresh failed: {}", .{err});
+                logx.event(log, "palette_mode_shortcut", "mode={d}", .{self.private().mode});
+                self.rebuildModes() catch |err| logx.catchWarn(log, "palette.keyPressed rebuildModes", err);
+                self.refresh() catch |err| logx.catchWarn(log, "palette.keyPressed refresh", err);
                 return 1;
             }
         }

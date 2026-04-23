@@ -4,6 +4,9 @@ const gdk = @import("gdk");
 const gio = @import("gio");
 const glib = @import("glib");
 const gtk = @import("gtk");
+const logx = @import("../log.zig");
+
+const log = std.log.scoped(.smithers_gtk_shortcuts);
 
 pub const Action = enum(u8) {
     show_palette,
@@ -484,8 +487,14 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Bindings {
     errdefer bindings.deinit();
 
     const bytes = std.fs.cwd().readFileAlloc(alloc, path, 1024 * 1024) catch |err| switch (err) {
-        error.FileNotFound => return bindings,
-        else => return err,
+        error.FileNotFound => {
+            log.debug("shortcuts load: no overrides file at {s}", .{path});
+            return bindings;
+        },
+        else => {
+            logx.catchWarn(log, "shortcuts load readFile", err);
+            return err;
+        },
     };
     defer alloc.free(bytes);
     if (std.mem.trim(u8, bytes, &std.ascii.whitespace).len == 0) return bindings;
@@ -534,6 +543,7 @@ pub fn save(alloc: std.mem.Allocator, path: []const u8, bindings: Bindings) !voi
 }
 
 pub fn register(app: *adw.Application, bindings: Bindings) void {
+    logx.event(log, "shortcuts_register", "action_count={d}", .{actions.len});
     const action_map = app.as(gio.ActionMap);
     const gtk_app = app.as(gtk.Application);
     inline for (actions) |action| {
@@ -605,7 +615,10 @@ fn parseShortcut(alloc: std.mem.Allocator, value: *std.json.Value) ?StoredShortc
     const obj = object(value) orelse return null;
     const key = stringField(obj, "key") orelse return null;
     var shortcut = StoredShortcut{
-        .key = alloc.dupe(u8, key) catch return null,
+        .key = alloc.dupe(u8, key) catch |err| {
+            logx.catchWarn(log, "parseShortcut.dupe key", err);
+            return null;
+        },
         .command = boolField(obj, "command"),
         .shift = boolField(obj, "shift"),
         .option = boolField(obj, "option"),
@@ -619,7 +632,10 @@ fn parseShortcut(alloc: std.mem.Allocator, value: *std.json.Value) ?StoredShortc
     };
     errdefer shortcut.deinit(alloc);
     if (stringField(obj, "chordKey")) |chord| {
-        if (chord.len > 0) shortcut.chordKey = alloc.dupe(u8, chord) catch return null;
+        if (chord.len > 0) shortcut.chordKey = alloc.dupe(u8, chord) catch |err| {
+            logx.catchWarn(log, "parseShortcut.dupe chordKey", err);
+            return null;
+        };
     }
     return shortcut;
 }

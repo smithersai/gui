@@ -1,5 +1,8 @@
 const std = @import("std");
 const structs = @import("apprt/structs.zig");
+const logx = @import("log.zig");
+
+const log = std.log.scoped(.smithers_core_ffi);
 
 pub const allocator = std.heap.c_allocator;
 
@@ -20,15 +23,24 @@ pub fn emptyString() structs.String {
 }
 
 pub fn stringDup(bytes: []const u8) structs.String {
-    const owned = dupZ(bytes) catch return .{ .ptr = null, .len = 0 };
+    const owned = dupZ(bytes) catch |err| {
+        logx.catchWarn(log, "stringDup", err);
+        return .{ .ptr = null, .len = 0 };
+    };
     return stringFromOwnedZ(owned);
 }
 
 pub fn stringJson(value: anytype) structs.String {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    std.json.Stringify.value(value, .{}, &out.writer) catch return stringDup("null");
-    const owned = out.toOwnedSliceSentinel(0) catch return .{ .ptr = null, .len = 0 };
+    std.json.Stringify.value(value, .{}, &out.writer) catch |err| {
+        logx.catchWarn(log, "stringJson.stringify", err);
+        return stringDup("null");
+    };
+    const owned = out.toOwnedSliceSentinel(0) catch |err| {
+        logx.catchWarn(log, "stringJson.toOwnedSlice", err);
+        return .{ .ptr = null, .len = 0 };
+    };
     return stringFromOwnedZ(owned);
 }
 
@@ -43,7 +55,10 @@ pub fn errorSuccess() structs.Error {
 }
 
 pub fn errorMessage(code: i32, msg: []const u8) structs.Error {
-    const owned = dupZ(msg) catch return .{ .code = code, .msg = null };
+    const owned = dupZ(msg) catch |err| {
+        logx.catchWarn(log, "errorMessage.dupZ", err);
+        return .{ .code = code, .msg = null };
+    };
     return .{ .code = code, .msg = owned.ptr };
 }
 
@@ -60,7 +75,10 @@ pub fn errorFree(e: structs.Error) void {
 }
 
 pub fn bytesDup(bytes: []const u8) structs.Bytes {
-    const owned = allocator.dupe(u8, bytes) catch return .{ .ptr = null, .len = 0 };
+    const owned = allocator.dupe(u8, bytes) catch |err| {
+        logx.catchWarn(log, "bytesDup", err);
+        return .{ .ptr = null, .len = 0 };
+    };
     return .{ .ptr = owned.ptr, .len = owned.len };
 }
 

@@ -3,9 +3,12 @@ const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const smithers = @import("../smithers.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
+
+const log = std.log.scoped(.smithers_gtk_quick_launch);
 
 const Mode = enum { command, workflow };
 const FieldKind = enum { string, number, enumeration, boolean, json };
@@ -103,10 +106,16 @@ pub const QuickLaunchConfirmSheet = extern struct {
     }
 
     pub fn present(self: *Self, parent: ?*gtk.Widget) void {
-        self.private().dialog.present(parent);
+        const priv = self.private();
+        switch (priv.mode) {
+            .command => logx.event(log, "quick_launch_opened", "mode=command", .{}),
+            .workflow => logx.event(log, "quick_launch_opened", "mode=workflow name={s}", .{priv.workflow_name orelse ""}),
+        }
+        priv.dialog.present(parent);
     }
 
     pub fn close(self: *Self) void {
+        logx.event(log, "quick_launch_closed", "", .{});
         _ = self.private().dialog.close();
     }
 

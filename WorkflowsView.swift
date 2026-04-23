@@ -1758,7 +1758,7 @@ struct WorkflowsView: View {
     private func runStatusColor(_ status: RunStatus) -> Color {
         switch status {
         case .running: return Theme.accent
-        case .waitingApproval: return Theme.warning
+        case .waitingApproval, .waitingEvent, .waitingTimer: return Theme.warning
         case .finished: return Theme.success
         case .failed: return Theme.danger
         case .stale, .orphaned: return Theme.warning
@@ -1770,6 +1770,7 @@ struct WorkflowsView: View {
         switch status {
         case .running: return "play.circle.fill"
         case .waitingApproval: return "checkmark.shield.fill"
+        case .waitingEvent, .waitingTimer: return "clock.fill"
         case .finished: return "checkmark.circle.fill"
         case .failed: return "xmark.circle.fill"
         case .stale, .orphaned: return "exclamationmark.triangle.fill"

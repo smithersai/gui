@@ -4,8 +4,11 @@ const gdk = @import("gdk");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
+
+const log = std.log.scoped(.smithers_gtk_shortcut_recorder);
 
 pub const ShortcutRecorder = extern struct {
     const Self = @This();
@@ -87,7 +90,10 @@ pub const ShortcutRecorder = extern struct {
             priv.label.setText("Press shortcut...");
             priv.status.setText("Recording");
         } else if (priv.shortcut) |shortcut| {
-            const z = priv.alloc.dupeZ(u8, shortcut) catch return;
+            const z = priv.alloc.dupeZ(u8, shortcut) catch |err| {
+                logx.catchWarn(log, "refreshLabel dupeZ", err);
+                return;
+            };
             defer priv.alloc.free(z);
             priv.label.setText(z.ptr);
             priv.status.setText(if (self.hasConflict()) "Conflict with existing binding" else "Ready");
@@ -139,10 +145,14 @@ pub const ShortcutRecorder = extern struct {
             return 1;
         }
 
-        const formatted = formatShortcut(priv.alloc, keyval, mods) catch return 1;
+        const formatted = formatShortcut(priv.alloc, keyval, mods) catch |err| {
+            logx.catchWarn(log, "formatShortcut", err);
+            return 1;
+        };
         if (priv.shortcut) |old| priv.alloc.free(old);
         priv.shortcut = formatted;
         priv.recording = false;
+        logx.event(log, "shortcut_recorded", "value={s} conflict={}", .{ formatted, self.hasConflict() });
         self.refreshLabel();
         return 1;
     }

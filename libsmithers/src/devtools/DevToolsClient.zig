@@ -1,4 +1,7 @@
 const std = @import("std");
+const logx = @import("../log.zig");
+
+const log = std.log.scoped(.smithers_core_devtools_client);
 
 const Value = std.json.Value;
 
@@ -30,6 +33,9 @@ const PropEntry = struct {
 
 pub fn call(allocator: std.mem.Allocator, method: []const u8, args: Value) !?[]u8 {
     if (!std.mem.startsWith(u8, method, "devtools.")) return null;
+
+    const timer = logx.startTimer();
+    defer log.debug("rpc method={s} took {d}ms", .{ method, timer.elapsedMs() });
 
     if (std.mem.eql(u8, method, "devtools.validateRunId")) {
         return try validationResult(allocator, isValidRunId(stringArg(args, "runId") orelse ""));

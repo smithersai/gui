@@ -4,9 +4,12 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const tree_state = @import("../features/tree_state.zig");
+
+const log = std.log.scoped(.smithers_gtk_live_run_frame_scrubber);
 
 pub const FrameScrubber = extern struct {
     const Self = @This();

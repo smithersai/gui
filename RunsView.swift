@@ -155,9 +155,11 @@ struct RunsView: View {
         }
         .background(Theme.surface1)
         .task {
+            AppLogger.lifecycle.info("RunsView appeared")
             await initializeRunsView()
         }
         .onDisappear {
+            AppLogger.lifecycle.info("RunsView disappeared")
             stopLiveUpdates()
         }
         .confirmationDialog(
@@ -817,8 +819,10 @@ struct RunsView: View {
     private func toggleExpand(_ run: RunSummary) {
         if expandedRunIds.contains(run.id) {
             expandedRunIds.remove(run.id)
+            AppLogger.state.info("RunsView collapsed row", metadata: ["run_id": run.runId])
         } else {
             expandedRunIds.insert(run.id)
+            AppLogger.state.info("RunsView expanded row", metadata: ["run_id": run.runId])
             if inspections[run.id] == nil {
                 Task { await loadInspection(run.runId) }
             }
@@ -852,10 +856,23 @@ struct RunsView: View {
             error = nil
         }
 
+        AppLogger.ui.info("RunsView.loadRuns start", metadata: [
+            "show_loading": String(showLoading),
+            "clear_error": String(clearError),
+        ])
+
         do {
-            runs = try await smithers.listRuns()
+            let loaded = try await AppLogger.measure("RunsView.listRuns") {
+                try await smithers.listRuns()
+            }
+            runs = loaded
             synchronizeCachedState()
+            AppLogger.ui.info("RunsView.loadRuns complete", metadata: ["runs_count": String(loaded.count)])
         } catch {
+            AppLogger.error.error("RunsView.loadRuns failed", metadata: [
+                "error": String(describing: error),
+                "runs_count": String(runs.count),
+            ])
             if runs.isEmpty || clearError {
                 self.error = error.localizedDescription
             } else {
@@ -1194,7 +1211,7 @@ private extension RunStatus {
         switch self {
         case .finished, .failed, .cancelled:
             return true
-        case .running, .waitingApproval, .stale, .orphaned, .unknown:
+        case .running, .waitingApproval, .waitingEvent, .waitingTimer, .stale, .orphaned, .unknown:
             return false
         }
     }

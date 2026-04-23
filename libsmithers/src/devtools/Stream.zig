@@ -1,6 +1,9 @@
 const std = @import("std");
+const logx = @import("../log.zig");
 const EventStream = @import("../session/event_stream.zig");
 const snapshot = @import("Snapshot.zig");
+
+const log = std.log.scoped(.smithers_core_snapshot_stream);
 
 pub const Ctx = struct {
     allocator: std.mem.Allocator,
@@ -36,10 +39,12 @@ pub fn start(
 
     const thread = try std.Thread.spawn(.{}, loop, .{ctx});
     stream.attachProducer(thread, @ptrCast(ctx), cleanup);
+    logx.event(log, "snapshot_stream_open", "run_id={s} poll_ms={d} from_seq={?d}", .{ ctx.run_id, ctx.poll_ms, ctx.from_seq });
 }
 
 fn cleanup(raw: *anyopaque) void {
     const ctx: *Ctx = @ptrCast(@alignCast(raw));
+    logx.event(log, "snapshot_stream_close", "run_id={s}", .{ctx.run_id});
     ctx.stream.release();
     ctx.allocator.free(ctx.run_id);
     ctx.allocator.free(ctx.db_path);
@@ -61,19 +66,22 @@ fn loop(ctx: *Ctx) void {
     if (snapshot.buildSnapshotEventJson(ctx.allocator, ctx.db_path, ctx.run_id, null)) |json| {
         defer ctx.allocator.free(json);
         pushAndTrack(ctx, json, &last_emitted);
-    } else |_| {}
+    } else |err| logx.catchDebug(log, "buildSnapshotEventJson(initial)", err);
 
     while (!ctx.stream.stopRequested()) {
         sleepSlices(ctx);
         if (ctx.stream.stopRequested()) break;
 
-        const latest = snapshot.latestFrameNo(ctx.allocator, ctx.db_path, ctx.run_id) catch continue;
+        const latest = snapshot.latestFrameNo(ctx.allocator, ctx.db_path, ctx.run_id) catch |err| {
+            logx.catchDebug(log, "latestFrameNo", err);
+            continue;
+        };
         if (latest) |max| {
             if (max > last_emitted) {
                 if (snapshot.buildSnapshotEventJson(ctx.allocator, ctx.db_path, ctx.run_id, null)) |json| {
                     defer ctx.allocator.free(json);
                     pushAndTrack(ctx, json, &last_emitted);
-                } else |_| {}
+                } else |err| logx.catchWarn(log, "buildSnapshotEventJson", err);
             }
         }
     }
@@ -85,7 +93,12 @@ fn pushAndTrack(ctx: *Ctx, json: []const u8, last_emitted: *i64) void {
         if (fn_val <= last_emitted.*) return;
         last_emitted.* = fn_val;
     }
-    ctx.stream.pushJson(json) catch {};
+    ctx.stream.pushJson(json) catch |err| {
+        logx.catchErr(log, "stream.pushJson(snapshot)", err);
+        log.warn("backpressure drop: snapshot run_id={s} frame={?d}", .{ ctx.run_id, extractFrameNo(json) });
+        return;
+    };
+    log.debug("event sent type=snapshot run_id={s} frame={?d}", .{ ctx.run_id, extractFrameNo(json) });
 }
 
 fn extractFrameNo(json: []const u8) ?i64 {

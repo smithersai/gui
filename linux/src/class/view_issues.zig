@@ -7,6 +7,8 @@ const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const vh = @import("../features/view_helpers.zig");
 const MainWindow = @import("main_window.zig").MainWindow;
+const logx = @import("../log.zig");
+const log = std.log.scoped(.smithers_gtk_view_issues);
 
 pub const IssuesView = extern struct {
     const Self = @This();
@@ -47,7 +49,13 @@ pub const IssuesView = extern struct {
     }
 
     pub fn refresh(self: *Self) void {
-        self.load() catch |err| vh.setStatus(self.allocator(), self.private().detail, "dialog-error-symbolic", "Issues unavailable", @errorName(err));
+        logx.event(log, "refresh_start", "view=issues state={s}", .{self.private().state_filter orelse "all"});
+        const t = logx.startTimer();
+        self.load() catch |err| {
+            logx.catchWarn(log, "refresh load", err);
+            vh.setStatus(self.allocator(), self.private().detail, "dialog-error-symbolic", "Issues unavailable", @errorName(err));
+        };
+        logx.endTimer(log, "refresh", t);
     }
 
     fn allocator(self: *Self) std.mem.Allocator {
@@ -105,7 +113,9 @@ pub const IssuesView = extern struct {
 
     fn load(self: *Self) !void {
         const alloc = self.allocator();
+        const rpc_t = logx.startTimer();
         const json = try vh.callJson(alloc, self.client(), "listIssues", &.{.{ .key = "state", .value = .{ .optional_string = self.private().state_filter } }});
+        logx.endTimerDebug(log, "rpc=listIssues", rpc_t);
         defer alloc.free(json);
         const parsed = try vh.parseItems(alloc, json, &.{ "issues", "items", "results", "data" }, .{
             .id = &.{ "id", "number", "title" },
@@ -119,6 +129,7 @@ pub const IssuesView = extern struct {
         self.private().items = parsed;
         self.private().selected_index = null;
         try self.renderList();
+        logx.event(log, "refresh_done", "view=issues rows={d}", .{self.private().items.items.len});
         if (self.private().create_visible) try self.renderCreate() else vh.setStatus(alloc, self.private().detail, "emblem-documents-symbolic", "Select an issue", "Issue details and actions appear here.");
     }
 
@@ -204,15 +215,21 @@ pub const IssuesView = extern struct {
             self.private().window.showToast("Issue title is required");
             return;
         }
-        const body = vh.getTextViewText(alloc, self.private().body_view) catch return;
+        const body = vh.getTextViewText(alloc, self.private().body_view) catch |err| {
+            logx.catchWarn(log, "getTextViewText body_view", err);
+            return;
+        };
         defer alloc.free(body);
+        const rpc_t = logx.startTimer();
         const json = vh.callJson(alloc, self.client(), "createIssue", &.{
             .{ .key = "title", .value = .{ .string = title } },
             .{ .key = "body", .value = .{ .string = body } },
         }) catch |err| {
+            logx.catchWarn(log, "rpc=createIssue", err);
             self.private().window.showToastFmt("Create issue failed: {}", .{err});
             return;
         };
+        logx.endTimerDebug(log, "rpc=createIssue", rpc_t);
         defer alloc.free(json);
         self.private().window.showToastFmt("Created issue {s}", .{title});
         self.private().create_visible = false;
@@ -229,10 +246,17 @@ pub const IssuesView = extern struct {
         };
         const alloc = self.allocator();
         const comment = if (std.mem.eql(u8, method, "closeIssue"))
-            vh.getTextViewText(alloc, self.private().close_comment) catch return
+            vh.getTextViewText(alloc, self.private().close_comment) catch |err| blk: {
+                logx.catchWarn(log, "getTextViewText close_comment", err);
+                break :blk alloc.dupe(u8, "") catch return;
+            }
         else
-            alloc.dupe(u8, "") catch return;
+            alloc.dupe(u8, "") catch |err| {
+                logx.catchWarn(log, "dupe empty comment", err);
+                return;
+            };
         defer alloc.free(comment);
+        const rpc_t = logx.startTimer();
         const json = if (std.mem.eql(u8, method, "closeIssue"))
             vh.callJson(alloc, self.client(), method, &.{
                 .{ .key = "number", .value = .{ .integer = number } },
@@ -241,9 +265,11 @@ pub const IssuesView = extern struct {
         else
             vh.callJson(alloc, self.client(), method, &.{.{ .key = "number", .value = .{ .integer = number } }});
         const result = json catch |err| {
+            logx.catchWarn(log, "rpc=issueAction", err);
             self.private().window.showToastFmt("{s} failed: {}", .{ label, err });
             return;
         };
+        log.debug("rpc={s} took {d}ms", .{ method, rpc_t.elapsedMs() });
         defer alloc.free(result);
         self.private().window.showToastFmt("{s} #{d}", .{ label, number });
         self.refresh();
@@ -254,9 +280,13 @@ pub const IssuesView = extern struct {
         if (index >= self.private().items.items.len) return;
         const item = self.private().items.items[index];
         const alloc = self.allocator();
-        if (vh.rawJsonFieldString(alloc, item.raw_json, &.{ "url", "html_url", "web_url", "permalink", "browserUrl", "browser_url" }) catch null) |url| {
+        if (vh.rawJsonFieldString(alloc, item.raw_json, &.{ "url", "html_url", "web_url", "permalink", "browserUrl", "browser_url" }) catch |rerr| blk: {
+            logx.catchDebug(log, "rawJsonFieldString issue url", rerr);
+            break :blk null;
+        }) |url| {
             defer alloc.free(url);
             vh.openUrl(alloc, url) catch |err| {
+                logx.catchWarn(log, "openUrl", err);
                 self.private().window.showToastFmt("Open browser failed: {}", .{err});
             };
             return;
@@ -266,6 +296,7 @@ pub const IssuesView = extern struct {
             return;
         };
         const json = vh.callJson(alloc, self.client(), "openIssueInBrowser", &.{.{ .key = "number", .value = .{ .integer = number } }}) catch |err| {
+            logx.catchWarn(log, "rpc=openIssueInBrowser", err);
             self.private().window.showToastFmt("Open issue failed: {}", .{err});
             return;
         };
@@ -277,7 +308,12 @@ pub const IssuesView = extern struct {
         if (index >= self.private().items.items.len) return;
         const number = self.private().items.items[index].number orelse return;
         const alloc = self.allocator();
-        const json = vh.callJson(alloc, self.client(), "getIssue", &.{.{ .key = "number", .value = .{ .integer = number } }}) catch return;
+        const rpc_t = logx.startTimer();
+        const json = vh.callJson(alloc, self.client(), "getIssue", &.{.{ .key = "number", .value = .{ .integer = number } }}) catch |err| {
+            logx.catchWarn(log, "rpc=getIssue", err);
+            return;
+        };
+        logx.endTimerDebug(log, "rpc=getIssue", rpc_t);
         defer alloc.free(json);
         var parsed = vh.parseItems(alloc, json, &.{ "issue", "issues", "items", "data" }, .{
             .id = &.{ "id", "number", "title" },
@@ -286,7 +322,10 @@ pub const IssuesView = extern struct {
             .status = &.{ "state", "status" },
             .body = &.{ "body", "description" },
             .number = &.{"number"},
-        }) catch return;
+        }) catch |err| {
+            logx.catchWarn(log, "parseItems getIssue", err);
+            return;
+        };
         defer {
             vh.clearItems(alloc, &parsed);
             parsed.deinit(alloc);

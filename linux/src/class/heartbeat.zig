@@ -4,9 +4,12 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const tree_state = @import("../features/tree_state.zig");
+
+const log = std.log.scoped(.smithers_gtk_heartbeat);
 
 pub const HeartbeatView = extern struct {
     const Self = @This();
@@ -41,6 +44,7 @@ pub const HeartbeatView = extern struct {
         self.private().* = .{ .alloc = alloc };
         try self.build();
         self.private().tick_source = glib.timeoutAdd(1000, tick, self);
+        logx.event(log, "heartbeat_started", "tick_source={d}", .{self.private().tick_source});
         return self;
     }
 
@@ -62,9 +66,15 @@ pub const HeartbeatView = extern struct {
         const now = tree_state.nowMs();
         if (priv.started_at_ms) |started| {
             const elapsed_seconds = @divFloor(@max(now - started, 0), 1000);
-            const text = tree_state.formatElapsed(priv.alloc, elapsed_seconds) catch return;
+            const text = tree_state.formatElapsed(priv.alloc, elapsed_seconds) catch |err| {
+                logx.catchWarn(log, "heartbeat.refreshLabels formatElapsed", err);
+                return;
+            };
             defer priv.alloc.free(text);
-            const z = priv.alloc.dupeZ(u8, text) catch return;
+            const z = priv.alloc.dupeZ(u8, text) catch |err| {
+                logx.catchWarn(log, "heartbeat.refreshLabels dupeZ", err);
+                return;
+            };
             defer priv.alloc.free(z);
             priv.elapsed.setText(z.ptr);
         } else {
@@ -79,9 +89,15 @@ pub const HeartbeatView = extern struct {
             else => "engine offline",
         };
         const tooltip = if (priv.last_event_ms) |last|
-            std.fmt.allocPrintSentinel(priv.alloc, "Last event ms: {d}\nSeq: {d}", .{ last, priv.last_seq }, 0) catch return
+            std.fmt.allocPrintSentinel(priv.alloc, "Last event ms: {d}\nSeq: {d}", .{ last, priv.last_seq }, 0) catch |err| {
+                logx.catchWarn(log, "heartbeat.refreshLabels tooltip with-last", err);
+                return;
+            }
         else
-            std.fmt.allocPrintSentinel(priv.alloc, "Last event: none\nSeq: {d}", .{priv.last_seq}, 0) catch return;
+            std.fmt.allocPrintSentinel(priv.alloc, "Last event: none\nSeq: {d}", .{priv.last_seq}, 0) catch |err| {
+                logx.catchWarn(log, "heartbeat.refreshLabels tooltip none", err);
+                return;
+            };
         defer priv.alloc.free(tooltip);
         priv.engine.setText(label);
         priv.engine.as(gtk.Widget).setTooltipText(tooltip.ptr);
@@ -104,6 +120,7 @@ pub const HeartbeatView = extern struct {
             self.private().did_dispose = true;
             if (self.private().tick_source != 0) {
                 _ = glib.Source.remove(self.private().tick_source);
+                logx.event(log, "heartbeat_stopped", "tick_source={d}", .{self.private().tick_source});
                 self.private().tick_source = 0;
             }
             self.as(adw.Bin).setChild(null);

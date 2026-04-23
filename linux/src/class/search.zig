@@ -4,9 +4,12 @@ const gdk = @import("gdk");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const smithers = @import("../smithers.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
+
+const log = std.log.scoped(.smithers_gtk_search);
 
 const SearchScope = enum {
     everywhere,
@@ -106,7 +109,9 @@ pub const SearchView = extern struct {
 
         const args = try searchArgs(priv.alloc, trimmed, priv.scope);
         defer priv.alloc.free(args);
+        const t = logx.startTimer();
         const json = smithers.callJson(priv.alloc, priv.client, priv.scope.method(), args) catch |err| {
+            logx.catchWarn(log, "search callJson", err);
             const msg = try std.fmt.allocPrintSentinel(priv.alloc, "Search failed: {}", .{err}, 0);
             defer priv.alloc.free(msg);
             priv.status.setText(msg.ptr);
@@ -114,8 +119,17 @@ pub const SearchView = extern struct {
         };
         defer priv.alloc.free(json);
 
-        priv.results = parseResults(priv.alloc, json, priv.scope, trimmed) catch .empty;
+        priv.results = parseResults(priv.alloc, json, priv.scope, trimmed) catch |err| blk: {
+            logx.catchWarn(log, "search parseResults", err);
+            break :blk .empty;
+        };
         priv.selected_index = 0;
+        logx.endTimerDebug(log, "search", t);
+        logx.event(log, "search_run", "scope={s} query_len={d} matches={d}", .{
+            priv.scope.label(),
+            trimmed.len,
+            priv.results.items.len,
+        });
         try self.renderResults();
     }
 
@@ -190,7 +204,7 @@ pub const SearchView = extern struct {
 
         if (priv.results.items.len == 0) {
             priv.list.append((try ui.row(priv.alloc, "system-search-symbolic", "No results found", "Try a different query or scope.")).as(gtk.Widget));
-            self.renderPreview(null) catch {};
+            self.renderPreview(null) catch |err| logx.catchWarn(log, "renderPreview empty", err);
             return;
         }
         for (priv.results.items, 0..) |result, index| {
@@ -243,20 +257,25 @@ pub const SearchView = extern struct {
         if (index >= priv.results.items.len) return;
         priv.selected_index = index;
         if (priv.list.getRowAtIndex(@intCast(index))) |row| priv.list.selectRow(row);
-        self.renderPreview(priv.results.items[index]) catch {};
+        self.renderPreview(priv.results.items[index]) catch |err| logx.catchWarn(log, "renderPreview", err);
     }
 
     fn activateSelected(self: *Self) void {
         const priv = self.private();
         if (priv.selected_index >= priv.results.items.len) return;
         const result = priv.results.items[priv.selected_index];
-        const args = activateArgs(priv.alloc, result) catch return;
+        const args = activateArgs(priv.alloc, result) catch |err| {
+            logx.catchWarn(log, "activateSelected activateArgs", err);
+            return;
+        };
         defer priv.alloc.free(args);
-        const json = smithers.callJson(priv.alloc, priv.client, "openSearchResult", args) catch {
+        const json = smithers.callJson(priv.alloc, priv.client, "openSearchResult", args) catch |err| {
+            logx.catchWarn(log, "openSearchResult", err);
             priv.status.setText("Result selected");
             return;
         };
         defer priv.alloc.free(json);
+        logx.event(log, "search_result_opened", "kind={s} id={s}", .{ result.kind, result.id });
         priv.status.setText("Result opened");
     }
 
@@ -272,12 +291,14 @@ pub const SearchView = extern struct {
 
     fn searchActivated(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
         const query = std.mem.span(self.private().entry.as(gtk.Editable).getText());
-        self.search(query) catch {};
+        self.search(query) catch |err| logx.catchWarn(log, "searchActivated", err);
     }
 
     fn searchChanged(_: *gtk.SearchEntry, self: *Self) callconv(.c) void {
         const query = std.mem.span(self.private().entry.as(gtk.Editable).getText());
-        if (std.mem.trim(u8, query, &std.ascii.whitespace).len == 0) self.search(query) catch {};
+        if (std.mem.trim(u8, query, &std.ascii.whitespace).len == 0) {
+            self.search(query) catch |err| logx.catchWarn(log, "searchChanged clear", err);
+        }
     }
 
     fn scopeClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
@@ -285,9 +306,12 @@ pub const SearchView = extern struct {
         const index = ui.getIndex(button.as(gobject.Object)) orelse return;
         if (index >= scopes.len) return;
         self.private().scope = scopes[index];
-        self.rebuildScopes() catch {};
+        logx.event(log, "search_scope_changed", "scope={s}", .{self.private().scope.label()});
+        self.rebuildScopes() catch |err| logx.catchWarn(log, "scopeClicked rebuildScopes", err);
         const query = std.mem.span(self.private().entry.as(gtk.Editable).getText());
-        if (std.mem.trim(u8, query, &std.ascii.whitespace).len > 0) self.search(query) catch {};
+        if (std.mem.trim(u8, query, &std.ascii.whitespace).len > 0) {
+            self.search(query) catch |err| logx.catchWarn(log, "scopeClicked search", err);
+        }
     }
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {

@@ -198,8 +198,27 @@ fn childExec(
     _ = std.c.dup2(slave_fd, 1);
     _ = std.c.dup2(slave_fd, 2);
     if (slave_fd > 2) _ = std.c.close(slave_fd);
-    if (cwd_z) |cwd| _ = std.c.chdir(cwd.ptr);
-    posix.execvpeZ(shell_path, argv, envp) catch {};
+    if (cwd_z) |cwd| {
+        if (std.c.chdir(cwd.ptr) != 0) {
+            const errno = std.c._errno().*;
+            // stderr is wired to the slave PTY here, so this surfaces to the
+            // terminal buffer and any log scraper capturing PTY output.
+            const fd: i32 = 2;
+            var buf: [256]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "smithers-pty: chdir(\"{s}\") failed errno={d}\n", .{
+                std.mem.sliceTo(cwd.ptr, 0), errno,
+            }) catch "smithers-pty: chdir failed\n";
+            _ = std.c.write(fd, msg.ptr, msg.len);
+        }
+    }
+    posix.execvpeZ(shell_path, argv, envp) catch |err| {
+        const fd: i32 = 2;
+        var buf: [256]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "smithers-pty: execvpe(\"{s}\") failed: {s}\n", .{
+            std.mem.sliceTo(shell_path, 0), @errorName(err),
+        }) catch "smithers-pty: execvpe failed\n";
+        _ = std.c.write(fd, msg.ptr, msg.len);
+    };
     std.c._exit(127);
 }
 

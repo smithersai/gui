@@ -9,6 +9,8 @@ const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const vh = @import("../features/view_helpers.zig");
 const MainWindow = @import("main_window.zig").MainWindow;
+const logx = @import("../log.zig");
+const log = std.log.scoped(.smithers_gtk_view_dashboard);
 
 pub const DashboardView = extern struct {
     const Self = @This();
@@ -50,9 +52,13 @@ pub const DashboardView = extern struct {
     }
 
     pub fn refresh(self: *Self) void {
+        logx.event(log, "refresh_start", "view=dashboard tab={s}", .{@tagName(self.private().tab)});
+        const t = logx.startTimer();
         self.refreshImpl() catch |err| {
+            logx.catchWarn(log, "refresh refreshImpl", err);
             vh.setStatus(self.allocator(), self.private().body, "dialog-error-symbolic", "Dashboard unavailable", @errorName(err));
         };
+        logx.endTimer(log, "refresh", t);
     }
 
     fn allocator(self: *Self) std.mem.Allocator {
@@ -69,25 +75,29 @@ pub const DashboardView = extern struct {
         box.setSpacing(0);
         vh.installShortcut(Self, box.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
 
-        const header = vh.makeHeader("Dashboard", null);
-        const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh dashboard");
-        _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
-        header.append(refresh_button.as(gtk.Widget));
-        box.append(header.as(gtk.Widget));
-
         const tabs = gtk.Box.new(.horizontal, 0);
+        tabs.as(gtk.Widget).addCssClass("dash-tabs");
         inline for (.{ .overview, .runs, .workflows, .approvals, .landings, .issues, .workspaces }) |tab| {
             const button = ui.textButton(tabTitle(tab), false);
+            button.as(gtk.Widget).addCssClass("dash-tab");
+            if (tab == .overview) button.as(gtk.Widget).addCssClass("active");
             button.as(gobject.Object).setData("smithers-dashboard-tab", @ptrFromInt(tabIndex(tab) + 1));
             _ = gtk.Button.signals.clicked.connect(button, *Self, tabClicked, self, .{});
             tabs.append(button.as(gtk.Widget));
         }
         box.append(tabs.as(gtk.Widget));
 
-        const body = gtk.Box.new(.vertical, 16);
-        ui.margin(body.as(gtk.Widget), 20);
+        const body = gtk.Box.new(.vertical, 20);
+        ui.margin4(body.as(gtk.Widget), 24, 32, 24, 32);
+        body.as(gtk.Widget).setHexpand(1);
         self.private().body = body;
-        const scroll = ui.scrolled(body.as(gtk.Widget));
+
+        const clamp = adw.Clamp.new();
+        clamp.setMaximumSize(1100);
+        clamp.setTighteningThreshold(900);
+        clamp.setChild(body.as(gtk.Widget));
+
+        const scroll = ui.scrolled(clamp.as(gtk.Widget));
         scroll.as(gtk.Widget).setVexpand(1);
         box.append(scroll.as(gtk.Widget));
 
@@ -103,7 +113,10 @@ pub const DashboardView = extern struct {
 
         const runs_json = callOrError(self, "listRuns", &.{}, &source_errors);
         defer if (runs_json) |json| alloc.free(json);
-        var runs = if (runs_json) |json| models.parseRuns(alloc, json) catch std.ArrayList(models.RunSummary).empty else std.ArrayList(models.RunSummary).empty;
+        var runs = if (runs_json) |json| models.parseRuns(alloc, json) catch |err| blk: {
+            logx.catchWarn(log, "refreshImpl parseRuns", err);
+            break :blk std.ArrayList(models.RunSummary).empty;
+        } else std.ArrayList(models.RunSummary).empty;
         defer {
             models.clearList(models.RunSummary, alloc, &runs);
             runs.deinit(alloc);
@@ -111,7 +124,10 @@ pub const DashboardView = extern struct {
 
         const workflows_json = callOrError(self, "listWorkflows", &.{}, &source_errors);
         defer if (workflows_json) |json| alloc.free(json);
-        var workflows = if (workflows_json) |json| models.parseWorkflows(alloc, json) catch std.ArrayList(models.Workflow).empty else std.ArrayList(models.Workflow).empty;
+        var workflows = if (workflows_json) |json| models.parseWorkflows(alloc, json) catch |err| blk: {
+            logx.catchWarn(log, "refreshImpl parseWorkflows", err);
+            break :blk std.ArrayList(models.Workflow).empty;
+        } else std.ArrayList(models.Workflow).empty;
         defer {
             models.clearList(models.Workflow, alloc, &workflows);
             workflows.deinit(alloc);
@@ -161,7 +177,9 @@ pub const DashboardView = extern struct {
         if (self.private().window.activeWorkspace()) |path| {
             const path_z = try alloc.dupeZ(u8, path);
             defer alloc.free(path_z);
-            body.append(ui.dim(path_z).as(gtk.Widget));
+            const path_label = ui.dim(path_z);
+            path_label.setEllipsize(.middle);
+            body.append(path_label.as(gtk.Widget));
         }
 
         if (source_errors > 0) {
@@ -175,45 +193,31 @@ pub const DashboardView = extern struct {
             return;
         }
 
-        const quick = gtk.Box.new(.horizontal, 8);
-        const workflows_button = ui.textButton("Workflows", true);
-        _ = gtk.Button.signals.clicked.connect(workflows_button, *Self, workflowsClicked, self, .{});
-        quick.append(workflows_button.as(gtk.Widget));
-        const runs_button = ui.textButton("Runs", false);
-        _ = gtk.Button.signals.clicked.connect(runs_button, *Self, runsClicked, self, .{});
-        quick.append(runs_button.as(gtk.Widget));
-        const approvals_button = ui.textButton("Approvals", false);
-        _ = gtk.Button.signals.clicked.connect(approvals_button, *Self, approvalsClicked, self, .{});
-        quick.append(approvals_button.as(gtk.Widget));
-        const triggers_button = ui.textButton("Triggers", false);
-        _ = gtk.Button.signals.clicked.connect(triggers_button, *Self, triggersClicked, self, .{});
-        quick.append(triggers_button.as(gtk.Widget));
-        body.append(quick.as(gtk.Widget));
+        const primary = gtk.Box.new(.horizontal, 12);
+        primary.as(gtk.Widget).setHexpand(1);
+        try vh.appendMetricPrimary(alloc, primary, "Active Runs", countActiveRuns(runs.items), "running or waiting");
+        try vh.appendMetricPrimary(alloc, primary, "Pending Approvals", approvals.items.len, "gates to review");
+        try vh.appendMetricPrimary(alloc, primary, "Failed Runs", countRunStatus(runs.items, "failed"), "needs attention");
+        try vh.appendMetricPrimary(alloc, primary, "Open Landings", countStatus(landings.items, "open"), "JJHub requests");
+        body.append(primary.as(gtk.Widget));
 
-        const metrics = gtk.Box.new(.horizontal, 12);
-        metrics.as(gtk.Widget).setHexpand(1);
-        try vh.appendMetric(alloc, metrics, "Active Runs", countActiveRuns(runs.items), "running or waiting");
-        try vh.appendMetric(alloc, metrics, "Workflows", workflows.items.len, "local definitions");
-        try vh.appendMetric(alloc, metrics, "Approvals", approvals.items.len, "pending gates");
-        try vh.appendMetric(alloc, metrics, "Landings", countStatus(landings.items, "open"), "open JJHub requests");
-        body.append(metrics.as(gtk.Widget));
+        const caption = ui.label("AT A GLANCE", "caption");
+        ui.margin4(caption.as(gtk.Widget), 8, 0, 2, 0);
+        body.append(caption.as(gtk.Widget));
 
-        const second = gtk.Box.new(.horizontal, 12);
-        second.as(gtk.Widget).setHexpand(1);
-        try vh.appendMetric(alloc, second, "Issues", countStatus(issues.items, "open"), "open JJHub issues");
-        try vh.appendMetric(alloc, second, "Workspaces", workspaces.items.len, "known workspaces");
-        try vh.appendMetric(alloc, second, "Recent Runs", runs.items.len, "execution history");
-        body.append(second.as(gtk.Widget));
+        const secondary = gtk.Box.new(.horizontal, 10);
+        secondary.as(gtk.Widget).setHexpand(1);
+        try vh.appendMetricSecondary(alloc, secondary, "Workflows", workflows.items.len);
+        try vh.appendMetricSecondary(alloc, secondary, "Running", countRunStatus(runs.items, "running"));
+        try vh.appendMetricSecondary(alloc, secondary, "Waiting", countRunStatus(runs.items, "waiting-approval"));
+        try vh.appendMetricSecondary(alloc, secondary, "Finished", countRunStatus(runs.items, "finished"));
+        try vh.appendMetricSecondary(alloc, secondary, "Issues", countStatus(issues.items, "open"));
+        try vh.appendMetricSecondary(alloc, secondary, "Workspaces", workspaces.items.len);
+        body.append(secondary.as(gtk.Widget));
 
-        const run_status = gtk.Box.new(.horizontal, 12);
-        run_status.as(gtk.Widget).setHexpand(1);
-        try vh.appendMetric(alloc, run_status, "Running", countRunStatus(runs.items, "running"), "active agents");
-        try vh.appendMetric(alloc, run_status, "Waiting", countRunStatus(runs.items, "waiting-approval"), "approval blocked");
-        try vh.appendMetric(alloc, run_status, "Finished", countRunStatus(runs.items, "finished"), "completed");
-        try vh.appendMetric(alloc, run_status, "Failed", countRunStatus(runs.items, "failed"), "needs attention");
-        body.append(run_status.as(gtk.Widget));
-
-        body.append(ui.heading("Recent Runs").as(gtk.Widget));
+        const recent_header = ui.label("RECENT RUNS", "caption");
+        ui.margin4(recent_header.as(gtk.Widget), 16, 0, 2, 0);
+        body.append(recent_header.as(gtk.Widget));
         const run_list = vh.listBox();
         if (runs.items.len == 0) {
             run_list.append((try ui.row(alloc, "view-list-symbolic", "No recent runs", "Launch a workflow to see execution state here.")).as(gtk.Widget));
@@ -230,7 +234,9 @@ pub const DashboardView = extern struct {
         _ = gtk.ListBox.signals.row_activated.connect(run_list, *Self, runActivated, self, .{});
         body.append(run_list.as(gtk.Widget));
 
-        body.append(ui.heading("Workflows").as(gtk.Widget));
+        const workflows_header = ui.label("WORKFLOWS", "caption");
+        ui.margin4(workflows_header.as(gtk.Widget), 16, 0, 2, 0);
+        body.append(workflows_header.as(gtk.Widget));
         const workflow_list = vh.listBox();
         if (workflows.items.len == 0) {
             workflow_list.append((try ui.row(alloc, "emblem-documents-symbolic", "No workflows found", ".smithers/workflows entries appear here.")).as(gtk.Widget));
@@ -408,25 +414,16 @@ pub const DashboardView = extern struct {
         self.refresh();
     }
 
-    fn workflowsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.private().window.showNav(.workflows);
-    }
-
-    fn runsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.private().window.showNav(.runs);
-    }
-
-    fn approvalsClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.private().window.showNav(.approvals);
-    }
-
-    fn triggersClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
-        self.private().window.showNav(.triggers);
-    }
-
     fn tabClicked(button: *gtk.Button, self: *Self) callconv(.c) void {
         const raw = button.as(gobject.Object).getData("smithers-dashboard-tab") orelse return;
         self.private().tab = tabFromIndex(@intFromPtr(raw) - 1);
+        if (button.as(gtk.Widget).getParent()) |parent_widget| {
+            var child = parent_widget.getFirstChild();
+            while (child) |w| : (child = w.getNextSibling()) {
+                w.removeCssClass("active");
+            }
+        }
+        button.as(gtk.Widget).addCssClass("active");
         self.refresh();
     }
 

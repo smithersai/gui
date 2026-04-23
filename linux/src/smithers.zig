@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const log = std.log.scoped(.smithers_gtk_smithers);
+
 pub const c = @cImport({
     @cInclude("smithers.h");
 });
@@ -8,6 +10,13 @@ pub const Error = error{
     SmithersCallFailed,
     NullString,
 };
+
+/// Convert a core-owned error struct into a safe Zig slice for logging.
+/// The returned slice is valid until the caller invokes `smithers_error_free`.
+fn errMessage(err: c.smithers_error_s) []const u8 {
+    if (err.msg == null) return "(no message)";
+    return std.mem.sliceTo(err.msg, 0);
+}
 
 pub fn ownedString(alloc: std.mem.Allocator, s: c.smithers_string_s) ![]u8 {
     defer c.smithers_string_free(s);
@@ -26,14 +35,34 @@ pub fn callJson(
     const args_z = try alloc.dupeZ(u8, args_json);
     defer alloc.free(args_z);
 
+    const start_ns = std.time.nanoTimestamp();
     var err = std.mem.zeroes(c.smithers_error_s);
     const result = c.smithers_client_call(client, method_z.ptr, args_z.ptr, &err);
     defer c.smithers_error_free(err);
+    const elapsed_ms: i64 = @intCast(@divTrunc(std.time.nanoTimestamp() - start_ns, std.time.ns_per_ms));
 
     if (err.code != 0) {
+        log.warn(
+            "smithers_client_call method={s} code={d} msg=\"{s}\" args_len={d} duration_ms={d}",
+            .{ method, err.code, errMessage(err), args_json.len, elapsed_ms },
+        );
         c.smithers_string_free(result);
         return Error.SmithersCallFailed;
     }
+
+    // Slow-call telemetry: anything over 250ms is interesting for latency debugging.
+    if (elapsed_ms >= 250) {
+        log.info(
+            "smithers_client_call slow method={s} duration_ms={d} result_len={d}",
+            .{ method, elapsed_ms, result.len },
+        );
+    } else {
+        log.debug(
+            "smithers_client_call ok method={s} duration_ms={d} result_len={d}",
+            .{ method, elapsed_ms, result.len },
+        );
+    }
+
     return try ownedString(alloc, result);
 }
 

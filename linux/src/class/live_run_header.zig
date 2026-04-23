@@ -3,10 +3,13 @@ const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const tree_state = @import("../features/tree_state.zig");
 const HeartbeatView = @import("heartbeat.zig").HeartbeatView;
+
+const log = std.log.scoped(.smithers_gtk_live_run_header);
 
 pub const LiveRunHeader = extern struct {
     const Self = @This();
@@ -51,16 +54,25 @@ pub const LiveRunHeader = extern struct {
 
     pub fn update(self: *Self, state: *const tree_state.LiveState) void {
         const priv = self.private();
-        const status_z = priv.alloc.dupeZ(u8, state.status.label()) catch return;
+        const status_z = priv.alloc.dupeZ(u8, state.status.label()) catch |err| {
+            logx.catchWarn(log, "status dupeZ", err);
+            return;
+        };
         defer priv.alloc.free(status_z);
         priv.status.setText(status_z.ptr);
         priv.cancel.as(gtk.Widget).setSensitive(@intFromBool(!state.status.isTerminal()));
 
-        const workflow_z = priv.alloc.dupeZ(u8, state.workflow_name) catch return;
+        const workflow_z = priv.alloc.dupeZ(u8, state.workflow_name) catch |err| {
+            logx.catchWarn(log, "workflow dupeZ", err);
+            return;
+        };
         defer priv.alloc.free(workflow_z);
         priv.workflow.setText(workflow_z.ptr);
 
-        const run_z = priv.alloc.dupeZ(u8, state.run_id) catch return;
+        const run_z = priv.alloc.dupeZ(u8, state.run_id) catch |err| {
+            logx.catchWarn(log, "run_id dupeZ", err);
+            return;
+        };
         defer priv.alloc.free(run_z);
         priv.run_id.setText(run_z.ptr);
         priv.heartbeat.update(state.started_at_ms, state.last_event_ms, state.seq);

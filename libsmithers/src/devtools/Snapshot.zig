@@ -1,7 +1,21 @@
 const std = @import("std");
+const logx = @import("../log.zig");
 const devtools = @import("DevToolsClient.zig");
 
+const log = std.log.scoped(.smithers_core_snapshot);
+
 const Value = std.json.Value;
+
+fn jsonSnippet(buf: []u8, src: []const u8) []const u8 {
+    const n = @min(buf.len, src.len);
+    for (src[0..n], 0..) |c, i| {
+        buf[i] = switch (c) {
+            '\n', '\r', '\t' => ' ',
+            else => c,
+        };
+    }
+    return buf[0..n];
+}
 
 const SQLITE_OK = 0;
 const SQLITE_ROW = 100;
@@ -421,7 +435,12 @@ fn buildAppliedXml(allocator: std.mem.Allocator, keyframe: Value, delta_strings:
 
     var deltas_value: Value = Value{ .array = std.json.Array.init(scratch) };
     for (delta_strings) |text| {
-        const parsed = std.json.parseFromSliceLeaky(Value, scratch, text, .{}) catch continue;
+        const parsed = std.json.parseFromSliceLeaky(Value, scratch, text, .{}) catch |err| {
+            var buf: [80]u8 = undefined;
+            const snippet = jsonSnippet(&buf, text);
+            log.warn("delta parse failed err={s} snippet=\"{s}\"", .{ @errorName(err), snippet });
+            continue;
+        };
         try deltas_value.array.append(parsed);
     }
 

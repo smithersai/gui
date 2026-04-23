@@ -5,6 +5,7 @@ const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const smithers = @import("../smithers.zig");
+const logx = @import("../log.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const Application = @import("application.zig").Application;
@@ -74,15 +75,30 @@ pub const SessionSubscription = struct {
                     },
                     smithers.c.SMITHERS_EVENT_JSON => {
                         drained = true;
-                        self.post(.json, eventPayload(self.allocator, ev) catch continue) catch {};
+                        const payload = eventPayload(self.allocator, ev) catch |err| {
+                            logx.catchWarn(log, "live run event payload (json)", err);
+                            continue;
+                        };
+                        log.debug("event received kind=json bytes={d}", .{payload.len});
+                        self.post(.json, payload) catch |err| logx.catchWarn(log, "live run post json", err);
                     },
                     smithers.c.SMITHERS_EVENT_ERROR => {
                         drained = true;
-                        self.post(.err, eventPayload(self.allocator, ev) catch continue) catch {};
+                        const payload = eventPayload(self.allocator, ev) catch |err| {
+                            logx.catchWarn(log, "live run event payload (err)", err);
+                            continue;
+                        };
+                        log.debug("event received kind=err bytes={d}", .{payload.len});
+                        self.post(.err, payload) catch |err| logx.catchWarn(log, "live run post err", err);
                     },
                     smithers.c.SMITHERS_EVENT_END => {
                         smithers.c.smithers_event_free(ev);
-                        self.post(.end, self.allocator.dupe(u8, "") catch return) catch {};
+                        log.info("event stream ended", .{});
+                        const payload = self.allocator.dupe(u8, "") catch |err| {
+                            logx.catchErr(log, "live run end payload dupe", err);
+                            return;
+                        };
+                        self.post(.end, payload) catch |err| logx.catchWarn(log, "live run post end", err);
                         return;
                     },
                     else => {
@@ -109,9 +125,8 @@ pub const SessionSubscription = struct {
 
     fn deliverPending(userdata: ?*anyopaque) callconv(.c) c_int {
         const pending: *PendingEvent = @ptrCast(@alignCast(userdata orelse return 0));
-        pending.owner.handleSubscriptionEvent(pending.kind, pending.payload) catch |err| {
-            log.warn("live run event handling failed: {}", .{err});
-        };
+        pending.owner.handleSubscriptionEvent(pending.kind, pending.payload) catch |err|
+            logx.catchWarn(log, "live run event handling", err);
         return 0;
     }
 
@@ -209,6 +224,7 @@ pub const LiveRunView = extern struct {
 
         try self.build();
         priv.subscription = try SessionSubscription.create(alloc, stream, self);
+        logx.event(log, "stream_open", "run_id={s} owns_session={}", .{ run_id, owns_session });
         self.refreshAll();
         return self;
     }
@@ -276,23 +292,34 @@ pub const LiveRunView = extern struct {
 
     fn restartSubscription(self: *Self) !void {
         const priv = self.private();
+        const run_id: []const u8 = if (priv.state) |*state| state.run_id else "?";
         if (priv.subscription) |sub| {
             sub.stop();
             priv.subscription = null;
+            logx.event(log, "stream_close", "run_id={s} reason=restart", .{run_id});
         }
         const stream = smithers.c.smithers_session_events(priv.session);
         if (stream == null) return error.EventStreamCreateFailed;
         errdefer smithers.c.smithers_event_stream_free(stream);
         priv.subscription = try SessionSubscription.create(priv.app.allocator(), stream, self);
+        logx.event(log, "stream_open", "run_id={s} reason=restart", .{run_id});
     }
 
     fn handleSubscriptionEvent(self: *Self, kind: SessionSubscription.PendingKind, payload: []const u8) !void {
         const priv = self.private();
         const state = if (priv.state) |*state| state else return;
+        const prev_status = state.status;
+        const prev_frame = state.latest_frame_no;
         switch (kind) {
             .json => try state.applyPayload(payload),
             .err => try state.applyError(payload),
             .end => try state.applyError("Event stream ended."),
+        }
+        if (state.status != prev_status) {
+            logx.event(log, "run_status", "run_id={s} from={s} to={s}", .{ state.run_id, prev_status.label(), state.status.label() });
+        }
+        if (state.latest_frame_no != prev_frame) {
+            log.debug("frame advanced run_id={s} frame={d} seq={d}", .{ state.run_id, state.latest_frame_no, state.seq });
         }
         state.selectFirstIfNeeded();
         self.refreshAll();
@@ -335,19 +362,29 @@ pub const LiveRunView = extern struct {
 
     fn refreshClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         const priv = self.private();
-        if (priv.state) |*state| state.returnToLive() catch {};
+        if (priv.state) |*state| state.returnToLive() catch |err|
+            logx.catchWarn(log, "returnToLive (refresh)", err);
+        const run_id: []const u8 = if (priv.state) |*state| state.run_id else "?";
+        logx.event(log, "refresh_clicked", "run_id={s}", .{run_id});
         self.sendCommand("{\"command\":\"refresh\"}");
-        self.restartSubscription() catch |err| log.warn("live run resubscribe failed: {}", .{err});
+        self.restartSubscription() catch |err|
+            logx.catchWarn(log, "live run resubscribe", err);
         self.refreshAll();
     }
 
     fn cancelClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
+        const priv = self.private();
+        const run_id: []const u8 = if (priv.state) |*state| state.run_id else "?";
+        logx.event(log, "cancel_clicked", "run_id={s}", .{run_id});
         self.sendCommand("{\"command\":\"cancel\"}");
     }
 
     fn returnLiveClicked(_: *gtk.Button, self: *Self) callconv(.c) void {
         const priv = self.private();
-        if (priv.state) |*state| state.returnToLive() catch {};
+        if (priv.state) |*state| {
+            logx.event(log, "return_to_live", "run_id={s}", .{state.run_id});
+            state.returnToLive() catch |err| logx.catchWarn(log, "returnToLive", err);
+        }
         self.refreshAll();
     }
 
@@ -396,12 +433,16 @@ pub const LiveRunView = extern struct {
         if (reason.len == 0) {
             priv.banner.setText("Rewind reason is required.");
             priv.banner.as(gtk.Widget).setVisible(1);
+            log.warn("rewind rejected: empty reason (frame={d})", .{frame});
             return;
         }
+        const run_id: []const u8 = if (priv.state) |*state| state.run_id else "?";
+        logx.event(log, "rewind_requested", "run_id={s} frame={d} reason_len={d}", .{ run_id, frame, reason.len });
         self.sendRewindCommand(frame, reason);
         priv.banner.setText("Rewind requested.");
         priv.banner.as(gtk.Widget).setVisible(1);
-        if (priv.state) |*state| state.returnToLive() catch {};
+        if (priv.state) |*state| state.returnToLive() catch |err|
+            logx.catchWarn(log, "returnToLive (rewind)", err);
         self.refreshAll();
     }
 
@@ -444,7 +485,11 @@ pub const LiveRunView = extern struct {
         if (priv.scrubber.isSuppressingChange()) return;
         const frame = priv.scrubber.currentFrame();
         if (priv.state) |*state| {
-            state.scrubTo(frame) catch return;
+            state.scrubTo(frame) catch |err| {
+                logx.catchWarn(log, "scrubTo", err);
+                return;
+            };
+            logx.event(log, "frame_jump", "run_id={s} frame={d}", .{ state.run_id, frame });
             self.sendCommandFmt("{{\"command\":\"scrub\",\"frameNo\":{d}}}", .{frame});
         }
         self.refreshAll();
@@ -453,7 +498,10 @@ pub const LiveRunView = extern struct {
     fn treeRowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
         const id = LiveRunTree.nodeIdForRow(row) orelse return;
         const priv = self.private();
-        if (priv.state) |*state| state.select(id);
+        if (priv.state) |*state| {
+            logx.event(log, "node_activate", "run_id={s} node_id={d}", .{ state.run_id, id });
+            state.select(id);
+        }
         self.refreshAll();
     }
 
@@ -463,6 +511,11 @@ pub const LiveRunView = extern struct {
         const selected = if (row) |r| LiveRunTree.nodeIdForRow(r) else null;
         if (state.selected_id == null and selected == null) return;
         if (state.selected_id != null and selected != null and state.selected_id.? == selected.?) return;
+        if (selected) |id| {
+            log.debug("node_select run_id={s} node_id={d}", .{ state.run_id, id });
+        } else {
+            log.debug("node_select run_id={s} cleared", .{state.run_id});
+        }
         state.select(selected);
         self.refreshAll();
     }
@@ -477,6 +530,8 @@ pub const LiveRunView = extern struct {
         const priv = self.private();
         if (!priv.did_dispose) {
             priv.did_dispose = true;
+            const run_id: []const u8 = if (priv.state) |*state| state.run_id else "?";
+            logx.event(log, "stream_close", "run_id={s} reason=dispose", .{run_id});
             self.as(adw.Bin).setChild(null);
             if (priv.subscription) |sub| {
                 sub.stop();

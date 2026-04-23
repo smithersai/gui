@@ -256,7 +256,7 @@ pub const RunInspectView = extern struct {
         body.append(ui.heading("DAG").as(gtk.Widget));
         const root_title = inspection.run.workflow_name orelse inspection.run.run_id;
         const root_row = try ui.row(alloc, "pointing-hand-symbolic", root_title, "Run root");
-        root_row.setActivatable(0);
+        root_row.as(gtk.ListBoxRow).setActivatable(0);
         body.append(root_row.as(gtk.Widget));
         const list = vh.listBox();
         _ = gtk.ListBox.signals.row_activated.connect(list, *Self, taskRowActivated, self, .{});

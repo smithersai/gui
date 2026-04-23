@@ -1,5 +1,8 @@
 const std = @import("std");
 const ffi = @import("../ffi.zig");
+const logx = @import("../log.zig");
+
+const log = std.log.scoped(.smithers_core_workspace_cwd);
 
 pub fn resolve(allocator: std.mem.Allocator, requested: ?[]const u8) ![]u8 {
     const current = try std.process.getCwdAlloc(allocator);
@@ -21,11 +24,14 @@ pub fn resolve(allocator: std.mem.Allocator, requested: ?[]const u8) ![]u8 {
     defer allocator.free(resolved);
 
     if (std.mem.eql(u8, resolved, "/") or !isDirectory(resolved)) {
+        log.info("cwd resolve falling back to home path={s}", .{home});
         return home;
     }
 
     allocator.free(home);
-    return try allocator.dupe(u8, resolved);
+    const final = try allocator.dupe(u8, resolved);
+    log.info("cwd resolved path={s}", .{final});
+    return final;
 }
 
 pub fn resolveC(requested: ?[*:0]const u8) ![]u8 {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
@@ -63,39 +64,33 @@ pub fn scrolled(child: *gtk.Widget) *gtk.ScrolledWindow {
     return scroll;
 }
 
-pub fn row(alloc: std.mem.Allocator, icon_name: [:0]const u8, title: []const u8, subtitle: ?[]const u8) !*gtk.ListBoxRow {
-    const list_row = gtk.ListBoxRow.new();
-    list_row.setActivatable(1);
+pub fn clamped(child: *gtk.Widget) *adw.Clamp {
+    const clamp = adw.Clamp.new();
+    clamp.setChild(child);
+    clamp.setMaximumSize(850);
+    return clamp;
+}
 
-    const box = gtk.Box.new(.horizontal, 12);
-    margin(box.as(gtk.Widget), 10);
-
-    const image = gtk.Image.newFromIconName(icon_name.ptr);
-    image.setPixelSize(20);
-    image.as(gtk.Widget).setValign(.center);
-    box.append(image.as(gtk.Widget));
-
-    const text_box = gtk.Box.new(.vertical, 2);
-    text_box.as(gtk.Widget).setHexpand(1);
+pub fn row(alloc: std.mem.Allocator, icon_name: [:0]const u8, title: []const u8, subtitle: ?[]const u8) !*adw.ActionRow {
+    const list_row = adw.ActionRow.new();
+    list_row.as(gtk.ListBoxRow).setActivatable(1);
 
     const title_z = try alloc.dupeZ(u8, title);
     defer alloc.free(title_z);
-    const title_label = label(title_z, "heading");
-    title_label.setWrap(0);
-    title_label.setEllipsize(.end);
-    text_box.append(title_label.as(gtk.Widget));
+    list_row.as(adw.PreferencesRow).setTitle(title_z.ptr);
 
     if (subtitle) |subtitle_text| {
         const subtitle_z = try alloc.dupeZ(u8, subtitle_text);
         defer alloc.free(subtitle_z);
-        const subtitle_label = dim(subtitle_z);
-        subtitle_label.setLines(2);
-        subtitle_label.setEllipsize(.end);
-        text_box.append(subtitle_label.as(gtk.Widget));
+        list_row.setSubtitle(subtitle_z.ptr);
+        list_row.setSubtitleLines(2);
     }
 
-    box.append(text_box.as(gtk.Widget));
-    list_row.setChild(box.as(gtk.Widget));
+    const image = gtk.Image.newFromIconName(icon_name.ptr);
+    image.setPixelSize(20);
+    image.as(gtk.Widget).setValign(.center);
+    list_row.addPrefix(image.as(gtk.Widget));
+
     return list_row;
 }
 

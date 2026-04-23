@@ -132,10 +132,20 @@ struct LiveRunView: View {
         }
         .rewindConfirmationDialog(isPresented: $showRewindConfirmation, frameNo: pendingRewindFrameNo) { frameNo in
             pendingRewindFrameNo = nil
+            AppLogger.state.info("LiveRunView rewind prompt confirmed", metadata: [
+                "run_id": runId,
+                "frame_no": String(frameNo),
+            ])
             Task {
                 await store.rewind(to: frameNo, confirm: true)
                 await refreshRunSummary()
             }
+        }
+        .onChange(of: showRewindConfirmation) { _, isShown in
+            AppLogger.state.info("LiveRunView rewind prompt \(isShown ? "shown" : "dismissed")", metadata: [
+                "run_id": runId,
+                "frame_no": pendingRewindFrameNo.map(String.init) ?? "nil",
+            ])
         }
         .confirmationDialog(
             "Cancel Run",
@@ -442,7 +452,15 @@ struct LiveRunView: View {
         pollTask?.cancel()
         pollTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                do {
+                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                } catch {
+                    AppLogger.ui.debug("LiveRunView poll sleep interrupted", metadata: [
+                        "run_id": runId,
+                        "error": error.localizedDescription,
+                    ])
+                    return
+                }
                 await refreshRunSummary()
             }
         }
@@ -571,6 +589,10 @@ struct LiveRunView: View {
         hijacking = true
         setActionMessage("Starting hijack session...", color: Theme.accent)
 
+        AppLogger.state.info("LiveRunView hijack start", metadata: [
+            "run_id": runId,
+        ])
+
         Task { @MainActor in
             defer { hijacking = false }
 
@@ -578,11 +600,19 @@ struct LiveRunView: View {
                 let session = try await smithers.hijackRun(runId)
                 guard session.supportsResume else {
                     setActionMessage("This agent does not support resumable hijack sessions.", color: Theme.warning)
+                    AppLogger.state.warning("LiveRunView hijack complete", metadata: [
+                        "run_id": runId,
+                        "result": "unsupported",
+                    ])
                     return
                 }
 
                 guard let invocation = session.launchInvocation() else {
                     setActionMessage("Hijack session is missing resume details.", color: Theme.danger)
+                    AppLogger.state.warning("LiveRunView hijack complete", metadata: [
+                        "run_id": runId,
+                        "result": "missing_invocation",
+                    ])
                     return
                 }
 
@@ -597,6 +627,10 @@ struct LiveRunView: View {
                 }
 
                 setActionMessage("Hijack session launched.", color: Theme.success)
+                AppLogger.state.info("LiveRunView hijack complete", metadata: [
+                    "run_id": runId,
+                    "result": "launched",
+                ])
             } catch {
                 setActionMessage("Hijack error: \(error.localizedDescription)", color: Theme.danger)
                 AppLogger.error.error("LiveRunView hijack failed", metadata: [
@@ -685,7 +719,7 @@ private extension RunStatus {
         switch self {
         case .finished, .failed, .cancelled:
             return true
-        case .running, .waitingApproval, .stale, .orphaned, .unknown:
+        case .running, .waitingApproval, .waitingEvent, .waitingTimer, .stale, .orphaned, .unknown:
             return false
         }
     }

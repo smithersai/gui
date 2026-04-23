@@ -1,5 +1,9 @@
+const std = @import("std");
 const glib = @import("glib");
 const gtk = @import("gtk");
+const logx = @import("../log.zig");
+
+const log = std.log.scoped(.smithers_gtk_ghostty);
 
 pub const App = opaque {};
 pub const Surface = opaque {};
@@ -24,9 +28,13 @@ var tick_source: ?c_uint = null;
 
 pub fn ensureApp() Error!*App {
     if (app) |existing| return existing;
-    const created = ghostty_gtk_app_new() orelse return error.AppCreateFailed;
+    const created = ghostty_gtk_app_new() orelse {
+        log.err("ghostty_gtk_app_new returned null", .{});
+        return error.AppCreateFailed;
+    };
     app = created;
     tick_source = glib.timeoutAdd(8, tickCallback, null);
+    logx.event(log, "ghostty_init", "tick_ms={d}", .{8});
     return created;
 }
 
@@ -38,12 +46,17 @@ pub fn shutdown() void {
     if (app) |existing| {
         ghostty_gtk_app_free(existing);
         app = null;
+        logx.event(log, "ghostty_shutdown", "", .{});
     }
 }
 
 pub fn newSurface() Error!*Surface {
     const existing = try ensureApp();
-    return ghostty_gtk_surface_new(existing) orelse error.SurfaceCreateFailed;
+    const surface = ghostty_gtk_surface_new(existing) orelse {
+        log.err("ghostty_gtk_surface_new returned null", .{});
+        return error.SurfaceCreateFailed;
+    };
+    return surface;
 }
 
 pub fn widget(surface: *Surface) *gtk.Widget {

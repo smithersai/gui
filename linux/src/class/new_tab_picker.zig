@@ -1,11 +1,15 @@
+const std = @import("std");
 const adw = @import("adw");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const logx = @import("../log.zig");
 const smithers = @import("../smithers.zig");
 const ui = @import("../ui.zig");
 const Common = @import("../class.zig").Common;
 const MainWindow = @import("main_window.zig").MainWindow;
+
+const log = std.log.scoped(.smithers_gtk_new_tab_picker);
 
 pub const NewTabPicker = extern struct {
     const Self = @This();
@@ -52,6 +56,7 @@ pub const NewTabPicker = extern struct {
     }
 
     pub fn present(self: *Self) void {
+        logx.event(log, "new_tab_picker_opened", "", .{});
         self.private().dialog.present(self.private().window.as(gtk.Widget));
     }
 
@@ -82,10 +87,15 @@ pub const NewTabPicker = extern struct {
     }
 
     fn rowActivated(_: *gtk.ListBox, row: *gtk.ListBoxRow, self: *Self) callconv(.c) void {
-        const index = ui.getIndex(row.as(gobject.Object)) orelse return;
+        const index = ui.getIndex(row.as(gobject.Object)) orelse {
+            log.debug("rowActivated missing index", .{});
+            return;
+        };
         if (index >= entries.len) return;
+        logx.event(log, "new_tab_picker_selected", "index={d} title={s}", .{ index, entries[index].title });
         _ = self.private().dialog.close();
         self.private().window.openSession(entries[index].kind, null) catch |err| {
+            logx.catchWarn(log, "new_tab_picker.openSession", err);
             self.private().window.showToastFmt("Unable to open tab: {}", .{err});
         };
     }
