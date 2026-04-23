@@ -66,6 +66,31 @@ The app degrades gracefully without these — specific features will be unavaila
 | **nvim** (Neovim) | "Open in Neovim" option for tickets is hidden. The built-in editor still works. Searched at `/opt/homebrew/bin/nvim`, `/usr/local/bin/nvim`, `/usr/bin/nvim`, and PATH. | `brew install neovim` |
 | **Agent CLIs** (`claude`, `codex`, `gemini`, `kimi`, `amp`, `forge`) | Only agents whose CLI binary is found on PATH appear in the agent picker. Each requires its own API key (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). | Install per agent's docs |
 
+### Terminal surface (transitional, ticket 0123)
+
+The terminal is being migrated from a macOS-only AppKit path to a
+cross-platform SwiftUI surface fed by `libghostty`'s pipes backend via
+`libsmithers-core`:
+
+- `TerminalSurface.swift` — shared SwiftUI entry point. Compiles on
+  macOS + iOS. Driven by byte streams from a `TerminalPTYTransport`.
+- `TerminalView+macOS.swift` — macOS bridge that delegates to the
+  existing apprt-backed `TerminalSurfaceRepresentable` (in
+  `TerminalView.swift`, now guarded `#if os(macOS)`).
+- `ios/Sources/SmithersiOS/Terminal/TerminalIOSRenderer.swift` — iOS
+  UITextView renderer over the shared model. libghostty VT-level
+  rendering (via `ghostty-vt.xcframework` from the 0092 PoC) replaces
+  this body in a follow-up.
+
+Compatibility note: `RuntimePTYTransport` is wired through 0120's
+`SmithersRuntime` wrapper but the 0120 runtime still ships a fake
+transport with no real byte stream. macOS therefore continues to use
+the legacy `smithers-session-daemon` path inside
+`TerminalSurfaceRepresentable` during migration. Once the 0094
+WebSocket PTY lands and 0120's transport graduates, flip shared
+callers off `TerminalView` (macOS-only) onto `TerminalSurface` and
+delete the daemon fallback.
+
 ### Build-only
 
 | Dependency | Version | Purpose |

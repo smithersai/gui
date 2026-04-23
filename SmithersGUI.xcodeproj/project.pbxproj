@@ -11,6 +11,7 @@
 		00DB9BDA2516CBEADAB07D2C /* OutputTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = FADAFB0CF3E41DE6B5AC3564 /* OutputTab.swift */; };
 		015E82549F67A9B08355D515 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06983F229A9AA5A68E65C689 /* WelcomeView.swift */; };
 		01D14FE87297843B53EE48DD /* iOSPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D89B976D4AAC991AFB20CF1 /* iOSPresenter.swift */; };
+		02037362AFF28A260BB73E4D /* TerminalIOSRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 621AED95A39CAC19BF30E7AE /* TerminalIOSRenderer.swift */; };
 		044808651492E307A7CCAD02 /* TreeRowStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C61600A23AB1B0BA31E7F20 /* TreeRowStateTests.swift */; };
 		0575EDAB43C3EE1E4934F8AA /* OAuth2Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = B24C159845F7156B1128CC16 /* OAuth2Client.swift */; };
 		06741C9EE877614E533168AB /* WorkspacesSessionKeyboardE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 088C389083110C192B0BC0B8 /* WorkspacesSessionKeyboardE2ETests.swift */; };
@@ -55,6 +56,7 @@
 		317B0AA5863A99D5238A929A /* WorkspaceContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F66E5ACCD5C8094B0D436FC /* WorkspaceContentView.swift */; };
 		31EA169BB4265571391A1C44 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D53762A177396CE80146A3 /* AppLogger.swift */; };
 		3220DB1571F560778DA8DF52 /* RunsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86860F7DE886872C26CD5EC7 /* RunsView.swift */; };
+		32D772D81938C2AE4D01006D /* SmithersRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E34A8B473050C90B667A2E4 /* SmithersRuntime.swift */; };
 		330DD4D5CC20ECB12FF8FD9D /* OutputPendingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10F823F3026A4A2F724105D8 /* OutputPendingView.swift */; };
 		331C95A2B1855C27F87E75F7 /* KeyboardShortcutController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F793E0EC1492EAF5925C22E9 /* KeyboardShortcutController.swift */; };
 		3323C9C033B0CF75596BEB9B /* Smithers.Action.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5FEACC8E941D28DEE147654 /* Smithers.Action.swift */; };
@@ -99,10 +101,12 @@
 		5345A5A795C5D0E94938381A /* WorkspaceSurfaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01BCA6B4521AB9972F0876DC /* WorkspaceSurfaceModels.swift */; };
 		544913A35CD41DE442C5E230 /* PromptsLandingsSQLE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF88ACB7FBB4880CF67C570F /* PromptsLandingsSQLE2ETests.swift */; };
 		547306A83485963A17B6690D /* DiffTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D77B9B353FE42EF04A6B523 /* DiffTabTests.swift */; };
+		55656C718088D82357AFB275 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB5B9BD35F6D5E3807B5FBF6 /* UITestSupport.swift */; };
 		5680905B32956671597F08BD /* Smithers.App.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF4E8F605DBC419D2A624428 /* Smithers.App.swift */; };
 		5750590ADDF24188638BD7A1 /* TriggersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A868A2AF0809ADB2185019 /* TriggersView.swift */; };
 		5765FF499504654B2D6A6881 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2DB5308B9A8B5B9B8441D086 /* CoreGraphics.framework */; };
 		578B9D40F416EB1F47C04308 /* SessionControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94C58D93AD5778981A7FEF5A /* SessionControllerTests.swift */; };
+		57AA66C944774493D8801A5E /* TerminalSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94849A46B2E823725CF39113 /* TerminalSurface.swift */; };
 		58028250BBF43300F280C903 /* Smithers.Error.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C6D9A7C3644EB54DAECAEE0 /* Smithers.Error.swift */; };
 		58F179B3EE30F9EF0A846595 /* ChatBlockRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D71DE3FA0486E6EB69C608B /* ChatBlockRenderer.swift */; };
 		5ABB22288D24FFCDE01FB4E2 /* Smithers.Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 373D944210C39D89EE83D999 /* Smithers.Models.swift */; };
@@ -118,6 +122,7 @@
 		6B888193BCA0F46DBB4FE5B0 /* HeartbeatState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C510990CEC17A134239635DE /* HeartbeatState.swift */; };
 		6C307B474E060D36325BF527 /* ChatBlockMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE20447684F1F0E9DE2AAD7D /* ChatBlockMerger.swift */; };
 		6C38E9CD71E31F1E74A06413 /* ChatBlockFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC3D379B8BFBB2BFAFB1E6E4 /* ChatBlockFilterTests.swift */; };
+		6CEE02B15A7A507A279AE93B /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 5F3621411598DF28B2518B91 /* README.md */; };
 		6D11923653ACA24E24708811 /* KeyboardShortcutSettingsFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E03CD76EB5C97A41BFB26A4 /* KeyboardShortcutSettingsFileStore.swift */; };
 		6D2A0E6BCD60668CB191764D /* Smithers.ExternalAgentSessionWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E1D6ACA47A3D0DFB1EAD8EA /* Smithers.ExternalAgentSessionWatcher.swift */; };
 		6F4407A16F01D63DB80500F1 /* DiffTabE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38F004EBDF146316C0E71859 /* DiffTabE2ETests.swift */; };
@@ -141,6 +146,7 @@
 		8316327AFAB5C6D773679E29 /* LastLogPerNodeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13299BDC182386D996E7127C /* LastLogPerNodeStore.swift */; };
 		833F93A04F824C6BA9E44D35 /* ViewLifecycleLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09D41EE2CAB846A0A15FA10 /* ViewLifecycleLogger.swift */; };
 		837BB432CBD8DF8D14A93BB0 /* RunInspectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8CDE6436EE63BE626BD050B /* RunInspectView.swift */; };
+		84AF2F0C2346E32C4DA5036F /* TerminalSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94849A46B2E823725CF39113 /* TerminalSurface.swift */; };
 		856D986364FA527F979E7F89 /* SessionStoreHijackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E0D23E643ED2DC3DAA9AEE4 /* SessionStoreHijackTests.swift */; };
 		86229B43D9E92124A5F02C41 /* TreeKeyboardHandlerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2190D8E6981860FADE965D3 /* TreeKeyboardHandlerTests.swift */; };
 		865EE52473F437AC71F3998D /* DevToolsClientErrorMappingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75AD836F5611B64C8283851D /* DevToolsClientErrorMappingTests.swift */; };
@@ -175,6 +181,7 @@
 		ACC1C2C83B481EA83D41FDA8 /* ViewInspector in Frameworks */ = {isa = PBXBuildFile; productRef = 3451D65EC19134A0C57863FB /* ViewInspector */; };
 		ACCCBE899719DA549DB37143 /* CoreText.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9660FBD8BEF9DAE91F3E3481 /* CoreText.framework */; };
 		ADEA182A67891C62C4E5B7AD /* FreshProjectE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08A6883F860E9A846CABF73B /* FreshProjectE2ETests.swift */; };
+		AE5A7F5ACEACC1243225C53A /* SmithersRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E34A8B473050C90B667A2E4 /* SmithersRuntime.swift */; };
 		AEEC6E431D9EA5DC67A52AB0 /* JJHubWorkflowsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95DA88753D359F39A1907002 /* JJHubWorkflowsView.swift */; };
 		B1FC92C0C9DCE013CBF01175 /* Smithers.Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02219E60CC698AAEEFED8416 /* Smithers.Session.swift */; };
 		B302459DF32292FB2AF9BD5E /* SurfaceNotificationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6F2AD52B198BA505D208010 /* SurfaceNotificationStore.swift */; };
@@ -207,6 +214,7 @@
 		D2E2F93A2E75772CD38EE449 /* DashboardWorkflowsE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C178C4818C0F7FF44ED51830 /* DashboardWorkflowsE2ETests.swift */; };
 		D558E267156E2332DFBB1181 /* LiveRunLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 354E0E3297B6BD5ED8EB3280 /* LiveRunLayout.swift */; };
 		D5A33D5DC6FE40B2C4BD385A /* DiffParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F5084BE3905D9C430F47B37 /* DiffParserTests.swift */; };
+		D6CFF283FD8E06F2FA72C3B2 /* TerminalView+macOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E359B9E2A291DA1C3FAFD53 /* TerminalView+macOS.swift */; };
 		D86ACB0171D88E2C386FB013 /* LiveRunTreeE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16451FA4A98F26A5BE264533 /* LiveRunTreeE2ETests.swift */; };
 		D86EEEA2639ADD1F518C6DEA /* DateFormatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 081367C18741EEB252C3264B /* DateFormatters.swift */; };
 		D99FBCAB28FA01FDA9D5617F /* Smithers.Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC8F51D9407A4AF34C5262D /* Smithers.Workspace.swift */; };
@@ -230,6 +238,7 @@
 		E4BFE3405D90F31359F7076B /* ApplyDeltaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A32DD4E7157360C36385B1F2 /* ApplyDeltaTests.swift */; };
 		E6270A97E8E6C5F8F53FA33A /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE54F1DB326B147AE6E6BE5C /* SignInView.swift */; };
 		E651389FB6F6B36FE89DE126 /* LiveRunDevToolsE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B3DBA39F594CFDE2F564899 /* LiveRunDevToolsE2ETests.swift */; };
+		E744F666C3219C25AC275543 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 5F3621411598DF28B2518B91 /* README.md */; };
 		EC0093F419F2ED08609F6E06 /* TmuxControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08B28AB1F14E53BCC4D3374F /* TmuxControllerTests.swift */; };
 		EDB682D1CD3D2877566F8678 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56ECA74603B6F7EEC2A4D1AC /* DashboardView.swift */; };
 		EEAF6F301C2B4FAEBFBB835C /* NewTabPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A26A91F4B685685EC909944 /* NewTabPicker.swift */; };
@@ -339,6 +348,8 @@
 		39A701BE26A2D3529816FB38 /* SmithersModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersModels.swift; sourceTree = "<group>"; };
 		3D04C8142FE76C32CF0EEA41 /* Smithers.SlashCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.SlashCommands.swift; sourceTree = "<group>"; };
 		3DD6440C9F6629BE503E05FA /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		3E34A8B473050C90B667A2E4 /* SmithersRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersRuntime.swift; sourceTree = "<group>"; };
+		3E359B9E2A291DA1C3FAFD53 /* TerminalView+macOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TerminalView+macOS.swift"; sourceTree = "<group>"; };
 		3F66E5ACCD5C8094B0D436FC /* WorkspaceContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceContentView.swift; sourceTree = "<group>"; };
 		408D73318DE461AFA2CF523A /* ScrubberE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberE2ETests.swift; sourceTree = "<group>"; };
 		41A868A2AF0809ADB2185019 /* TriggersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriggersView.swift; sourceTree = "<group>"; };
@@ -367,6 +378,7 @@
 		5B80B22E3CA680DFC7841324 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		5BAF892C1C0D8A04F2FCEFF5 /* TreeSearchIndexTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeSearchIndexTests.swift; sourceTree = "<group>"; };
 		5CCEB2A1283A77BEFEB62F60 /* DefaultTabPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultTabPicker.swift; sourceTree = "<group>"; };
+		5F3621411598DF28B2518B91 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		5F4227C1F0056998020E51A9 /* FrameScrubberView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameScrubberView.swift; sourceTree = "<group>"; };
 		5F5084BE3905D9C430F47B37 /* DiffParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffParserTests.swift; sourceTree = "<group>"; };
 		5FED589B5455608DF3A2AB30 /* HeartbeatStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartbeatStateTests.swift; sourceTree = "<group>"; };
@@ -375,6 +387,7 @@
 		618B233151E620C348F5B982 /* UnifiedDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDiffView.swift; sourceTree = "<group>"; };
 		61AB9B67D4C840038ED9F6B6 /* WorkflowFrontendResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowFrontendResolverTests.swift; sourceTree = "<group>"; };
 		620B5F99CFCBC8ADE7B08F39 /* Smithers.Upgrader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Upgrader.swift; sourceTree = "<group>"; };
+		621AED95A39CAC19BF30E7AE /* TerminalIOSRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIOSRenderer.swift; sourceTree = "<group>"; };
 		6271E01551F64DF581EE86ED /* ScrubberDebounceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberDebounceTests.swift; sourceTree = "<group>"; };
 		6294F7B3AB91AB50DA97C578 /* LiveRunDevToolsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunDevToolsStoreTests.swift; sourceTree = "<group>"; };
 		62D97266A86BB52E256401BB /* LiveRunTreeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunTreeView.swift; sourceTree = "<group>"; };
@@ -412,6 +425,7 @@
 		8F13753C81A222DA6379FE68 /* SmithersiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SmithersiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		903BABEE4FCDFCEB64EABEA2 /* RunsScoresMemoryE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsScoresMemoryE2ETests.swift; sourceTree = "<group>"; };
 		921F53ED403B4D761F7E7DE9 /* ShortcutAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutAction.swift; sourceTree = "<group>"; };
+		94849A46B2E823725CF39113 /* TerminalSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSurface.swift; sourceTree = "<group>"; };
 		94C58D93AD5778981A7FEF5A /* SessionControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionControllerTests.swift; sourceTree = "<group>"; };
 		95DA88753D359F39A1907002 /* JJHubWorkflowsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JJHubWorkflowsView.swift; sourceTree = "<group>"; };
 		9660FBD8BEF9DAE91F3E3481 /* CoreText.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreText.framework; path = System/Library/Frameworks/CoreText.framework; sourceTree = SDKROOT; };
@@ -669,6 +683,7 @@
 				2AFAA5B66424A6170F8E29B1 /* AuthViewModel.swift */,
 				B24C159845F7156B1128CC16 /* OAuth2Client.swift */,
 				BD91D5626780ABF64B661114 /* PKCE.swift */,
+				5F3621411598DF28B2518B91 /* README.md */,
 				DE54F1DB326B147AE6E6BE5C /* SignInView.swift */,
 				A03E8BB873A22BC349D69751 /* TokenManager.swift */,
 				1FF16B322F2706E4DA679D5E /* TokenStore.swift */,
@@ -759,7 +774,9 @@
 				B16541C51EFF64EEE26CBBC7 /* StoredShortcut.swift */,
 				A6F2AD52B198BA505D208010 /* SurfaceNotificationStore.swift */,
 				5AEEBCA3E92C8F54DA5D070F /* TerminalProcessTracker.swift */,
+				94849A46B2E823725CF39113 /* TerminalSurface.swift */,
 				4629F0B9B43F8AF7731E4919 /* TerminalView.swift */,
+				3E359B9E2A291DA1C3FAFD53 /* TerminalView+macOS.swift */,
 				34FBCE6095A7B7A659B2B257 /* Theme.swift */,
 				8EC0C110B0BA06054D579224 /* TicketsView.swift */,
 				A5D754B59E245DF9A93B5F50 /* TreeKeyboardHandler.swift */,
@@ -786,6 +803,7 @@
 				E14191522BADD0E200E9FB6C /* SmithersiOS */,
 				C764B14A497D9FD1B0438EB2 /* SmithersiOSTests */,
 				0BFDFC305220266B65576B6B /* SmithersiOSUITests */,
+				BC20D472B718E400890F94EF /* SmithersRuntime */,
 				11075296A4DE0BD4A59039E0 /* Frameworks */,
 				2C6C70FC49DF181A68D0D797 /* Products */,
 			);
@@ -897,6 +915,15 @@
 			path = Auth;
 			sourceTree = "<group>";
 		};
+		BC20D472B718E400890F94EF /* SmithersRuntime */ = {
+			isa = PBXGroup;
+			children = (
+				3E34A8B473050C90B667A2E4 /* SmithersRuntime.swift */,
+			);
+			name = SmithersRuntime;
+			path = Shared/Sources/SmithersRuntime;
+			sourceTree = "<group>";
+		};
 		C764B14A497D9FD1B0438EB2 /* SmithersiOSTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -912,9 +939,18 @@
 			children = (
 				88FDA11487C0DC3C72E580E4 /* SmithersApp.swift */,
 				A1D898262B8FEA123234560B /* Auth */,
+				F1BF8E762AD5DDE3D09C20C8 /* Terminal */,
 			);
 			name = SmithersiOS;
 			path = ios/Sources/SmithersiOS;
+			sourceTree = "<group>";
+		};
+		F1BF8E762AD5DDE3D09C20C8 /* Terminal */ = {
+			isa = PBXGroup;
+			children = (
+				621AED95A39CAC19BF30E7AE /* TerminalIOSRenderer.swift */,
+			);
+			path = Terminal;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -925,6 +961,7 @@
 			buildConfigurationList = 5541784C320071FFD3E83E60 /* Build configuration list for PBXNativeTarget "SmithersiOS" */;
 			buildPhases = (
 				863525A75065F2C079B1AEC9 /* Sources */,
+				39DB88491C91197051C90D69 /* Resources */,
 				AA51297F9DF523CD9FB49DCE /* Frameworks */,
 			);
 			buildRules = (
@@ -1098,8 +1135,17 @@
 			buildActionMask = 2147483647;
 			files = (
 				DE92E738DC18D9318E3821DC /* MarkdownShell in Resources */,
+				E744F666C3219C25AC275543 /* README.md in Resources */,
 				3152F974ACA8F9BA0EB0C9FD /* smithers-session-connect in Resources */,
 				C70E6795C96C77B4D89284BB /* smithers-session-daemon in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		39DB88491C91197051C90D69 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6CEE02B15A7A507A279AE93B /* README.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1124,8 +1170,12 @@
 				3D0836D34216C9FB6AF91EBF /* PKCE.swift in Sources */,
 				E6270A97E8E6C5F8F53FA33A /* SignInView.swift in Sources */,
 				F43077C555BDDA3B401EE6A4 /* SmithersApp.swift in Sources */,
+				AE5A7F5ACEACC1243225C53A /* SmithersRuntime.swift in Sources */,
+				02037362AFF28A260BB73E4D /* TerminalIOSRenderer.swift in Sources */,
+				57AA66C944774493D8801A5E /* TerminalSurface.swift in Sources */,
 				B9A123C3020A2411EAB06185 /* TokenManager.swift in Sources */,
 				EEDCC2537F5D92D0852C658F /* TokenStore.swift in Sources */,
+				55656C718088D82357AFB275 /* UITestSupport.swift in Sources */,
 				01D14FE87297843B53EE48DD /* iOSPresenter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1294,9 +1344,12 @@
 				52CE134E81420D474DCE140F /* Smithers.Upgrader.swift in Sources */,
 				D99FBCAB28FA01FDA9D5617F /* Smithers.Workspace.swift in Sources */,
 				17FB38CE28BA917017F5F393 /* SmithersModels.swift in Sources */,
+				32D772D81938C2AE4D01006D /* SmithersRuntime.swift in Sources */,
 				13F7BBFCCCD57BFC7A31E19F /* StoredShortcut.swift in Sources */,
 				B302459DF32292FB2AF9BD5E /* SurfaceNotificationStore.swift in Sources */,
 				247DB848E1FF634BF22D6AC1 /* TerminalProcessTracker.swift in Sources */,
+				84AF2F0C2346E32C4DA5036F /* TerminalSurface.swift in Sources */,
+				D6CFF283FD8E06F2FA72C3B2 /* TerminalView+macOS.swift in Sources */,
 				92BDA2B86665F9C195BD22E7 /* TerminalView.swift in Sources */,
 				4B0E762863D273E68FC783E8 /* Theme.swift in Sources */,
 				C0D41E0C8A8C139758476018 /* TicketsView.swift in Sources */,

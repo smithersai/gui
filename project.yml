@@ -105,6 +105,12 @@ targets:
       - TerminalProcessTracker.swift
       - WelcomeView.swift
       - TerminalView.swift
+      # ticket 0123 — shared terminal entry point + macOS bridge.
+      - TerminalSurface.swift
+      - TerminalView+macOS.swift
+      # ticket 0120 — runtime Swift wrapper compiled into the app target
+      # (same-module import for the shared terminal surface).
+      - path: Shared/Sources/SmithersRuntime
       - StoredShortcut.swift
       - ShortcutAction.swift
       - KeyboardShortcutController.swift
@@ -216,6 +222,14 @@ targets:
         excludes:
           - Info.plist
       - path: Shared/Sources/SmithersAuth
+      # ticket 0123 — shared terminal surface (compiles for macOS + iOS).
+      - TerminalSurface.swift
+      # Foundation-only helper that the shared surface uses to gate the
+      # UITest placeholder branch. Compiles on both platforms.
+      - UITestSupport.swift
+      # ticket 0120 — runtime Swift wrapper. iOS terminal surface reads
+      # PTY bytes from here, not from the macOS-only session daemon.
+      - path: Shared/Sources/SmithersRuntime
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOS

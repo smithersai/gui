@@ -1,3 +1,10 @@
+// NOTE (ticket 0123): this file is macOS-only. The cross-platform
+// terminal entry point lives in `TerminalSurface.swift`; the AppKit /
+// libghostty apprt bits below stay here behind `#if os(macOS)` and are
+// bridged into the shared surface by `TerminalView+macOS.swift`. Do
+// not remove the guard without also migrating the remaining callers
+// off `TerminalView` (macOS-only) onto the shared `TerminalSurface`.
+#if os(macOS)
 import SwiftUI
 import AppKit
 import QuartzCore
@@ -1842,3 +1849,5 @@ struct TerminalView: View {
         .accessibilityIdentifier("terminal.root")
     }
 }
+
+#endif // os(macOS)
