@@ -272,6 +272,12 @@ Desktop-local is structurally different enough from the iOS-and-remote-sandboxes
 | UI settings | device | `UserDefaults` / XDG / etc. |
 | Connection credentials | device | Keychain / libsecret |
 
+## Related documents
+
+- Execution plan: `ios-and-remote-sandboxes-execution.md`.
+- Production Electric shapes: `ios-and-remote-sandboxes-production-shapes.md`.
+- Independent validation checklist (consumed by the `ticket-implement` review step): `ios-and-remote-sandboxes-validation.md`.
+
 ## Open Questions Tracked Elsewhere
 
 - Warm-pool policy for JJHub sandboxes (cold-start UX).

@@ -106,6 +106,7 @@ Each is its own ticket. Ordered within groups, but groups can progress in parall
 - Example categories: new RPC has schema doc'd + both sides updated + shape subscribed by at least one client + metric added + error taxonomy entry + spec row checked off.
 - Per-PoC entry: "what should the agent look for to confirm this PoC actually proves what it claims?"
 - *Done when:* doc lives at `.smithers/specs/ios-and-remote-sandboxes-validation.md`; gets fed into the `ticket-implement` workflow's review step.
+- *Status:* landed. The checklist is at `.smithers/specs/ios-and-remote-sandboxes-validation.md` and is the review-step reference for every ticket in this initiative.
 
 **D4: Migration strategy.**
 - How today's `libsmithers/src/` tree evolves into `libsmithers-core` + deprecated engine bits. Per-commit ordering so the current desktop app keeps working at every step.
