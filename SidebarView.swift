@@ -11,6 +11,13 @@ import AppKit
 struct SidebarView: View {
     @ObservedObject var store: SessionStore
     @ObservedObject private var surfaceNotifications = SurfaceNotificationStore.shared
+    #if os(macOS)
+    // 0126: Remote-mode section. Read directly from the shared controller so
+    // the sidebar reacts to sign-in/out without plumbing bindings through
+    // ContentView (which 0122 just refactored and the ticket asks us to keep
+    // narrow).
+    @ObservedObject private var remoteMode: RemoteModeController = .shared
+    #endif
     @Binding var destination: NavDestination
     @Binding private var developerDebugPanelVisible: Bool
     @State private var smithersVersion: String?
@@ -48,7 +55,7 @@ struct SidebarView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     SidebarSection(
-                        title: "Smithers",
+                        title: localSectionTitle,
                         trailingAccessory: {
                             Button(action: onOpenNewTabPicker) {
                                 Image(systemName: "plus")
@@ -63,6 +70,17 @@ struct SidebarView: View {
                     ) {
                         workspaceList
                     }
+
+                    #if os(macOS)
+                    // 0126: Remote section. Only rendered when the
+                    // `remote_sandbox_enabled` flag is on. With flag off the
+                    // sidebar is visually indistinguishable from pre-0126.
+                    if remoteMode.isRemoteFeatureEnabled {
+                        SidebarSection(title: "REMOTE") {
+                            remoteSectionContent
+                        }
+                    }
+                    #endif
 
                     if developerDebugAvailable {
                         SidebarSection(title: "DEVELOPER") {
@@ -321,6 +339,147 @@ struct SidebarView: View {
         renameTerminalID = terminalID
         renameTerminalTitle = currentTitle
     }
+
+    // MARK: - 0126 Remote section
+
+    private var localSectionTitle: String {
+        #if os(macOS)
+        return remoteMode.isRemoteFeatureEnabled ? "LOCAL" : "Smithers"
+        #else
+        return "Smithers"
+        #endif
+    }
+
+    #if os(macOS)
+    @ViewBuilder
+    private var remoteSectionContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            remoteStatusRow
+
+            if remoteMode.isSignedIn {
+                if remoteMode.openWorkspaceTabs.isEmpty {
+                    Text("No remote sandboxes open")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        .accessibilityIdentifier("sidebar.remote.empty")
+                } else {
+                    ForEach(remoteMode.openWorkspaceTabs) { tab in
+                        remoteWorkspaceRow(tab)
+                    }
+                }
+
+                NavRow(
+                    icon: "rectangle.stack",
+                    label: "Browse sandboxes",
+                    isSelected: destination == .workspaces
+                ) {
+                    destination = .workspaces
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var remoteStatusRow: some View {
+        let label: String = {
+            switch remoteMode.phase {
+            case .disabled, .signedOut: return "Signed out"
+            case .signingIn: return "Signing in…"
+            case .bootBlocked: return "Connecting…"
+            case .slowBoot: return "This is taking longer than expected…"
+            case .stalledBoot: return "Still connecting — tap to cancel"
+            case .active: return "Signed in"
+            case .reconnecting: return "Reconnecting…"
+            case .whitelistDenied(let m): return "Access denied: \(m)"
+            case .error(let m): return "Error: \(m)"
+            }
+        }()
+        HStack(spacing: 8) {
+            Image(systemName: remoteStatusIcon)
+                .font(.system(size: 11))
+                .foregroundColor(remoteStatusColor)
+                .frame(width: 16)
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(2)
+            Spacer()
+            if case .stalledBoot = remoteMode.phase {
+                Button("Cancel") {
+                    Task { await remoteMode.cancelBoot() }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Theme.danger)
+                .accessibilityIdentifier("sidebar.remote.cancelBoot")
+            } else if remoteMode.isSignedIn {
+                Button("Sign out") {
+                    Task { await remoteMode.signOut() }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Theme.textTertiary)
+                .accessibilityIdentifier("sidebar.remote.signOut")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .accessibilityIdentifier("sidebar.remote.statusRow")
+    }
+
+    private var remoteStatusIcon: String {
+        switch remoteMode.phase {
+        case .active: return "checkmark.icloud.fill"
+        case .reconnecting, .slowBoot, .stalledBoot, .bootBlocked, .signingIn:
+            return "icloud.and.arrow.down"
+        case .whitelistDenied, .error: return "exclamationmark.icloud"
+        default: return "icloud.slash"
+        }
+    }
+
+    private var remoteStatusColor: Color {
+        switch remoteMode.phase {
+        case .active: return Theme.success
+        case .reconnecting, .slowBoot, .bootBlocked, .signingIn: return Theme.warning
+        case .stalledBoot, .whitelistDenied, .error: return Theme.danger
+        default: return Theme.textTertiary
+        }
+    }
+
+    @ViewBuilder
+    private func remoteWorkspaceRow(_ tab: RemoteWorkspaceTab) -> some View {
+        Button {
+            // 0138 will install a dedicated remote-workspace route. Until
+            // that lands, route remote-tab selections to the existing
+            // `.workspaces` destination so the user still has a surface.
+            destination = .workspaces
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "cloud.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 12)
+                Text(tab.name)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Close sandbox") {
+                remoteMode.closeRemoteWorkspace(id: tab.id)
+            }
+        }
+        .accessibilityIdentifier("sidebar.remote.workspace.\(tab.id)")
+    }
+    #endif
 
 }
 

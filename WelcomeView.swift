@@ -2,9 +2,16 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 #endif
+#if canImport(SmithersAuth)
+import SmithersAuth
+#endif
 
 struct WelcomeView: View {
     @ObservedObject var manager: WorkspaceManager
+    #if os(macOS)
+    @ObservedObject var remoteMode: RemoteModeController = .shared
+    @State private var showSignInSheet = false
+    #endif
 
     private static let githubURL = URL(string: "https://github.com/smithersai/gui")!
 
@@ -26,6 +33,16 @@ struct WelcomeView: View {
         }
         .frame(minWidth: 720, minHeight: 560)
         .accessibilityIdentifier("view.welcome")
+        #if os(macOS)
+        .sheet(isPresented: $showSignInSheet) {
+            SignInView(model: remoteMode.authModel)
+                .frame(minWidth: 480, minHeight: 360)
+                .accessibilityIdentifier("welcome.signInSheet")
+        }
+        .onChange(of: remoteMode.isSignedIn) { _, signedIn in
+            if signedIn { showSignInSheet = false }
+        }
+        #endif
     }
 
     private var header: some View {
@@ -61,6 +78,15 @@ struct WelcomeView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("welcome.openFolder")
 
+            #if os(macOS)
+            // 0126: Remote sign-in entry. Gated behind `remote_sandbox_enabled`
+            // (0112). When the flag is off we render NOTHING here — the app
+            // looks exactly like the current local-only product.
+            if remoteMode.isRemoteFeatureEnabled {
+                remoteSignInButton
+            }
+            #endif
+
             Button(action: openGitHub) {
                 HStack(spacing: 8) {
                     Image(systemName: "star.fill")
@@ -83,6 +109,59 @@ struct WelcomeView: View {
             .accessibilityIdentifier("welcome.starGitHub")
         }
     }
+
+    #if os(macOS)
+    @ViewBuilder
+    private var remoteSignInButton: some View {
+        if remoteMode.isSignedIn {
+            // Signed in: offer a direct "Browse Remote" shortcut so the user
+            // can reach the sandbox picker without re-entering the sheet.
+            // The dedicated picker lives in `WorkspacesView` today; 0138 is
+            // replacing it with a full-screen switcher.
+            Button(action: { showSignInSheet = true }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.icloud.fill")
+                        .font(.system(size: 15))
+                    Text("Signed in · Manage")
+                        .font(.system(size: 15, weight: .medium))
+                }
+                .frame(minWidth: 200)
+                .padding(.vertical, 14)
+                .padding(.horizontal, 24)
+                .background(Theme.surface1)
+                .foregroundColor(Theme.textPrimary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Theme.accent, lineWidth: 1)
+                )
+                .cornerRadius(8)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("welcome.remote.manage")
+        } else {
+            Button(action: { showSignInSheet = true }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "icloud.and.arrow.down.fill")
+                        .font(.system(size: 15))
+                    Text("Sign in to Smithers Cloud")
+                        .font(.system(size: 15, weight: .medium))
+                }
+                .frame(minWidth: 200)
+                .padding(.vertical, 14)
+                .padding(.horizontal, 24)
+                .background(Theme.surface1)
+                .foregroundColor(Theme.textPrimary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Theme.border, lineWidth: 1)
+                )
+                .cornerRadius(8)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("welcome.remote.signIn")
+        }
+    }
+    #endif
 
     private var recentsSection: some View {
         VStack(alignment: .leading, spacing: 12) {

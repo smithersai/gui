@@ -15,10 +15,12 @@ import AppKit
 struct SmithersApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var workspaceManager = WorkspaceManager.shared
+    // 0126: remote-mode controller lives for the app process lifetime.
+    @StateObject private var remoteMode = RemoteModeController.shared
 
     var body: some Scene {
         WindowGroup {
-            SmithersRootView(manager: workspaceManager)
+            SmithersRootView(manager: workspaceManager, remoteMode: remoteMode)
                 .preferredColorScheme(.dark)
                 .onOpenURL { url in
                     SmithersApp.handleOpenedURL(url, manager: workspaceManager)
@@ -43,12 +45,26 @@ struct SmithersApp: App {
 
 struct SmithersRootView: View {
     @ObservedObject var manager: WorkspaceManager
+    // 0126: The root view consults the remote-mode controller so it can
+    // decide whether to show a remote-only slow-boot overlay over the shell.
+    // Local mode is always reachable — remote UX never blocks the user from
+    // opening a local folder.
+    @ObservedObject var remoteMode: RemoteModeController
 
     var body: some View {
         Group {
             if let path = manager.activeWorkspacePath {
                 ContentView(workspacePath: path)
                     .id(path)
+            } else if remoteMode.isSignedIn && remoteMode.phase.allowsRemoteSurface {
+                // Signed in remote user with no local folder open → show the
+                // Welcome view (which now exposes the sandbox picker + local
+                // "Open Folder…"). The shell inside ContentView only loads
+                // once the user picks a concrete workspace (local or
+                // remote). For remote workspaces the detail surface is
+                // served by `WorkspacesView` today; 0138 replaces this with
+                // a dedicated full-screen switcher.
+                WelcomeView(manager: manager)
             } else {
                 WelcomeView(manager: manager)
             }

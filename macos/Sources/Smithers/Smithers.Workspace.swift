@@ -28,6 +28,35 @@ struct RecentWorkspace: Codable, Equatable, Identifiable {
     }
 }
 
+// MARK: - 0126 Remote workspace identity
+
+/// Identity of a workspace the user has active in the current app session.
+/// The macOS app can hold an arbitrary mix of `.local` and `.remote`
+/// workspaces at once — see hybrid-session requirement in ticket 0126.
+///
+/// This type intentionally lives in the macOS support layer: the Shared
+/// Store already has `WorkspaceRow` (Electric shape projection) and we
+/// don't want to widen that to carry UI / local-FS concerns.
+enum WorkspaceIdentity: Equatable, Hashable {
+    /// A local filesystem workspace opened via "Open Folder…".
+    case local(path: String)
+    /// A remote JJHub sandbox opened via the remote-mode picker.
+    case remote(workspaceId: String, engineId: String?)
+
+    var isRemote: Bool {
+        if case .remote = self { return true }
+        return false
+    }
+
+    /// A stable cross-run identifier suitable for tab keys.
+    var stableId: String {
+        switch self {
+        case .local(let path): return "local:\(path)"
+        case .remote(let id, let engine): return "remote:\(engine ?? "default"):\(id)"
+        }
+    }
+}
+
 private let recentWorkspaceDecoder: JSONDecoder = {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .secondsSince1970
