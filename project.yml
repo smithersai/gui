@@ -3,10 +3,12 @@ options:
   minimumXcodeGenVersion: 2.43.0
   deploymentTarget:
     macOS: "14.0"
+    iOS: "17.0"
 settings:
   base:
     SWIFT_VERSION: "5.9"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"
 packages:
@@ -14,6 +16,12 @@ packages:
     url: https://github.com/nalexn/ViewInspector.git
     from: "0.10.0"
 targets:
+  # ---------------------------------------------------------------------------
+  # macOS app (existing). Owns every Swift file in the repo root plus the macOS
+  # support layer and the macOS-only helper binaries shipped under
+  # libsmithers/zig-out/bin. Linker flags and AppKit frameworks are kept
+  # macOS-only; the iOS target below does not inherit any of them.
+  # ---------------------------------------------------------------------------
   SmithersGUI:
     type: application
     platform: macOS
@@ -118,6 +126,9 @@ targets:
       - macos/Sources/Smithers
       - path: Resources/MarkdownShell
         type: folder
+      # Helper binaries are macOS-only and intentionally NOT bundled into the
+      # iOS target below (ticket 0121 acceptance: iOS build graph must not
+      # include these).
       - path: libsmithers/zig-out/bin/smithers-session-daemon
         buildPhase: resources
       - path: libsmithers/zig-out/bin/smithers-session-connect
@@ -128,6 +139,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: SmithersGUI
         INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
+        SUPPORTED_PLATFORMS: macosx
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CGhosttyKit $(SRCROOT)/CSmithersKit"
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64 $(SRCROOT)/libsmithers/zig-out/lib $(SRCROOT)/libsmithers"
         OTHER_LDFLAGS: "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2 -lsqlite3"
@@ -163,6 +175,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUITests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: SmithersGUI
+        SUPPORTED_PLATFORMS: macosx
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CGhosttyKit $(SRCROOT)/CSmithersKit"
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64 $(SRCROOT)/libsmithers/zig-out/lib $(SRCROOT)/libsmithers"
         OTHER_LDFLAGS: "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2 -lsqlite3"
@@ -178,6 +191,84 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUIUITests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: SmithersGUI
+        SUPPORTED_PLATFORMS: macosx
+  # ---------------------------------------------------------------------------
+  # iOS app (ticket 0121). Intentionally minimal scaffolding so the build
+  # system is real. Downstream tickets expand this target:
+  #   - 0122: shared ContentView/SidebarView/etc. get added here.
+  #   - 0123: TerminalView portability + libghostty iOS artifact wiring.
+  #   - 0124: libsmithers-core iOS static archive linkage.
+  #   - 0125: code signing + release plumbing.
+  #
+  # The target explicitly does NOT link AppKit, and does NOT bundle the
+  # macOS-only `smithers-session-daemon` / `smithers-session-connect` helper
+  # binaries. Both are macOS-only in the SmithersGUI target above.
+  # ---------------------------------------------------------------------------
+  SmithersiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ios/Sources/SmithersiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOS
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Smithers
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        # Manual placeholder signing. 0125 replaces this with real identities.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+        DEVELOPMENT_TEAM: ""
+    dependencies:
+      - sdk: Foundation.framework
+      - sdk: UIKit.framework
+      - sdk: SwiftUI.framework
+  SmithersiOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ios/Tests/SmithersiOSTests
+    dependencies:
+      - target: SmithersiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOSTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: SmithersiOS
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+  SmithersiOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ios/Tests/SmithersiOSUITests
+    dependencies:
+      - target: SmithersiOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOSUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: SmithersiOS
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
 schemes:
   SmithersGUI:
     build:
@@ -189,4 +280,15 @@ schemes:
       targets:
         - SmithersGUITests
         - SmithersGUIUITests
+      gatherCoverageData: false
+  SmithersiOS:
+    build:
+      targets:
+        SmithersiOS: all
+        SmithersiOSTests: [test]
+        SmithersiOSUITests: [test]
+    test:
+      targets:
+        - SmithersiOSTests
+        - SmithersiOSUITests
       gatherCoverageData: false

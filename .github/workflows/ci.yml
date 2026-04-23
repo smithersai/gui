@@ -1,0 +1,174 @@
+# CI for SmithersGUI (ticket 0121).
+#
+# Builds both the macOS app and the iOS app on every push/PR so the
+# cross-platform matrix is exercised continuously. The iOS jobs are the
+# part that did not exist before this ticket; the macOS job replaces the
+# previously ad-hoc local-only `zig build xcode` path.
+#
+# Downstream tickets add:
+#   0123: libghostty iOS artifact build + linking
+#   0124: libsmithers-core iOS static archive build + linking
+#   0125: code signing + release upload
+#
+# Until 0123/0124 land, the iOS target is scaffolding only — it does not
+# link libghostty or libsmithers — so CI builds it standalone without the
+# Zig prerequisites.
+
+name: CI
+
+on:
+  push:
+    branches: [main, "initiative/*"]
+  pull_request:
+    branches: [main, "initiative/*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # XcodeGen reads project.yml; pin version via brew for reproducibility.
+  XCODEGEN_VERSION: "2.43.0"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Regenerate the Xcode project and fail if project.yml drifted out of sync
+  # with the tracked .xcodeproj. Cheap sanity gate that runs before the heavy
+  # build jobs.
+  # ---------------------------------------------------------------------------
+  xcodegen-check:
+    name: XcodeGen regenerate
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Regenerate project
+        run: xcodegen generate
+      - name: Verify .xcodeproj is in sync
+        run: |
+          # The generated xcodeproj is expected to be committed. If it differs
+          # from the checked-in version, fail — developer forgot to regenerate.
+          if ! git diff --quiet -- SmithersGUI.xcodeproj; then
+            echo "::error::SmithersGUI.xcodeproj is out of sync with project.yml."
+            echo "::error::Run 'xcodegen generate' and commit the result."
+            git --no-pager diff --stat -- SmithersGUI.xcodeproj
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # macOS app + tests. Uses the zig build shim so libsmithers + libghostty
+  # are built first (matching local developer flow).
+  # ---------------------------------------------------------------------------
+  macos-build:
+    name: macOS build & test
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Install Zig (pinned)
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.15.2
+      - name: Build libsmithers + libghostty
+        run: |
+          zig build libsmithers
+          zig build ghostty
+      - name: Regenerate Xcode project
+        run: xcodegen generate
+      - name: Build SmithersGUI (macOS)
+        run: |
+          xcodebuild \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersGUI \
+            -destination 'platform=macOS' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Unit tests (macOS)
+        run: |
+          xcodebuild \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersGUI \
+            -destination 'platform=macOS' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+  # ---------------------------------------------------------------------------
+  # iOS simulator app + tests. No Zig prerequisites until 0123/0124 land the
+  # iOS artifacts for libghostty / libsmithers-core. Once those ship, reuse
+  # the same zig build steps as the macOS job.
+  # ---------------------------------------------------------------------------
+  ios-simulator-build:
+    name: iOS simulator build & test
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Regenerate Xcode project
+        run: xcodegen generate
+      - name: Show available iOS simulators
+        run: xcrun simctl list devices available | grep -E "iPhone" | head -20
+      - name: Build SmithersiOS (simulator)
+        run: |
+          xcodebuild \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersiOS \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Run iOS unit + UI tests (simulator)
+        run: |
+          xcodebuild \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersiOS \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+  # ---------------------------------------------------------------------------
+  # iOS device-slice build (no signing, no deploy). Proves the project is
+  # shaped correctly for App Store builds ahead of 0125's signing work.
+  # ---------------------------------------------------------------------------
+  ios-device-build:
+    name: iOS device-slice build (no signing)
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Regenerate Xcode project
+        run: xcodegen generate
+      - name: Build SmithersiOS (device slice, no signing)
+        run: |
+          xcodebuild \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersiOS \
+            -destination 'generic/platform=iOS' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
