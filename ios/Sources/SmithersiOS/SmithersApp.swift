@@ -1,8 +1,11 @@
-// SmithersApp.swift — iOS entry point (ticket 0121, expanded by 0109).
+// SmithersApp.swift — iOS entry point (ticket 0121, expanded by 0109/0122).
 //
 // The app starts at the sign-in shell. Once the user completes OAuth2
-// (0106 + 0109) the placeholder post-signin surface is shown. Tickets
-// 0122/0123 replace that placeholder with the shared ContentView.
+// (0106 + 0109) the `IOSContentShell` takes over. The iOS shell hosts a
+// `NavigationStack`-based composition that reuses the shared
+// `NavigationStateStore` and `NavDestination` from
+// `SharedNavigation.swift`. Tickets 0123/0124 expand the leaves it can
+// render once TerminalView / libsmithers-core are iOS-portable.
 
 #if os(iOS)
 import SwiftUI
@@ -18,9 +21,7 @@ struct SmithersiOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                RootSurface(model: authModel)
-            }
+            RootSurface(model: authModel)
         }
     }
 
@@ -54,38 +55,16 @@ private struct RootSurface: View {
     var body: some View {
         switch model.phase {
         case .signedIn:
-            PlaceholderSignedInView(model: model)
-        default:
-            SignInView(model: model)
-                .navigationTitle("Smithers")
-                .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-}
-
-/// Temporary post-signin landing. 0122 replaces this with the shared
-/// ContentView.
-private struct PlaceholderSignedInView: View {
-    @ObservedObject var model: AuthViewModel
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "hammer.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.tint)
-            Text("Smithers")
-                .font(.largeTitle.bold())
-            Text("Signed in. Main UI lands in 0122/0123.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-            Button("Sign out") {
+            IOSContentShell(onSignOut: {
                 Task { await model.signOut() }
+            })
+        default:
+            NavigationStack {
+                SignInView(model: model)
+                    .navigationTitle("Smithers")
+                    .navigationBarTitleDisplayMode(.inline)
             }
-            .buttonStyle(.bordered)
         }
-        .navigationTitle("Smithers")
     }
 }
 #endif

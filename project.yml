@@ -58,6 +58,9 @@ targets:
       - ChangesView.swift
       - CommandPaletteView.swift
       - ContentView.swift
+      - DetailRouter.swift
+      - BootstrapStage.swift
+      - SharedNavigation.swift
       - DashboardView.swift
       - IssuesView.swift
       - JJHubWorkflowsView.swift
@@ -230,6 +233,9 @@ targets:
       # ticket 0120 — runtime Swift wrapper. iOS terminal surface reads
       # PTY bytes from here, not from the macOS-only session daemon.
       - path: Shared/Sources/SmithersRuntime
+      # ticket 0122 — shared navigation/state model (route vocabulary
+      # compiles for both platforms).
+      - SharedNavigation.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOS

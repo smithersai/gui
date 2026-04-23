@@ -1,348 +1,27 @@
+// ContentView.swift
+//
+// Ticket 0122 decomposed this file. Compared to pre-refactor, ContentView
+// no longer owns:
+//   - the app entry point (`@main SmithersApp`) → `macos/Sources/Smithers/Smithers.AppDelegate.swift`
+//   - the app delegate (`AppDelegate`)          → `macos/Sources/Smithers/Smithers.AppDelegate.swift`
+//   - the route/state model (`NavDestination`)  → `SharedNavigation.swift`
+//   - the detail route switch (`detailContent`) → `DetailRouter.swift`
+//   - the loading/bootstrap stage                → `BootstrapStage.swift`
+//   - the macOS `NavigationSplitView` shell       → `macos/Sources/Smithers/Smithers.ContentShell.macOS.swift`
+//   - AppKit-only actions (open-panel / workspace-open / app-terminate /
+//     pasteboard-write)                             → `macos/Sources/Smithers/Smithers.PlatformAdapters.swift`
+//
+// What stays here is the composition root: `ContentView` wires the shared
+// navigation store, palette state, keyboard shortcut controller, and
+// per-destination callbacks into the macOS shell via `MacOSContentShell`.
+// The iOS shell is a separate composition in `ios/Sources/SmithersiOS/`.
+
 import SwiftUI
 import WebKit
 import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #endif
-
-private struct WorkspaceToolbarTitleView: View {
-    @ObservedObject var workspace: TerminalWorkspace
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(workspace.orderedSurfaces) { surface in
-                WorkspaceToolbarSurfaceChip(
-                    surface: surface,
-                    isFocused: workspace.focusedSurfaceId == surface.id,
-                    onSelect: { workspace.focusSurface(surface.id) }
-                )
-            }
-        }
-        .accessibilityIdentifier("toolbar.workspace.title")
-    }
-}
-
-private struct WorkspaceToolbarSurfaceChip: View {
-    let surface: WorkspaceSurface
-    let isFocused: Bool
-    let onSelect: () -> Void
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 6) {
-                Text(surface.title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(isFocused ? Theme.textPrimary : Theme.textSecondary)
-                    .lineLimit(1)
-                if !surface.subtitle.isEmpty {
-                    Text(surface.subtitle)
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(isFocused ? Theme.surface1 : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("toolbar.workspace.chip.\(surface.id.rawValue)")
-    }
-}
-
-private struct RunSnapshotsSelection: Identifiable, Equatable {
-    let runId: String
-    let workflowName: String?
-
-    var id: String { runId }
-}
-
-private struct SnapshotsRouteView: View {
-    @ObservedObject var smithers: SmithersClient
-    var onOpenRunSnapshots: (RunSummary) -> Void
-
-    @State private var runs: [RunSummary] = []
-    @State private var selectedRunId: String?
-    @State private var isLoading = true
-    @State private var error: String?
-
-    private var sortedRuns: [RunSummary] {
-        runs.sortedByStartedAtDescending()
-    }
-
-    private var selectedRun: RunSummary? {
-        if let selectedRunId,
-           let selected = sortedRuns.first(where: { $0.runId == selectedRunId }) {
-            return selected
-        }
-        return sortedRuns.first
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            content
-        }
-        .background(Theme.surface1)
-        .task { await loadRuns() }
-        .accessibilityIdentifier("view.snapshots")
-    }
-
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Timeline / Snapshots")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(Theme.textPrimary)
-                Text("Choose a run to inspect snapshots.")
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.textTertiary)
-            }
-
-            Spacer()
-
-            if isLoading {
-                ProgressView()
-                    .scaleEffect(0.6)
-                    .frame(width: 16, height: 16)
-            }
-
-            Button {
-                Task { await loadRuns() }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10))
-                    Text("Refresh")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(Theme.textSecondary)
-                .padding(.horizontal, 10)
-                .frame(height: 24)
-                .background(Theme.inputBg)
-                .cornerRadius(6)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("snapshots.refresh")
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 52)
-        .border(Theme.border, edges: [.bottom])
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if isLoading {
-            VStack(spacing: 8) {
-                ProgressView()
-                Text("Loading runs...")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.textTertiary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let error {
-            VStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 24))
-                    .foregroundColor(Theme.warning)
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.textSecondary)
-                    .multilineTextAlignment(.center)
-                Button("Retry") {
-                    Task { await loadRuns() }
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(Theme.accent)
-                .accessibilityIdentifier("snapshots.retry")
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(20)
-        } else if sortedRuns.isEmpty {
-            VStack(spacing: 8) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 24))
-                    .foregroundColor(Theme.textTertiary)
-                Text("No runs found")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.textTertiary)
-                Text("Run a workflow first, then open snapshots.")
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.textTertiary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            HStack(spacing: 0) {
-                runList
-                    .frame(width: 340)
-                    .background(Theme.surface2)
-
-                Divider().background(Theme.border)
-
-                runDetail
-            }
-        }
-    }
-
-    private var runList: some View {
-        ScrollView {
-            VStack(spacing: 8) {
-                ForEach(sortedRuns) { run in
-                    let isSelected = run.runId == selectedRun?.runId
-                    Button {
-                        selectedRunId = run.runId
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(run.workflowName ?? run.runId)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(Theme.textPrimary)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(run.status.label)
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundColor(statusColor(run.status))
-                            }
-
-                            Text(run.runId)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(Theme.textTertiary)
-                                .lineLimit(1)
-
-                            if let startedAtMs = run.startedAtMs {
-                                Text(runInspectorRelativeDate(startedAtMs))
-                                    .font(.system(size: 9, design: .monospaced))
-                                    .foregroundColor(Theme.textTertiary)
-                            }
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 8, defaultFill: Theme.surface2)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("snapshots.run.\(runInspectorSafeID(run.runId))")
-                }
-            }
-            .padding(12)
-        }
-        .refreshable { await loadRuns() }
-    }
-
-    private var runDetail: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let selectedRun {
-                Text(selectedRun.workflowName ?? "Run \(String(selectedRun.runId.prefix(8)))")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(Theme.textPrimary)
-
-                detailRow("Run ID", selectedRun.runId)
-                detailRow("Status", selectedRun.status.label)
-                detailRow("Started", selectedRun.startedAtMs.map(runInspectorShortDate) ?? "-")
-                detailRow("Elapsed", selectedRun.elapsedString.isEmpty ? "-" : selectedRun.elapsedString)
-
-                Divider().background(Theme.border)
-
-                Text("Open Timeline")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(Theme.textSecondary)
-                Text("Open the snapshots viewer for this run to inspect timeline frames, then fork or replay.")
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.textTertiary)
-
-                Button {
-                    onOpenRunSnapshots(selectedRun)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 10, weight: .bold))
-                        Text("Open Snapshots")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(Theme.textPrimary)
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .background(Theme.inputBg)
-                    .cornerRadius(7)
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.border, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("snapshots.open")
-
-                Spacer(minLength: 0)
-            } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 20))
-                        .foregroundColor(Theme.textTertiary)
-                    Text("Select a run")
-                        .font(.system(size: 12))
-                        .foregroundColor(Theme.textTertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .padding(16)
-    }
-
-    private func detailRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label)
-                .font(.system(size: 10))
-                .foregroundColor(Theme.textTertiary)
-                .frame(width: 72, alignment: .leading)
-            Text(value)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(Theme.textSecondary)
-                .lineLimit(1)
-            Spacer()
-        }
-    }
-
-    private func statusColor(_ status: RunStatus) -> Color {
-        switch status {
-        case .running:
-            return Theme.info
-        case .waitingApproval:
-            return Theme.warning
-        case .finished:
-            return Theme.success
-        case .failed, .cancelled:
-            return Theme.danger
-        case .stale, .orphaned:
-            return Theme.warning
-        case .unknown:
-            return Theme.textTertiary
-        }
-    }
-
-    private func loadRuns() async {
-        isLoading = true
-        error = nil
-
-        do {
-            let fetched = try await smithers.listRuns()
-            runs = fetched
-
-            let sorted = fetched.sortedByStartedAtDescending()
-            let availableRunIDs = Set(sorted.map(\.runId))
-            if let selectedRunId, availableRunIDs.contains(selectedRunId) {
-                self.selectedRunId = selectedRunId
-            } else {
-                self.selectedRunId = sorted.first?.runId
-            }
-        } catch {
-            runs = []
-            self.error = error.localizedDescription
-        }
-
-        isLoading = false
-    }
-}
 
 struct SettingsView: View {
     @AppStorage(AppPreferenceKeys.vimModeEnabled) private var vimModeEnabled = false
@@ -661,7 +340,9 @@ struct SettingsView: View {
             """
             try? template.write(to: fileURL, atomically: true, encoding: .utf8)
         }
-        NSWorkspace.shared.open(fileURL)
+        #if os(macOS)
+        PlatformAdapters.open(fileURL)
+        #endif
     }
 }
 
@@ -725,6 +406,11 @@ private struct ShortcutSettingsRow: View {
 }
 #endif
 
+// MARK: - ContentView
+
+/// macOS composition root. ContentView wires the shared navigation store,
+/// the palette state, and per-destination callbacks into `MacOSContentShell`.
+/// The iOS target composes `IOSContentShell` directly from `SmithersApp.swift`.
 struct ContentView: View {
     @StateObject private var store: SessionStore
     @StateObject private var smithers: SmithersClient
@@ -746,10 +432,11 @@ struct ContentView: View {
     @State private var navHistoryIndex: Int = 0
     @State private var isNavigatingThroughHistory = false
     @State private var navigationSplitVisibility: NavigationSplitViewVisibility = .all
-    @State private var runSnapshotsSelection: RunSnapshotsSelection?
+    #if os(macOS)
+    @State private var runSnapshotsSelection: RunSnapshotsRouteSelection?
+    #endif
     @State private var workflowsInitialID: String?
     @State private var changesInitialID: String?
-    @State private var isLoading = true
     @State private var developerDebugPanelVisible = false
     @State private var guiControlSidebarExpanded = false
     @State private var pendingTerminalCloseId: String?
@@ -823,367 +510,70 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private var detailContent: some View {
-        switch destination {
-        case .terminal(let id):
-            TerminalWorkspaceRouteView(
-                store: store,
-                terminalId: id,
-                onClose: {
-                    requestTerminalClose(id)
-                },
-                onAppShortcutCommand: { command in
-                    handleKeyboardShortcutCommand(command)
-                }
-            )
-                .id(id)
-                .logLifecycle("TerminalWorkspaceView")
-                .accessibilityIdentifier("view.terminal")
-        case .terminalCommand(let binary, let workingDirectory, let name):
-            TerminalView(
-                command: binary,
-                workingDirectory: workingDirectory,
-                onClose: { destination = defaultDestination },
-                onAppShortcutCommand: { command in
-                    handleKeyboardShortcutCommand(command)
-                }
-            )
-                .id("\(binary)-\(workingDirectory)")
-                .accessibilityIdentifier("view.terminalCommand.\(name)")
-        case .liveRun(let runId, let nodeId):
-            LiveRunView(
-                smithers: smithers,
-                runId: runId,
-                nodeId: nodeId,
-                onOpenTerminalCommand: openTerminalCommandTab,
-                onOpenWorkflow: { workflowName in
-                    workflowsInitialID = workflowName
-                    destination = .workflows
-                },
-                onOpenPrompt: { destination = .prompts },
-                onRunSummaryRefreshed: { store.updateRunTab(with: $0) },
-                onClose: { destination = .runs }
-            )
-            .id("live-run-\(runId)-\(nodeId ?? "all")")
-            .logLifecycle("LiveRunView")
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("view.liveRun")
-        case .runInspect(let runId, let workflowName):
-            RunInspectView(
-                smithers: smithers,
-                runId: runId,
-                onOpenLiveChat: { runId, nodeId in
-                    let preview = nodeId.map { "Node \($0)" } ?? "Live run"
-                    openRunTab(runId: runId, title: workflowName, preview: preview, nodeId: nodeId)
-                },
-                onOpenTerminalCommand: openTerminalCommandTab,
-                onRunSummaryRefreshed: { store.updateRunTab(with: $0) },
-                onClose: { destination = .runs }
-            )
-            .id("run-inspect-\(runId)")
-            .logLifecycle("RunInspectView")
-            .accessibilityIdentifier("view.runinspect")
-        case .home:
-            HomeView(
-                itemsProvider: { query in commandPaletteItems(for: query) },
-                onExecute: { item, query in executePaletteItem(item, rawQuery: query) }
-            )
-            .id("home")
-            .logLifecycle("HomeView")
-            .accessibilityIdentifier("view.home")
-        case .dashboard:
-            DashboardView(
-                smithers: smithers,
-                onAutoPopulateActiveRuns: { runs in
-                    store.autoPopulateActiveRunTabs(runs)
-                },
-                onOpenLiveChat: { run, nodeId in
-                    openRunTab(run: run, nodeId: nodeId)
-                },
-                onOpenWorkflow: { workflow in
-                    workflowsInitialID = workflow.id
-                    destination = .workflows
-                }
-            )
-                .logLifecycle("DashboardView")
-                .accessibilityIdentifier("view.dashboard")
-        case .vcsDashboard:
-            VCSDashboardView(
-                smithers: smithers,
-                onNavigate: { destination = $0 },
-                onOpenChange: { change in
-                    changesInitialID = change.changeID
-                    destination = .changes
-                }
-            )
-                .logLifecycle("VCSDashboardView")
-                .accessibilityIdentifier("view.vcsDashboard")
-        case .agents:
-            AgentsView(smithers: smithers)
-                .logLifecycle("AgentsView")
-                .accessibilityIdentifier("view.agents")
-        case .changes:
-            ChangesView(smithers: smithers, initialChangeID: changesInitialID)
-                .id(changesInitialID ?? "changes-default")
-                .logLifecycle("ChangesView")
-                .accessibilityIdentifier("view.changes")
-        case .runs:
-            RunsView(
-                smithers: smithers,
-                onOpenLiveChat: { run, nodeId in
-                    openRunTab(run: run, nodeId: nodeId)
-                },
-                onOpenRunInspector: { run in
-                    destination = .runInspect(runId: run.runId, workflowName: run.workflowName)
-                },
-                onOpenRunSnapshots: { run in
-                    runSnapshotsSelection = RunSnapshotsSelection(runId: run.runId, workflowName: run.workflowName)
-                },
-                onOpenTerminalCommand: openTerminalCommandTab
-            )
-            .logLifecycle("RunsView")
-            .accessibilityIdentifier("view.runs")
-        case .snapshots:
-            SnapshotsRouteView(
-                smithers: smithers,
-                onOpenRunSnapshots: { run in
-                    runSnapshotsSelection = RunSnapshotsSelection(runId: run.runId, workflowName: run.workflowName)
-                }
-            )
-            .logLifecycle("SnapshotsRouteView")
-            .accessibilityIdentifier("view.snapshots")
-        case .workflows:
-            WorkflowsView(
-                smithers: smithers,
-                onNavigate: { destination = $0 },
-                onRunStarted: { runId, title in
-                    openRunTab(runId: runId, title: title, preview: "Workflow run")
-                },
-                initialWorkflowID: workflowsInitialID
-            )
-            .id(workflowsInitialID ?? "workflows-default")
-            .logLifecycle("WorkflowsView")
-            .accessibilityIdentifier("view.workflows")
-        case .triggers:
-            TriggersView(smithers: smithers)
-                .logLifecycle("TriggersView")
-                .accessibilityIdentifier("view.triggers")
-        case .jjhubWorkflows:
-            JJHubWorkflowsView(smithers: smithers)
-                .logLifecycle("JJHubWorkflowsView")
-                .accessibilityIdentifier("view.jjhubWorkflows")
-        case .approvals:
-            ApprovalsView(smithers: smithers)
-                .logLifecycle("ApprovalsView")
-                .accessibilityIdentifier("view.approvals")
-        case .prompts:
-            PromptsView(smithers: smithers)
-                .logLifecycle("PromptsView")
-                .accessibilityIdentifier("view.prompts")
-        case .scores:
-            ScoresView(smithers: smithers)
-                .logLifecycle("ScoresView")
-                .accessibilityIdentifier("view.scores")
-        case .memory:
-            MemoryView(smithers: smithers)
-                .logLifecycle("MemoryView")
-                .accessibilityIdentifier("view.memory")
-        case .search:
-            SearchView(smithers: smithers)
-                .logLifecycle("SearchView")
-                .accessibilityIdentifier("view.search")
-        case .sql:
-            SQLBrowserView(smithers: smithers)
-                .logLifecycle("SQLBrowserView")
-                .accessibilityIdentifier("view.sql")
-        case .landings:
-            LandingsView(smithers: smithers)
-                .logLifecycle("LandingsView")
-                .accessibilityIdentifier("view.landings")
-        case .tickets:
-            TicketsView(smithers: smithers)
-                .logLifecycle("TicketsView")
-                .accessibilityIdentifier("view.tickets")
-        case .issues:
-            IssuesView(smithers: smithers)
-                .logLifecycle("IssuesView")
-                .accessibilityIdentifier("view.issues")
-        case .workspaces:
-            WorkspacesView(smithers: smithers)
-                .logLifecycle("WorkspacesView")
-                .accessibilityIdentifier("view.workspaces")
-        case .logs:
-            LogViewerView()
-                .logLifecycle("LogViewerView")
-                .accessibilityIdentifier("view.logs")
-        case .settings:
-            SettingsView()
-                .logLifecycle("SettingsView")
-                .accessibilityIdentifier("view.settings")
+    var body: some View {
+        #if os(macOS)
+        BootstrapStageView(smithers: smithers, onReady: handleBootstrapReady) {
+            macOSShell
         }
+        #else
+        // On iOS, ContentView is not used; the iOS target composes
+        // `IOSContentShell` directly from `SmithersApp.swift`.
+        EmptyView()
+        #endif
     }
 
-    var body: some View {
-        if isLoading {
-            VStack(spacing: 12) {
-                ProgressView()
-                    .scaleEffect(1.5)
-                Text("Connecting to Smithers...")
-                    .font(.system(size: 14))
-                    .foregroundColor(Theme.textTertiary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.base)
-            .task {
-                let logStats = await AppLogger.fileWriter.stats()
-                AppLogger.lifecycle.info("File logging ready", metadata: [
-                    "path": logStats.fileURL.path,
-                    "entries": String(logStats.entryCount),
-                    "size_bytes": String(logStats.sizeBytes)
-                ])
-                AppLogger.lifecycle.info("App launching, checking connection")
-                await smithers.checkConnection()
-                AppLogger.lifecycle.info("Connection check complete", metadata: [
-                    "connected": String(smithers.isConnected),
-                    "cliAvailable": String(smithers.cliAvailable)
-                ])
-                if !UITestSupport.isEnabled {
-                    AppNotifications.shared.beginRunEventMonitoring(smithers: smithers)
+    #if os(macOS)
+    private var macOSShell: some View {
+        MacOSContentShell(
+            store: store,
+            smithers: smithers,
+            smithersUpgrader: smithersUpgrader,
+            destination: $destination,
+            navigationSplitVisibility: $navigationSplitVisibility,
+            runSnapshotsSelection: $runSnapshotsSelection,
+            developerDebugPanelVisible: $developerDebugPanelVisible,
+            developerToolsEnabled: developerToolsEnabled,
+            guiControlSidebarEnabled: guiControlSidebarEnabled,
+            guiControlSidebarExpanded: $guiControlSidebarExpanded,
+            activeTerminalId: activeTerminalId,
+            shouldShowSmithersVersionWarning: shouldShowSmithersVersionWarning,
+            detailRefreshNonce: detailRefreshNonce,
+            canGoBack: canGoBack,
+            canGoForward: canGoForward,
+            goBack: goBack,
+            goForward: goForward,
+            onOpenNewTabPicker: { openCommandPalette(prefill: NewTabPaletteCatalog.expandedQuery) },
+            onAppShortcutCommand: handleKeyboardShortcutCommand,
+            onRequestTerminalClose: requestTerminalClose,
+            onTerminalProcessExited: handleTerminalProcessExited,
+            onDropMarkdown: handleMarkdownFileDrop,
+            onHandleNavigation: handleNavigation,
+            onDestinationChanged: { newValue in recordHistory(newValue) },
+            onSmithersActionNotification: handleSmithersActionNotification,
+            onAppear: handleShellAppear,
+            onDisappear: handleShellDisappear,
+            onUpgradeSmithers: {
+                Task {
+                    await smithersUpgrader.upgrade()
+                    _ = await smithers.getOrchestratorVersion()
                 }
-                isLoading = false
-
-                let environment = ProcessInfo.processInfo.environment
-                if UITestSupport.isEnabled,
-                   environment["SMITHERS_GUI_UITEST_OPEN_TREE_ON_LAUNCH"] == "1" {
-                    destination = .liveRun(runId: "ui-run-active-001", nodeId: nil)
-                }
-            }
-        } else {
-            HStack(spacing: 0) {
-                NavigationSplitView(columnVisibility: $navigationSplitVisibility) {
-                    SidebarView(
-                        store: store,
-                        destination: $destination,
-                        developerDebugPanelVisible: $developerDebugPanelVisible,
-                        developerDebugAvailable: developerToolsEnabled,
-                        onOpenNewTabPicker: {
-                            openCommandPalette(prefill: NewTabPaletteCatalog.expandedQuery)
-                        },
-                        versionProvider: { await smithers.getOrchestratorVersion() }
-                    )
-                    .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
-                } detail: {
-                    ZStack(alignment: .topLeading) {
-                        TerminalTabsLayer(
-                            store: store,
-                            activeTerminalId: activeTerminalId,
-                            onRequestClose: { id in requestTerminalClose(id) },
-                            onProcessExited: { id in handleTerminalProcessExited(id) },
-                            onAppShortcutCommand: { command in
-                                handleKeyboardShortcutCommand(command)
-                            }
-                        )
-                        .opacity(activeTerminalId != nil ? 1 : 0)
-                        .allowsHitTesting(activeTerminalId != nil)
-                        .accessibilityHidden(activeTerminalId == nil)
-
-                        if activeTerminalId == nil {
-                            VStack(spacing: 0) {
-                                if shouldShowSmithersVersionWarning,
-                                   let installed = smithers.orchestratorVersion,
-                                   smithers.orchestratorVersionMeetsMinimum == false {
-                                    SmithersVersionWarningBanner(
-                                        installed: installed,
-                                        onUpgrade: {
-                                            Task {
-                                                await smithersUpgrader.upgrade()
-                                                _ = await smithers.getOrchestratorVersion()
-                                            }
-                                        },
-                                        upgradeStatus: smithersUpgrader.status
-                                    )
-                                }
-                                detailContent
-                            }
-                            .id("\(String(describing: destination)):\(detailRefreshNonce)")
-                        }
-                    }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .toolbar {
-                            ToolbarItemGroup(placement: .navigation) {
-                                Button(action: goBack) {
-                                    Image(systemName: "chevron.left")
-                                }
-                                .disabled(!canGoBack)
-                                .help("Back (⌘[)")
-                                .accessibilityIdentifier("nav.back")
-
-                                Button(action: goForward) {
-                                    Image(systemName: "chevron.right")
-                                }
-                                .disabled(!canGoForward)
-                                .help("Forward (⌘])")
-                                .accessibilityIdentifier("nav.forward")
-
-                                if let terminalId = activeTerminalId,
-                                   let workspace = store.terminalWorkspaceIfAvailable(terminalId) {
-                                    WorkspaceToolbarTitleView(workspace: workspace)
-                                }
-                            }
-                        }
-                }
-                .navigationSplitViewStyle(.balanced)
-                .sheet(item: $runSnapshotsSelection) { selection in
-                    RunSnapshotsSheet(
-                        smithers: smithers,
-                        runId: selection.runId,
-                        nodeIdFilter: nil,
-                        onClose: { runSnapshotsSelection = nil }
-                    )
-                    .frame(minWidth: 840, minHeight: 520)
-                }
-                .frame(minWidth: 800, minHeight: 600)
-                .background(Theme.base)
-                .overlay(alignment: .topLeading) {
-                    hiddenShortcutButtons
-                }
-                .accessibilityIdentifier("app.root")
-                .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
-                    handleMarkdownFileDrop(providers)
-                }
-                .onChange(of: destination) { _, newValue in
-                    AppLogger.ui.debug("Navigate to \(newValue.label)")
-                    recordHistory(newValue)
-                }
-                .onReceive(NotificationCenter.default.publisher(for: .smithersAction)) { notification in
-                    handleSmithersActionNotification(notification)
-                }
-                if guiControlSidebarEnabled {
-                    GUIControlSidebar(
-                        isExpanded: $guiControlSidebarExpanded,
-                        store: store,
-                        smithers: smithers,
-                        destination: destination,
-                        onNavigate: handleNavigation
-                    )
-                }
-
-                if developerDebugPanelVisible && developerToolsEnabled {
-                    DeveloperDebugPanel(
-                        store: store,
-                        smithers: smithers,
-                        destination: destination,
-                        onClose: { developerDebugPanelVisible = false },
-                        onOpenLogs: { destination = .logs }
-                    )
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                AppToastOverlay()
-            }
-            .overlay {
+            },
+            versionProvider: { await smithers.getOrchestratorVersion() },
+            terminateTerminalBinding: terminateTerminalConfirmationBinding,
+            pendingTerminalCloseTitle: pendingTerminalCloseTitle,
+            confirmTerminalClose: confirmTerminalClose,
+            clearPendingTerminalClose: clearPendingTerminalClose,
+            detailContent: {
+                DetailRouterView(
+                    store: store,
+                    smithers: smithers,
+                    destination: destination,
+                    workflowsInitialID: workflowsInitialID,
+                    changesInitialID: changesInitialID,
+                    actions: detailRouterActions
+                )
+            },
+            commandPaletteOverlay: {
                 if commandPaletteVisible {
                     CommandPaletteView(
                         initialQuery: commandPaletteSeedQuery,
@@ -1200,39 +590,63 @@ struct ContentView: View {
                     )
                     .transition(.opacity)
                 }
-            }
-            .overlay {
+            },
+            quickLaunchOverlay: {
                 if let state = quickLaunchState {
                     quickLaunchOverlay(state: state)
                         .transition(.opacity)
                 }
+            },
+            hiddenShortcutButtons: {
+                hiddenShortcutButtons
             }
-            .background(Theme.base)
-            .onAppear {
-                installKeyboardShortcutMonitor()
-                fileSearchIndex.updateRootPath(store.workspaceRootPath)
-                fileSearchIndex.ensureLoaded()
+        )
+    }
+
+    private var detailRouterActions: DetailRouterActions {
+        DetailRouterActions(
+            navigate: { destination = $0 },
+            requestTerminalClose: requestTerminalClose,
+            handleKeyboardShortcutCommand: handleKeyboardShortcutCommand,
+            openTerminalCommandTab: openTerminalCommandTab(command:workingDirectory:name:),
+            openRunTabForRun: openRunTab(run:nodeId:),
+            openRunTab: { runId, title, preview, nodeId in
+                openRunTab(runId: runId, title: title, preview: preview, nodeId: nodeId)
+            },
+            setWorkflowsInitialID: { workflowsInitialID = $0 },
+            setChangesInitialID: { changesInitialID = $0 },
+            presentRunSnapshotsSheet: { run in
+                runSnapshotsSelection = RunSnapshotsRouteSelection(runId: run.runId, workflowName: run.workflowName)
+            },
+            autoPopulateActiveRunTabs: { runs in
+                store.autoPopulateActiveRunTabs(runs)
+            },
+            updateRunTab: { store.updateRunTab(with: $0) },
+            commandPaletteItems: { commandPaletteItems(for: $0) },
+            executePaletteItem: { item, rawQuery in
+                executePaletteItem(item, rawQuery: rawQuery)
             }
-            .onDisappear {
-                keyboardShortcutController.uninstall()
-                paletteDataRefreshTask?.cancel()
-                paletteDataRefreshTask = nil
-            }
-            .confirmationDialog(
-                "Terminate Terminal?",
-                isPresented: terminateTerminalConfirmationBinding,
-                titleVisibility: .visible
-            ) {
-                Button("Terminate Terminal", role: .destructive) {
-                    confirmTerminalClose()
-                }
-                Button("Cancel", role: .cancel) {
-                    clearPendingTerminalClose()
-                }
-            } message: {
-            Text("Terminate \"\(pendingTerminalCloseTitle)\"? This will stop the terminal session and close the workspace. This action cannot be undone.")
-            }
-        } // end else (isLoading)
+        )
+    }
+
+    private func handleBootstrapReady() {
+        let environment = ProcessInfo.processInfo.environment
+        if UITestSupport.isEnabled,
+           environment["SMITHERS_GUI_UITEST_OPEN_TREE_ON_LAUNCH"] == "1" {
+            destination = .liveRun(runId: "ui-run-active-001", nodeId: nil)
+        }
+    }
+
+    private func handleShellAppear() {
+        installKeyboardShortcutMonitor()
+        fileSearchIndex.updateRootPath(store.workspaceRootPath)
+        fileSearchIndex.ensureLoaded()
+    }
+
+    private func handleShellDisappear() {
+        keyboardShortcutController.uninstall()
+        paletteDataRefreshTask?.cancel()
+        paletteDataRefreshTask = nil
     }
 
     @ViewBuilder
@@ -1493,7 +907,7 @@ struct ContentView: View {
         case .showNotifications:
             showNotificationSummary()
         case .toggleFullScreen:
-            NSApp.keyWindow?.toggleFullScreen(nil)
+            PlatformAdapters.toggleFullScreen()
         case .focusBrowserAddressBar:
             focusBrowserAddressBar()
         case .browserBack:
@@ -1905,25 +1319,10 @@ struct ContentView: View {
     }
 
     private func openMarkdownFilePicker() {
-        let panel = NSOpenPanel()
-        panel.title = "Open Markdown File"
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = URL(fileURLWithPath: store.workspaceRootPath, isDirectory: true)
-        let markdownTypes = [
-            UTType(filenameExtension: "md"),
-            UTType(filenameExtension: "markdown"),
-        ].compactMap { $0 }
-        panel.allowedContentTypes = markdownTypes.isEmpty ? [.plainText] : markdownTypes
-
-        guard panel.runModal() == .OK,
-              let url = panel.url
-        else {
-            return
-        }
-
-        openMarkdownFile(url)
+        PlatformAdapters.presentMarkdownOpenPanel(
+            startingAt: store.workspaceRootPath,
+            completion: { url in openMarkdownFile(url) }
+        )
     }
 
     private func openMarkdownFile(_ url: URL) {
@@ -2115,7 +1514,7 @@ struct ContentView: View {
         case .showHelp:
             openCommandPalette(prefill: ">")
         case .quit:
-            NSApplication.shared.terminate(nil)
+            PlatformAdapters.terminateApp()
         case .runWorkflow(let workflow):
             startQuickLaunch(workflow: workflow, prompt: "")
         case .runSmithersPrompt(_):
@@ -2136,10 +1535,10 @@ struct ContentView: View {
             if isMarkdownFile(fileURL) {
                 openMarkdownFile(fileURL)
             } else {
-                NSWorkspace.shared.open(fileURL)
+                PlatformAdapters.open(fileURL)
             }
         } else {
-            copyTextToClipboard(fileMention)
+            PlatformAdapters.copyToClipboard(fileMention)
             AppNotifications.shared.post(
                 title: "File Missing",
                 message: "Copied \(fileMention) to clipboard instead.",
@@ -2158,12 +1557,6 @@ struct ContentView: View {
     private func isMarkdownFile(_ url: URL) -> Bool {
         let ext = url.pathExtension.lowercased()
         return ext == "md" || ext == "markdown"
-    }
-
-    private func copyTextToClipboard(_ text: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
     }
 
     private func openRunTab(run: RunSummary, nodeId: String?) {
@@ -2307,8 +1700,10 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.surface1)
     }
+    #endif
 }
 
+#if os(macOS)
 private extension View {
     func uiTestShortcutAnchor() -> some View {
         frame(width: 1, height: 1)
@@ -2317,116 +1712,6 @@ private extension View {
             // accessibility tree.
             .opacity(UITestSupport.isEnabled ? 1 : 0.01)
             .clipped()
-    }
-}
-
-@main
-struct SmithersApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var workspaceManager = WorkspaceManager.shared
-
-    var body: some Scene {
-        WindowGroup {
-            SmithersRootView(manager: workspaceManager)
-                .preferredColorScheme(.dark)
-                .onOpenURL { url in
-                    SmithersApp.handleOpenedURL(url, manager: workspaceManager)
-                }
-        }
-        .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unified)
-    }
-
-    static func handleOpenedURL(_ url: URL, manager: WorkspaceManager) {
-        if url.isFileURL {
-            manager.openWorkspace(at: url)
-            return
-        }
-        guard url.scheme == "smithers-gui" else { return }
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-        if let path = components.queryItems?.first(where: { $0.name == "path" })?.value {
-            manager.openWorkspace(at: URL(fileURLWithPath: path, isDirectory: true))
-        }
-    }
-}
-
-struct SmithersRootView: View {
-    @ObservedObject var manager: WorkspaceManager
-
-    var body: some View {
-        Group {
-            if let path = manager.activeWorkspacePath {
-                ContentView(workspacePath: path)
-                    .id(path)
-            } else {
-                WelcomeView(manager: manager)
-            }
-        }
-        .environmentObject(manager)
-    }
-}
-
-class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
-        AppLogger.lifecycle.info("Application did finish launching")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            AppDelegate.relocateOffScreenWindows()
-        }
-    }
-
-    func applicationDidBecomeActive(_ notification: Notification) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            AppDelegate.relocateOffScreenWindows()
-        }
-    }
-
-    private static func relocateOffScreenWindows() {
-        let screens = NSScreen.screens
-        guard !screens.isEmpty else { return }
-        // Fallback target when a window is off every connected screen. Prefer
-        // the screen anchored at origin (0, 0) — NSScreen.main can point at a
-        // phantom display remembered from a prior multi-monitor setup.
-        let anchored = screens.first(where: { $0.frame.origin == .zero })
-        guard let fallbackScreen = anchored ?? NSScreen.main else { return }
-        let visibleFrame = fallbackScreen.visibleFrame
-        for window in NSApp.windows {
-            let frame = window.frame
-            guard frame.width > 0, frame.height > 0 else { continue }
-            let onAnyScreen = screens.contains { $0.visibleFrame.intersects(frame) }
-            if onAnyScreen { continue }
-            let size = NSSize(
-                width: min(frame.width, visibleFrame.width * 0.9),
-                height: min(frame.height, visibleFrame.height * 0.9)
-            )
-            let origin = NSPoint(
-                x: visibleFrame.midX - size.width / 2,
-                y: visibleFrame.midY - size.height / 2
-            )
-            AppLogger.ui.info("relocating off-screen window", metadata: [
-                "from": "\(frame)",
-                "to": "\(NSRect(origin: origin, size: size))"
-            ])
-            window.setFrame(NSRect(origin: origin, size: size), display: true)
-            window.makeKeyAndOrderFront(nil)
-        }
-    }
-
-    func application(_ application: NSApplication, open urls: [URL]) {
-        Task { @MainActor in
-            for url in urls {
-                SmithersApp.handleOpenedURL(url, manager: WorkspaceManager.shared)
-            }
-        }
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        Task { @MainActor in
-            AppNotifications.shared.stopRunEventMonitoring()
-            GhosttyApp.shared.shutdown()
-        }
-        AppLogger.lifecycle.info("Application will terminate")
     }
 }
 
@@ -2448,3 +1733,4 @@ struct HomeView: View {
         .background(Theme.surface1)
     }
 }
+#endif
