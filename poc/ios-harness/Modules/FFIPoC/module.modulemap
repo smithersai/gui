@@ -1,0 +1,4 @@
+module FFIPoC {
+    header "ffi_poc.h"
+    export *
+}

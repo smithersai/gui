@@ -1,0 +1,550 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1894220F7683160D155B5F75 /* IOSHarnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21EC2407C43248319724B63A /* IOSHarnessApp.swift */; };
+		20AB8E4B8B656337AC66E37B /* SQLitePoCTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86AFA4E3EF775F6A646601E8 /* SQLitePoCTests.swift */; };
+		29493B9715A9E9A89852DFFD /* FFIPoCTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6802242305614B27D9B6F040 /* FFIPoCTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		03A7B5206F956BE1D64F1F32 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B9296D3F4C12A551765D1372 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3518341BD3D9B811311A71D9;
+			remoteInfo = IOSHarness;
+		};
+		5D4FC79F150AF4EF14F94DCB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B9296D3F4C12A551765D1372 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3518341BD3D9B811311A71D9;
+			remoteInfo = IOSHarness;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		21EC2407C43248319724B63A /* IOSHarnessApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSHarnessApp.swift; sourceTree = "<group>"; };
+		52C9578E95B41CD16001ECEE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		6802242305614B27D9B6F040 /* FFIPoCTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFIPoCTests.swift; sourceTree = "<group>"; };
+		764F87265B71B1E4324B3F80 /* FFIPoCTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = FFIPoCTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		846DE37734A5B8A1C150DC48 /* SQLitePoCTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SQLitePoCTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		86AFA4E3EF775F6A646601E8 /* SQLitePoCTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLitePoCTests.swift; sourceTree = "<group>"; };
+		C753F1313B3F7142045E42B4 /* IOSHarness.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = IOSHarness.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		05F24C458E19D990A14EE004 /* IOSHarness */ = {
+			isa = PBXGroup;
+			children = (
+				52C9578E95B41CD16001ECEE /* Info.plist */,
+				21EC2407C43248319724B63A /* IOSHarnessApp.swift */,
+			);
+			path = IOSHarness;
+			sourceTree = "<group>";
+		};
+		204A7693287F8F5BB3C7FA7D /* SQLitePoCTests */ = {
+			isa = PBXGroup;
+			children = (
+				86AFA4E3EF775F6A646601E8 /* SQLitePoCTests.swift */,
+			);
+			path = SQLitePoCTests;
+			sourceTree = "<group>";
+		};
+		36AC861F5D1DCDCB45E2858D /* FFIPoCTests */ = {
+			isa = PBXGroup;
+			children = (
+				6802242305614B27D9B6F040 /* FFIPoCTests.swift */,
+			);
+			path = FFIPoCTests;
+			sourceTree = "<group>";
+		};
+		3EC075CFF47D6AAE8CD4DFFC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				764F87265B71B1E4324B3F80 /* FFIPoCTests.xctest */,
+				C753F1313B3F7142045E42B4 /* IOSHarness.app */,
+				846DE37734A5B8A1C150DC48 /* SQLitePoCTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E7A7D8E9E03AF18597DFE478 = {
+			isa = PBXGroup;
+			children = (
+				36AC861F5D1DCDCB45E2858D /* FFIPoCTests */,
+				05F24C458E19D990A14EE004 /* IOSHarness */,
+				204A7693287F8F5BB3C7FA7D /* SQLitePoCTests */,
+				3EC075CFF47D6AAE8CD4DFFC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		18E45920200572E8C452D120 /* FFIPoCTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BD0F4E34DCA8D295C67EB2EA /* Build configuration list for PBXNativeTarget "FFIPoCTests" */;
+			buildPhases = (
+				2D687CECA87655EB65296682 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5764196567F8A7D0C72C5C73 /* PBXTargetDependency */,
+			);
+			name = FFIPoCTests;
+			packageProductDependencies = (
+			);
+			productName = FFIPoCTests;
+			productReference = 764F87265B71B1E4324B3F80 /* FFIPoCTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		3518341BD3D9B811311A71D9 /* IOSHarness */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0EEAFAF3415AF2E19DA8325B /* Build configuration list for PBXNativeTarget "IOSHarness" */;
+			buildPhases = (
+				10644C9995EBC533B982E1A1 /* Build Zig libs */,
+				699435E964325E8928F0214D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = IOSHarness;
+			packageProductDependencies = (
+			);
+			productName = IOSHarness;
+			productReference = C753F1313B3F7142045E42B4 /* IOSHarness.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D9541F2C0BD1E85402CF4928 /* SQLitePoCTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6ADA783D39739F0C088F92C4 /* Build configuration list for PBXNativeTarget "SQLitePoCTests" */;
+			buildPhases = (
+				DE18C69E0ED3E3099FDD6AB8 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				12DC231AF1381B3E100650A0 /* PBXTargetDependency */,
+			);
+			name = SQLitePoCTests;
+			packageProductDependencies = (
+			);
+			productName = SQLitePoCTests;
+			productReference = 846DE37734A5B8A1C150DC48 /* SQLitePoCTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B9296D3F4C12A551765D1372 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					18E45920200572E8C452D120 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					3518341BD3D9B811311A71D9 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					D9541F2C0BD1E85402CF4928 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 8230E2F6C466071B06585C98 /* Build configuration list for PBXProject "IOSHarness" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = E7A7D8E9E03AF18597DFE478;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 54;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				18E45920200572E8C452D120 /* FFIPoCTests */,
+				3518341BD3D9B811311A71D9 /* IOSHarness */,
+				D9541F2C0BD1E85402CF4928 /* SQLitePoCTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		10644C9995EBC533B982E1A1 /* Build Zig libs */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Zig libs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/.libs/$(PLATFORM_NAME)/libffi_poc.a",
+				"$(SRCROOT)/.libs/$(PLATFORM_NAME)/libsqlite_poc.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nbash \"$SRCROOT/build_zig_libs.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2D687CECA87655EB65296682 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				29493B9715A9E9A89852DFFD /* FFIPoCTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		699435E964325E8928F0214D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1894220F7683160D155B5F75 /* IOSHarnessApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DE18C69E0ED3E3099FDD6AB8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				20AB8E4B8B656337AC66E37B /* SQLitePoCTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		12DC231AF1381B3E100650A0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3518341BD3D9B811311A71D9 /* IOSHarness */;
+			targetProxy = 03A7B5206F956BE1D64F1F32 /* PBXContainerItemProxy */;
+		};
+		5764196567F8A7D0C72C5C73 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3518341BD3D9B811311A71D9 /* IOSHarness */;
+			targetProxy = 5D4FC79F150AF4EF14F94DCB /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1C0364652089D12F22B2E060 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = IOSHarness/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "-lffi_poc -lsqlite_poc $(SDKROOT)/usr/lib/libsqlite3.tbd -Xlinker -syslibroot -Xlinker $(SDKROOT)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.smithers.poc.iosharness;
+				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Modules/FFIPoC $(SRCROOT)/Modules/SQLitePoC";
+				SWIFT_OBJC_BRIDGING_HEADER = "";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		1D5D80ABC0012C10EFB0F8BC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "-lsqlite_poc $(SDKROOT)/usr/lib/libsqlite3.tbd -Xlinker -syslibroot -Xlinker $(SDKROOT)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.smithers.poc.sqltests;
+				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Modules/SQLitePoC";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/IOSHarness.app/IOSHarness";
+			};
+			name = Debug;
+		};
+		1D9343C50D4C36B7E5809BF4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../zig-swift-ffi/include $(SRCROOT)/../zig-sqlite-ios/include";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/.libs/$(PLATFORM_NAME)";
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				OTHER_SWIFT_FLAGS = "-Xcc -I$(SRCROOT)/../zig-swift-ffi/include -Xcc -I$(SRCROOT)/../zig-sqlite-ios/include";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Modules/FFIPoC $(SRCROOT)/Modules/SQLitePoC";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		588393369A635F80FD34FE82 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../zig-swift-ffi/include $(SRCROOT)/../zig-sqlite-ios/include";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/.libs/$(PLATFORM_NAME)";
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_SWIFT_FLAGS = "-Xcc -I$(SRCROOT)/../zig-swift-ffi/include -Xcc -I$(SRCROOT)/../zig-sqlite-ios/include";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Modules/FFIPoC $(SRCROOT)/Modules/SQLitePoC";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		588D767B4104FEDC6F66E713 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "-lsqlite_poc $(SDKROOT)/usr/lib/libsqlite3.tbd -Xlinker -syslibroot -Xlinker $(SDKROOT)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.smithers.poc.sqltests;
+				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Modules/SQLitePoC";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/IOSHarness.app/IOSHarness";
+			};
+			name = Release;
+		};
+		7F9909F006DF2B0890941D80 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "-lffi_poc -Xlinker -syslibroot -Xlinker $(SDKROOT)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.smithers.poc.ffitests;
+				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Modules/FFIPoC";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/IOSHarness.app/IOSHarness";
+			};
+			name = Debug;
+		};
+		A28B458774E49D667D59E141 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "-lffi_poc -Xlinker -syslibroot -Xlinker $(SDKROOT)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.smithers.poc.ffitests;
+				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Modules/FFIPoC";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/IOSHarness.app/IOSHarness";
+			};
+			name = Release;
+		};
+		DF44645EE9949DADD3B490B7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = IOSHarness/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "-lffi_poc -lsqlite_poc $(SDKROOT)/usr/lib/libsqlite3.tbd -Xlinker -syslibroot -Xlinker $(SDKROOT)";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.smithers.poc.iosharness;
+				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Modules/FFIPoC $(SRCROOT)/Modules/SQLitePoC";
+				SWIFT_OBJC_BRIDGING_HEADER = "";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0EEAFAF3415AF2E19DA8325B /* Build configuration list for PBXNativeTarget "IOSHarness" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DF44645EE9949DADD3B490B7 /* Debug */,
+				1C0364652089D12F22B2E060 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6ADA783D39739F0C088F92C4 /* Build configuration list for PBXNativeTarget "SQLitePoCTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1D5D80ABC0012C10EFB0F8BC /* Debug */,
+				588D767B4104FEDC6F66E713 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8230E2F6C466071B06585C98 /* Build configuration list for PBXProject "IOSHarness" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				588393369A635F80FD34FE82 /* Debug */,
+				1D9343C50D4C36B7E5809BF4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BD0F4E34DCA8D295C67EB2EA /* Build configuration list for PBXNativeTarget "FFIPoCTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7F9909F006DF2B0890941D80 /* Debug */,
+				A28B458774E49D667D59E141 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = B9296D3F4C12A551765D1372 /* Project object */;
+}

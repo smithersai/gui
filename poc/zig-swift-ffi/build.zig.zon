@@ -1,0 +1,13 @@
+.{
+    .name = .ffi_poc,
+    .version = "0.0.0",
+    .fingerprint = 0xcec46ff455d4c2a6,
+    .minimum_zig_version = "0.15.2",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "include",
+    },
+    .dependencies = .{},
+}

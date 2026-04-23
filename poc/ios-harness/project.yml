@@ -1,0 +1,99 @@
+name: IOSHarness
+options:
+  deploymentTarget:
+    iOS: "17.0"
+  minimumXcodeGenVersion: "2.38.0"
+  bundleIdPrefix: dev.smithers.poc
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SWIFT_STRICT_CONCURRENCY: minimal
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+    # Let the Zig PoC libs be resolved per-SDK.
+    LIBRARY_SEARCH_PATHS: "$(SRCROOT)/.libs/$(PLATFORM_NAME)"
+    SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Modules/FFIPoC $(SRCROOT)/Modules/SQLitePoC"
+    OTHER_SWIFT_FLAGS: "-Xcc -I$(SRCROOT)/../zig-swift-ffi/include -Xcc -I$(SRCROOT)/../zig-sqlite-ios/include"
+    # Tests import these as regular Swift modules via module.modulemap.
+    HEADER_SEARCH_PATHS: "$(SRCROOT)/../zig-swift-ffi/include $(SRCROOT)/../zig-sqlite-ios/include"
+
+targets:
+  IOSHarness:
+    type: application
+    platform: iOS
+    sources:
+      - path: IOSHarness
+    info:
+      path: IOSHarness/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.smithers.poc.iosharness
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        OTHER_LDFLAGS: "-lffi_poc -lsqlite_poc $(SDKROOT)/usr/lib/libsqlite3.tbd -Xlinker -syslibroot -Xlinker $(SDKROOT)"
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+        # Ensure the app imports module-map modules.
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Modules/FFIPoC $(SRCROOT)/Modules/SQLitePoC"
+    preBuildScripts:
+      - name: Build Zig libs
+        script: |
+          set -e
+          bash "$SRCROOT/build_zig_libs.sh"
+        outputFiles:
+          - $(SRCROOT)/.libs/$(PLATFORM_NAME)/libffi_poc.a
+          - $(SRCROOT)/.libs/$(PLATFORM_NAME)/libsqlite_poc.a
+
+  FFIPoCTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: FFIPoCTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.smithers.poc.ffitests
+        GENERATE_INFOPLIST_FILE: YES
+        OTHER_LDFLAGS: "-lffi_poc -Xlinker -syslibroot -Xlinker $(SDKROOT)"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Modules/FFIPoC"
+    dependencies:
+      - target: IOSHarness
+
+  SQLitePoCTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SQLitePoCTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.smithers.poc.sqltests
+        GENERATE_INFOPLIST_FILE: YES
+        OTHER_LDFLAGS: "-lsqlite_poc $(SDKROOT)/usr/lib/libsqlite3.tbd -Xlinker -syslibroot -Xlinker $(SDKROOT)"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Modules/SQLitePoC"
+    dependencies:
+      - target: IOSHarness
+
+schemes:
+  FFIPoC:
+    build:
+      targets:
+        IOSHarness: all
+        FFIPoCTests: [test]
+    test:
+      targets:
+        - FFIPoCTests
+      gatherCoverageData: false
+    run:
+      config: Debug
+  SQLitePoC:
+    build:
+      targets:
+        IOSHarness: all
+        SQLitePoCTests: [test]
+    test:
+      targets:
+        - SQLitePoCTests
+      gatherCoverageData: false
+    run:
+      config: Debug
