@@ -19,6 +19,11 @@ let package = Package(
         .macOS(.v14),
         .iOS(.v17),
     ],
+    products: [
+        // Exposed so the iOS XcodeGen target can consume the shared auth
+        // module. Cross-platform (iOS + macOS). See ticket 0109.
+        .library(name: "SmithersAuth", targets: ["SmithersAuth"]),
+    ],
     dependencies: [
         .package(url: "https://github.com/nalexn/ViewInspector.git", from: "0.10.0"),
     ],
@@ -31,9 +36,25 @@ let package = Package(
             name: "CSmithersKit",
             path: "CSmithersKit"
         ),
+        // Ticket 0109. Shared OAuth2/PKCE/Keychain module. Must compile for
+        // BOTH macOS and iOS — no AppKit/UIKit imports, only Foundation,
+        // CryptoKit, Security, SwiftUI, AuthenticationServices.
+        .target(
+            name: "SmithersAuth",
+            path: "Shared/Sources/SmithersAuth",
+            exclude: ["README.md"],
+            linkerSettings: [
+                .linkedFramework("Security"),
+                .linkedFramework("AuthenticationServices"),
+                .linkedFramework("CryptoKit"),
+            ]
+        ),
+        // Tests for SmithersAuth live in the standalone SwiftPM package at
+        // `Shared/Package.swift` so `swift test` there can run hermetically
+        // without compiling the whole SmithersGUI / CGhosttyKit graph.
         .executableTarget(
             name: "SmithersGUI",
-            dependencies: ["CGhosttyKit", "CSmithersKit"],
+            dependencies: ["CGhosttyKit", "CSmithersKit", "SmithersAuth"],
             path: ".",
             exclude: [
                 "ghostty",
@@ -68,6 +89,7 @@ let package = Package(
                 "node_modules",
                 "build",
                 "SmithersGUI.xcodeproj",
+                "Shared",
             ],
             resources: [
                 .process("Resources"),

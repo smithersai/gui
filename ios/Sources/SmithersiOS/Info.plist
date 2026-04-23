@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Ticket 0109: custom URL scheme registration for the OAuth2 callback.
+
+  This plist is merged with XcodeGen's generated Info.plist (via
+  INFOPLIST_FILE in project.yml). It registers the `smithers` scheme so the
+  system delivers `smithers://auth/callback?code=...&state=...` back to us
+  via `ASWebAuthenticationSession`.
+
+  The scheme name is documented to be globally unique in the Smithers
+  namespace. If another app registers the same scheme, iOS routes by
+  install order (no collision guarantees) — we rely on bundle-id
+  uniqueness instead and defense-in-depth via the `state` check in
+  `parseCallback`.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundleDisplayName</key>
+    <string>Smithers</string>
+    <key>CFBundlePackageType</key>
+    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+    </dict>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>CFBundleURLName</key>
+            <string>com.smithers.oauth2.callback</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>smithers</string>
+            </array>
+        </dict>
+    </array>
+    <!-- Explicit app transport security: only talk to plue over https. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+    </dict>
+</dict>
+</plist>

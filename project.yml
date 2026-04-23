@@ -124,6 +124,7 @@ targets:
       - WorkflowsView.swift
       - WorkspacesView.swift
       - macos/Sources/Smithers
+      - Shared/Sources/SmithersAuth
       - path: Resources/MarkdownShell
         type: folder
       # Helper binaries are macOS-only and intentionally NOT bundled into the
@@ -157,6 +158,8 @@ targets:
       - sdk: Carbon.framework
       - sdk: Foundation.framework
       - sdk: libsqlite3.tbd
+      - sdk: AuthenticationServices.framework
+      - sdk: CryptoKit.framework
   SmithersGUITests:
     type: bundle.unit-test
     platform: macOS
@@ -210,14 +213,14 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: ios/Sources/SmithersiOS
+        excludes:
+          - Info.plist
+      - path: Shared/Sources/SmithersAuth
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOS
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Smithers
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: ios/Sources/SmithersiOS/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
@@ -231,6 +234,9 @@ targets:
       - sdk: Foundation.framework
       - sdk: UIKit.framework
       - sdk: SwiftUI.framework
+      - sdk: AuthenticationServices.framework
+      - sdk: CryptoKit.framework
+      - sdk: Security.framework
   SmithersiOSTests:
     type: bundle.unit-test
     platform: iOS

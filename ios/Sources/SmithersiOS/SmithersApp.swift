@@ -1,45 +1,91 @@
-// SmithersApp.swift — iOS entry point (ticket 0121).
+// SmithersApp.swift — iOS entry point (ticket 0121, expanded by 0109).
 //
-// This file is intentionally minimal. It provides the SwiftUI @main entry for
-// the iOS target so the build system has a first-class iOS app to compile.
-//
-// Tickets 0122 (shared navigation/state refactor) and 0123 (terminal
-// portability) will progressively replace `PlaceholderRootView` with the
-// real cross-platform ContentView once those shared surfaces exist.
-//
-// Keep this file iOS-only. The macOS app entry lives in
-// `macos/Sources/Smithers/Smithers.App.swift`.
+// The app starts at the sign-in shell. Once the user completes OAuth2
+// (0106 + 0109) the placeholder post-signin surface is shown. Tickets
+// 0122/0123 replace that placeholder with the shared ContentView.
 
 #if os(iOS)
 import SwiftUI
 
 @main
 struct SmithersiOSApp: App {
+    @StateObject private var authModel: AuthViewModel
+
+    init() {
+        let model = Self.makeAuthModel()
+        _authModel = StateObject(wrappedValue: model)
+    }
+
     var body: some Scene {
         WindowGroup {
-            PlaceholderRootView()
+            NavigationStack {
+                RootSurface(model: authModel)
+            }
+        }
+    }
+
+    private static func makeAuthModel() -> AuthViewModel {
+        // Plue base URL lives in an env-driven config; default to the
+        // production endpoint. `SMITHERS_PLUE_URL` overrides for dev.
+        let base = ProcessInfo.processInfo.environment["SMITHERS_PLUE_URL"]
+            .flatMap(URL.init(string:)) ?? URL(string: "https://app.smithers.sh")!
+        let config = OAuth2ClientConfig(
+            baseURL: base,
+            clientID: "smithers-ios",
+            redirectURI: "smithers://auth/callback"
+        )
+        let client = OAuth2Client(config: config)
+        let store = KeychainTokenStore(service: "com.smithers.oauth2.ios", account: "default")
+        let manager = TokenManager(client: client, store: store)
+        let presenter = iOSWebAuthPresenter()
+        let driver = WebAuthSessionDriver(presenter: presenter)
+        return AuthViewModel(
+            client: client,
+            tokens: manager,
+            driver: driver,
+            callbackScheme: "smithers"
+        )
+    }
+}
+
+private struct RootSurface: View {
+    @ObservedObject var model: AuthViewModel
+
+    var body: some View {
+        switch model.phase {
+        case .signedIn:
+            PlaceholderSignedInView(model: model)
+        default:
+            SignInView(model: model)
+                .navigationTitle("Smithers")
+                .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
 
-private struct PlaceholderRootView: View {
+/// Temporary post-signin landing. 0122 replaces this with the shared
+/// ContentView.
+private struct PlaceholderSignedInView: View {
+    @ObservedObject var model: AuthViewModel
+
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 16) {
-                Image(systemName: "hammer.fill")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.tint)
-                Text("Smithers iOS")
-                    .font(.largeTitle.bold())
-                Text("Build scaffolding only — UI lands in 0122/0123.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+        VStack(spacing: 16) {
+            Image(systemName: "hammer.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(.tint)
+            Text("Smithers")
+                .font(.largeTitle.bold())
+            Text("Signed in. Main UI lands in 0122/0123.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button("Sign out") {
+                Task { await model.signOut() }
             }
-            .navigationTitle("Smithers")
-            .navigationBarTitleDisplayMode(.inline)
+            .buttonStyle(.bordered)
         }
+        .navigationTitle("Smithers")
     }
 }
 #endif
