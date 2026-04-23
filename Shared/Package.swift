@@ -20,6 +20,7 @@ let package = Package(
     products: [
         .library(name: "SmithersAuth", targets: ["SmithersAuth"]),
         .library(name: "SmithersRuntime", targets: ["SmithersRuntime"]),
+        .library(name: "SmithersStore", targets: ["SmithersStore"]),
     ],
     targets: [
         .target(
@@ -51,6 +52,20 @@ let package = Package(
             name: "SmithersRuntimeTests",
             dependencies: ["SmithersRuntime"],
             path: "Tests/SmithersRuntimeTests"
+        ),
+        // Ticket 0124 / 0138 — shared observable store layer (runs the
+        // hermetic test surface from the standalone Shared package so
+        // switcher tests don't pull in CGhosttyKit / libsmithers).
+        .target(
+            name: "SmithersStore",
+            dependencies: ["SmithersRuntime"],
+            path: "Sources/SmithersStore",
+            exclude: ["README.md"]
+        ),
+        .testTarget(
+            name: "SmithersStoreTests",
+            dependencies: ["SmithersStore"],
+            path: "Tests/SmithersStoreTests"
         ),
     ]
 )

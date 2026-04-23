@@ -132,6 +132,8 @@ targets:
       - WorkspaceSurfaceModels.swift
       - WorkflowsView.swift
       - WorkspacesView.swift
+      # ticket 0138 — cross-platform workspace switcher row view.
+      - WorkspaceSwitcherView.swift
       - macos/Sources/Smithers
       - path: Shared/Sources/SmithersAuth
         excludes:
@@ -247,6 +249,10 @@ targets:
       - path: Shared/Sources/SmithersStore
         excludes:
           - README.md
+      # ticket 0138 — cross-platform workspace switcher view + iOS
+      # full-screen presenter. Compiles for iOS. Remote-only surface;
+      # desktop's Local-recents section stays on the macOS side.
+      - WorkspaceSwitcherView.swift
     settings:
       base:
         # Ticket 0125: bundle id is the canonical App Store Connect identifier.
