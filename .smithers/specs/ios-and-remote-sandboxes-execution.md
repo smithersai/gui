@@ -140,7 +140,7 @@ Truly independent, start anywhere:
 
 Dependencies that serialize within Stage 0:
 ├─ D3      Validation checklist                   [ticket 0099]   (LANDS FIRST among D* — every other D ticket's 'Independent validation' section references it)
-├─ D0      Dispatch-run semantics decision        [ticket 0108]   (picks implicit-via-user-message vs. explicit route; blocks tickets that would assume the answer)
+├─ D0      Dispatch-run semantics decision        [ticket 0108]   (RESOLVED: Option A — implicit via user message; see ios-and-remote-sandboxes-dispatch-run.md)
 ├─ D5      Rollout                                [ticket 0101]   (references feature-flag owner tickets; best landed after 0107/0110/0111/0112/0113 exist as tickets so cross-refs resolve)
 
 Parallel work with one-directional benefit (not hard blocks):
