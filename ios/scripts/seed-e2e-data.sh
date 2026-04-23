@@ -26,6 +26,12 @@
 #   PLUE_E2E_USER_ID=<integer>
 #   PLUE_E2E_WORKSPACE_ID=<uuid>
 #   PLUE_E2E_SEEDED_WORKSPACE_TITLE=<title>
+#   PLUE_E2E_WORKSPACE_SESSION_ID=<uuid>   (terminal scenario group)
+#   PLUE_E2E_AGENT_SESSION_ID=<uuid>       (approvals scenario group)
+#   PLUE_E2E_APPROVAL_ID=<uuid>            (approvals scenario group)
+#   PLUE_E2E_REPO_ID=<integer>             (approvals decide route)
+#   PLUE_E2E_REPO_OWNER=<string>           (approvals decide route)
+#   PLUE_E2E_REPO_NAME=<string>            (approvals decide route)
 
 set -euo pipefail
 
@@ -79,9 +85,12 @@ done
 SQL_TEMPLATE=$(cat <<'SQL'
 DO $PLPGSQL$
 DECLARE
-    v_user_id        BIGINT;
-    v_workspace_id   UUID;
-    v_repo_id        BIGINT;
+    v_user_id            BIGINT;
+    v_workspace_id       UUID;
+    v_repo_id            BIGINT;
+    v_workspace_sess_id  UUID;
+    v_agent_sess_id      UUID;
+    v_approval_id        UUID;
 BEGIN
     -- Ensure the E2E user exists. The 'alice' dev user from db/seed.sql
     -- provides the org; we reuse its organization_id if the schema
@@ -190,8 +199,106 @@ BEGIN
             last_activity_at = NOW(),
             updated_at = NOW();
 
+    -- Terminal scenario (group A): seed a workspace_session row tied to
+    -- the workspace we just created. Status='pending' represents the
+    -- "client just opened the workspace, sandbox not yet connected"
+    -- phase — which is exactly what the iOS terminal surface shows in
+    -- v1 (no live Freestyle connection in e2e). Stable UUID so repeat
+    -- runs upsert the same row.
+    v_workspace_sess_id := 'e2e00000-0000-0000-0000-0000000005e5'::uuid;
+    INSERT INTO workspace_sessions (
+        id, workspace_id, repository_id, user_id, status,
+        cols, rows, last_activity_at, idle_timeout_secs,
+        created_at, updated_at, ssh_connection_info
+    )
+    VALUES (
+        v_workspace_sess_id,
+        v_workspace_id,
+        v_repo_id,
+        v_user_id,
+        'pending',
+        80, 24, NOW(), 1800,
+        NOW(), NOW(),
+        '{}'::jsonb
+    )
+    ON CONFLICT (id) DO UPDATE
+        SET workspace_id = EXCLUDED.workspace_id,
+            repository_id = EXCLUDED.repository_id,
+            user_id = EXCLUDED.user_id,
+            status = 'pending',
+            last_activity_at = NOW(),
+            updated_at = NOW();
+
+    -- Approvals scenario (group B): approvals.session_id → agent_sessions.
+    -- Seed a stable agent_session first, then the approval. Agent session
+    -- id is also stable so repeat runs update the same row.
+    v_agent_sess_id := 'e2e00000-0000-0000-0000-0000000000a6'::uuid;
+    INSERT INTO agent_sessions (
+        id, repository_id, user_id, workflow_run_id, title, status,
+        started_at, created_at, updated_at
+    )
+    VALUES (
+        v_agent_sess_id,
+        v_repo_id,
+        v_user_id,
+        NULL,
+        'e2e-agent-session',
+        'active',
+        NOW(),
+        NOW(),
+        NOW()
+    )
+    ON CONFLICT (id) DO UPDATE
+        SET repository_id = EXCLUDED.repository_id,
+            user_id = EXCLUDED.user_id,
+            title = EXCLUDED.title,
+            status = 'active',
+            updated_at = NOW();
+
+    -- Pending approval row. The approvals_check constraint requires
+    -- pending → decided_at IS NULL AND decided_by IS NULL, which is
+    -- already the default. We RESET these fields on re-seed so the
+    -- approvals decide test always starts from a fresh pending state
+    -- (otherwise the second run would start with state='approved' and
+    -- the decide POST would see the already-decided conflict path).
+    v_approval_id := 'e2e00000-0000-0000-0000-0000000000a7'::uuid;
+    INSERT INTO approvals (
+        id, session_id, repository_id, state, kind, title,
+        description, created_at, decided_at, decided_by,
+        expires_at, payload
+    )
+    VALUES (
+        v_approval_id,
+        v_agent_sess_id,
+        v_repo_id,
+        'pending',
+        'shell_command',
+        'E2E approval',
+        'seeded by ios/scripts/seed-e2e-data.sh for the approvals scenario group',
+        NOW(),
+        NULL,
+        NULL,
+        NOW() + INTERVAL '1 hour',
+        '{"command":"echo hello"}'::jsonb
+    )
+    ON CONFLICT (id) DO UPDATE
+        SET session_id = EXCLUDED.session_id,
+            repository_id = EXCLUDED.repository_id,
+            state = 'pending',
+            kind = EXCLUDED.kind,
+            title = EXCLUDED.title,
+            description = EXCLUDED.description,
+            decided_at = NULL,
+            decided_by = NULL,
+            expires_at = EXCLUDED.expires_at,
+            payload = EXCLUDED.payload;
+
     RAISE NOTICE 'SEED_USER_ID=%', v_user_id;
     RAISE NOTICE 'SEED_WORKSPACE_ID=%', v_workspace_id;
+    RAISE NOTICE 'SEED_REPO_ID=%', v_repo_id;
+    RAISE NOTICE 'SEED_WORKSPACE_SESSION_ID=%', v_workspace_sess_id;
+    RAISE NOTICE 'SEED_AGENT_SESSION_ID=%', v_agent_sess_id;
+    RAISE NOTICE 'SEED_APPROVAL_ID=%', v_approval_id;
 END
 $PLPGSQL$ LANGUAGE plpgsql;
 SQL
@@ -218,9 +325,19 @@ fi
 
 user_id=$(echo "$OUT" | sed -n 's/.*SEED_USER_ID=\([0-9]*\).*/\1/p' | head -1)
 workspace_id=$(echo "$OUT" | sed -n 's/.*SEED_WORKSPACE_ID=\([0-9a-f-]*\).*/\1/p' | head -1)
+repo_id=$(echo "$OUT" | sed -n 's/.*SEED_REPO_ID=\([0-9]*\).*/\1/p' | head -1)
+workspace_sess_id=$(echo "$OUT" | sed -n 's/.*SEED_WORKSPACE_SESSION_ID=\([0-9a-f-]*\).*/\1/p' | head -1)
+agent_sess_id=$(echo "$OUT" | sed -n 's/.*SEED_AGENT_SESSION_ID=\([0-9a-f-]*\).*/\1/p' | head -1)
+approval_id=$(echo "$OUT" | sed -n 's/.*SEED_APPROVAL_ID=\([0-9a-f-]*\).*/\1/p' | head -1)
 
 if [[ -z "$user_id" || -z "$workspace_id" ]]; then
     echo "seed-e2e-data.sh: failed to parse user/workspace id from psql output" >&2
+    echo "$OUT" >&2
+    exit 1
+fi
+if [[ -z "$repo_id" || -z "$workspace_sess_id" || -z "$agent_sess_id" || -z "$approval_id" ]]; then
+    echo "seed-e2e-data.sh: failed to parse one or more new ids from psql output" >&2
+    echo "repo_id=$repo_id workspace_sess_id=$workspace_sess_id agent_sess_id=$agent_sess_id approval_id=$approval_id" >&2
     echo "$OUT" >&2
     exit 1
 fi
@@ -230,4 +347,10 @@ SMITHERS_E2E_BEARER=$TOKEN
 PLUE_E2E_USER_ID=$user_id
 PLUE_E2E_WORKSPACE_ID=$workspace_id
 PLUE_E2E_SEEDED_WORKSPACE_TITLE=$WORKSPACE_TITLE
+PLUE_E2E_WORKSPACE_SESSION_ID=$workspace_sess_id
+PLUE_E2E_AGENT_SESSION_ID=$agent_sess_id
+PLUE_E2E_APPROVAL_ID=$approval_id
+PLUE_E2E_REPO_ID=$repo_id
+PLUE_E2E_REPO_OWNER=e2e_user
+PLUE_E2E_REPO_NAME=e2e-repo
 ENV

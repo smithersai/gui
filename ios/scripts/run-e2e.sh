@@ -39,13 +39,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # User's shell has LIBRARY_PATH + SDKROOT + RUSTFLAGS from Rust tooling.
-# Strip them — xcodebuild picks up wrong SDK paths otherwise.
+# Strip them — xcodebuild picks up wrong SDK paths otherwise. Also
+# prepend Homebrew's keg-only libpq (psql) so the seed script can reach
+# Postgres in a non-interactive shell where the user's `zshrc` didn't
+# run (e.g. invoked from CI or a plain bash subprocess).
 export_clean_env() {
     unset SDKROOT
     unset LIBRARY_PATH
     unset RUSTFLAGS
     unset DYLD_LIBRARY_PATH
     unset DYLD_FRAMEWORK_PATH
+    export PATH="/opt/homebrew/opt/libpq/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
 }
 
 log() { echo "[run-e2e] $*" >&2; }
@@ -132,19 +136,34 @@ log "regenerating SmithersGUI.xcodeproj"
 log "booting simulator: $E2E_SIMULATOR_NAME (iOS $E2E_SIMULATOR_OS)"
 # Find the device UDID. `xcrun simctl list devices` output format:
 #     iPhone 16 (UUID) (State)
-DEVICE_UDID=$(xcrun simctl list devices available | awk -v name="$E2E_SIMULATOR_NAME" '
-    /-- iOS / { runtime = $3 }
-    runtime == "'"$E2E_SIMULATOR_OS"'" && $0 ~ name " \\(" {
-        match($0, /\(([0-9A-F-]+)\)/, m); print m[1]; exit
-    }
-' || true)
-if [[ -z "$DEVICE_UDID" ]]; then
-    # Fall back: pick the first iPhone on the runtime.
-    DEVICE_UDID=$(xcrun simctl list devices available | awk -v os="$E2E_SIMULATOR_OS" '
-        /-- iOS / { runtime = $3 }
-        runtime == os && $0 ~ /iPhone/ { match($0, /\(([0-9A-F-]+)\)/, m); print m[1]; exit }
-    ' || true)
-fi
+# macOS ships BSD awk which does not support the 3-arg match() (capture
+# arrays) that GNU awk does, so we use JSON output + python to scan.
+DEVICE_UDID=$(xcrun simctl list devices available --json 2>/dev/null \
+    | /usr/bin/python3 -c "
+import json, sys, re
+data = json.load(sys.stdin)
+want_os = '$E2E_SIMULATOR_OS'
+want_name = '$E2E_SIMULATOR_NAME'
+# Match either SimRuntime.iOS-18-6 or 'iOS 18.6'
+os_key = want_os.replace('.', '-')
+for runtime, devs in data.get('devices', {}).items():
+    if f'iOS-{os_key}' not in runtime and f'iOS {want_os}' not in runtime:
+        continue
+    for d in devs:
+        if not d.get('isAvailable', True):
+            continue
+        if d.get('name') == want_name:
+            print(d['udid']); sys.exit(0)
+# Fallback: any iPhone on that runtime
+for runtime, devs in data.get('devices', {}).items():
+    if f'iOS-{os_key}' not in runtime and f'iOS {want_os}' not in runtime:
+        continue
+    for d in devs:
+        if not d.get('isAvailable', True):
+            continue
+        if 'iPhone' in d.get('name', ''):
+            print(d['udid']); sys.exit(0)
+" || true)
 if [[ -z "$DEVICE_UDID" ]]; then
     die "no simulator matching name=$E2E_SIMULATOR_NAME os=$E2E_SIMULATOR_OS; run 'xcrun simctl list devices available'"
 fi
@@ -170,13 +189,43 @@ export PLUE_E2E_SEEDED=1
 export PLUE_E2E_SEEDED_WORKSPACE_TITLE="${PLUE_E2E_SEEDED_WORKSPACE_TITLE:-e2e-workspace}"
 export PLUE_E2E_WORKSPACE_ID
 export SMITHERS_E2E_REFRESH="${SMITHERS_E2E_REFRESH:-}"
+# Scenario-group inputs: terminal, approvals, reconnect. Empty values
+# cause the relevant test to gracefully bail (NOT XCTSkip — an env-var
+# check inside the test so the reason surfaces in the xcresult bundle).
+export PLUE_E2E_WORKSPACE_SESSION_ID="${PLUE_E2E_WORKSPACE_SESSION_ID:-}"
+export PLUE_E2E_AGENT_SESSION_ID="${PLUE_E2E_AGENT_SESSION_ID:-}"
+export PLUE_E2E_APPROVAL_ID="${PLUE_E2E_APPROVAL_ID:-}"
+export PLUE_E2E_REPO_ID="${PLUE_E2E_REPO_ID:-}"
+export PLUE_E2E_REPO_OWNER="${PLUE_E2E_REPO_OWNER:-}"
+export PLUE_E2E_REPO_NAME="${PLUE_E2E_REPO_NAME:-}"
+
+# Reconnect scenario: the test asks for the docker api container name to
+# `docker pause` + `docker unpause` mid-test. We discover it by prefix so
+# users running a differently-named plue worktree still have their
+# container picked up. When no match: the test logs why + skips.
+# BSD grep (macOS) interprets some POSIX character classes differently;
+# explicit ERE with -E + [0-9] works on both BSD + GNU. Match any
+# container whose name ends in `-api-<digit>+`.
+DOCKER_API_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null \
+    | grep -E -- '-api-[0-9]+$' | head -1 || true)
+export PLUE_E2E_DOCKER_API_CONTAINER="${PLUE_E2E_DOCKER_API_CONTAINER:-$DOCKER_API_CONTAINER}"
+log "reconnect scenario: docker api container = ${PLUE_E2E_DOCKER_API_CONTAINER:-<none found>}"
 
 set +e
+# Use a dedicated DerivedData directory so concurrent macOS-scheme
+# xcodebuild invocations (e.g. the other test loop this user runs in
+# parallel) cannot lock our build.db. This was a repeat source of
+# `database is locked Possibly there are two concurrent builds running
+# in the same filesystem location.` failures.
+DERIVED_DATA="$REPO_ROOT/build/DerivedData-ios-e2e"
+mkdir -p "$DERIVED_DATA"
+
 xcodebuild \
     -project "$REPO_ROOT/SmithersGUI.xcodeproj" \
     -scheme "$E2E_SCHEME" \
     -destination "platform=iOS Simulator,id=$DEVICE_UDID,arch=arm64" \
     -resultBundlePath "$XCRESULT" \
+    -derivedDataPath "$DERIVED_DATA" \
     test 2>&1 | tee "$REPO_ROOT/build/e2e-xcodebuild.log"
 rc=${PIPESTATUS[0]}
 set -e

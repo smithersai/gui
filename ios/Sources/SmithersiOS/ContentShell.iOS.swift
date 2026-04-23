@@ -71,6 +71,13 @@ struct IOSContentShell: View {
                     WorkspaceDetailPlaceholder(workspace: opened, onBack: {
                         openedWorkspace = nil
                     })
+                    // `.contain` is REQUIRED here — without it SwiftUI
+                    // treats the whole placeholder as one atomic a11y
+                    // element and hides the inner terminal-gate / wrapper
+                    // identifiers the e2e harness asserts on. With
+                    // `.contain`, children's accessibilityIdentifiers
+                    // bubble up alongside this one.
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("content.ios.workspace-detail")
                 } else {
                     List {
@@ -167,9 +174,26 @@ struct IOSContentShell: View {
 /// Placeholder "workspace detail" pane so the E2E test has a rendered
 /// surface to assert against. Tickets 0123/0124 replace this with the
 /// real chat + terminal shell once the shared leaves compile for iOS.
+///
+/// E2E harness extension: when `PLUE_E2E_WORKSPACE_SESSION_ID` is present
+/// in the process environment, the detail view also mounts a
+/// `TerminalSurface` so the terminal PTY scenario group can assert the
+/// `terminal.ios.surface` accessibility identifier renders. Without a
+/// live Freestyle sandbox the transport stays detached and the surface
+/// shows its empty state — that is intentional: the scenario asserts
+/// "the surface mounted and is wired", not "bytes flowed through a real
+/// sandbox" (which is a Freestyle-live follow-up, not a v1 e2e goal).
 private struct WorkspaceDetailPlaceholder: View {
     let workspace: SwitcherWorkspace
     let onBack: () -> Void
+
+    /// Session id threaded through from `run-e2e.sh` after the seed
+    /// script writes a `workspace_sessions` row. Non-empty only when the
+    /// harness is exercising the terminal scenario group.
+    private var seededSessionID: String? {
+        ProcessInfo.processInfo.environment["PLUE_E2E_WORKSPACE_SESSION_ID"]
+            .flatMap { $0.isEmpty ? nil : $0 }
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -186,6 +210,33 @@ private struct WorkspaceDetailPlaceholder: View {
             Text("Workspace id: \(workspace.id)")
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
+            // Diagnostic: expose whether the env var made it into the
+            // app process. The e2e harness asserts on the `content.ios.
+            // workspace-detail.terminal-gate` identifier to distinguish
+            // "env forwarded but TerminalSurface failed to render" from
+            // "env never arrived" — a SwiftUI lazy-init quirk that has
+            // bitten this test once already (the `if let` below was
+            // evaluated in a context where ProcessInfo didn't yet have
+            // the launchEnvironment merged in).
+            Text(seededSessionID ?? "no-session")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("content.ios.workspace-detail.terminal-gate")
+            if let sessionID = seededSessionID {
+                // Mount the shared terminal surface so the e2e harness
+                // can assert `terminal.ios.surface` is present. The
+                // surface is detached (transport=nil) in v1 — a live
+                // Freestyle sandbox would attach a real PTYTransport.
+                TerminalSurface(
+                    transport: nil,
+                    sessionID: sessionID,
+                    command: nil,
+                    workingDirectory: nil
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: 200)
+                .accessibilityIdentifier("content.ios.workspace-detail.terminal")
+            }
             Button("Back", action: onBack)
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("content.ios.workspace-detail.back")

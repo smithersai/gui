@@ -97,6 +97,41 @@
             value = "$(SMITHERS_E2E_REFRESH)"
             isEnabled = "YES">
          </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "PLUE_E2E_WORKSPACE_SESSION_ID"
+            value = "$(PLUE_E2E_WORKSPACE_SESSION_ID)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "PLUE_E2E_AGENT_SESSION_ID"
+            value = "$(PLUE_E2E_AGENT_SESSION_ID)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "PLUE_E2E_APPROVAL_ID"
+            value = "$(PLUE_E2E_APPROVAL_ID)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "PLUE_E2E_REPO_ID"
+            value = "$(PLUE_E2E_REPO_ID)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "PLUE_E2E_REPO_OWNER"
+            value = "$(PLUE_E2E_REPO_OWNER)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "PLUE_E2E_REPO_NAME"
+            value = "$(PLUE_E2E_REPO_NAME)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "PLUE_E2E_DOCKER_API_CONTAINER"
+            value = "$(PLUE_E2E_DOCKER_API_CONTAINER)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
       </EnvironmentVariables>
    </TestAction>
    <LaunchAction

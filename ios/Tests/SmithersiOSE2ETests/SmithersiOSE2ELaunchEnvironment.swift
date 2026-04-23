@@ -31,6 +31,24 @@ enum E2ELaunchKey {
     /// title text (SwiftUI Button absorbs child StaticText into its
     /// label, so the title is not separately accessible).
     static let seededWorkspaceID = "PLUE_E2E_WORKSPACE_ID"
+    /// UUID of the seeded `workspace_sessions` row (terminal scenario).
+    /// Forwarded into the app so `WorkspaceDetailPlaceholder` knows to
+    /// mount `TerminalSurface` when the row exists.
+    static let seededWorkspaceSessionID = "PLUE_E2E_WORKSPACE_SESSION_ID"
+    /// UUID of the seeded `agent_sessions` row. Approval rows foreign-
+    /// key on this, so the approvals scenario asserts on it as proof
+    /// the seed succeeded.
+    static let seededAgentSessionID = "PLUE_E2E_AGENT_SESSION_ID"
+    /// UUID of the seeded pending approval. Approvals scenario asserts
+    /// the DB row exists + exercises the HTTP decide path against it.
+    static let seededApprovalID = "PLUE_E2E_APPROVAL_ID"
+    /// Owner/name pair for the approvals `/api/repos/{owner}/{repo}/…`
+    /// route. Seeded by the script for idempotency.
+    static let seededRepoOwner = "PLUE_E2E_REPO_OWNER"
+    static let seededRepoName = "PLUE_E2E_REPO_NAME"
+    /// Name of the docker container backing plue's api. The reconnect
+    /// scenario uses `docker pause` / `docker unpause` on it.
+    static let dockerAPIContainer = "PLUE_E2E_DOCKER_API_CONTAINER"
 }
 
 /// Shape of the per-test launch environment. The harness script passes
@@ -85,11 +103,27 @@ struct E2ELaunchEnvironment {
             if let title = seededWorkspaceTitle {
                 app.launchEnvironment[E2ELaunchKey.seededWorkspaceTitle] = title
             }
-            // Forward the workspace UUID so tests can match on
-            // `switcher.row.<id>` identifiers.
+            // Forward every seeded UUID so tests and the app under test
+            // share the same view of what's in Postgres. Keys that the
+            // app also reads (e.g. seededWorkspaceSessionID — gates the
+            // TerminalSurface mount in `WorkspaceDetailPlaceholder`) are
+            // stamped into `launchEnvironment`; keys only the test side
+            // uses (approval id, repo owner/name, docker container)
+            // stay in the process environment where the test itself
+            // reads them via ProcessInfo.
             let procEnv = ProcessInfo.processInfo.environment
-            if let wsID = procEnv[E2ELaunchKey.seededWorkspaceID], !wsID.isEmpty {
-                app.launchEnvironment[E2ELaunchKey.seededWorkspaceID] = wsID
+            let forwardedKeys: [String] = [
+                E2ELaunchKey.seededWorkspaceID,
+                E2ELaunchKey.seededWorkspaceSessionID,
+                E2ELaunchKey.seededAgentSessionID,
+                E2ELaunchKey.seededApprovalID,
+                E2ELaunchKey.seededRepoOwner,
+                E2ELaunchKey.seededRepoName,
+            ]
+            for k in forwardedKeys {
+                if let v = procEnv[k], !v.isEmpty {
+                    app.launchEnvironment[k] = v
+                }
             }
         }
     }

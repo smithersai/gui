@@ -142,6 +142,11 @@ targets:
       - path: Shared/Sources/SmithersStore
         excludes:
           - README.md
+      # ticket macos-e2e-harness — env-var-gated test hooks (mirrors the
+      # iOS wiring). In production builds the whole module is dormant
+      # because `E2EEnvironment.parse()` returns nil when PLUE_E2E_MODE
+      # is unset, so it is safe to ship.
+      - path: Shared/Sources/SmithersE2ESupport
       - path: Resources/MarkdownShell
         type: folder
       # Helper binaries are macOS-only and intentionally NOT bundled into the
@@ -209,6 +214,27 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUIUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: SmithersGUI
+        SUPPORTED_PLATFORMS: macosx
+  # ---------------------------------------------------------------------------
+  # macOS E2E test target (ticket macos-e2e-harness). Full-stack XCUITest
+  # bundle that talks to a real plue backend on localhost:4000 via the
+  # PLUE_E2E_MODE env-var bypass in SmithersE2ESupport. Mirrors the iOS
+  # SmithersiOSE2ETests target. See macos/scripts/run-e2e.sh for the
+  # orchestration. Kept distinct from SmithersGUIUITests (the cheap
+  # launch-smoke UI test bundle).
+  # ---------------------------------------------------------------------------
+  SmithersMacOSE2ETests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: macos/Tests/SmithersMacOSE2ETests
+    dependencies:
+      - target: SmithersGUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersMacOSE2ETests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: SmithersGUI
         SUPPORTED_PLATFORMS: macosx
@@ -398,6 +424,46 @@ schemes:
         - SmithersGUITests
         - SmithersGUIUITests
       gatherCoverageData: false
+  # Dedicated scheme for the macOS full-stack E2E bundle. Mirrors the
+  # SmithersiOSE2ETests scheme. Scheme-level environment variables are
+  # the reliable path to thread values into the XCUITest runner's
+  # `ProcessInfo` — `${...}` macros resolve at test time from the
+  # invoking process environment, so `macos/scripts/run-e2e.sh` just
+  # exports these and calls xcodebuild.
+  SmithersMacOSE2ETests:
+    build:
+      targets:
+        SmithersGUI: all
+        SmithersMacOSE2ETests: [test]
+    test:
+      environmentVariables:
+        - variable: SMITHERS_E2E_BEARER
+          value: $(SMITHERS_E2E_BEARER)
+          isEnabled: true
+        - variable: PLUE_BASE_URL
+          value: $(PLUE_BASE_URL)
+          isEnabled: true
+        - variable: PLUE_E2E_MODE
+          value: $(PLUE_E2E_MODE)
+          isEnabled: true
+        - variable: PLUE_REMOTE_SANDBOX_ENABLED
+          value: $(PLUE_REMOTE_SANDBOX_ENABLED)
+          isEnabled: true
+        - variable: PLUE_E2E_SEEDED
+          value: $(PLUE_E2E_SEEDED)
+          isEnabled: true
+        - variable: PLUE_E2E_SEEDED_WORKSPACE_TITLE
+          value: $(PLUE_E2E_SEEDED_WORKSPACE_TITLE)
+          isEnabled: true
+        - variable: PLUE_E2E_WORKSPACE_ID
+          value: $(PLUE_E2E_WORKSPACE_ID)
+          isEnabled: true
+        - variable: SMITHERS_E2E_REFRESH
+          value: $(SMITHERS_E2E_REFRESH)
+          isEnabled: true
+      targets:
+        - SmithersMacOSE2ETests
+      gatherCoverageData: false
   SmithersiOS:
     build:
       targets:
@@ -450,6 +516,33 @@ schemes:
           isEnabled: true
         - variable: SMITHERS_E2E_REFRESH
           value: $(SMITHERS_E2E_REFRESH)
+          isEnabled: true
+        # Scenario-group env vars (ios-e2e-harness phase 2).
+        #   terminal scenario: workspace_session id.
+        #   approvals scenario: agent_session + approval id, plus repo
+        #     owner/name for the `/api/repos/{owner}/{repo}/approvals/{id}/decide`
+        #     route.
+        #   reconnect scenario: docker container name for host-side pauses.
+        - variable: PLUE_E2E_WORKSPACE_SESSION_ID
+          value: $(PLUE_E2E_WORKSPACE_SESSION_ID)
+          isEnabled: true
+        - variable: PLUE_E2E_AGENT_SESSION_ID
+          value: $(PLUE_E2E_AGENT_SESSION_ID)
+          isEnabled: true
+        - variable: PLUE_E2E_APPROVAL_ID
+          value: $(PLUE_E2E_APPROVAL_ID)
+          isEnabled: true
+        - variable: PLUE_E2E_REPO_ID
+          value: $(PLUE_E2E_REPO_ID)
+          isEnabled: true
+        - variable: PLUE_E2E_REPO_OWNER
+          value: $(PLUE_E2E_REPO_OWNER)
+          isEnabled: true
+        - variable: PLUE_E2E_REPO_NAME
+          value: $(PLUE_E2E_REPO_NAME)
+          isEnabled: true
+        - variable: PLUE_E2E_DOCKER_API_CONTAINER
+          value: $(PLUE_E2E_DOCKER_API_CONTAINER)
           isEnabled: true
       targets:
         - SmithersiOSE2ETests
