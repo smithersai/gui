@@ -137,5 +137,29 @@ let package = Package(
             ],
             path: "Tests/SmithersGUITests"
         ),
+
+        // ticket/0120 — thin Swift wrapper around the new libsmithers-core FFI.
+        // Cross-platform (macOS + iOS) by design; no AppKit / WebKit deps.
+        .target(
+            name: "SmithersRuntime",
+            dependencies: ["CSmithersKit"],
+            path: "Shared/Sources/SmithersRuntime",
+            linkerSettings: [
+                .unsafeFlags(
+                    [
+                        "-Llibsmithers/zig-out/lib",
+                        "-lsmithers",
+                    ],
+                    .when(platforms: [.macOS])
+                ),
+                .linkedLibrary("sqlite3", .when(platforms: [.macOS])),
+                .linkedLibrary("c++", .when(platforms: [.macOS])),
+            ]
+        ),
+        .testTarget(
+            name: "SmithersRuntimeTests",
+            dependencies: ["SmithersRuntime"],
+            path: "Shared/Tests/SmithersRuntimeTests"
+        ),
     ]
 )

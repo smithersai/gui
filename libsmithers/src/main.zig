@@ -2,6 +2,7 @@ pub const App = @import("App.zig");
 pub const apprt = @import("apprt/apprt.zig");
 pub const client = @import("client/client.zig");
 pub const commands = @import("commands/mod.zig");
+pub const core = @import("core/core.zig");
 pub const devtools = @import("devtools/DevToolsClient.zig");
 pub const ffi = @import("ffi.zig");
 pub const models = @import("models/mod.zig");
@@ -12,6 +13,8 @@ pub const workspace = @import("workspace/mod.zig");
 
 comptime {
     _ = apprt.embedded;
+    // Ensure the new core FFI exports are pulled into the static archive.
+    _ = @import("core/ffi.zig");
 }
 
 test {

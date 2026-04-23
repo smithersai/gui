@@ -410,6 +410,202 @@ SMITHERS_API smithers_error_s  smithers_persistence_save_sessions(smithers_persi
 //   - Theme.swift, KeyboardShortcut*.swift, UITestSupport.swift
 //   - AppKit/NSView integration, SceneKit, etc.
 
+//------------------------------------------------------------------------------
+// Core runtime (ticket 0120) — connection-scoped production runtime.
+//
+// This is the NEW center of gravity replacing the app/session/client split
+// above. One `smithers_core_t` per process, one `smithers_core_session_t`
+// per engine connection. A session owns:
+//   - Electric shape subscriptions (see 0093)
+//   - WebSocket PTY attachments (see 0094)
+//   - HTTP JSON writes (pessimistic write then await shape echo)
+//   - Bounded per-connection SQLite cache (per 0103 + spec)
+//   - Platform-injected OAuth credentials (0109) via callback — core
+//     NEVER reads tokens from disk.
+//
+// The old `smithers_app_t` / `smithers_client_t` / `smithers_session_t`
+// surface above is retained for compatibility (REMOVE-AFTER-0126) while
+// desktop-local migrates. New downstream code should target THIS surface
+// exclusively.
+
+typedef void *smithers_core_t;               // process-lifetime runtime
+typedef void *smithers_core_session_t;       // one engine connection
+typedef uint64_t smithers_subscription_t;    // handle for a shape subscription
+typedef uint64_t smithers_write_future_t;    // handle for a pending HTTP write
+typedef void *smithers_pty_handle_t;         // attached PTY stream
+
+// Credentials token returned by the platform.
+// The core copies these bytes synchronously inside the callback; the host
+// retains ownership of the underlying storage (typically Keychain-backed).
+typedef struct {
+  const char *bearer;          // NUL-terminated; NULL if no credentials
+  int64_t expires_unix_ms;     // 0 if unknown
+  const char *refresh_token;   // optional; NULL if not provided
+} smithers_credentials_s;
+
+// Platform-provided credentials callback. Core invokes this when it needs
+// a fresh bearer (connect, 401 recovery, pre-flight). Host implementations
+// typically read from iOS/macOS Keychain.
+//
+// Contract: fill `*out` with borrowed pointers valid for the duration of
+// the callback. Return true iff credentials were populated. Returning
+// false triggers the auth-expired event on the session.
+typedef bool (*smithers_credentials_fn)(smithers_userdata_t ud,
+                                        smithers_credentials_s *out);
+
+// Engine connection configuration — passed to smithers_core_connect.
+// `base_url` is the plue API base (e.g. https://api.plue.example).
+// `shape_proxy_url` is the Electric auth-proxy URL.
+// `ws_pty_url` is the WebSocket PTY endpoint. Either may be NULL to
+// disable that transport (e.g. read-only sessions).
+typedef struct {
+  const char *engine_id;       // stable id, used as cache partition key
+  const char *base_url;
+  const char *shape_proxy_url;
+  const char *ws_pty_url;
+  const char *cache_dir;       // per-connection cache directory; NULL => memory
+  uint32_t cache_max_mb;       // 0 => unbounded; otherwise LRU evicts unpinned
+} smithers_core_engine_config_s;
+
+// Session lifecycle events delivered to the host.
+typedef enum {
+  SMITHERS_CORE_EVENT_STATE_CHANGED = 0,   // connected / disconnected / reconnecting
+  SMITHERS_CORE_EVENT_AUTH_EXPIRED,        // credentials callback returned false or got 401
+  SMITHERS_CORE_EVENT_RECONNECT,           // transport reconnected
+  SMITHERS_CORE_EVENT_SHAPE_DELTA,         // a subscribed shape applied new rows
+  SMITHERS_CORE_EVENT_WRITE_ACK,           // HTTP write future resolved
+  SMITHERS_CORE_EVENT_PTY_DATA,            // bytes arrived on a PTY handle
+  SMITHERS_CORE_EVENT_PTY_CLOSED,          // PTY stream ended
+} smithers_core_event_tag_e;
+
+typedef void (*smithers_core_event_fn)(
+    smithers_userdata_t ud,
+    smithers_core_event_tag_e tag,
+    const char *payload_json_or_null);
+
+// --- Core lifecycle ---
+
+// Create a new core. The credentials callback is required; it's how the
+// core acquires bearer tokens for every engine it connects to. `userdata`
+// is passed verbatim to the callback.
+//
+// Returns NULL and sets `*out_err` if the feature flag
+// `remote_sandbox_enabled` is off, or if initialization fails.
+SMITHERS_API smithers_core_t smithers_core_new(
+    smithers_credentials_fn credentials_cb,
+    smithers_userdata_t userdata,
+    smithers_error_s *out_err);
+
+SMITHERS_API void smithers_core_free(smithers_core_t core);
+
+// --- Session lifecycle ---
+
+// Open a session for the given engine. Returns NULL on failure.
+// On 401 during initial handshake, the core fires AUTH_EXPIRED and returns
+// a session in state=disconnected that can be retried after token refresh.
+SMITHERS_API smithers_core_session_t smithers_core_connect(
+    smithers_core_t core,
+    const smithers_core_engine_config_s *cfg,
+    smithers_error_s *out_err);
+
+SMITHERS_API void smithers_core_disconnect(smithers_core_session_t s);
+
+// Register a single event callback per session. Re-registering replaces
+// the previous callback.
+SMITHERS_API void smithers_core_register_callback(
+    smithers_core_session_t s,
+    smithers_core_event_fn cb,
+    smithers_userdata_t userdata);
+
+// --- Shape subscriptions ---
+
+// Subscribe to an Electric shape. `shape_name` is one of the production
+// shape names from 0114-0118 (agent_sessions, agent_messages, agent_parts,
+// workspaces, workspace_sessions, approvals). `params_json` carries the
+// server-side where clause parameters (e.g. repository filter).
+//
+// Returns 0 on failure; check out_err. On success, deltas begin arriving
+// via SHAPE_DELTA events and rows land in the cache.
+SMITHERS_API smithers_subscription_t smithers_core_subscribe(
+    smithers_core_session_t s,
+    const char *shape_name,
+    const char *params_json,
+    smithers_error_s *out_err);
+
+SMITHERS_API void smithers_core_unsubscribe(
+    smithers_core_session_t s,
+    smithers_subscription_t handle);
+
+// Pinning keeps a subscription's rows in the cache past LRU eviction.
+// Default state is unpinned. Idempotent.
+SMITHERS_API void smithers_core_pin(
+    smithers_core_session_t s,
+    smithers_subscription_t handle);
+SMITHERS_API void smithers_core_unpin(
+    smithers_core_session_t s,
+    smithers_subscription_t handle);
+
+// --- Cache reads ---
+
+// Query the bounded per-connection cache. `where_sql` is an optional
+// substring appended as `WHERE <where_sql>` (parameterized through the
+// adapter's bindings; pass NULL for no filter). Returns a JSON array of
+// rows, core-owned. For the skeleton, only the `agent_sessions` table is
+// supported; other tables return an empty array and a non-zero err.code.
+SMITHERS_API smithers_string_s smithers_core_cache_query(
+    smithers_core_session_t s,
+    const char *table,
+    const char *where_sql,  // nullable
+    int32_t limit,          // <= 0 => unbounded
+    int32_t offset,
+    smithers_error_s *out_err);
+
+// --- Writes ---
+
+// Issue an HTTP JSON write. `action` is the plue write route identifier
+// (e.g. "agent_sessions.create"). `payload_json` is the request body.
+// Returns 0 on failure. The future resolves via WRITE_ACK event carrying
+// a JSON object: {"future": <id>, "ok": <bool>, "body": "...", "status": N}.
+SMITHERS_API smithers_write_future_t smithers_core_write(
+    smithers_core_session_t s,
+    const char *action,
+    const char *payload_json,
+    smithers_error_s *out_err);
+
+// --- PTY ---
+
+SMITHERS_API smithers_pty_handle_t smithers_core_attach_pty(
+    smithers_core_session_t s,
+    const char *session_id,
+    smithers_error_s *out_err);
+
+SMITHERS_API smithers_error_s smithers_core_pty_write(
+    smithers_pty_handle_t h,
+    const uint8_t *bytes,
+    size_t len);
+
+SMITHERS_API smithers_error_s smithers_core_pty_resize(
+    smithers_pty_handle_t h,
+    uint16_t cols,
+    uint16_t rows);
+
+SMITHERS_API void smithers_core_detach_pty(smithers_pty_handle_t h);
+
+// --- Cache maintenance ---
+
+// Wipe the bounded cache for this session. Called by the platform on
+// sign-out so no cached rows outlive credential revocation (per 0133).
+SMITHERS_API smithers_error_s smithers_core_cache_wipe(
+    smithers_core_session_t s);
+
+// --- Test hooks (do NOT call from shipping code) ---
+
+// Drive the transport tick synchronously. Used by SmithersRuntime's
+// test target so integration tests are deterministic. Production code
+// relies on a background event-loop thread; calling this from a
+// shipping code path is a bug.
+SMITHERS_API void smithers_core_tick_for_test(smithers_core_session_t s);
+
 #ifdef __cplusplus
 }
 #endif

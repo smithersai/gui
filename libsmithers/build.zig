@@ -142,12 +142,28 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .macos) daemon_unit_tests.linkSystemLibrary("proc");
     const run_daemon_unit_tests = b.addRunArtifact(daemon_unit_tests);
 
+    // Core FFI smoke test — exercises the `smithers_core_*` extern symbols
+    // declared by `src/core/ffi.zig`. Uses `test/core/ffi_smoke.zig` as
+    // the root with `libsmithers` imported so the `pub export fn` bodies
+    // are linked into the test binary.
+    const core_ffi_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/core/ffi_smoke.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "libsmithers", .module = root_mod }},
+        }),
+    });
+    configureSQLite(b, core_ffi_tests.root_module, target);
+    const run_core_ffi_tests = b.addRunArtifact(core_ffi_tests);
+
     const test_step = b.step("test", "Run libsmithers e2e tests");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_daemon_unit_tests.step);
     test_step.dependOn(&run_connect_unit_tests.step);
     test_step.dependOn(&run_devtools_tests.step);
+    test_step.dependOn(&run_core_ffi_tests.step);
     test_step.dependOn(&(blk: {
         const integration_tests = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path("test/integration/all.zig"),
