@@ -93,6 +93,7 @@ Each is its own ticket. Ordered within groups, but groups can progress in parall
 - Boundary conditions: shape reconnect at byte offset 0, at the middle of a delta, across token expiry; PTY write during disconnect; Electric deltas during local SQLite compaction.
 - Android WIP canary: CI job that *only* checks the Android core build still compiles. If it breaks, the offending PR is flagged.
 - *Done when:* doc lives at `.smithers/specs/ios-and-remote-sandboxes-testing.md`, reviewed.
+- *Status:* landed. The testing strategy doc is at `.smithers/specs/ios-and-remote-sandboxes-testing.md` and is the per-component / per-boundary-condition / per-PoC testing reference for every ticket in this initiative.
 
 **D2: Observability & error conditions.**
 - Structured log taxonomy (what fields, what levels, what contexts).
