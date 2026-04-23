@@ -143,13 +143,28 @@ final class SmithersiOSE2ETests: XCTestCase {
         )
         app.buttons["content.ios.open-switcher"].tap()
 
-        // Switcher should load and show our seeded row.
-        let expectedTitle = env.seededWorkspaceTitle ?? "e2e-workspace"
-        let workspaceCell = app.staticTexts[expectedTitle]
+        // Wait for the switcher list. The seeded row is a Button with
+        // accessibility identifier `switcher.row.<workspace_id>` — match
+        // on that rather than the title StaticText (SwiftUI Buttons
+        // absorb child text into the button label, so
+        // `app.staticTexts[title]` doesn't find it).
+        let expectedWorkspaceID = ProcessInfo.processInfo
+            .environment[E2ELaunchKey.seededWorkspaceID] ?? ""
+        let rowMatch: XCUIElement = {
+            if !expectedWorkspaceID.isEmpty {
+                return app.buttons["switcher.row.\(expectedWorkspaceID)"]
+            }
+            // Fallback: any button whose identifier starts with
+            // `switcher.row.` (there should be exactly one after seed).
+            return app.buttons.matching(
+                NSPredicate(format: "identifier BEGINSWITH 'switcher.row.'")
+            ).firstMatch
+        }()
         XCTAssertTrue(
-            workspaceCell.waitForExistence(timeout: 15),
-            "seeded workspace row with title \(expectedTitle) must appear"
+            rowMatch.waitForExistence(timeout: 15),
+            "seeded workspace row must appear in the switcher"
         )
+        _ = env
     }
 
     // MARK: - 4. Open workspace → remote chat shell
@@ -171,23 +186,16 @@ final class SmithersiOSE2ETests: XCTestCase {
         )
         app.buttons["content.ios.open-switcher"].tap()
 
-        // Wait for the seeded row to appear, then tap the row's full
-        // Button (identified by workspace id prefix) rather than the
-        // title StaticText, so the tap lands on the actual hittable
-        // control and not a child text view.
-        let expectedTitle = env.seededWorkspaceTitle ?? "e2e-workspace"
-        let titleText = app.staticTexts[expectedTitle]
-        XCTAssertTrue(titleText.waitForExistence(timeout: 15),
-                      "seeded workspace title should appear in the switcher")
-
-        // Buttons registered by `WorkspaceSwitcherRow` use the
-        // identifier pattern `switcher.row.<workspace_id>`. We match
-        // any button whose identifier starts with `switcher.row.` so
-        // we do not couple the test to a specific UUID.
+        // Wait for the seeded row. `WorkspaceSwitcherRow` wraps its
+        // content in a SwiftUI Button which absorbs child text into
+        // the button label, so we match the row's accessibility
+        // identifier `switcher.row.<workspace_id>` instead of the
+        // title StaticText.
+        _ = env
         let rowButton = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH 'switcher.row.'")
         ).firstMatch
-        XCTAssertTrue(rowButton.waitForExistence(timeout: 5),
+        XCTAssertTrue(rowButton.waitForExistence(timeout: 15),
                       "expected at least one switcher.row.<id> button")
         rowButton.tap()
 

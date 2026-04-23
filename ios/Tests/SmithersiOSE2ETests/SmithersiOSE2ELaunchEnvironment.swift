@@ -26,6 +26,11 @@ enum E2ELaunchKey {
     /// Workspace title that `ios/scripts/seed-e2e-data.sh` inserts. The
     /// test harness asserts this exact string appears in the switcher.
     static let seededWorkspaceTitle = "PLUE_E2E_SEEDED_WORKSPACE_TITLE"
+    /// UUID of the seeded workspace. Tests match against the
+    /// `switcher.row.<id>` accessibility identifier rather than the
+    /// title text (SwiftUI Button absorbs child StaticText into its
+    /// label, so the title is not separately accessible).
+    static let seededWorkspaceID = "PLUE_E2E_WORKSPACE_ID"
 }
 
 /// Shape of the per-test launch environment. The harness script passes
@@ -79,6 +84,12 @@ struct E2ELaunchEnvironment {
             app.launchEnvironment[E2ELaunchKey.seededData] = "1"
             if let title = seededWorkspaceTitle {
                 app.launchEnvironment[E2ELaunchKey.seededWorkspaceTitle] = title
+            }
+            // Forward the workspace UUID so tests can match on
+            // `switcher.row.<id>` identifiers.
+            let procEnv = ProcessInfo.processInfo.environment
+            if let wsID = procEnv[E2ELaunchKey.seededWorkspaceID], !wsID.isEmpty {
+                app.launchEnvironment[E2ELaunchKey.seededWorkspaceID] = wsID
             }
         }
     }

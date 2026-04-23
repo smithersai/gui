@@ -37,13 +37,19 @@ set -euo pipefail
 
 export PGPASSWORD
 
-# Generate a fresh token per run. Prefix distinguishes from prod tokens
-# so a leak is easy to detect in logs.
+# Generate a fresh token per run. Plue's ExtractToken (see
+# plue/internal/middleware/auth.go `isValidTokenFormat`) requires the
+# strict format `jjhub_<40 hex chars>` — any extra prefix (e.g.
+# `jjhub_e2e_`) makes ExtractToken return empty and RequireAuth yields
+# 401. To still distinguish e2e tokens from production ones, we use a
+# known hex prefix `e2e` (3 hex chars + 5 more hex chars padding =
+# `e2e00000`), then 32 random hex.
 if [[ -n "${SMITHERS_E2E_BEARER:-}" ]]; then
   TOKEN="$SMITHERS_E2E_BEARER"
 else
+  # 8 hex chars of deterministic prefix + 32 hex chars random = 40 total
   HEX="$(openssl rand -hex 16)"
-  TOKEN="jjhub_e2e_${HEX}"
+  TOKEN="jjhub_e2e00000${HEX}"
 fi
 
 WORKSPACE_TITLE="${PLUE_E2E_SEEDED_WORKSPACE_TITLE:-e2e-workspace}"
@@ -66,8 +72,12 @@ done
 # alice's organization for relation sanity; if the seeded dev rows are
 # absent this script will fail loudly (which is what we want — the seed
 # should have run as part of docker compose up).
-SQL=$(cat <<SQL
-DO \$\$
+# Heredoc is quoted ('SQL') so that backticks, $, and \ inside are
+# passed through literally to psql. We pre-substitute the token via sed
+# below since bash variable expansion is disabled inside a quoted
+# heredoc.
+SQL_TEMPLATE=$(cat <<'SQL'
+DO $PLPGSQL$
 DECLARE
     v_user_id        BIGINT;
     v_workspace_id   UUID;
@@ -76,18 +86,20 @@ BEGIN
     -- Ensure the E2E user exists. The 'alice' dev user from db/seed.sql
     -- provides the org; we reuse its organization_id if the schema
     -- requires an organization, but otherwise keep the user independent.
-    INSERT INTO users (username, lower_username, email, password_hash, is_admin, created_at, updated_at)
+    INSERT INTO users (username, lower_username, email, lower_email, display_name, is_admin, created_at, updated_at)
     VALUES (
         'e2e_user',
         'e2e_user',
         'e2e@smithers.local',
-        'x',
+        'e2e@smithers.local',
+        'E2E Test User',
         FALSE,
         NOW(),
         NOW()
     )
     ON CONFLICT (lower_username) DO UPDATE
         SET email = EXCLUDED.email,
+            lower_email = EXCLUDED.lower_email,
             updated_at = NOW()
     RETURNING id INTO v_user_id;
 
@@ -99,8 +111,8 @@ BEGIN
         9000,
         v_user_id,
         'e2e-ios-harness',
-        encode(digest('$TOKEN', 'sha256'), 'hex'),
-        RIGHT('$TOKEN', 8),
+        encode(digest('__TOKEN__', 'sha256'), 'hex'),
+        RIGHT('__TOKEN__', 8),
         'write:repository,read:repository,write:user,read:user,write:workspace,read:workspace',
         NOW(),
         NOW()
@@ -112,33 +124,63 @@ BEGIN
             scopes = EXCLUDED.scopes,
             updated_at = NOW();
 
-    -- Repository owned by our e2e user.
-    INSERT INTO repositories (user_id, name, lower_name, description, visibility, created_at, updated_at)
-    VALUES (
-        v_user_id,
-        'e2e-repo',
-        'e2e-repo',
-        'seeded by ios/scripts/seed-e2e-data.sh',
-        'private',
-        NOW(),
-        NOW()
-    )
-    ON CONFLICT (user_id, lower_name) DO UPDATE
-        SET description = EXCLUDED.description,
-            updated_at = NOW()
-    RETURNING id INTO v_repo_id;
+    -- Repository owned by our e2e user. The plue schema uses
+    -- is_public BOOLEAN (not a string visibility column) and requires
+    -- a non-empty shard_id. We use the same shard the dev seed uses.
+    -- Unique index on (user_id, lower_name) is partial (WHERE org_id
+    -- IS NULL), which Postgres will not accept as an ON CONFLICT target
+    -- without matching the predicate — simpler to upsert manually.
+    SELECT id INTO v_repo_id
+    FROM repositories
+    WHERE user_id = v_user_id AND lower_name = 'e2e-repo'
+    LIMIT 1;
 
-    -- Workspace: idempotent via a stable UUID derived from the repo+user
-    -- tuple. `uuid-ossp` is commonly installed; fall back to a fixed
-    -- UUID namespace + digest if not.
-    INSERT INTO workspaces (id, repository_id, user_id, name, status, last_activity_at, created_at, updated_at)
+    IF v_repo_id IS NULL THEN
+        INSERT INTO repositories (user_id, name, lower_name, description, is_public, shard_id, created_at, updated_at)
+        VALUES (
+            v_user_id,
+            'e2e-repo',
+            'e2e-repo',
+            'seeded by ios/scripts/seed-e2e-data.sh',
+            FALSE,
+            'jjhub-repo-host-s1',
+            NOW(),
+            NOW()
+        )
+        RETURNING id INTO v_repo_id;
+    ELSE
+        UPDATE repositories
+        SET description = 'seeded by ios/scripts/seed-e2e-data.sh',
+            updated_at = NOW()
+        WHERE id = v_repo_id;
+    END IF;
+
+    -- Workspace: idempotent via a stable UUID. A unique partial index
+    -- on (repository_id, user_id) exists for active workspaces, so we
+    -- keep status='running' and rely on that constraint for idempotency
+    -- instead of the PK. We look up any existing active workspace for
+    -- this (repo,user) pair first, then INSERT ... ON CONFLICT (id).
+    SELECT id INTO v_workspace_id
+    FROM workspaces
+    WHERE repository_id = v_repo_id
+      AND user_id = v_user_id
+      AND deleted_at IS NULL
+      AND is_fork = FALSE
+    LIMIT 1;
+
+    IF v_workspace_id IS NULL THEN
+        v_workspace_id := 'e2e00000-0000-0000-0000-000000000001'::uuid;
+    END IF;
+
+    INSERT INTO workspaces (id, repository_id, user_id, name, status, last_activity_at, vm_id, created_at, updated_at)
     VALUES (
-        'e2e00000-0000-0000-0000-000000000001',
+        v_workspace_id,
         v_repo_id,
         v_user_id,
-        '$WORKSPACE_TITLE',
+        '__WORKSPACE_TITLE__',
         'running',
         NOW(),
+        'e2e-vm-stub',
         NOW(),
         NOW()
     )
@@ -146,15 +188,21 @@ BEGIN
         SET name = EXCLUDED.name,
             status = EXCLUDED.status,
             last_activity_at = NOW(),
-            updated_at = NOW()
-    RETURNING id INTO v_workspace_id;
+            updated_at = NOW();
 
     RAISE NOTICE 'SEED_USER_ID=%', v_user_id;
     RAISE NOTICE 'SEED_WORKSPACE_ID=%', v_workspace_id;
 END
-\$\$ LANGUAGE plpgsql;
+$PLPGSQL$ LANGUAGE plpgsql;
 SQL
 )
+
+# Substitute token and workspace title into the template. Using python
+# for the substitution is robust against special characters in the
+# token that could otherwise confuse sed (not expected with hex tokens,
+# but defensive is cheap).
+SQL="${SQL_TEMPLATE//__TOKEN__/$TOKEN}"
+SQL="${SQL//__WORKSPACE_TITLE__/$WORKSPACE_TITLE}"
 
 # `psql` sends RAISE NOTICE output to stderr. Capture both streams so we
 # can extract the ids and still surface errors to the caller.
