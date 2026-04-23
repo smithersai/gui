@@ -140,7 +140,7 @@ What plue already covers, and what we'd need to add. Gaps were catalogued by rea
    - Shape subscription so every connected client sees pending approvals live.
    - `POST /api/repos/{owner}/{repo}/approvals/{id}/decide` for the action.
 4. **Generic devtools snapshot endpoint.** Plue has `diffview/` but it's VCS-tied (jj change diffs). We need a generic devtools surface — snapshot of whatever the agent is looking at (screen, file tree, command output). Shape: SSE feed of typed snapshot events from the guest-agent.
-5. **Multi-client PTY attach — out of scope for v1.** `workspace_terminal.go` today creates one SSH session per WebSocket and tears it down on close (`workspace_terminal.go:117, 124, 203, 251, 324`). Each connecting client mints fresh SSH credentials and opens an **independent shell** — two devices do not share a view and neither kicks the other off. Proper multi-client *shared-view* attach requires either session multiplexing in the handler or a new "attach existing PTY" mode in guest-agent — this is a PoC (ticket 0102) that de-risks the design, but the spec does not assume multi-client shared-PTY for v1.
+5. **Multi-client PTY attach — DEFERRED to v2 (conclusion of PoC 0102).** `workspace_terminal.go` today creates one SSH session per WebSocket (`workspace_terminal.go:117, 124, 203, 251, 324`) and tears it down on close; two devices connecting to the same `session_id` open **two independent shells** that diverge immediately. PoC 0102 reproduced this end-to-end against a real PTY + SSH server + handler-shape proxy (see `plue/poc/multi-client-pty/README.md`) and evaluated both named options — handler-side multiplexing and guest-agent attach mode. **Both are deferred.** Handler-mux fails horizontal scale without sticky-session routing and its scrollback dies on plue-API restart. Guest-agent attach is the architecturally cleaner option but stacks protocol change + sandbox-image rebuild + capability negotiation + write-arbitration UX — a stage-2 body of work, not v1. The v1 multi-device model stays "each device gets its own shell; shared state syncs via Electric." Reopen specifically Option B (guest-agent attach) in v2 if (a) user research shows shared-PTY is a top request, (b) desktop-local mode lands and we want `guest-agent = libsmithers-local-daemon` protocol unification, or (c) scrollback-on-mobile-reconnect becomes a standalone v2 goal.
 
 ### Guest-agent extensions
 
@@ -160,7 +160,7 @@ Desktop-local is structurally different enough from the iOS-and-remote-sandboxes
 | Agent sessions (chat) | ✅ | — |
 | Workspace/session SSE | ✅ | — |
 | Terminal WS (single-client) | ✅ | — |
-| Multi-client PTY attach | ❌ | out of scope v1; tracked in PoC-B4 |
+| Multi-client PTY attach | ❌ | v1: one-shell-per-device. v2: reopen Option B (guest-agent attach) per PoC 0102 conclusion |
 | Run control | ✅ (dispatch, inspect, cancel, SSE log/event streams all present) | expose run status as Electric shape; pick canonical route naming |
 | Approvals | ❌ | full flow |
 | Generic devtools snapshot | ❌ (VCS-only) | new surface |
