@@ -63,6 +63,65 @@ const PtyAttachment = struct {
     transport_handle: u64,
 };
 
+/// URL parse helper: split "scheme://host:port" into host + port. Defaults
+/// to port 80 for `http://`, 443 for `https://`, 4000 if unspecified.
+fn parseHostPort(url: []const u8, default_port: u16) !struct { host: []const u8, port: u16 } {
+    var rest = url;
+    if (std.mem.startsWith(u8, rest, "http://")) {
+        rest = rest[7..];
+    } else if (std.mem.startsWith(u8, rest, "https://")) {
+        rest = rest[8..];
+    } else if (std.mem.startsWith(u8, rest, "ws://")) {
+        rest = rest[5..];
+    } else if (std.mem.startsWith(u8, rest, "wss://")) {
+        rest = rest[6..];
+    }
+    // Trim trailing path.
+    if (std.mem.indexOfScalar(u8, rest, '/')) |i| rest = rest[0..i];
+    if (std.mem.indexOfScalar(u8, rest, ':')) |i| {
+        const host = rest[0..i];
+        const port = try std.fmt.parseInt(u16, rest[i + 1 ..], 10);
+        return .{ .host = host, .port = port };
+    }
+    return .{ .host = rest, .port = default_port };
+}
+
+/// Derive a `RealConfig` from the engine config strings. The engine
+/// config carries full URLs; the real transport needs host + port
+/// pairs for each of {shape proxy, API, WS PTY}.
+fn derivedRealCfg(cfg_in: EngineConfig) !transport.RealConfig {
+    const api = try parseHostPort(cfg_in.base_url, 4000);
+    const shape = if (cfg_in.shape_proxy_url) |u|
+        try parseHostPort(u, 3001)
+    else
+        api;
+    const ws = if (cfg_in.ws_pty_url) |u|
+        try parseHostPort(u, api.port)
+    else
+        api;
+    return .{
+        .shape_host = shape.host,
+        .shape_port = shape.port,
+        .api_host = api.host,
+        .api_port = api.port,
+        .ws_host = ws.host,
+        .ws_port = ws.port,
+        .origin = cfg_in.base_url,
+    };
+}
+
+/// Credentials fetch trampoline for RealTransport. Turns
+/// `Core.fetchCredentials()` into a `CredentialsRefresher.BearerSnapshot`
+/// with an allocator-owned bearer.
+fn coreCredsRefreshTrampoline(
+    ctx: ?*anyopaque,
+    allocator: std.mem.Allocator,
+) anyerror!transport.CredentialsRefresher.BearerSnapshot {
+    const core: *Core = @ptrCast(@alignCast(ctx.?));
+    const creds = core.fetchCredentials() catch return error.AuthExpired;
+    return .{ .bearer = try allocator.dupe(u8, creds.bearer) };
+}
+
 pub const Session = struct {
     core: *Core,
     allocator: std.mem.Allocator,
@@ -118,18 +177,31 @@ pub const Session = struct {
         // once the macOS/iOS sandbox story for cache files is pinned in
         // 0121/0133.
 
-        // Default to the real-transport path. Tests override via
-        // `core.transport_override`. Today the real transport is the
-        // fake (per scope caveat) — swap when the Electric/WS poc code
-        // is promoted (TODO 0120-followup).
+        // Default to the real-transport path (0140). Tests opt into a
+        // FakeTransport via `core.testing_use_fake_transport = true`, or
+        // pass a full vtable via `core.transport_override`.
         var owns: bool = true;
         const t_impl: transport.Transport = blk: {
             if (core.transport_override) |vt| {
                 owns = false;
                 break :blk .{ .vtable = vt, .ctx = null };
             }
-            const ft = try transport.FakeTransport.create(a);
-            break :blk ft.transport();
+            if (core.testing_use_fake_transport) {
+                const ft = try transport.FakeTransport.create(a);
+                break :blk ft.transport();
+            }
+            // Production path: spin up the RealTransport with shape
+            // proxy / API / WS hosts derived from the engine config.
+            // Missing shape_proxy_url falls back to base_url. Parsing
+            // failures surface as CoreError.TransportError and land the
+            // session in `state=disconnected`.
+            const real_cfg = derivedRealCfg(cfg_in) catch return CoreError.TransportError;
+            const refresher = transport.CredentialsRefresher{
+                .ctx = @ptrCast(core),
+                .fetch_fn = coreCredsRefreshTrampoline,
+            };
+            const rt = transport.RealTransport.create(a, c, real_cfg, refresher) catch return CoreError.TransportError;
+            break :blk rt.transport();
         };
 
         self.* = .{
@@ -503,6 +575,7 @@ fn recordEvent(ud: ?*anyopaque, tag: EventTag, payload: ?[*:0]const u8) callconv
 test "Session: subscribe agent_sessions + apply delta via tick" {
     const core = try Core.create(testing.allocator, credsOk, null);
     defer core.destroy();
+    core.testing_use_fake_transport = true;
 
     const s = try core.connect(.{
         .engine_id = "e1",
@@ -545,6 +618,7 @@ test "Session: subscribe agent_sessions + apply delta via tick" {
 test "Session: unsubscribe drops rows + allows resubscribe" {
     const core = try Core.create(testing.allocator, credsOk, null);
     defer core.destroy();
+    core.testing_use_fake_transport = true;
     const s = try core.connect(.{ .engine_id = "e1", .base_url = "http://x" });
     const ft: *transport.FakeTransport = @ptrCast(@alignCast(s.transport_impl.ctx.?));
 
@@ -564,6 +638,7 @@ test "Session: unsubscribe drops rows + allows resubscribe" {
 test "Session: cache wipe clears rows (sign-out path)" {
     const core = try Core.create(testing.allocator, credsOk, null);
     defer core.destroy();
+    core.testing_use_fake_transport = true;
     const s = try core.connect(.{ .engine_id = "e1", .base_url = "http://x" });
     const ft: *transport.FakeTransport = @ptrCast(@alignCast(s.transport_impl.ctx.?));
 
@@ -583,6 +658,7 @@ test "Session: cache wipe clears rows (sign-out path)" {
 test "Session: write issues future + ack fires WRITE_ACK" {
     const core = try Core.create(testing.allocator, credsOk, null);
     defer core.destroy();
+    core.testing_use_fake_transport = true;
     const s = try core.connect(.{ .engine_id = "e1", .base_url = "http://x" });
     const ft: *transport.FakeTransport = @ptrCast(@alignCast(s.transport_impl.ctx.?));
 
@@ -611,6 +687,7 @@ test "Session: write issues future + ack fires WRITE_ACK" {
 test "Session: attach / write / resize / detach PTY" {
     const core = try Core.create(testing.allocator, credsOk, null);
     defer core.destroy();
+    core.testing_use_fake_transport = true;
     const s = try core.connect(.{ .engine_id = "e1", .base_url = "http://x" });
 
     const h = try s.attachPty("session_abc");
@@ -623,6 +700,7 @@ test "Session: attach / write / resize / detach PTY" {
 test "Session: auth-expired surfaces at connect time" {
     const core = try Core.create(testing.allocator, credsExpired, null);
     defer core.destroy();
+    core.testing_use_fake_transport = true;
     const s = try core.connect(.{ .engine_id = "e1", .base_url = "http://x" });
     try testing.expectEqual(ConnectionState.disconnected, s.state);
 }
@@ -630,6 +708,7 @@ test "Session: auth-expired surfaces at connect time" {
 test "Session: subscribe rejects unknown shape" {
     const core = try Core.create(testing.allocator, credsOk, null);
     defer core.destroy();
+    core.testing_use_fake_transport = true;
     const s = try core.connect(.{ .engine_id = "e1", .base_url = "http://x" });
     try testing.expectError(CoreError.UnknownShape, s.subscribe("not_a_shape", "{}"));
 }

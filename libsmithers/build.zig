@@ -157,6 +157,20 @@ pub fn build(b: *std.Build) void {
     configureSQLite(b, core_ffi_tests.root_module, target);
     const run_core_ffi_tests = b.addRunArtifact(core_ffi_tests);
 
+    // Ticket 0140 real-transport integration tests. Compile + run
+    // unconditionally; the tests themselves detect POC_ELECTRIC_STACK=1
+    // and degrade to a passing no-op when the stack isn't up.
+    const core_integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/core/integration/real_transport.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "libsmithers", .module = root_mod }},
+        }),
+    });
+    configureSQLite(b, core_integration_tests.root_module, target);
+    const run_core_integration_tests = b.addRunArtifact(core_integration_tests);
+
     const test_step = b.step("test", "Run libsmithers e2e tests");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_unit_tests.step);
@@ -164,6 +178,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_connect_unit_tests.step);
     test_step.dependOn(&run_devtools_tests.step);
     test_step.dependOn(&run_core_ffi_tests.step);
+    test_step.dependOn(&run_core_integration_tests.step);
     test_step.dependOn(&(blk: {
         const integration_tests = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path("test/integration/all.zig"),

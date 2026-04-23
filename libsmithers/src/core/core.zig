@@ -30,6 +30,12 @@ pub const transport = @import("transport.zig");
 pub const session = @import("session.zig");
 pub const ffi = @import("ffi.zig");
 pub const schema = @import("schema.zig");
+/// Electric shape protocol client (promoted from poc/zig-electric-client
+/// per ticket 0140). Exposed for tests + tools that want to drive the
+/// HTTP layer directly; RealTransport is the only production consumer.
+pub const electric = @import("electric/mod.zig");
+/// WebSocket PTY client (promoted from poc/zig-ws-pty per ticket 0140).
+pub const wspty = @import("wspty/mod.zig");
 
 pub const Cache = cache.Cache;
 pub const Transport = transport.Transport;
@@ -83,6 +89,14 @@ pub const Core = struct {
     /// this vtable instead of the real transport. Production code leaves it
     /// null; tests set it to a fake.
     transport_override: ?*const TransportVTable = null,
+
+    /// Test-only flag: when true, sessions construct a `FakeTransport`
+    /// instead of the real Electric/WS/HTTP stack. This keeps the 0120
+    /// lifecycle tests deterministic without requiring a live plue.
+    ///
+    /// When FALSE (default), sessions build a `RealTransport` per 0140.
+    /// Integration tests gated on `POC_ELECTRIC_STACK=1` leave this off.
+    testing_use_fake_transport: bool = false,
 
     pub fn create(
         allocator: std.mem.Allocator,
@@ -146,6 +160,8 @@ test {
     _ = @import("transport.zig");
     _ = @import("session.zig");
     _ = @import("schema.zig");
+    _ = @import("electric/mod.zig");
+    _ = @import("wspty/mod.zig");
 }
 
 // -----------------------------------------------------------------------
