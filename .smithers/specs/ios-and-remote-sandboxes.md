@@ -280,6 +280,7 @@ Desktop-local is structurally different enough from the iOS-and-remote-sandboxes
 - Production Electric shapes: `ios-and-remote-sandboxes-production-shapes.md`.
 - Independent validation checklist (consumed by the `ticket-implement` review step): `ios-and-remote-sandboxes-validation.md`.
 - Testing strategy (per-component layers, boundary conditions, CI job set): `ios-and-remote-sandboxes-testing.md`.
+- Migration strategy (gui-tree only): `ios-and-remote-sandboxes-migration.md`.
 
 ## Open Questions Tracked Elsewhere
 
