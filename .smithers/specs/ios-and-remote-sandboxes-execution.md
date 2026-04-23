@@ -126,6 +126,7 @@ Each is its own ticket. Ordered within groups, but groups can progress in parall
 - Feature flags — anchored to plue's existing global env-backed booleans (`plue/internal/routes/flags.go:10`, `plue/internal/config/config.go:53`). If per-cohort or kill-switch infra doesn't exist, the doc either scopes the rollout to what global flags can do, or it proposes the flag-infra upgrade as a named prerequisite.
 - Android timing: already decided in the main spec — continuous build canary only, no user-facing release. Rollout plan must not schedule Android user phases. If that ever changes, a new phase is added.
 - *Done when:* doc lives at `.smithers/specs/ios-and-remote-sandboxes-rollout.md`, reviewed.
+- *Status:* landed. The rollout plan is at [`ios-and-remote-sandboxes-rollout.md`](ios-and-remote-sandboxes-rollout.md); it carries the five-phase sequence (desktop-remote private → desktop-remote alpha → iOS alpha → desktop-local migration [blocked on sibling spec] → GA), the five-flag → owner-ticket mapping, Option (a) gating choice (scope to global booleans; cohorts via build distribution), canary cohorts, kill-switch policy with rollback latency, and per-phase machine-checkable acceptance gates referencing the observability doc's metric/error names.
 
 ## Implementation ordering
 

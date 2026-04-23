@@ -282,6 +282,7 @@ Desktop-local is structurally different enough from the iOS-and-remote-sandboxes
 - Independent validation checklist (consumed by the `ticket-implement` review step): `ios-and-remote-sandboxes-validation.md`.
 - Testing strategy (per-component layers, boundary conditions, CI job set): `ios-and-remote-sandboxes-testing.md`.
 - Migration strategy (gui-tree only): `ios-and-remote-sandboxes-migration.md`.
+- Rollout plan (phases, feature flags, canary cohorts, kill switches, acceptance gates): `ios-and-remote-sandboxes-rollout.md`.
 
 ## Open Questions Tracked Elsewhere
 
