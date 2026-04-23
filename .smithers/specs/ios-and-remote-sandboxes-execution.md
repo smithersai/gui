@@ -103,6 +103,11 @@ Each is its own ticket. Ordered within groups, but groups can progress in parall
 - *Done when:* doc lives at `.smithers/specs/ios-and-remote-sandboxes-observability.md`, reviewed.
 - *Status:* landed. The doc is at [`ios-and-remote-sandboxes-observability.md`](ios-and-remote-sandboxes-observability.md) and is the source of truth for metric and error-code additions for every ticket in this initiative (referenced by validation universal checks #4 and #5).
 
+**D2a: Secure-store threat model & session recovery.**
+- Threat model for OAuth2 tokens in the platform secure store; recovery paths for lost device, revoked session, refresh-rotation crash; v1 revoke-scope decision.
+- *Done when:* doc lives at `.smithers/specs/ios-and-remote-sandboxes-secure-store.md`, reviewed.
+- *Status:* landed. The doc is at [`ios-and-remote-sandboxes-secure-store.md`](ios-and-remote-sandboxes-secure-store.md) and is referenced by 0106/0109 reviewers. v1 scope = app-wide revoke (option b); reuses `auth_expired` / `auth_revoked` from D2's taxonomy — no new error class introduced.
+
 **D3: Independent validation checklist.**
 - For each ticket, what does a reviewing agent check to independently confirm "done" beyond "tests pass"?
 - Example categories: new RPC has schema doc'd + both sides updated + shape subscribed by at least one client + metric added + error taxonomy entry + spec row checked off.
