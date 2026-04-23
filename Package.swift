@@ -23,6 +23,8 @@ let package = Package(
         // Exposed so the iOS XcodeGen target can consume the shared auth
         // module. Cross-platform (iOS + macOS). See ticket 0109.
         .library(name: "SmithersAuth", targets: ["SmithersAuth"]),
+        // Ticket 0124: shared observable store layer over SmithersRuntime.
+        .library(name: "SmithersStore", targets: ["SmithersStore"]),
     ],
     dependencies: [
         .package(url: "https://github.com/nalexn/ViewInspector.git", from: "0.10.0"),
@@ -54,12 +56,13 @@ let package = Package(
         // without compiling the whole SmithersGUI / CGhosttyKit graph.
         .executableTarget(
             name: "SmithersGUI",
-            dependencies: ["CGhosttyKit", "CSmithersKit", "SmithersAuth"],
+            dependencies: ["CGhosttyKit", "CSmithersKit", "SmithersAuth", "SmithersRuntime", "SmithersStore"],
             path: ".",
             exclude: [
                 "ghostty",
                 "CGhosttyKit",
                 "CSmithersKit",
+                "poc",
                 "tmux",
                 "build.zig",
                 ".zig-cache",
@@ -160,6 +163,22 @@ let package = Package(
             name: "SmithersRuntimeTests",
             dependencies: ["SmithersRuntime"],
             path: "Shared/Tests/SmithersRuntimeTests"
+        ),
+
+        // ticket/0124 — shared observable stores over SmithersRuntime.
+        // Cross-platform (macOS + iOS); no AppKit/UIKit/CLI. Views bind
+        // via @Published arrays; writes go through the pessimistic
+        // dispatcher on `SmithersStore`.
+        .target(
+            name: "SmithersStore",
+            dependencies: ["SmithersRuntime"],
+            path: "Shared/Sources/SmithersStore",
+            exclude: ["README.md"]
+        ),
+        .testTarget(
+            name: "SmithersStoreTests",
+            dependencies: ["SmithersStore"],
+            path: "Shared/Tests/SmithersStoreTests"
         ),
     ]
 )

@@ -26,6 +26,14 @@ class SmithersClient: ObservableObject {
     @Published private(set) var connectionTransport: ConnectionTransport = .none
     @Published private(set) var serverReachable = false
 
+    // Ticket 0124. When the user has signed in (0109) and the 0120 runtime
+    // has a live session, the SwiftUI layer installs a `SmithersRemoteProvider`
+    // here. Reads prefer the store's cached shape rows; writes go through
+    // the pessimistic dispatcher (`smithers_core_write` + shape echo).
+    // Local-mode (no-sign-in) continues to use the CLI/libsmithers path.
+    weak var remoteProvider: SmithersRemoteProvider?
+    var isRemoteModeActive: Bool { remoteProvider != nil }
+
     nonisolated static let minimumOrchestratorVersion = "0.16.0"
     nonisolated static let defaultHTTPTransportPort = 7331
 
@@ -265,7 +273,10 @@ class SmithersClient: ObservableObject {
     }
 
     func listRuns() async throws -> [RunSummary] {
-        try await callList("listRuns", keys: ["runs"])
+        if let remote = remoteProvider {
+            return remote.listRuns()
+        }
+        return try await callList("listRuns", keys: ["runs"])
     }
 
     func inspectRun(_ runId: String) async throws -> RunInspection {
@@ -273,10 +284,18 @@ class SmithersClient: ObservableObject {
     }
 
     func cancelRun(_ runId: String) async throws {
+        if let remote = remoteProvider {
+            try await remote.cancelRun(runId)
+            return
+        }
         try await callVoid("cancelRun", args: ["runId": AnyEncodable(runId)])
     }
 
     func approveNode(runId: String, nodeId: String, iteration: Int? = nil, note: String? = nil) async throws {
+        if let remote = remoteProvider {
+            try await remote.approveNode(runId: runId, nodeId: nodeId, iteration: iteration, note: note)
+            return
+        }
         try await callVoid("approveNode", args: [
             "runId": AnyEncodable(runId),
             "nodeId": AnyEncodable(nodeId),
@@ -286,6 +305,10 @@ class SmithersClient: ObservableObject {
     }
 
     func denyNode(runId: String, nodeId: String, iteration: Int? = nil, reason: String? = nil) async throws {
+        if let remote = remoteProvider {
+            try await remote.denyNode(runId: runId, nodeId: nodeId, iteration: iteration, reason: reason)
+            return
+        }
         try await callVoid("denyNode", args: [
             "runId": AnyEncodable(runId),
             "nodeId": AnyEncodable(nodeId),
@@ -295,7 +318,11 @@ class SmithersClient: ObservableObject {
     }
 
     func rerunRun(_ runId: String) async throws -> String {
-        try await call("rerunRun", args: ["runId": AnyEncodable(runId)])
+        if let remote = remoteProvider {
+            try await remote.rerunRun(runId)
+            return runId
+        }
+        return try await call("rerunRun", args: ["runId": AnyEncodable(runId)])
     }
 
     func hijackRun(_ runId: String, port: Int = defaultHTTPTransportPort) async throws -> HijackSession {
@@ -518,8 +545,14 @@ class SmithersClient: ObservableObject {
     func toggleCron(cronID: String, enabled: Bool) async throws { try await callVoid("toggleCron", args: ["cronID": AnyEncodable(cronID), "enabled": AnyEncodable(enabled)]) }
     func deleteCron(cronID: String) async throws { try await callVoid("deleteCron", args: ["cronID": AnyEncodable(cronID)]) }
 
-    func listPendingApprovals() async throws -> [Approval] { try await callList("listPendingApprovals", keys: ["approvals"]) }
-    func listRecentDecisions(limit: Int = 20) async throws -> [ApprovalDecision] { try await callList("listRecentDecisions", args: ["limit": AnyEncodable(limit)], keys: ["decisions"]) }
+    func listPendingApprovals() async throws -> [Approval] {
+        if let remote = remoteProvider { return remote.listPendingApprovals() }
+        return try await callList("listPendingApprovals", keys: ["approvals"])
+    }
+    func listRecentDecisions(limit: Int = 20) async throws -> [ApprovalDecision] {
+        if let remote = remoteProvider { return remote.listRecentDecisions() }
+        return try await callList("listRecentDecisions", args: ["limit": AnyEncodable(limit)], keys: ["decisions"])
+    }
 
     func listLandings(state: String? = nil) async throws -> [Landing] { try await callList("listLandings", args: ["state": AnyEncodable(state)], keys: ["landings", "items"]) }
     func getLanding(number: Int) async throws -> Landing { try await callOne("getLanding", args: ["number": AnyEncodable(number)], keys: ["landing"]) }
@@ -535,17 +568,56 @@ class SmithersClient: ObservableObject {
     func closeIssue(number: Int, comment: String?) async throws -> SmithersIssue { try await callOne("closeIssue", args: ["number": AnyEncodable(number), "comment": AnyEncodable(comment)], keys: ["issue"]) }
     func reopenIssue(number: Int) async throws -> SmithersIssue { try await callOne("reopenIssue", args: ["number": AnyEncodable(number)], keys: ["issue"]) }
 
-    func listWorkspaces() async throws -> [Workspace] { try await callList("listWorkspaces", keys: ["workspaces", "items", "results"]) }
-    func viewWorkspace(_ workspaceId: String) async throws -> Workspace { try await callOne("viewWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)], keys: ["workspace"]) }
-    func createWorkspace(name: String, snapshotId: String? = nil) async throws -> Workspace { try await callOne("createWorkspace", args: ["name": AnyEncodable(name), "snapshotId": AnyEncodable(snapshotId)], keys: ["workspace"]) }
-    func deleteWorkspace(_ workspaceId: String) async throws { try await callVoid("deleteWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)]) }
-    func suspendWorkspace(_ workspaceId: String) async throws { try await callVoid("suspendWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)]) }
-    func resumeWorkspace(_ workspaceId: String) async throws { try await callVoid("resumeWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)]) }
-    func forkWorkspace(_ workspaceId: String, name: String? = nil) async throws -> Workspace { try await callOne("forkWorkspace", args: ["workspaceId": AnyEncodable(workspaceId), "name": AnyEncodable(name)], keys: ["workspace"]) }
-    func listWorkspaceSnapshots() async throws -> [WorkspaceSnapshot] { try await callList("listWorkspaceSnapshots", keys: ["snapshots", "items", "results"]) }
+    func listWorkspaces() async throws -> [Workspace] {
+        if let remote = remoteProvider { return remote.listWorkspaces() }
+        return try await callList("listWorkspaces", keys: ["workspaces", "items", "results"])
+    }
+    func viewWorkspace(_ workspaceId: String) async throws -> Workspace {
+        if let remote = remoteProvider, let ws = remote.listWorkspaces().first(where: { $0.id == workspaceId }) { return ws }
+        return try await callOne("viewWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)], keys: ["workspace"])
+    }
+    func createWorkspace(name: String, snapshotId: String? = nil) async throws -> Workspace {
+        if let remote = remoteProvider {
+            try await remote.createWorkspace(name: name, snapshotId: snapshotId)
+            return remote.listWorkspaces().first(where: { $0.name == name }) ?? Workspace(id: "pending", name: name)
+        }
+        return try await callOne("createWorkspace", args: ["name": AnyEncodable(name), "snapshotId": AnyEncodable(snapshotId)], keys: ["workspace"])
+    }
+    func deleteWorkspace(_ workspaceId: String) async throws {
+        if let remote = remoteProvider { try await remote.deleteWorkspace(workspaceId); return }
+        try await callVoid("deleteWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)])
+    }
+    func suspendWorkspace(_ workspaceId: String) async throws {
+        if let remote = remoteProvider { try await remote.suspendWorkspace(workspaceId); return }
+        try await callVoid("suspendWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)])
+    }
+    func resumeWorkspace(_ workspaceId: String) async throws {
+        if let remote = remoteProvider { try await remote.resumeWorkspace(workspaceId); return }
+        try await callVoid("resumeWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)])
+    }
+    func forkWorkspace(_ workspaceId: String, name: String? = nil) async throws -> Workspace {
+        if let remote = remoteProvider {
+            try await remote.forkWorkspace(workspaceId, name: name)
+            return remote.listWorkspaces().first(where: { name == nil ? $0.id != workspaceId : $0.name == name }) ?? Workspace(id: "pending", name: name ?? workspaceId)
+        }
+        return try await callOne("forkWorkspace", args: ["workspaceId": AnyEncodable(workspaceId), "name": AnyEncodable(name)], keys: ["workspace"])
+    }
+    func listWorkspaceSnapshots() async throws -> [WorkspaceSnapshot] {
+        if let remote = remoteProvider { return remote.listWorkspaceSnapshots() }
+        return try await callList("listWorkspaceSnapshots", keys: ["snapshots", "items", "results"])
+    }
     func viewWorkspaceSnapshot(_ snapshotId: String) async throws -> WorkspaceSnapshot { try await callOne("viewWorkspaceSnapshot", args: ["snapshotId": AnyEncodable(snapshotId)], keys: ["snapshot"]) }
-    func createWorkspaceSnapshot(workspaceId: String, name: String) async throws -> WorkspaceSnapshot { try await callOne("createWorkspaceSnapshot", args: ["workspaceId": AnyEncodable(workspaceId), "name": AnyEncodable(name)], keys: ["snapshot"]) }
-    func deleteWorkspaceSnapshot(_ snapshotId: String) async throws { try await callVoid("deleteWorkspaceSnapshot", args: ["snapshotId": AnyEncodable(snapshotId)]) }
+    func createWorkspaceSnapshot(workspaceId: String, name: String) async throws -> WorkspaceSnapshot {
+        if let remote = remoteProvider {
+            try await remote.createWorkspaceSnapshot(workspaceId: workspaceId, name: name)
+            return WorkspaceSnapshot(id: "pending", workspaceId: workspaceId, name: name)
+        }
+        return try await callOne("createWorkspaceSnapshot", args: ["workspaceId": AnyEncodable(workspaceId), "name": AnyEncodable(name)], keys: ["snapshot"])
+    }
+    func deleteWorkspaceSnapshot(_ snapshotId: String) async throws {
+        if let remote = remoteProvider { try await remote.deleteWorkspaceSnapshot(snapshotId); return }
+        try await callVoid("deleteWorkspaceSnapshot", args: ["snapshotId": AnyEncodable(snapshotId)])
+    }
 
     func search(query: String, scope: SearchScope, issueState: String? = nil, limit: Int = 20) async throws -> [SearchResult] {
         try await callList("search", args: ["query": AnyEncodable(query), "scope": AnyEncodable(scope), "issueState": AnyEncodable(issueState), "limit": AnyEncodable(limit)], keys: ["results", "items"])
@@ -1129,11 +1201,25 @@ class SmithersClient: ObservableObject {
     }
 
     func checkConnection() async {
+        // Ticket 0124. Prefer the 0120 runtime's http transport when a
+        // sign-in session is active. The legacy CLI probe still runs so
+        // the dev-tools view can report whether the local binary is
+        // installed, but it is NOT the authoritative transport any more.
         let version = await getOrchestratorVersion()
         cliAvailable = version != nil
-        isConnected = version != nil
-        connectionTransport = version == nil ? .none : .cli
-        serverReachable = false
+        if isRemoteModeActive {
+            isConnected = true
+            connectionTransport = .http
+            serverReachable = true
+        } else {
+            isConnected = version != nil
+            // Remote mode absent → local-only; transport is .none. We
+            // intentionally do NOT fall back to .cli for the remote data
+            // plane — tickets 0124/0126 require a real sign-in before the
+            // remote UI renders against shape reads.
+            connectionTransport = version == nil ? .none : .none
+            serverReachable = false
+        }
     }
 
     func hasSmithersProject() -> Bool {

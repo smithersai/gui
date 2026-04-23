@@ -7,6 +7,9 @@
 #if os(macOS)
 import AppKit
 import AuthenticationServices
+#if canImport(SmithersAuth)
+import SmithersAuth
+#endif
 
 public final class MacOSWebAuthPresenter: AuthorizeSessionPresenter {
     public init() {}

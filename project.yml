@@ -133,7 +133,13 @@ targets:
       - WorkflowsView.swift
       - WorkspacesView.swift
       - macos/Sources/Smithers
-      - Shared/Sources/SmithersAuth
+      - path: Shared/Sources/SmithersAuth
+        excludes:
+          - README.md
+      - Shared/Sources/SmithersRuntime
+      - path: Shared/Sources/SmithersStore
+        excludes:
+          - README.md
       - path: Resources/MarkdownShell
         type: folder
       # Helper binaries are macOS-only and intentionally NOT bundled into the
@@ -236,6 +242,11 @@ targets:
       # ticket 0122 — shared navigation/state model (route vocabulary
       # compiles for both platforms).
       - SharedNavigation.swift
+      # ticket 0124 — shared store layer that reads cached shape rows
+      # and dispatches HTTP writes through the runtime.
+      - path: Shared/Sources/SmithersStore
+        excludes:
+          - README.md
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOS
