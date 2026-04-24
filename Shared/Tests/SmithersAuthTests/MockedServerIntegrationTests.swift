@@ -193,23 +193,49 @@ final class MockedServerIntegrationTests: XCTestCase {
 
     // MARK: - Concurrent 401s collapse into one refresh
 
-    @MainActor
     func test_concurrent_refreshes_deduplicate() async throws {
         let transport = MockHTTPTransport()
-        transport.responses.append(.json(payload: [
-            "access_token": "A2", "refresh_token": "R2",
-        ]))
+        transport.sendDelayNanoseconds = 25_000_000
+        for _ in 0..<2 {
+            transport.responses.append(.json(payload: [
+                "access_token": "A2", "refresh_token": "R2",
+            ]))
+        }
         let client = OAuth2Client(config: makeConfig(), transport: transport)
         let store = InMemoryTokenStore(initial: OAuth2Tokens(accessToken: "A1", refreshToken: "R1"))
         let mgr = TokenManager(client: client, store: store)
 
-        async let a = mgr.refresh()
-        async let b = mgr.refresh()
-        let (ta, tb) = try await (a, b)
+        let a = Task { try await mgr.refresh() }
+        let b = Task { try await mgr.refresh() }
+
+        let ta = try await a.value
+        let tb = try await b.value
+
+        XCTAssertEqual(ta, tb)
         XCTAssertEqual(ta.accessToken, "A2")
-        XCTAssertEqual(tb.accessToken, "A2")
-        // Only ONE refresh hit the wire.
-        XCTAssertEqual(transport.recorded.count, 1)
+        XCTAssertEqual(refreshRequests(in: transport).count, 1)
+    }
+
+    func test_concurrent_refreshes_stress_deduplicate() async throws {
+        let transport = MockHTTPTransport()
+        transport.sendDelayNanoseconds = 25_000_000
+        for _ in 0..<20 {
+            transport.responses.append(.json(payload: [
+                "access_token": "A2", "refresh_token": "R2",
+            ]))
+        }
+        let client = OAuth2Client(config: makeConfig(), transport: transport)
+        let store = InMemoryTokenStore(initial: OAuth2Tokens(accessToken: "A1", refreshToken: "R1"))
+        let mgr = TokenManager(client: client, store: store)
+
+        let tasks = (0..<20).map { _ in
+            Task { try await mgr.refresh() }
+        }
+        let results = try await tasks.asyncMap { try await $0.value }
+        let first = try XCTUnwrap(results.first)
+
+        XCTAssertTrue(results.allSatisfy { $0 == first })
+        XCTAssertEqual(refreshRequests(in: transport).count, 1)
     }
 
     // MARK: - CSRF state mismatch is rejected
@@ -230,4 +256,23 @@ final class MockedServerIntegrationTests: XCTestCase {
 private final class CountingWipeHandler: SessionWipeHandler {
     var wipeCount = 0
     func wipeAfterSignOut() { wipeCount += 1 }
+}
+
+private func refreshRequests(in transport: MockHTTPTransport) -> [MockHTTPTransport.Recorded] {
+    transport.recorded.filter {
+        $0.url.absoluteString.hasSuffix("/api/oauth2/token")
+            && ($0.bodyString ?? "").contains("grant_type=refresh_token")
+    }
+}
+
+private extension Array {
+    func asyncMap<T>(_ transform: (Element) async throws -> T) async rethrows -> [T] {
+        var results: [T] = []
+        results.reserveCapacity(count)
+        for element in self {
+            let value = try await transform(element)
+            results.append(value)
+        }
+        return results
+    }
 }

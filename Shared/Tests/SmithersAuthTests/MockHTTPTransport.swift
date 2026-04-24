@@ -34,19 +34,33 @@ final class MockHTTPTransport: HTTPTransport {
         }
     }
 
+    private let lock = NSLock()
     var responses: [CannedResponse] = []
+    var sendDelayNanoseconds: UInt64 = 0
     private(set) var recorded: [Recorded] = []
 
     func send(_ request: URLRequest) async throws -> (Data, Int, [String: String]) {
-        recorded.append(Recorded(
-            url: request.url!,
-            method: request.httpMethod ?? "GET",
-            body: request.httpBody
-        ))
-        guard !responses.isEmpty else {
-            return (Data(), 500, [:])
+        if sendDelayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: sendDelayNanoseconds)
         }
-        let r = responses.removeFirst()
-        return (r.body, r.status, r.headers)
+
+        return withLock {
+            recorded.append(Recorded(
+                url: request.url!,
+                method: request.httpMethod ?? "GET",
+                body: request.httpBody
+            ))
+            guard !responses.isEmpty else {
+                return (Data(), 500, [:])
+            }
+            let r = responses.removeFirst()
+            return (r.body, r.status, r.headers)
+        }
+    }
+
+    private func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
     }
 }

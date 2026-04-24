@@ -87,51 +87,23 @@ public final class TokenManager {
     /// tokens hit the Keychain before this function resolves.
     @discardableResult
     public func refresh() async throws -> OAuth2Tokens {
-        // De-duplicate concurrent refreshes — two parallel 401s must not
-        // both redeem the same refresh token.
-        let (existingTask, current): (Task<OAuth2Tokens, Error>?, OAuth2Tokens?) = {
-            lock.lock(); defer { lock.unlock() }
-            return (inFlightRefresh, cached)
-        }()
-        if let existing = existingTask {
-            return try await existing.value
+        let task = withLock { () -> Task<OAuth2Tokens, Error>? in
+            if let existing = inFlightRefresh {
+                return existing
+            }
+            guard let current = cached else {
+                return nil
+            }
+            let task = makeRefreshTask(current: current)
+            inFlightRefresh = task
+            return task
         }
-        guard let current = current else {
+
+        guard let task else {
             throw TokenManagerError.notSignedIn
         }
-        let task = Task { [client, store] () throws -> OAuth2Tokens in
-            let newTokens: OAuth2Tokens
-            do {
-                newTokens = try await client.refresh(refreshToken: current.refreshToken)
-            } catch let err as OAuth2Error {
-                if case .whitelistDenied(let msg) = err {
-                    throw TokenManagerError.whitelistDenied(msg)
-                }
-                throw TokenManagerError.refreshFailed(err)
-            }
-            // WRITE-BEFORE-RETURN. If this throws, the caller treats the
-            // user as signed out — see `refreshAndRetry` wiring.
-            do {
-                try store.save(newTokens)
-            } catch let e as TokenStoreError {
-                throw TokenManagerError.persistenceFailed(e)
-            }
-            return newTokens
-        }
-        setInflight(task)
 
-        do {
-            let newTokens = try await task.value
-            self.setCached(newTokens)
-            self.clearInflight()
-            return newTokens
-        } catch {
-            self.clearInflight()
-            // A refresh failure (expired/rotated/revoked refresh token OR
-            // a store write failure) locks the user out. Wipe silently.
-            await self.localSignOut()
-            throw error
-        }
+        return try await task.value
     }
 
     private func setCached(_ t: OAuth2Tokens) {
@@ -142,8 +114,44 @@ public final class TokenManager {
         lock.lock(); inFlightRefresh = nil; lock.unlock()
     }
 
-    private func setInflight(_ t: Task<OAuth2Tokens, Error>) {
-        lock.lock(); inFlightRefresh = t; lock.unlock()
+    private func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
+
+    private func makeRefreshTask(current: OAuth2Tokens) -> Task<OAuth2Tokens, Error> {
+        Task { [self, client, store] in
+            defer { clearInflight() }
+
+            do {
+                let newTokens: OAuth2Tokens
+                do {
+                    newTokens = try await client.refresh(refreshToken: current.refreshToken)
+                } catch let err as OAuth2Error {
+                    if case .whitelistDenied(let msg) = err {
+                        throw TokenManagerError.whitelistDenied(msg)
+                    }
+                    throw TokenManagerError.refreshFailed(err)
+                }
+
+                // WRITE-BEFORE-RETURN. If this throws, the caller treats the
+                // user as signed out — see `refreshAndRetry` wiring.
+                do {
+                    try store.save(newTokens)
+                } catch let e as TokenStoreError {
+                    throw TokenManagerError.persistenceFailed(e)
+                }
+
+                setCached(newTokens)
+                return newTokens
+            } catch {
+                // A refresh failure (expired/rotated/revoked refresh token OR
+                // a store write failure) locks the user out. Wipe silently.
+                await localSignOut()
+                throw error
+            }
+        }
     }
 
     /// 401-retry helper. `perform` receives a bearer access token; return
