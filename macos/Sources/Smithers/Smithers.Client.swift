@@ -1,5 +1,8 @@
 import Foundation
 import CSmithersKit
+#if canImport(SmithersStore)
+import SmithersStore
+#endif
 
 @MainActor
 class SmithersClient: ObservableObject {
@@ -285,15 +288,28 @@ class SmithersClient: ObservableObject {
 
     func cancelRun(_ runId: String) async throws {
         if let remote = remoteProvider {
-            try await remote.cancelRun(runId)
+            try await remote.cancelRun(runId, repo: try await requireRemoteRepoRef())
             return
         }
         try await callVoid("cancelRun", args: ["runId": AnyEncodable(runId)])
     }
 
-    func approveNode(runId: String, nodeId: String, iteration: Int? = nil, note: String? = nil) async throws {
+    func approveNode(
+        runId: String,
+        nodeId: String,
+        iteration: Int? = nil,
+        approvalId: String? = nil,
+        note: String? = nil
+    ) async throws {
         if let remote = remoteProvider {
-            try await remote.approveNode(runId: runId, nodeId: nodeId, iteration: iteration, note: note)
+            try await remote.approveNode(
+                repo: try await requireRemoteRepoRef(),
+                approvalID: approvalId,
+                runId: runId,
+                nodeId: nodeId,
+                iteration: iteration,
+                note: note
+            )
             return
         }
         try await callVoid("approveNode", args: [
@@ -304,9 +320,22 @@ class SmithersClient: ObservableObject {
         ])
     }
 
-    func denyNode(runId: String, nodeId: String, iteration: Int? = nil, reason: String? = nil) async throws {
+    func denyNode(
+        runId: String,
+        nodeId: String,
+        iteration: Int? = nil,
+        approvalId: String? = nil,
+        reason: String? = nil
+    ) async throws {
         if let remote = remoteProvider {
-            try await remote.denyNode(runId: runId, nodeId: nodeId, iteration: iteration, reason: reason)
+            try await remote.denyNode(
+                repo: try await requireRemoteRepoRef(),
+                approvalID: approvalId,
+                runId: runId,
+                nodeId: nodeId,
+                iteration: iteration,
+                reason: reason
+            )
             return
         }
         try await callVoid("denyNode", args: [
@@ -319,7 +348,7 @@ class SmithersClient: ObservableObject {
 
     func rerunRun(_ runId: String) async throws -> String {
         if let remote = remoteProvider {
-            try await remote.rerunRun(runId)
+            try await remote.rerunRun(runId, repo: try await requireRemoteRepoRef())
             return runId
         }
         return try await call("rerunRun", args: ["runId": AnyEncodable(runId)])
@@ -578,26 +607,26 @@ class SmithersClient: ObservableObject {
     }
     func createWorkspace(name: String, snapshotId: String? = nil) async throws -> Workspace {
         if let remote = remoteProvider {
-            try await remote.createWorkspace(name: name, snapshotId: snapshotId)
+            try await remote.createWorkspace(repo: try await requireRemoteRepoRef(), name: name, snapshotId: snapshotId)
             return remote.listWorkspaces().first(where: { $0.name == name }) ?? Workspace(id: "pending", name: name)
         }
         return try await callOne("createWorkspace", args: ["name": AnyEncodable(name), "snapshotId": AnyEncodable(snapshotId)], keys: ["workspace"])
     }
     func deleteWorkspace(_ workspaceId: String) async throws {
-        if let remote = remoteProvider { try await remote.deleteWorkspace(workspaceId); return }
+        if let remote = remoteProvider { try await remote.deleteWorkspace(workspaceId, repo: try await requireRemoteRepoRef()); return }
         try await callVoid("deleteWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)])
     }
     func suspendWorkspace(_ workspaceId: String) async throws {
-        if let remote = remoteProvider { try await remote.suspendWorkspace(workspaceId); return }
+        if let remote = remoteProvider { try await remote.suspendWorkspace(workspaceId, repo: try await requireRemoteRepoRef()); return }
         try await callVoid("suspendWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)])
     }
     func resumeWorkspace(_ workspaceId: String) async throws {
-        if let remote = remoteProvider { try await remote.resumeWorkspace(workspaceId); return }
+        if let remote = remoteProvider { try await remote.resumeWorkspace(workspaceId, repo: try await requireRemoteRepoRef()); return }
         try await callVoid("resumeWorkspace", args: ["workspaceId": AnyEncodable(workspaceId)])
     }
     func forkWorkspace(_ workspaceId: String, name: String? = nil) async throws -> Workspace {
         if let remote = remoteProvider {
-            try await remote.forkWorkspace(workspaceId, name: name)
+            try await remote.forkWorkspace(workspaceId, repo: try await requireRemoteRepoRef(), name: name)
             return remote.listWorkspaces().first(where: { name == nil ? $0.id != workspaceId : $0.name == name }) ?? Workspace(id: "pending", name: name ?? workspaceId)
         }
         return try await callOne("forkWorkspace", args: ["workspaceId": AnyEncodable(workspaceId), "name": AnyEncodable(name)], keys: ["workspace"])
@@ -609,13 +638,13 @@ class SmithersClient: ObservableObject {
     func viewWorkspaceSnapshot(_ snapshotId: String) async throws -> WorkspaceSnapshot { try await callOne("viewWorkspaceSnapshot", args: ["snapshotId": AnyEncodable(snapshotId)], keys: ["snapshot"]) }
     func createWorkspaceSnapshot(workspaceId: String, name: String) async throws -> WorkspaceSnapshot {
         if let remote = remoteProvider {
-            try await remote.createWorkspaceSnapshot(workspaceId: workspaceId, name: name)
+            try await remote.createWorkspaceSnapshot(repo: try await requireRemoteRepoRef(), workspaceId: workspaceId, name: name)
             return WorkspaceSnapshot(id: "pending", workspaceId: workspaceId, name: name)
         }
         return try await callOne("createWorkspaceSnapshot", args: ["workspaceId": AnyEncodable(workspaceId), "name": AnyEncodable(name)], keys: ["snapshot"])
     }
     func deleteWorkspaceSnapshot(_ snapshotId: String) async throws {
-        if let remote = remoteProvider { try await remote.deleteWorkspaceSnapshot(snapshotId); return }
+        if let remote = remoteProvider { try await remote.deleteWorkspaceSnapshot(snapshotId, repo: try await requireRemoteRepoRef()); return }
         try await callVoid("deleteWorkspaceSnapshot", args: ["snapshotId": AnyEncodable(snapshotId)])
     }
 
@@ -1363,6 +1392,21 @@ struct AnyEncodable: Encodable {
 
     func encode(to encoder: Encoder) throws {
         try encodeBody(encoder)
+    }
+}
+
+private extension SmithersClient {
+    func requireRemoteRepoRef() async throws -> ActionRepoRef {
+        let repo = try await getCurrentRepo()
+        guard
+            let owner = repo.owner?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !owner.isEmpty,
+            let name = repo.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !name.isEmpty
+        else {
+            throw ActionContractError.missingRepoContext
+        }
+        return ActionRepoRef(owner: owner, name: name)
     }
 }
 

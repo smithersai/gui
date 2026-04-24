@@ -442,7 +442,12 @@ struct ApprovalsView: View {
     private func approve(_ approval: Approval) async {
         actionInFlight.insert(approval.id)
         do {
-            try await smithers.approveNode(runId: approval.runId, nodeId: approval.nodeId, iteration: approval.iteration)
+            try await smithers.approveNode(
+                runId: approval.runId,
+                nodeId: approval.nodeId,
+                iteration: approval.iteration,
+                approvalId: approval.id
+            )
             AppNotifications.shared.post(
                 title: "Approval granted",
                 message: "\(approval.gate ?? approval.nodeId) (\(String(approval.runId.prefix(8))))",
@@ -464,7 +469,12 @@ struct ApprovalsView: View {
     private func deny(_ approval: Approval) async {
         actionInFlight.insert(approval.id)
         do {
-            try await smithers.denyNode(runId: approval.runId, nodeId: approval.nodeId, iteration: approval.iteration)
+            try await smithers.denyNode(
+                runId: approval.runId,
+                nodeId: approval.nodeId,
+                iteration: approval.iteration,
+                approvalId: approval.id
+            )
             AppNotifications.shared.post(
                 title: "Approval denied",
                 message: "\(approval.gate ?? approval.nodeId) (\(String(approval.runId.prefix(8))))",

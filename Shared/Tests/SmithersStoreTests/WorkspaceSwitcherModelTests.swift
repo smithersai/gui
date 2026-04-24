@@ -49,9 +49,9 @@ private final class FakeFetcher: RemoteWorkspaceFetcher, @unchecked Sendable {
 private final class FakeDeleter: WorkspaceDeleter, @unchecked Sendable {
     var deleted: [String] = []
     var shouldThrow: Error? = nil
-    func deleteWorkspace(id: String) async throws {
+    func deleteWorkspace(_ workspace: SwitcherWorkspace) async throws {
         if let e = shouldThrow { throw e }
-        deleted.append(id)
+        deleted.append(workspace.id)
     }
 }
 

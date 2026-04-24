@@ -100,6 +100,8 @@ public struct ApprovalShapeRow: Sendable, Codable, Equatable, Hashable, Identifi
 public struct WorkspaceRow: Sendable, Codable, Equatable, Hashable, Identifiable {
     public var id: String { workspaceId }
     public let workspaceId: String
+    public let repoOwner: String?
+    public let repoName: String?
     public let name: String
     public let status: String
     public let engineId: String?
@@ -107,8 +109,32 @@ public struct WorkspaceRow: Sendable, Codable, Equatable, Hashable, Identifiable
     public let updatedAt: Date?
     public let suspendedAt: Date?
 
+    public init(
+        workspaceId: String,
+        repoOwner: String? = nil,
+        repoName: String? = nil,
+        name: String,
+        status: String,
+        engineId: String? = nil,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil,
+        suspendedAt: Date? = nil
+    ) {
+        self.workspaceId = workspaceId
+        self.repoOwner = repoOwner
+        self.repoName = repoName
+        self.name = name
+        self.status = status
+        self.engineId = engineId
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.suspendedAt = suspendedAt
+    }
+
     private enum CodingKeys: String, CodingKey {
         case workspaceId = "workspace_id"
+        case repoOwner = "repo_owner"
+        case repoName = "repo_name"
         case name
         case status
         case engineId = "engine_id"
@@ -258,19 +284,5 @@ public enum StoreTable {
     public static let devtoolsSnapshots = "devtools_snapshots"
 }
 
-/// Write actions mirror the plue HTTP routes (ticket 0110/0111). Again, in
-/// ONE place so rename churn stays surgical.
-public enum StoreAction {
-    public static let approveNode = "approvals.decide.approve"
-    public static let denyNode = "approvals.decide.deny"
-    public static let cancelRun = "runs.cancel"
-    public static let rerunRun = "runs.rerun"
-    public static let createWorkspace = "workspaces.create"
-    public static let deleteWorkspace = "workspaces.delete"
-    public static let suspendWorkspace = "workspaces.suspend"
-    public static let resumeWorkspace = "workspaces.resume"
-    public static let forkWorkspace = "workspaces.fork"
-    public static let createWorkspaceSnapshot = "workspaces.snapshot.create"
-    public static let deleteWorkspaceSnapshot = "workspaces.snapshot.delete"
-    public static let sendAgentMessage = "agent.sessions.sendMessage"
-}
+/// Write action kinds live in `ActionKind.swift` so Swift emitters and the
+/// Zig resolver share one canonical contract surface.

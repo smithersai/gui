@@ -9,13 +9,15 @@
 // signed out / no engine is configured.
 //
 // Pessimistic writes: all mutating verbs route through
-// `SmithersStore.dispatch(action:, payloadJSON:, echoTable:)`. The view
+// `SmithersStore.dispatch(_:echoTable:)`. The view
 // `await`s the dispatch; the store only returns after the HTTP write AND
 // the matching shape-delta have been observed.
 
 import Foundation
-#if SWIFT_PACKAGE
+#if canImport(SmithersRuntime)
 import SmithersRuntime
+#endif
+#if canImport(SmithersStore)
 import SmithersStore
 #endif
 
@@ -70,91 +72,111 @@ final class SmithersRemoteProvider: ObservableObject {
 
     // MARK: Writes — pessimistic.
 
-    func approveNode(runId: String, nodeId: String, iteration: Int?, note: String?) async throws {
-        let payload = jsonEncode([
-            "run_id": runId,
-            "node_id": nodeId,
-            "iteration": iteration as Any,
-            "note": note as Any,
-        ])
-        _ = try await store.dispatch(action: StoreAction.approveNode, payloadJSON: payload, echoTable: StoreTable.approvals)
-    }
-
-    func denyNode(runId: String, nodeId: String, iteration: Int?, reason: String?) async throws {
-        let payload = jsonEncode([
-            "run_id": runId,
-            "node_id": nodeId,
-            "iteration": iteration as Any,
-            "reason": reason as Any,
-        ])
-        _ = try await store.dispatch(action: StoreAction.denyNode, payloadJSON: payload, echoTable: StoreTable.approvals)
-    }
-
-    func cancelRun(_ runId: String) async throws {
+    func approveNode(
+        repo: ActionRepoRef,
+        approvalID: String?,
+        runId: String,
+        nodeId: String,
+        iteration: Int?,
+        note: String?
+    ) async throws {
+        let resolvedApprovalID = try approvalID ?? resolveApprovalID(runId: runId, nodeId: nodeId, iteration: iteration)
         _ = try await store.dispatch(
-            action: StoreAction.cancelRun,
-            payloadJSON: jsonEncode(["run_id": runId]),
+            ActionRequestFactory.approvalDecide(
+                repo: repo,
+                approvalID: resolvedApprovalID,
+                runID: runId,
+                nodeID: nodeId,
+                iteration: iteration,
+                decision: .approved,
+                note: note
+            ),
+            echoTable: StoreTable.approvals
+        )
+    }
+
+    func denyNode(
+        repo: ActionRepoRef,
+        approvalID: String?,
+        runId: String,
+        nodeId: String,
+        iteration: Int?,
+        reason: String?
+    ) async throws {
+        let resolvedApprovalID = try approvalID ?? resolveApprovalID(runId: runId, nodeId: nodeId, iteration: iteration)
+        _ = try await store.dispatch(
+            ActionRequestFactory.approvalDecide(
+                repo: repo,
+                approvalID: resolvedApprovalID,
+                runID: runId,
+                nodeID: nodeId,
+                iteration: iteration,
+                decision: .rejected,
+                reason: reason
+            ),
+            echoTable: StoreTable.approvals
+        )
+    }
+
+    func cancelRun(_ runId: String, repo: ActionRepoRef) async throws {
+        _ = try await store.dispatch(
+            ActionRequestFactory.workflowRunCancel(repo: repo, runID: runId),
             echoTable: StoreTable.workflowRuns
         )
     }
 
-    func rerunRun(_ runId: String) async throws {
+    func rerunRun(_ runId: String, repo: ActionRepoRef) async throws {
         _ = try await store.dispatch(
-            action: StoreAction.rerunRun,
-            payloadJSON: jsonEncode(["run_id": runId]),
+            ActionRequestFactory.workflowRunRerun(repo: repo, runID: runId),
             echoTable: StoreTable.workflowRuns
         )
     }
 
-    func createWorkspace(name: String, snapshotId: String?) async throws {
-        let payload = jsonEncode(["name": name, "snapshot_id": snapshotId as Any])
-        _ = try await store.dispatch(action: StoreAction.createWorkspace, payloadJSON: payload, echoTable: StoreTable.workspaces)
-    }
-
-    func deleteWorkspace(_ id: String) async throws {
+    func createWorkspace(repo: ActionRepoRef, name: String, snapshotId: String?) async throws {
         _ = try await store.dispatch(
-            action: StoreAction.deleteWorkspace,
-            payloadJSON: jsonEncode(["workspace_id": id]),
+            ActionRequestFactory.workspaceCreate(repo: repo, name: name, snapshotID: snapshotId),
             echoTable: StoreTable.workspaces
         )
     }
 
-    func suspendWorkspace(_ id: String) async throws {
+    func deleteWorkspace(_ id: String, repo: ActionRepoRef) async throws {
         _ = try await store.dispatch(
-            action: StoreAction.suspendWorkspace,
-            payloadJSON: jsonEncode(["workspace_id": id]),
+            ActionRequestFactory.workspaceDelete(repo: repo, workspaceID: id),
             echoTable: StoreTable.workspaces
         )
     }
 
-    func resumeWorkspace(_ id: String) async throws {
+    func suspendWorkspace(_ id: String, repo: ActionRepoRef) async throws {
         _ = try await store.dispatch(
-            action: StoreAction.resumeWorkspace,
-            payloadJSON: jsonEncode(["workspace_id": id]),
+            ActionRequestFactory.workspaceSuspend(repo: repo, workspaceID: id),
             echoTable: StoreTable.workspaces
         )
     }
 
-    func forkWorkspace(_ id: String, name: String?) async throws {
+    func resumeWorkspace(_ id: String, repo: ActionRepoRef) async throws {
         _ = try await store.dispatch(
-            action: StoreAction.forkWorkspace,
-            payloadJSON: jsonEncode(["workspace_id": id, "name": name as Any]),
+            ActionRequestFactory.workspaceResume(repo: repo, workspaceID: id),
             echoTable: StoreTable.workspaces
         )
     }
 
-    func createWorkspaceSnapshot(workspaceId: String, name: String) async throws {
+    func forkWorkspace(_ id: String, repo: ActionRepoRef, name: String?) async throws {
         _ = try await store.dispatch(
-            action: StoreAction.createWorkspaceSnapshot,
-            payloadJSON: jsonEncode(["workspace_id": workspaceId, "name": name]),
+            ActionRequestFactory.workspaceFork(repo: repo, workspaceID: id, name: name),
+            echoTable: StoreTable.workspaces
+        )
+    }
+
+    func createWorkspaceSnapshot(repo: ActionRepoRef, workspaceId: String, name: String) async throws {
+        _ = try await store.dispatch(
+            ActionRequestFactory.workspaceSnapshotCreate(repo: repo, workspaceID: workspaceId, name: name),
             echoTable: nil
         )
     }
 
-    func deleteWorkspaceSnapshot(_ id: String) async throws {
+    func deleteWorkspaceSnapshot(_ id: String, repo: ActionRepoRef) async throws {
         _ = try await store.dispatch(
-            action: StoreAction.deleteWorkspaceSnapshot,
-            payloadJSON: jsonEncode(["snapshot_id": id]),
+            ActionRequestFactory.workspaceSnapshotDelete(repo: repo, snapshotID: id),
             echoTable: nil
         )
     }
@@ -164,22 +186,14 @@ final class SmithersRemoteProvider: ObservableObject {
     func wipe() {
         lifecycle.wipeForSignOut()
     }
-}
-
-// MARK: - JSON helpers
-
-private func jsonEncode(_ dict: [String: Any]) -> String {
-    // Convert `nil`-bearing Any values — JSONSerialization refuses to
-    // encode Swift `Optional<Any>.none`; normalise to NSNull.
-    var  normalised: [String: Any] = [:]
-    for (k, v) in dict {
-        if case Optional<Any>.none = v { normalised[k] = NSNull(); continue }
-        normalised[k] = v
+    private func resolveApprovalID(runId: String, nodeId: String, iteration: Int?) throws -> String {
+        if let match = store.approvals.pending.first(where: {
+            $0.runId == runId && $0.nodeId == nodeId && $0.iteration == iteration
+        }) {
+            return match.approvalId
+        }
+        throw ActionContractError.missingApprovalID(runID: runId, nodeID: nodeId, iteration: iteration)
     }
-    guard let data = try? JSONSerialization.data(withJSONObject: normalised, options: []) else {
-        return "{}"
-    }
-    return String(decoding: data, as: UTF8.self)
 }
 
 // MARK: - DTO adapters

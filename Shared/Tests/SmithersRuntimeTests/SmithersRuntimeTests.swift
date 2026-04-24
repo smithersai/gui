@@ -54,7 +54,7 @@ final class SmithersRuntimeTests: XCTestCase {
     func testWriteReturnsFuture() throws {
         let rt = try SmithersRuntime { SmithersCredentials(bearer: "tb") }
         let s = try rt.connect(.init(engineID: "e1", baseURL: "http://localhost"))
-        let fut = try s.write(action: "agent_sessions.create", payloadJSON: #"{"title":"hi"}"#)
+        let fut = try s.write(action: "agent_session.create", payloadJSON: #"{"title":"hi"}"#)
         XCTAssertGreaterThan(fut, 0)
     }
 

@@ -16,7 +16,7 @@
 //     `isLive()==true` and skip the background refetch on wake. When
 //     it is NOT live (0120 fake transport today), the presenter can call
 //     `refresh()` on foreground — we do NOT hide a polling loop in here.
-//   - Delete routes through `StoreAction.deleteWorkspace` (0105 owns the
+//   - Delete routes through `ActionRequestFactory.workspaceDelete(...)` (0105 owns the
 //     surface). Soft-delete → row disappears when the shape echoes.
 //     Hard-delete → row is gone outright. Either way: single path.
 //   - Ordering rule (MUST match 0135's server order):
@@ -86,6 +86,14 @@ public struct SwitcherWorkspace: Sendable, Codable, Equatable, Hashable, Identif
         case (let owner?, nil): return owner
         default: return ""
         }
+    }
+
+    public var actionRepoRef: ActionRepoRef? {
+        guard
+            let repoOwner, !repoOwner.isEmpty,
+            let repoName, !repoName.isEmpty
+        else { return nil }
+        return ActionRepoRef(owner: repoOwner, name: repoName)
     }
 
     /// The sortable recency key. Matches 0135's server expression:
@@ -248,10 +256,10 @@ public enum WorkspaceSwitcherState: Equatable {
 // MARK: - Delete action protocol
 
 /// The actual delete dispatch. In production this is a thin wrapper over
-/// `SmithersStore.dispatch(action: StoreAction.deleteWorkspace, ...)` —
+/// `SmithersStore.dispatch(ActionRequestFactory.workspaceDelete(...))` —
 /// which routes to 0105's soft-delete surface. In tests it's a recorder.
 public protocol WorkspaceDeleter: AnyObject {
-    func deleteWorkspace(id: String) async throws
+    func deleteWorkspace(_ workspace: SwitcherWorkspace) async throws
 }
 
 // MARK: - View-model
@@ -323,11 +331,18 @@ public final class WorkspaceSwitcherViewModel: ObservableObject {
             state = .emptySignedIn
             return
         }
-        let mapped = rows.map {
-            SwitcherWorkspace(
+        let existingByID: [String: SwitcherWorkspace]
+        if case .loaded(let items) = state {
+            existingByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        } else {
+            existingByID = [:]
+        }
+        let mapped: [SwitcherWorkspace] = rows.map {
+            let existing = existingByID[$0.workspaceId]
+            return SwitcherWorkspace(
                 id: $0.workspaceId,
-                repoOwner: nil,
-                repoName: nil,
+                repoOwner: $0.repoOwner ?? existing?.repoOwner,
+                repoName: $0.repoName ?? existing?.repoName,
                 title: $0.name,
                 state: $0.status,
                 lastAccessedAt: $0.updatedAt,
@@ -356,8 +371,12 @@ public final class WorkspaceSwitcherViewModel: ObservableObject {
         guard pendingDeleteID == id else { return }
         pendingDeleteID = nil
         guard let deleter else { return }
+        guard case .loaded(let items) = state, let workspace = items.first(where: { $0.id == id }) else {
+            state = .backendUnavailable(message: "delete: missing workspace context")
+            return
+        }
         do {
-            try await deleter.deleteWorkspace(id: id)
+            try await deleter.deleteWorkspace(workspace)
             if liveProbe?.isLive() != true {
                 await refresh()
             }
@@ -391,14 +410,15 @@ public final class StoreWorkspaceDeleter: WorkspaceDeleter, @unchecked Sendable 
 
     public init(store: SmithersStoreProtocol) { self.store = store }
 
-    public func deleteWorkspace(id: String) async throws {
+    public func deleteWorkspace(_ workspace: SwitcherWorkspace) async throws {
         // 0105 owns this surface: `workspaces.delete` is the canonical
         // soft-delete dispatch. We wait for the shape echo so the row
         // actually disappears before we return.
-        let payload = "{\"workspace_id\":\"\(id)\"}"
+        guard let repo = workspace.actionRepoRef else {
+            throw ActionContractError.missingRepoContext
+        }
         _ = try await store.dispatch(
-            action: StoreAction.deleteWorkspace,
-            payloadJSON: payload,
+            ActionRequestFactory.workspaceDelete(repo: repo, workspaceID: workspace.id),
             echoTable: StoreTable.workspaces
         )
     }

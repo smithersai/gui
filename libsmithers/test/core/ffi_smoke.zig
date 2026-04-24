@@ -146,7 +146,7 @@ test "FFI: write returns non-zero future" {
     };
     const s = smithers_core_connect(core, &cfg, &err);
     defer smithers_core_disconnect(s);
-    const fut = smithers_core_write(s, "agent_sessions.create", "{\"title\":\"hi\"}", &err);
+    const fut = smithers_core_write(s, "agent_session.create", "{\"title\":\"hi\"}", &err);
     try testing.expect(fut != 0);
 }
 

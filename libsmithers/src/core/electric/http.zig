@@ -45,6 +45,18 @@ pub const Request = struct {
     handle: ?[]const u8 = null,
 };
 
+pub const WriteMethod = enum {
+    POST,
+    DELETE,
+
+    fn asString(self: WriteMethod) []const u8 {
+        return switch (self) {
+            .POST => "POST",
+            .DELETE => "DELETE",
+        };
+    }
+};
+
 pub fn renderRequest(allocator: std.mem.Allocator, r: Request) ![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
@@ -86,9 +98,26 @@ pub fn post(
     req: Request,
     body: []const u8,
 ) Err!Response {
+    return sendJson(allocator, .POST, req, body);
+}
+
+pub fn delete(
+    allocator: std.mem.Allocator,
+    req: Request,
+    body: []const u8,
+) Err!Response {
+    return sendJson(allocator, .DELETE, req, body);
+}
+
+fn sendJson(
+    allocator: std.mem.Allocator,
+    method: WriteMethod,
+    req: Request,
+    body: []const u8,
+) Err!Response {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
-    buf.print(allocator, "POST {s} HTTP/1.1\r\n", .{req.path_and_query}) catch return Err.OutOfMemory;
+    buf.print(allocator, "{s} {s} HTTP/1.1\r\n", .{ method.asString(), req.path_and_query }) catch return Err.OutOfMemory;
     buf.print(allocator, "Host: {s}\r\n", .{req.host}) catch return Err.OutOfMemory;
     buf.appendSlice(allocator, "Accept: application/json\r\n") catch return Err.OutOfMemory;
     buf.appendSlice(allocator, "Content-Type: application/json\r\n") catch return Err.OutOfMemory;

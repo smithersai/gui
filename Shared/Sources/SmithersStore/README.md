@@ -25,7 +25,7 @@ UIKit, no CLI, no local-only fallbacks.
 - STATE: Electric shape subscriptions (via `RuntimeSession.subscribe`) feed
   a bounded SQLite cache in Zig. Stores re-query the cache on every
   `.shapeDelta` event for their table.
-- WRITES: `SmithersStore.dispatch(action:, payload:)` goes through
+- WRITES: `SmithersStore.dispatch(_:echoTable:)` goes through
   `smithers_core_write` (HTTP). UI state is NOT updated optimistically —
   the store only publishes the new row after the matching `.shapeDelta`
   arrives (pessimistic-write rule from the initiative spec).
