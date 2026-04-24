@@ -27,6 +27,8 @@ targets:
     platform: macOS
     sources:
       - AppLogger.swift
+      - SmithersGUI/Runtime/DevToolsClient.swift
+      - SmithersGUI/Runtime/DevToolsStore.swift
       - DevToolsModels.swift
       - DevToolsClientError.swift
       - DevToolsCLITransport.swift
@@ -39,6 +41,10 @@ targets:
       - FrameScrubberView.swift
       - RewindConfirmationDialog.swift
       - LiveRunLayout.swift
+      - SmithersGUI/Views/RunInspector/RunInspectorView.swift
+      - SmithersGUI/Views/RunInspector/RunTreeView.swift
+      - SmithersGUI/Views/RunInspector/NodeInspectorView.swift
+      - SmithersGUI/Views/RunInspector/FrameScrubberView.swift
       - LiveRunView.swift
       - LiveRunTreeExpansionStore.swift
       - LiveRunTreeView.swift
@@ -284,6 +290,43 @@ targets:
       # returns nil when PLUE_E2E_MODE is unset), so it is safe to ship
       # in the App Store binary.
       - path: Shared/Sources/SmithersE2ESupport
+    info:
+      path: ios/Sources/SmithersiOS/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: Smithers
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: "$(PRODUCT_NAME)"
+        CFBundlePackageType: "$(PRODUCT_BUNDLE_PACKAGE_TYPE)"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        SmithersPlueBaseURL: "$(PLUE_BASE_URL)"
+        SmithersPreviewURL: "$(PLUE_PREVIEW_URL)"
+        LSRequiresIPhoneOS: true
+        UILaunchStoryboardName: LaunchScreen
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # Register `smithers://` once for OAuth2 callbacks and app deep links.
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.smithers.ios.deep-links
+            CFBundleURLSchemes:
+              - smithers
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+            127.0.0.1:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
     settings:
       base:
         # Ticket 0125: bundle id is the canonical App Store Connect identifier.
@@ -291,11 +334,13 @@ targets:
         # the knob the user plugs into https://appstoreconnect.apple.com/.
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.ios
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: ios/Sources/SmithersiOS/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
+        # Holds the associated-domains placeholder for universal links.
+        # Production link handling still requires the AASA file + profile.
         CODE_SIGN_ENTITLEMENTS: ios/SmithersiOS.entitlements
+        APS_ENVIRONMENT: development
         # Ticket 0125: versioning.
         #   MARKETING_VERSION      = CFBundleShortVersionString (e.g. 0.1.0).
         #   CURRENT_PROJECT_VERSION = CFBundleVersion           (monotonic int).
@@ -324,6 +369,11 @@ targets:
         PROVISIONING_PROFILE_SPECIFIER: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+        # Keep clang/ld pinned to the active iOS SDK even when a developer
+        # shell exports LIBRARY_PATH/RUSTFLAGS for the CommandLineTools macOS SDK.
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
+        OTHER_LDFLAGS: "$(inherited) -force_load $(BUILT_PRODUCTS_DIR)/libghostty-vt.a -lc++"
       configs:
         Debug:
           # Developer + CI simulator builds: no signing at all. The
@@ -340,13 +390,94 @@ targets:
           CODE_SIGNING_REQUIRED: YES
           CODE_SIGNING_ALLOWED: YES
           CODE_SIGN_IDENTITY: "Apple Distribution"
+          APS_ENVIRONMENT: production
     dependencies:
+      - target: SmithersShareExtension
+        embed: true
+      - framework: ghostty/zig-out/lib/ghostty-vt.xcframework
+        embed: false
       - sdk: Foundation.framework
       - sdk: UIKit.framework
       - sdk: SwiftUI.framework
       - sdk: AuthenticationServices.framework
       - sdk: CryptoKit.framework
       - sdk: Security.framework
+  SmithersShareExtension:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ios/Sources/SmithersShareExtension
+        excludes:
+          - Info.plist
+      # Keychain bearer reader only. Avoid the full auth UI/session-driver
+      # surface because app extensions cannot present ASWebAuthenticationSession.
+      - Shared/Sources/SmithersAuth/TokenStore.swift
+    info:
+      path: ios/Sources/SmithersShareExtension/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: en
+        CFBundleDisplayName: Smithers
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: "$(PRODUCT_NAME)"
+        CFBundlePackageType: "$(PRODUCT_BUNDLE_PACKAGE_TYPE)"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        SmithersPlueBaseURL: "$(PLUE_BASE_URL)"
+        SmithersPreviewURL: "$(PLUE_PREVIEW_URL)"
+        NSExtension:
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebPageWithMaxCount: 1
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ShareViewController"
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+            127.0.0.1:
+              NSExceptionAllowsInsecureHTTPLoads: true
+              NSIncludesSubdomains: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.ios.ShareExtension
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        APPLICATION_EXTENSION_API_ONLY: YES
+        CODE_SIGN_ENTITLEMENTS: ios/SmithersShareExtension.entitlements
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Distribution"
+        DEVELOPMENT_TEAM: ""
+        PROVISIONING_PROFILE_SPECIFIER: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
+      configs:
+        Debug:
+          CODE_SIGNING_REQUIRED: NO
+          CODE_SIGNING_ALLOWED: NO
+          CODE_SIGN_IDENTITY: ""
+        Release:
+          CODE_SIGNING_REQUIRED: YES
+          CODE_SIGNING_ALLOWED: YES
+          CODE_SIGN_IDENTITY: "Apple Distribution"
+    dependencies:
+      - sdk: Foundation.framework
+      - sdk: UIKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: Security.framework
+      - sdk: UniformTypeIdentifiers.framework
   SmithersiOSTests:
     type: bundle.unit-test
     platform: iOS
@@ -364,10 +495,12 @@ targets:
         TEST_TARGET_NAME: SmithersiOS
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
   SmithersiOSUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -383,10 +516,12 @@ targets:
         TEST_TARGET_NAME: SmithersiOS
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
   # ---------------------------------------------------------------------------
   # iOS E2E test target (ticket ios-e2e-harness). Full-stack XCUITest bundle
   # that talks to a real plue backend on localhost:4000 via the PLUE_E2E_MODE
@@ -410,10 +545,12 @@ targets:
         TEST_TARGET_NAME: SmithersiOS
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
 schemes:
   SmithersGUI:
     build:
@@ -470,6 +607,7 @@ schemes:
     build:
       targets:
         SmithersiOS: all
+        SmithersShareExtension: all
         SmithersiOSTests: [test]
         SmithersiOSUITests: [test]
     test:
@@ -477,6 +615,11 @@ schemes:
         - SmithersiOSTests
         - SmithersiOSUITests
       gatherCoverageData: false
+  SmithersShareExtension:
+    build:
+      targets:
+        SmithersiOS: all
+        SmithersShareExtension: all
   # Dedicated scheme for the full-stack E2E bundle. Kept separate from
   # the `SmithersiOS` scheme so `xcodebuild -scheme SmithersiOSE2ETests test`
   # runs ONLY the e2e bundle and does not re-run the launch smoke test.

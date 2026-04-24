@@ -174,6 +174,17 @@ final class WorkspaceSwitcherRowModelTests: XCTestCase {
         ).asSwitcherWorkspace()
         XCTAssertEqual(ws.state, "unknown")
     }
+
+    func testUniqueReposAreSortedAndDeduped() {
+        let repos = WorkspaceSwitcherViewModel.uniqueRepos(from: [
+            dto(id: "1", owner: "zed", name: "api").asSwitcherWorkspace(),
+            dto(id: "2", owner: "acme", name: "widgets").asSwitcherWorkspace(),
+            dto(id: "3", owner: "acme", name: "widgets").asSwitcherWorkspace(),
+            dto(id: "4", owner: nil, name: "missing-owner").asSwitcherWorkspace(),
+        ])
+
+        XCTAssertEqual(repos.map(\.label), ["acme/widgets", "zed/api"])
+    }
 }
 
 // MARK: - Empty / error states
@@ -222,6 +233,30 @@ final class WorkspaceSwitcherStateMachineTests: XCTestCase {
         fetcher.set(.authExpired)
         await vm.refresh()
         XCTAssertEqual(vm.state, .signedOut, "stale rows must not remain visible after auth expiry")
+    }
+
+    func testRepoFilterRestrictsVisibleRowsAndCanClear() async {
+        let fetcher = FakeFetcher(outcome: .rows([
+            dto(id: "a", owner: "acme", name: "widgets", last: 3_000),
+            dto(id: "b", owner: "zed", name: "api", last: 2_000),
+            dto(id: "c", owner: "acme", name: "widgets", last: 1_000),
+        ]))
+        let vm = WorkspaceSwitcherViewModel(fetcher: fetcher)
+        await vm.refresh()
+
+        vm.setRepoFilter(SwitcherRepoRef(owner: "acme", name: "widgets"))
+        guard case .loaded(let filtered) = vm.state else {
+            return XCTFail("expected .loaded, got \(vm.state)")
+        }
+        XCTAssertEqual(filtered.map(\.id), ["a", "c"])
+        XCTAssertEqual(vm.repoFilterLabel, "acme/widgets")
+
+        vm.clearRepoFilter()
+        guard case .loaded(let all) = vm.state else {
+            return XCTFail("expected .loaded, got \(vm.state)")
+        }
+        XCTAssertEqual(all.map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(vm.repoFilterLabel, "All repos")
     }
 }
 

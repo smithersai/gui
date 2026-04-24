@@ -55,7 +55,7 @@ Make the existing macOS app capable of connecting to JJHub sandboxes in addition
 - `.smithers/tickets/0106-plue-oauth2-pkce-for-mobile.md`
 - `.smithers/tickets/0109-client-oauth2-signin-ui.md`
 - `.smithers/tickets/0112-plue-add-new-feature-flags.md`
-- Tickets `0114`-`0117` (production shape slices, authored in parallel)
+- Tickets `0114`-`0118` (production shape slices, authored in parallel)
 - `WelcomeView.swift`
 - `SidebarView.swift`
 - `WorkspacesView.swift`

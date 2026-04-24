@@ -1,13 +1,8 @@
 // TokenStore.swift — Keychain wrapper for OAuth2 access + refresh tokens.
 //
 // SECURITY (ticket 0109):
-//   - Storage class is `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
-//     Justification: the app needs to perform background refresh (and
-//     network calls in response to user taps shortly after launch) without
-//     re-authenticating, so `WhenUnlocked` is too strict. Binding to THIS
-//     DEVICE ONLY prevents the Keychain item from migrating to a new
-//     device via iCloud Keychain backup and expanding the blast radius of
-//     a device compromise.
+//   - Storage class is `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.
+//     Tokens are device-local and unavailable while the device is locked.
 //   - Tokens are never logged. `String(describing:)` on any value here
 //     returns a redacted placeholder for diagnostics.
 //   - Refresh-token rotation atomicity is enforced by the `saveTokens`
@@ -101,8 +96,11 @@ public final class KeychainTokenStore: TokenStore {
     public func save(_ tokens: OAuth2Tokens) throws -> OAuth2Tokens {
         let payload = try TokenJSON.encode(tokens)
 
-        // Try update first — if an item exists, keep its attributes.
-        let update: [String: Any] = [kSecValueData as String: payload]
+        // Try update first and migrate older items to the current access class.
+        let update: [String: Any] = [
+            kSecValueData as String: payload,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
         let updateStatus = SecItemUpdate(baseQuery() as CFDictionary, update as CFDictionary)
         switch updateStatus {
         case errSecSuccess:
@@ -116,8 +114,8 @@ public final class KeychainTokenStore: TokenStore {
 
         var add = baseQuery()
         add[kSecValueData as String] = payload
-        // SECURITY: access class + this-device-only + no iCloud sync.
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        // SECURITY: current-device-unlocked + this-device-only + no iCloud sync.
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         add[kSecAttrSynchronizable as String] = kCFBooleanFalse as Any
 
         let addStatus = SecItemAdd(add as CFDictionary, nil)

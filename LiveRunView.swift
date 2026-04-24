@@ -7,6 +7,7 @@ import AppKit
 
 struct LiveRunView: View {
     @ObservedObject var smithers: SmithersClient
+    private let devToolsClient: DevToolsClient
     let runId: String
     let nodeId: String?
     var onOpenTerminalCommand: ((String, String, String) -> Void)? = nil
@@ -69,6 +70,14 @@ struct LiveRunView: View {
         return runSummary?.status ?? .unknown
     }
 
+    private var runStateLabel: String? {
+        store.runStateView?.stateLabel
+    }
+
+    private var runStateReason: String? {
+        store.runStateView?.reasonSummary
+    }
+
     private var canCancel: Bool {
         !effectiveStatus.isTerminal
     }
@@ -96,7 +105,9 @@ struct LiveRunView: View {
         self.onOpenPrompt = onOpenPrompt
         self.onRunSummaryRefreshed = onRunSummaryRefreshed
         self.onClose = onClose
-        _store = StateObject(wrappedValue: LiveRunDevToolsStore(streamProvider: smithers))
+        let devToolsClient = DevToolsClient(smithers: smithers)
+        self.devToolsClient = devToolsClient
+        _store = StateObject(wrappedValue: LiveRunDevToolsStore(streamProvider: devToolsClient))
         _lastLogStore = StateObject(
             wrappedValue: LastLogPerNodeStore(streamProvider: smithers, historyProvider: smithers)
         )
@@ -198,6 +209,10 @@ struct LiveRunView: View {
                 heartbeatMs: 1_000,
                 lastEventAt: store.lastEventAt,
                 lastSeq: store.seq,
+                runStateLabel: runStateLabel,
+                runStateReason: runStateReason,
+                connectionState: store.connectionState,
+                staleSince: store.staleSince,
                 onCancel: canCancel ? { showCancelConfirmation = true } : nil,
                 onHijack: startHijack,
                 onOpenLogs: openLogsInTerminal,
@@ -207,6 +222,9 @@ struct LiveRunView: View {
                         store.connect(runId: runId)
                         await refreshRunSummary()
                     }
+                },
+                onClearHistory: {
+                    store.clearHistory()
                 },
                 onOpenWorkflow: onOpenWorkflow.map { handler in
                     { handler(workflowName) }
@@ -227,8 +245,8 @@ struct LiveRunView: View {
                 errorBanner(runLoadError)
             }
 
-            if case .error(let error) = store.connectionState {
-                connectionBanner(error)
+            if store.isStaleBannerVisible, let staleSince = store.staleSince {
+                staleBanner(since: staleSince)
             }
 
             if effectiveStatus == .waitingApproval {
@@ -381,13 +399,13 @@ struct LiveRunView: View {
         .accessibilityIdentifier("liveRun.errorBanner")
     }
 
-    private func connectionBanner(_ error: DevToolsClientError) -> some View {
+    private func staleBanner(since: Date) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "wifi.exclamationmark")
+            Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.warning)
 
-            Text(error.displayMessage)
+            Text("Connection stale since \(staleSinceText(since)). Showing last-known state.")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
 
@@ -406,6 +424,12 @@ struct LiveRunView: View {
         .background(Theme.warning.opacity(0.12))
         .overlay(Rectangle().fill(Theme.border).frame(height: 1), alignment: .bottom)
         .accessibilityIdentifier("liveRun.connectionBanner")
+    }
+
+    private func staleSinceText(_ since: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: since, relativeTo: Date())
     }
 
     private func connect() async {
@@ -534,8 +558,8 @@ struct LiveRunView: View {
         defer { cancelInFlight = false }
 
         do {
-            try await smithers.cancelRun(runId)
-            setActionMessage("Run cancelled.", color: Theme.success)
+            let result = try await devToolsClient.cancel(runId: runId)
+            setActionMessage(actionMessage("Run cancelled.", auditRowId: result.auditRowId), color: Theme.success)
             await refreshRunSummary()
         } catch {
             setActionMessage("Cancel error: \(error.localizedDescription)", color: Theme.danger)
@@ -552,8 +576,11 @@ struct LiveRunView: View {
         defer { approvalActionInFlight = false }
 
         do {
-            try await smithers.approveNode(runId: runId, nodeId: task.nodeId, iteration: task.iteration)
-            setActionMessage("Approved \(task.nodeId).", color: Theme.success)
+            let result = try await devToolsClient.approve(runId: runId, nodeId: task.nodeId, iteration: task.iteration)
+            setActionMessage(
+                actionMessage("Approved \(task.nodeId).", auditRowId: result.auditRowId),
+                color: Theme.success
+            )
             await refreshRunSummary()
         } catch {
             setActionMessage("Approve error: \(error.localizedDescription)", color: Theme.danger)
@@ -571,8 +598,8 @@ struct LiveRunView: View {
         defer { approvalActionInFlight = false }
 
         do {
-            try await smithers.denyNode(runId: runId, nodeId: task.nodeId, iteration: task.iteration)
-            setActionMessage("Denied \(task.nodeId).", color: Theme.success)
+            let result = try await devToolsClient.deny(runId: runId, nodeId: task.nodeId, iteration: task.iteration)
+            setActionMessage(actionMessage("Denied \(task.nodeId).", auditRowId: result.auditRowId), color: Theme.success)
             await refreshRunSummary()
         } catch {
             setActionMessage("Deny error: \(error.localizedDescription)", color: Theme.danger)
@@ -650,6 +677,11 @@ struct LiveRunView: View {
     private func setActionMessage(_ message: String, color: Color) {
         actionMessage = message
         actionMessageColor = color
+    }
+
+    private func actionMessage(_ base: String, auditRowId: String?) -> String {
+        guard let auditRowId, !auditRowId.isEmpty else { return base }
+        return "\(base) Audit: \(auditRowId)"
     }
 
     private func isRunNotFoundError(_ error: Error) -> Bool {

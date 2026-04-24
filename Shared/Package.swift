@@ -21,6 +21,7 @@ let package = Package(
         .library(name: "SmithersAuth", targets: ["SmithersAuth"]),
         .library(name: "SmithersRuntime", targets: ["SmithersRuntime"]),
         .library(name: "SmithersStore", targets: ["SmithersStore"]),
+        .library(name: "SmithersFlags", targets: ["SmithersFlags"]),
         .library(name: "SmithersE2ESupport", targets: ["SmithersE2ESupport"]),
     ],
     targets: [
@@ -38,6 +39,16 @@ let package = Package(
             name: "SmithersAuthTests",
             dependencies: ["SmithersAuth"],
             path: "Tests/SmithersAuthTests"
+        ),
+        .target(
+            name: "SmithersFlags",
+            dependencies: ["SmithersAuth"],
+            path: "Sources/SmithersFlags"
+        ),
+        .testTarget(
+            name: "SmithersFlagsTests",
+            dependencies: ["SmithersFlags"],
+            path: "Tests/SmithersFlagsTests"
         ),
         // SmithersRuntime — thin Swift wrapper around the 0120 libsmithers-core
         // FFI. The #if canImport(CSmithersKit) guard in the source file means
@@ -74,6 +85,11 @@ let package = Package(
             name: "SmithersE2ESupport",
             dependencies: ["SmithersAuth"],
             path: "Sources/SmithersE2ESupport"
+        ),
+        .testTarget(
+            name: "SmithersE2ESupportTests",
+            dependencies: ["SmithersE2ESupport"],
+            path: "Tests/SmithersE2ESupportTests"
         ),
     ]
 )

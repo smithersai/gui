@@ -1,5 +1,10 @@
 # Client: iOS productization umbrella
 
+## Status (audited 2026-04-24) — PARTIAL (umbrella ticket)
+
+- Done: Refactored into coordination umbrella; child tickets 0120–0126 exist with dependency ordering. 0125 (release plumbing) and 0126 (desktop-remote) shipped.
+- Remaining: Blocked on 0120/0121/0122/0123 (all PARTIAL) and 0146 (iOS terminal renderer, INCOMPLETE) before iOS can ship to TestFlight end-to-end.
+
 ## Context
 
 The original 0113 tried to cover build setup, navigation refactors, terminal portability, remote data wiring, release plumbing, and the underlying runtime shift in one ticket. That is too large to implement or review safely. The gui repo is still macOS-only in both `Package.swift:4-95` and `project.yml:1-192`, `ContentView.swift:730-2431` still mixes app entry, navigation shell, route switching, and AppKit hooks in one file, and `TerminalView.swift:430-1815` is still an AppKit terminal surface.

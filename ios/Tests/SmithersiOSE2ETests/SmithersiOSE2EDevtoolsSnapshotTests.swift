@@ -18,17 +18,15 @@ private enum DevtoolsLogicalKind {
     case console
     case network
 
-    // Ticket 0107's reference implementation uses a closed enum
-    // (`command_output`, `tool_state`, etc.), while the GUI ticket asks
-    // for logical "console" / "network" coverage. Try the user-facing
-    // kind first, then fall back to the plue-side enum when the backend
-    // rejects the logical name.
+    // Ticket 0107's target enum is hyphenated (`command-output`,
+    // `tool-state`), but deployed stacks may still expose underscore or
+    // logical aliases. Try canonical first, then compatibility fallbacks.
     var candidateAPIKinds: [String] {
         switch self {
         case .console:
-            return ["console", "command_output"]
+            return ["command-output", "command_output", "console"]
         case .network:
-            return ["network", "tool_state"]
+            return ["tool-state", "tool_state", "network"]
         }
     }
 }
@@ -369,7 +367,10 @@ private final class DevtoolsTestClient {
         let sessionID = sessionID ?? context.sessionID
         let repoID = repoID ?? context.repoID
         let whereClause = "repository_id IN (\(repoID)) AND session_id IN ('\(sessionID)')"
+        return try openShapeProbe(whereClause: whereClause)
+    }
 
+    func openShapeProbe(whereClause: String) throws -> ShapeStreamProbe {
         var request = URLRequest(url: try endpointURL(
             path: "v1/shape",
             queryItems: [
@@ -742,6 +743,84 @@ final class SmithersiOSE2EDevtoolsSnapshotTests: XCTestCase {
         XCTAssertFalse(
             streamed.body.contains("where clause with repository_id filter is required"),
             "shape request must include the required repository_id filter; body=\(streamed.body)"
+        )
+    }
+
+    func test_devtools_snapshot_shape_requires_repository_filter() throws {
+        let client = try DevtoolsTestClient.fromEnvironment()
+        try client.skipPositiveScenariosIfFlagExplicitlyDisabled()
+
+        let whereClause = "session_id IN ('\(client.context.sessionID)')"
+        let probe = try client.openShapeProbe(whereClause: whereClause)
+        defer { probe.close() }
+
+        let response = probe.waitForAnyData(timeout: 3)
+        XCTAssertTrue(
+            response.statusCode >= 400 ||
+            response.body.lowercased().contains("repository_id"),
+            "shape without repository_id filter should be rejected or explicitly flagged; status=\(response.statusCode), body=\(response.body)"
+        )
+    }
+
+    func test_devtools_snapshot_shape_fans_out_to_multiple_subscribers() throws {
+        let client = try DevtoolsTestClient.fromEnvironment()
+        try client.skipPositiveScenariosIfFlagExplicitlyDisabled()
+
+        let marker = client.uniqueMarker("fanout")
+        let firstProbe = try client.openShapeProbe()
+        let secondProbe = try client.openShapeProbe()
+        defer {
+            firstProbe.close()
+            secondProbe.close()
+        }
+
+        let write = try client.postSnapshot(
+            logicalKind: .console,
+            payload: [
+                "marker": marker,
+                "message": "fanout payload",
+            ]
+        )
+        XCTAssertEqual(write.statusCode, 201, "fanout write should succeed; path=\(write.path), body=\(write.body)")
+
+        let first = firstProbe.waitForContains(marker, timeout: 5)
+        let second = secondProbe.waitForContains(marker, timeout: 5)
+        XCTAssertEqual(first.statusCode, 200, "first subscriber should stay connected; body=\(first.body)")
+        XCTAssertEqual(second.statusCode, 200, "second subscriber should stay connected; body=\(second.body)")
+        XCTAssertTrue(first.body.contains(marker), "first subscriber missing marker; body=\(first.body)")
+        XCTAssertTrue(second.body.contains(marker), "second subscriber missing marker; body=\(second.body)")
+    }
+
+    func test_devtools_snapshot_shape_wrong_repo_does_not_leak() throws {
+        let client = try DevtoolsTestClient.fromEnvironment()
+        try client.skipPositiveScenariosIfFlagExplicitlyDisabled()
+
+        let marker = client.uniqueMarker("wrong-repo")
+        let write = try client.postSnapshot(
+            logicalKind: .console,
+            payload: [
+                "marker": marker,
+                "message": "repo isolation",
+            ]
+        )
+        XCTAssertEqual(write.statusCode, 201, "isolation write should succeed; path=\(write.path), body=\(write.body)")
+
+        let wrongRepoID = client.context.repoID + 9_999_999
+        let probe = try client.openShapeProbe(sessionID: client.context.sessionID, repoID: wrongRepoID)
+        defer { probe.close() }
+
+        let isolated = probe.waitForContains(marker, timeout: 3)
+        if isolated.statusCode >= 400 {
+            XCTAssertTrue(
+                [401, 403].contains(isolated.statusCode) ||
+                isolated.body.lowercased().contains("forbidden"),
+                "wrong-repo shape should be rejected by ACL; status=\(isolated.statusCode), body=\(isolated.body)"
+            )
+            return
+        }
+        XCTAssertFalse(
+            isolated.body.contains(marker),
+            "wrong-repo subscription must not receive marker data; body=\(isolated.body)"
         )
     }
 

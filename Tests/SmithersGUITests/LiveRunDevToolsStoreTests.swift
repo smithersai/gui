@@ -3,6 +3,7 @@ import XCTest
 
 // MARK: - Mock Stream Provider
 
+@MainActor
 final class MockDevToolsStreamProvider: DevToolsStreamProvider, @unchecked Sendable {
     var events: [DevToolsEvent] = []
     var snapshotToReturn: DevToolsSnapshot?
@@ -22,13 +23,15 @@ final class MockDevToolsStreamProvider: DevToolsStreamProvider, @unchecked Senda
     var streamCallCount = 0
     var snapshotCallCount = 0
     var jumpCallCount = 0
-    var lastFromSeq: Int?
+    var lastAfterSeq: Int?
+    var streamCalls: [(runId: String, afterSeq: Int?)] = []
     var lastJumpFrameNo: Int?
     var lastJumpConfirm: Bool?
 
-    func streamDevTools(runId: String, fromSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error> {
+    func streamDevTools(runId: String, afterSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error> {
         streamCallCount += 1
-        lastFromSeq = fromSeq
+        lastAfterSeq = afterSeq
+        streamCalls.append((runId, afterSeq))
         let capturedEvents = events
         let capturedError = streamError
         return AsyncThrowingStream { continuation in
@@ -78,7 +81,30 @@ private func makeNode(
     props: [String: JSONValue] = [:], task: DevToolsTaskInfo? = nil,
     children: [DevToolsNode] = [], depth: Int = 0
 ) -> DevToolsNode {
-    DevToolsNode(id: id, type: type, name: name, props: props, task: task, children: children, depth: depth)
+    let effectiveTask: DevToolsTaskInfo?
+    if let task {
+        effectiveTask = task
+    } else if type == .task {
+        effectiveTask = DevToolsTaskInfo(
+            nodeId: "task:\(id)",
+            kind: "agent",
+            agent: nil,
+            label: nil,
+            outputTableName: nil,
+            iteration: nil
+        )
+    } else {
+        effectiveTask = nil
+    }
+    return DevToolsNode(
+        id: id,
+        type: type,
+        name: name,
+        props: props,
+        task: effectiveTask,
+        children: children,
+        depth: depth
+    )
 }
 
 private func makeSnapshot(
@@ -189,6 +215,34 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         XCTAssertTrue(store.tree?.children.isEmpty ?? true, "Tree should be unchanged after resync request")
     }
 
+    func testGapResyncDiscardsDeltaPatchingUntilSnapshotArrives() {
+        let store = LiveRunDevToolsStore()
+        store.runId = "run_test"
+        let originalRoot = makeNode(
+            id: 1,
+            type: .workflow,
+            children: [makeNode(id: 2, name: "before")]
+        )
+        store.applyEvent(.snapshot(makeSnapshot(seq: 10, root: originalRoot)))
+
+        store.applyEvent(.gapResync(DevToolsGapResync(fromSeq: 10, toSeq: 20)))
+
+        let ignoredDelta = DevToolsDelta(baseSeq: 20, seq: 21, ops: [
+            .addNode(parentId: 1, index: 1, node: makeNode(id: 3, name: "ignored"))
+        ])
+        store.applyEvent(.delta(ignoredDelta))
+        XCTAssertNil(store.tree?.findNode(byId: 3), "Deltas should be ignored until the follow-up snapshot")
+
+        let replacementRoot = makeNode(
+            id: 1,
+            type: .workflow,
+            children: [makeNode(id: 4, name: "after-resync")]
+        )
+        store.applyEvent(.snapshot(makeSnapshot(frameNo: 2, seq: 21, root: replacementRoot)))
+        XCTAssertEqual(store.tree?.children.first?.id, 4)
+        XCTAssertEqual(store.seq, 21)
+    }
+
     // MARK: - Ghost state
 
     func testSelectNodeSetsSelectedNodeId() {
@@ -248,6 +302,26 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         let restored = makeNode(id: 1, children: [makeNode(id: 2, name: "back")])
         store.applyEvent(.snapshot(DevToolsSnapshot(runId: "run_test", frameNo: 3, seq: 3, root: restored)))
         XCTAssertFalse(store.isGhost, "Ghost should auto-clear when node reappears")
+    }
+
+    func testGhostEvictionHonorsConfiguredCap() {
+        let store = LiveRunDevToolsStore(ghostNodeCap: 1)
+        store.runId = "run_test"
+
+        let initialRoot = makeNode(
+            id: 1,
+            type: .workflow,
+            children: [
+                makeNode(id: 2, name: "first"),
+                makeNode(id: 3, name: "second"),
+            ]
+        )
+        store.applyEvent(.snapshot(makeSnapshot(frameNo: 1, seq: 1, root: initialRoot)))
+
+        let emptyRoot = makeNode(id: 1, type: .workflow, children: [])
+        store.applyEvent(.snapshot(makeSnapshot(frameNo: 2, seq: 2, root: emptyRoot)))
+
+        XCTAssertEqual(store.ghostNodes.count, 1)
     }
 
     func testDeselectClearsGhost() {
@@ -347,6 +421,69 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         store.connect(runId: "run_a")
         store.connect(runId: "run_b")
         XCTAssertEqual(store.runId, "run_b")
+    }
+
+    func testReconnectUsesStoredCursorPerRun() async {
+        let provider = MockDevToolsStreamProvider()
+        provider.events = [.snapshot(makeSnapshot(runId: "run_test", frameNo: 1, seq: 9))]
+        let store = LiveRunDevToolsStore(streamProvider: provider)
+
+        store.connect(runId: "run_test")
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        store.disconnect()
+
+        provider.events = []
+        store.connect(runId: "run_test")
+
+        XCTAssertEqual(provider.lastAfterSeq, 9)
+    }
+
+    func testSwitchingBackToRunRequestsFreshSnapshotAfterTreeReset() async {
+        let provider = MockDevToolsStreamProvider()
+        let store = LiveRunDevToolsStore(streamProvider: provider)
+
+        provider.events = [.snapshot(makeSnapshot(runId: "run_a", frameNo: 1, seq: 9))]
+        store.connect(runId: "run_a")
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        store.disconnect()
+
+        provider.events = [.snapshot(makeSnapshot(runId: "run_b", frameNo: 1, seq: 3))]
+        store.connect(runId: "run_b")
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        store.disconnect()
+
+        provider.events = []
+        store.connect(runId: "run_a")
+        try? await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertEqual(provider.streamCalls.last?.runId, "run_a")
+        XCTAssertNil(provider.streamCalls.last?.afterSeq)
+    }
+
+    func testRewindPastGhostMountClearsGhostEntry() async {
+        let provider = MockDevToolsStreamProvider()
+        let store = LiveRunDevToolsStore(streamProvider: provider)
+        store.runId = "run_test"
+
+        let mountedRoot = makeNode(
+            id: 1,
+            type: .workflow,
+            children: [makeNode(id: 2, name: "selected")]
+        )
+        let unmountedRoot = makeNode(id: 1, type: .workflow, children: [])
+        store.applyEvent(.snapshot(makeSnapshot(runId: "run_test", frameNo: 10, seq: 10, root: mountedRoot)))
+        store.selectNode(2)
+        store.applyEvent(.snapshot(makeSnapshot(runId: "run_test", frameNo: 11, seq: 11, root: unmountedRoot)))
+        XCTAssertTrue(store.isGhost)
+        XCTAssertEqual(store.selectedGhostRecord?.mountedFrameNo, 10)
+
+        provider.snapshotToReturn = makeSnapshot(runId: "run_test", frameNo: 5, seq: 12, root: mountedRoot)
+        await store.scrubTo(frameNo: 5)
+        provider.snapshotToReturn = makeSnapshot(runId: "run_test", frameNo: 5, seq: 13, root: unmountedRoot)
+        await store.rewind(to: 5, confirm: true)
+
+        XCTAssertTrue(store.ghostNodes.isEmpty, "Ghost entries mounted after rewind target should be cleared")
+        XCTAssertFalse(store.isGhost)
     }
 
     // MARK: - Concurrency annotations

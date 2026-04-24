@@ -1,5 +1,10 @@
 # PoC: Zig + SQLite on iOS
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: `poc/zig-sqlite-ios/` exists with `build.zig` and `src/`; Xcode project scaffolding in place.
+- Remaining: on-device XCTest runtime validation unconfirmed; real-device performance/crash data not yet captured.
+
 ## Context
 
 From `.smithers/specs/ios-and-remote-sandboxes-execution.md`, PoC-A6, added to Stage 0 based on the Codex review of the initial ticket set. The spec commits to a bounded SQLite cache inside `libsmithers-core` as the storage primitive for all Electric-synced state. That SQLite integration has never been proven on iOS from Zig, and it's central to client architecture — if it doesn't work, the entire Section 4 changes shape.

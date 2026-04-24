@@ -39,6 +39,16 @@ public enum OAuth2Error: Error, Equatable {
     case transport(String)
 }
 
+/// Cheap authenticated probe used by restored-session bootstrap paths.
+/// `.indeterminate` preserves the existing session when the backend is
+/// temporarily unavailable, while `.invalid` is reserved for clear auth
+/// failures from plue.
+public enum AccessTokenValidationResult: Equatable {
+    case valid
+    case invalid
+    case indeterminate
+}
+
 /// Small `URLSession`-style indirection so we can stub the wire in tests.
 public protocol HTTPTransport: AnyObject {
     /// Returns (data, HTTP status, headers). Callers assume the body is
@@ -138,6 +148,30 @@ public final class OAuth2Client {
             .init(name: "client_id", value: config.clientID),
         ]
         return try await postToken(body: form.percentEncodedQuery ?? "")
+    }
+
+    /// Verifies whether an access token still authenticates against plue's
+    /// cheap `/api/user` endpoint.
+    public func validateAccessToken(_ accessToken: String) async -> AccessTokenValidationResult {
+        var req = URLRequest(url: config.baseURL.appendingPathComponent("api/user"))
+        req.httpMethod = "GET"
+        req.timeoutInterval = 10
+        req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (_, status, _) = try await transport.send(req)
+            switch status {
+            case 200...299:
+                return .valid
+            case 400, 401, 403:
+                return .invalid
+            default:
+                return .indeterminate
+            }
+        } catch {
+            return .indeterminate
+        }
     }
 
     /// Best-effort app-wide revoke. When the route does not exist on the

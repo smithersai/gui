@@ -342,9 +342,15 @@ final class SmithersiOSE2ETerminalExtendedTests: XCTestCase {
         )
 
         openSeededWorkspace(in: app, workspaceID: ctx.workspaceID)
+        let terminalEmptyState = app.descendants(matching: .any)
+            .matching(identifier: "content.ios.workspace-detail.terminal-empty").firstMatch
         XCTAssertFalse(
             terminalSurface(in: app).waitForExistence(timeout: 5),
             "after the workspace session is tombstoned, reopening the workspace must not render the terminal surface"
+        )
+        XCTAssertTrue(
+            terminalEmptyState.waitForExistence(timeout: 5),
+            "after the workspace session is tombstoned, reopening the workspace must show the terminal-empty state"
         )
     }
 

@@ -29,10 +29,18 @@ final class AuthPKCETests: XCTestCase {
         let service = "com.smithers.ios.tests.\(UUID().uuidString)"
         let store = KeychainTokenStore(service: service, account: "roundtrip")
         let t = OAuth2Tokens(accessToken: "i_a", refreshToken: "i_r")
-        try store.save(t)
-        XCTAssertEqual(try store.load(), t)
-        try store.clear()
-        XCTAssertNil(try store.load())
+
+        do {
+            try store.save(t)
+            XCTAssertEqual(try store.load(), t)
+            try store.clear()
+            XCTAssertNil(try store.load())
+        } catch let error as TokenStoreError {
+            if case .keychainWriteFailed(-34018) = error {
+                throw XCTSkip("Simulator keychain is unavailable in this environment (\(error)).")
+            }
+            throw error
+        }
     }
 }
 #endif

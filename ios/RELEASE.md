@@ -303,11 +303,11 @@ Things go wrong. Order of escalation:
 
 ## Out of scope for this ticket
 
-- Universal links (`applinks:` associated domains) — the OAuth2 flow
-  uses a custom URL scheme (`smithers://auth/callback`), and
-  universal links would require serving an
-  `apple-app-site-association` file from plue. Revisit at App Store
-  launch.
+- Universal links are not production-ready yet. The entitlement contains
+  an `applinks:smithers.ai` placeholder, but the domain still needs a
+  valid `apple-app-site-association` file and a matching provisioning
+  profile before universal links can be claimed to work. The reliable
+  OAuth2 path is the custom URL scheme (`smithers://oauth2/callback`).
 - App Store (public) submission — TestFlight only.
 - Push notifications — no APNs entitlement today.
 - Sign in with Apple — not wired into the OAuth2 flow.

@@ -44,6 +44,10 @@ public struct SignInView: View {
                     ProgressView("Opening browser…")
                         .progressViewStyle(.circular)
 
+                case .restoringSession:
+                    ProgressView("Checking session…")
+                        .progressViewStyle(.circular)
+
                 case .signedIn:
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.seal.fill")
@@ -84,6 +88,7 @@ public struct SignInView: View {
     private func phaseKey(_ phase: AuthViewModel.Phase) -> String {
         switch phase {
         case .signedOut: return "signedOut"
+        case .restoringSession: return "restoringSession"
         case .signingIn: return "signingIn"
         case .signedIn: return "signedIn"
         case .whitelistDenied: return "whitelistDenied"

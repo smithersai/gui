@@ -25,6 +25,8 @@
 
 import SwiftUI
 import Foundation
+import Combine
+import os
 
 // MARK: - Public callback surface
 
@@ -67,6 +69,21 @@ public enum TerminalSurfaceConnectionState: Equatable {
     case disconnected
 }
 
+private extension TerminalSurfaceConnectionState {
+    var logValue: String {
+        switch self {
+        case .connecting:
+            return "connecting"
+        case .connected:
+            return "connected"
+        case .reconnecting:
+            return "reconnecting"
+        case .disconnected:
+            return "disconnected"
+        }
+    }
+}
+
 // MARK: - Transport
 
 /// A platform-neutral PTY transport. Concrete implementations live
@@ -74,7 +91,10 @@ public enum TerminalSurfaceConnectionState: Equatable {
 /// macOS only — alongside the legacy daemon session flow. The shared
 /// surface never reaches into AppKit or SessionController to produce
 /// bytes; it only consumes this protocol.
+@MainActor
 public protocol TerminalPTYTransport: AnyObject {
+    var connectionState: TerminalSurfaceConnectionState { get }
+    var connectionStatePublisher: AnyPublisher<TerminalSurfaceConnectionState, Never> { get }
     /// Begin streaming bytes into the model. The closure is called every
     /// time bytes arrive on the PTY. Implementations should dispatch to
     /// the main actor before invoking (the model assumes main-thread
@@ -85,6 +105,8 @@ public protocol TerminalPTYTransport: AnyObject {
     /// Forward a resize event to the engine. Columns/rows are already
     /// clamped to UInt16.
     func resize(cols: UInt16, rows: UInt16)
+    /// Request a fresh connection attempt after a terminal disconnect.
+    func reconnect()
     /// Detach and release underlying resources.
     func stop()
 }
@@ -111,8 +133,8 @@ public final class TerminalSurfaceModel: ObservableObject {
 
     public var callbacks: TerminalSurfaceCallbacks
 
-    private weak var transport: AnyObject?
     private var _transport: TerminalPTYTransport?
+    private var transportStateCancellable: AnyCancellable?
 
     public init(callbacks: TerminalSurfaceCallbacks = TerminalSurfaceCallbacks()) {
         self.callbacks = callbacks
@@ -124,9 +146,15 @@ public final class TerminalSurfaceModel: ObservableObject {
     }
 
     public func attach(_ transport: TerminalPTYTransport) {
+        transportStateCancellable?.cancel()
         self._transport = transport
         isClosed = false
         connectionState = .connecting
+        transportStateCancellable = transport.connectionStatePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                self?.applyConnectionState(state)
+            }
         transport.start(
             onBytes: { [weak self] data in
                 Task { @MainActor in self?.appendBytes(data) }
@@ -146,18 +174,14 @@ public final class TerminalSurfaceModel: ObservableObject {
     }
 
     public func detach() {
+        transportStateCancellable?.cancel()
+        transportStateCancellable = nil
         _transport?.stop()
         _transport = nil
     }
 
-    public func markReconnecting() {
-        guard connectionState != .disconnected else { return }
-        connectionState = .reconnecting
-    }
-
-    public func markConnected() {
-        isClosed = false
-        connectionState = .connected
+    public func retryConnection() {
+        _transport?.reconnect()
     }
 
     // Host-visible setters. Called by the platform renderer as it
@@ -182,7 +206,6 @@ public final class TerminalSurfaceModel: ObservableObject {
 
     private func appendBytes(_ data: Data) {
         isClosed = false
-        connectionState = .connected
         if recentBytes.count + data.count > recentBytesCap {
             let dropCount = recentBytes.count + data.count - recentBytesCap
             if dropCount < recentBytes.count {
@@ -194,6 +217,13 @@ public final class TerminalSurfaceModel: ObservableObject {
         recentBytes.append(data)
     }
 
+    private func applyConnectionState(_ newValue: TerminalSurfaceConnectionState) {
+        connectionState = newValue
+        if newValue != .disconnected {
+            isClosed = false
+        }
+    }
+
     private func markClosed() {
         isClosed = true
         connectionState = .disconnected
@@ -203,7 +233,6 @@ public final class TerminalSurfaceModel: ObservableObject {
 
 // MARK: - Runtime-backed PTY transport
 
-#if canImport(CSmithersKit)
 // SmithersRuntime types (RuntimeSession, etc.) are either compiled into
 // the same target as this file (xcodegen/project.yml macOS+iOS targets)
 // OR exposed as a separate SwiftPM module (via Package.swift, used by
@@ -213,76 +242,277 @@ public final class TerminalSurfaceModel: ObservableObject {
 import SmithersRuntime
 #endif
 
+internal protocol RuntimePTYHandle: AnyObject {
+    var handle: UInt64? { get }
+    func write(_ bytes: Data) throws
+    func resize(cols: UInt16, rows: UInt16) throws
+    func detach()
+}
+
+internal protocol RuntimePTYSessionProviding: AnyObject {
+    @discardableResult
+    func addEventListener(_ handler: @escaping (RuntimeEvent) -> Void) -> UUID
+    func removeEventListener(_ token: UUID)
+    func attachRuntimePTY(sessionID: String) throws -> any RuntimePTYHandle
+}
+
+extension RuntimePTY: RuntimePTYHandle {}
+
+extension RuntimeSession: RuntimePTYSessionProviding {
+    internal func attachRuntimePTY(sessionID: String) throws -> any RuntimePTYHandle {
+        try attachPTY(sessionID: sessionID)
+    }
+}
+
+private struct AnyRuntimePTYClock: Sendable {
+    private let sleepForDuration: @Sendable (Duration) async throws -> Void
+
+    init<C: Clock>(_ clock: C) where C.Duration == Duration {
+        self.sleepForDuration = { duration in
+            try await clock.sleep(for: duration)
+        }
+    }
+
+    func sleep(for duration: Duration) async throws {
+        try await sleepForDuration(duration)
+    }
+}
+
 /// `TerminalPTYTransport` backed by `libsmithers-core`'s WebSocket PTY
 /// layer. This is the remote path required by the ticket: the shared
 /// surface talks to the runtime, not to `smithers-session-daemon`.
 ///
-/// NOTE: the full attach/read/write wiring awaits the 0094 WebSocket
-/// PTY PoC graduating into the runtime. Until then, `start` emits a
-/// one-shot placeholder banner and reports `closed` on `stop`, so the
-/// shared surface is still demonstrably not a pure stub — it really
-/// is driven by a runtime-owned object, it just has no bytes yet.
+/// Connection state is driven from the PTY lifecycle: initial attach,
+/// reconnect backoff, successful reattach, and terminal disconnect.
+@MainActor
 public final class RuntimePTYTransport: TerminalPTYTransport {
-    private let session: RuntimeSession
+    @Published public private(set) var connectionState: TerminalSurfaceConnectionState = .disconnected
+
+    public var connectionStatePublisher: AnyPublisher<TerminalSurfaceConnectionState, Never> {
+        $connectionState
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
+    private let session: any RuntimePTYSessionProviding
     private let sessionID: String
+    private let clock: AnyRuntimePTYClock
+    private let decoder = JSONDecoder()
     private var onBytes: ((Data) -> Void)?
     private var onClosed: (() -> Void)?
+    private var pty: (any RuntimePTYHandle)?
+    private var eventListenerToken: UUID?
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectAttempts = 0
+    private var pendingSize: (cols: UInt16, rows: UInt16)?
     private var started = false
+    private var isStopping = false
 
-    public init(session: RuntimeSession, sessionID: String) {
+    private static let logger = Logger(subsystem: "com.smithers.gui", category: "terminal")
+    private static let maxReconnectAttempts = 5
+
+    private struct PTYDataEnvelope: Decodable {
+        let handle: UInt64
+        let bytes: String
+    }
+
+    private struct PTYClosedEnvelope: Decodable {
+        let handle: UInt64
+    }
+
+    public convenience init(session: RuntimeSession, sessionID: String) {
+        self.init(session: session, sessionID: sessionID, clock: ContinuousClock())
+    }
+
+    public init<C: Clock>(session: RuntimeSession, sessionID: String, clock: C) where C.Duration == Duration {
         self.session = session
         self.sessionID = sessionID
+        self.clock = AnyRuntimePTYClock(clock)
+    }
+
+    internal convenience init(session: any RuntimePTYSessionProviding, sessionID: String) {
+        self.init(session: session, sessionID: sessionID, clock: ContinuousClock())
+    }
+
+    internal init<C: Clock>(session: any RuntimePTYSessionProviding, sessionID: String, clock: C) where C.Duration == Duration {
+        self.session = session
+        self.sessionID = sessionID
+        self.clock = AnyRuntimePTYClock(clock)
     }
 
     public func start(onBytes: @escaping (Data) -> Void, onClosed: @escaping () -> Void) {
+        guard !started else { return }
         self.onBytes = onBytes
         self.onClosed = onClosed
         started = true
-        // Subscribe to ptyData events on the shared event stream.
-        session.onEvent { [weak self] event in
-            guard let self else { return }
-            switch event {
-            case .ptyData(let payload?):
-                // Payload is base64 in the current FFI contract; fall
-                // back to raw utf8 if decoding fails so early smoke
-                // tests still show *something*.
-                let data = Data(base64Encoded: payload) ?? Data(payload.utf8)
-                Task { @MainActor in self.onBytes?(data) }
-            case .ptyClosed:
-                Task { @MainActor in self.onClosed?() }
-            default:
-                break
+        isStopping = false
+        reconnectAttempts = 0
+
+        if eventListenerToken == nil {
+            eventListenerToken = session.addEventListener { [weak self] event in
+                Task { @MainActor in
+                    self?.handleRuntimeEvent(event)
+                }
             }
         }
-        // Banner so reviewers can see the shared surface is live even
-        // before real bytes flow.
-        let banner = "[smithers-runtime] attaching to PTY \(sessionID)…\r\n"
-        Task { @MainActor in self.onBytes?(Data(banner.utf8)) }
+
+        attemptAttach(reason: "initial connect", initialState: .connecting)
     }
 
     public func write(_ bytes: Data) {
         guard started else { return }
-        // TODO(0120-followup): call smithers_core_pty_write via the
-        // Swift wrapper once `RuntimeSession.attachPTY` returns a
-        // concrete handle. For now this is a no-op — the runtime's
-        // fake transport does not loop bytes back yet.
-        _ = bytes
+        guard let pty else { return }
+        do {
+            try pty.write(bytes)
+        } catch {
+            Self.logger.error("terminal write failed for session \(self.sessionID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     public func resize(cols: UInt16, rows: UInt16) {
+        pendingSize = (cols, rows)
+        guard started, let pty else { return }
+        do {
+            try pty.resize(cols: cols, rows: rows)
+        } catch {
+            Self.logger.error("terminal resize failed for session \(self.sessionID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    public func reconnect() {
         guard started else { return }
-        // TODO(0120-followup): smithers_core_pty_resize.
-        _ = (cols, rows)
+        reconnectAttempts = 0
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        attemptAttach(reason: "manual reconnect", initialState: .connecting)
     }
 
     public func stop() {
+        guard started || eventListenerToken != nil else { return }
+        isStopping = true
         started = false
-        onClosed?()
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        if let token = eventListenerToken {
+            session.removeEventListener(token)
+            eventListenerToken = nil
+        }
+        releasePTY()
+        transition(to: .disconnected, reason: "transport stopped")
         onBytes = nil
         onClosed = nil
     }
+
+    private func handleRuntimeEvent(_ event: RuntimeEvent) {
+        guard started else { return }
+
+        switch event {
+        case .ptyData(let payload?):
+            guard let envelope = decodePayload(PTYDataEnvelope.self, from: payload) else { return }
+            guard matchesCurrentPTYHandle(envelope.handle) else { return }
+            onBytes?(Data(envelope.bytes.utf8))
+        case .ptyClosed(let payload):
+            if let envelope = payload.flatMap({ decodePayload(PTYClosedEnvelope.self, from: $0) }) {
+                guard matchesCurrentPTYHandle(envelope.handle) else { return }
+                Self.logger.warning("terminal PTY closed for session \(self.sessionID, privacy: .public) handle=\(String(envelope.handle), privacy: .public)")
+            } else {
+                Self.logger.warning("terminal PTY closed for session \(self.sessionID, privacy: .public)")
+            }
+            handleUnexpectedClose(reason: "PTY closed")
+        default:
+            break
+        }
+    }
+
+    private func attemptAttach(reason: String, initialState: TerminalSurfaceConnectionState) {
+        guard started, !isStopping else { return }
+
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        releasePTY()
+        transition(to: initialState, reason: reason)
+
+        do {
+            let pty = try session.attachRuntimePTY(sessionID: sessionID)
+            self.pty = pty
+            if let pendingSize {
+                try pty.resize(cols: pendingSize.cols, rows: pendingSize.rows)
+            }
+            reconnectAttempts = 0
+            transition(to: .connected, reason: "PTY attached")
+        } catch {
+            Self.logger.error("terminal attach failed for session \(self.sessionID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            scheduleReconnect(reason: "attach failed")
+        }
+    }
+
+    private func matchesCurrentPTYHandle(_ handle: UInt64) -> Bool {
+        guard let currentHandle = pty?.handle else { return false }
+        return currentHandle == handle
+    }
+
+    private func handleUnexpectedClose(reason: String) {
+        guard started, !isStopping else { return }
+        guard pty != nil || connectionState != .disconnected else { return }
+        releasePTY()
+        scheduleReconnect(reason: reason)
+    }
+
+    private func scheduleReconnect(reason: String) {
+        guard started, !isStopping else { return }
+
+        guard reconnectAttempts < Self.maxReconnectAttempts else {
+            transition(to: .disconnected, reason: "retry budget exhausted")
+            onClosed?()
+            return
+        }
+
+        reconnectAttempts += 1
+        let attempt = reconnectAttempts
+        let delaySeconds = min(Int(pow(2.0, Double(attempt - 1))), 30)
+        transition(to: .reconnecting, reason: "\(reason), retry \(attempt)")
+        Self.logger.info("terminal reconnect scheduled for session \(self.sessionID, privacy: .public) attempt=\(String(attempt), privacy: .public) delay=\(String(delaySeconds), privacy: .public)s")
+
+        let clock = self.clock
+        reconnectTask = Task { [weak self, clock] in
+            do {
+                try await clock.sleep(for: .seconds(Int64(delaySeconds)))
+            } catch {
+                return
+            }
+            await MainActor.run {
+                guard !Task.isCancelled, let self, self.started, !self.isStopping else { return }
+                self.attemptAttach(reason: "retry \(attempt)", initialState: .reconnecting)
+            }
+        }
+    }
+
+    private func releasePTY() {
+        guard let pty else { return }
+        pty.detach()
+        self.pty = nil
+    }
+
+    private func transition(to newState: TerminalSurfaceConnectionState, reason: String) {
+        guard connectionState != newState else { return }
+        connectionState = newState
+        Self.logger.info("terminal state -> \(newState.logValue, privacy: .public) for session \(self.sessionID, privacy: .public): \(reason, privacy: .public)")
+    }
+
+    private func decodePayload<T: Decodable>(_ type: T.Type, from payload: String) -> T? {
+        guard let data = payload.data(using: .utf8) else {
+            Self.logger.error("terminal event payload was not UTF-8 for session \(self.sessionID, privacy: .public)")
+            return nil
+        }
+
+        do {
+            return try decoder.decode(type, from: data)
+        } catch {
+            Self.logger.error("terminal event payload decode failed for session \(self.sessionID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
 }
-#endif
 
 // MARK: - UITest / preview placeholder transport
 
@@ -292,6 +522,14 @@ public final class RuntimePTYTransport: TerminalPTYTransport {
 /// surface genuinely exercises its byte-append path (per independent
 /// validation bullet in the ticket: no pure `#if os(iOS)` stubs).
 public final class PlaceholderPTYTransport: TerminalPTYTransport {
+    @Published public private(set) var connectionState: TerminalSurfaceConnectionState = .disconnected
+
+    public var connectionStatePublisher: AnyPublisher<TerminalSurfaceConnectionState, Never> {
+        $connectionState
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
     private var onBytes: ((Data) -> Void)?
     private var onClosed: (() -> Void)?
     private var timer: Timer?
@@ -304,6 +542,7 @@ public final class PlaceholderPTYTransport: TerminalPTYTransport {
     public func start(onBytes: @escaping (Data) -> Void, onClosed: @escaping () -> Void) {
         self.onBytes = onBytes
         self.onClosed = onClosed
+        connectionState = .connected
         onBytes(Data(banner.utf8))
     }
 
@@ -317,10 +556,17 @@ public final class PlaceholderPTYTransport: TerminalPTYTransport {
         onBytes?(Data(msg.utf8))
     }
 
+    public func reconnect() {
+        connectionState = .connecting
+        connectionState = .connected
+    }
+
     public func stop() {
         timer?.invalidate()
         timer = nil
-        onClosed?()
+        connectionState = .disconnected
+        onBytes = nil
+        onClosed = nil
     }
 }
 

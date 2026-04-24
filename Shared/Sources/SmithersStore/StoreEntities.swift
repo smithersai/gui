@@ -224,20 +224,189 @@ public struct AgentPartRow: Sendable, Codable, Equatable, Hashable, Identifiable
     }
 }
 
+public enum JSONBlob: Sendable, Codable, Equatable, Hashable {
+    case object([String: JSONBlob])
+    case array([JSONBlob])
+    case string(String)
+    case integer(Int64)
+    case double(Double)
+    case bool(Bool)
+    case null
+
+    public init(from decoder: Decoder) throws {
+        if let keyed = try? decoder.container(keyedBy: AnyCodingKey.self) {
+            var object: [String: JSONBlob] = [:]
+            for key in keyed.allKeys {
+                object[key.stringValue] = try keyed.decode(JSONBlob.self, forKey: key)
+            }
+            self = .object(object)
+            return
+        }
+
+        if var unkeyed = try? decoder.unkeyedContainer() {
+            var values: [JSONBlob] = []
+            while !unkeyed.isAtEnd {
+                values.append(try unkeyed.decode(JSONBlob.self))
+            }
+            self = .array(values)
+            return
+        }
+
+        let single = try decoder.singleValueContainer()
+        if single.decodeNil() {
+            self = .null
+            return
+        }
+        if let value = try? single.decode(Bool.self) {
+            self = .bool(value)
+            return
+        }
+        if let value = try? single.decode(Int64.self) {
+            self = .integer(value)
+            return
+        }
+        if let value = try? single.decode(Double.self) {
+            self = .double(value)
+            return
+        }
+        if let value = try? single.decode(String.self) {
+            self = .string(value)
+            return
+        }
+        throw DecodingError.dataCorruptedError(in: single, debugDescription: "invalid JSON value")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case .object(let object):
+            var container = encoder.container(keyedBy: AnyCodingKey.self)
+            for (key, value) in object {
+                try container.encode(value, forKey: AnyCodingKey(key))
+            }
+        case .array(let array):
+            var container = encoder.unkeyedContainer()
+            for value in array {
+                try container.encode(value)
+            }
+        case .string(let value):
+            var container = encoder.singleValueContainer()
+            try container.encode(value)
+        case .integer(let value):
+            var container = encoder.singleValueContainer()
+            try container.encode(value)
+        case .double(let value):
+            var container = encoder.singleValueContainer()
+            try container.encode(value)
+        case .bool(let value):
+            var container = encoder.singleValueContainer()
+            try container.encode(value)
+        case .null:
+            var container = encoder.singleValueContainer()
+            try container.encodeNil()
+        }
+    }
+}
+
 public struct DevToolsSnapshotRow: Sendable, Codable, Equatable, Hashable, Identifiable {
-    public var id: String { snapshotId }
-    public let snapshotId: String
-    public let runId: String
-    public let nodeId: String?
-    public let createdAt: Date?
+    public var id: String {
+        if let snapshotId, !snapshotId.isEmpty {
+            return snapshotId
+        }
+        let timestampPart = timestamp.map { String(Int64($0.timeIntervalSince1970 * 1000.0)) } ?? "0"
+        return "\(sessionId):\(kind):\(timestampPart)"
+    }
+
+    public let snapshotId: String?
+    public let sessionId: String
+    public let repositoryId: String
+    public let timestamp: Date?
+    public let kind: String
+    public let payload: JSONBlob
+    public let workspaceId: String?
     public let summary: String?
 
-    private enum CodingKeys: String, CodingKey {
-        case snapshotId = "snapshot_id"
-        case runId = "run_id"
-        case nodeId = "node_id"
-        case createdAt = "created_at"
-        case summary
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: AnyCodingKey.self)
+
+        snapshotId = Self.decodeString(container, keys: ["snapshot_id", "snapshotId", "id"])
+        sessionId = Self.decodeString(container, keys: ["session_id", "run_id"]) ?? ""
+        repositoryId = Self.decodeString(container, keys: ["repository_id"]) ?? ""
+        timestamp = Self.decodeDate(container, keys: ["timestamp", "created_at", "createdAt"])
+        kind = Self.decodeString(container, keys: ["kind"]) ?? "unknown"
+        payload = Self.decodeJSONBlob(container, keys: ["payload", "payload_json", "payloadJson"]) ?? .null
+        workspaceId = Self.decodeString(container, keys: ["workspace_id"])
+        summary = Self.decodeString(container, keys: ["summary"])
+    }
+
+    private static func decodeString(
+        _ container: KeyedDecodingContainer<AnyCodingKey>,
+        keys: [String]
+    ) -> String? {
+        for rawKey in keys {
+            let key = AnyCodingKey(rawKey)
+            if let value = try? container.decodeIfPresent(String.self, forKey: key), !value.isEmpty {
+                return value
+            }
+            if let value = try? container.decodeIfPresent(Int64.self, forKey: key) {
+                return String(value)
+            }
+            if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+                return String(value)
+            }
+        }
+        return nil
+    }
+
+    private static func decodeDate(
+        _ container: KeyedDecodingContainer<AnyCodingKey>,
+        keys: [String]
+    ) -> Date? {
+        for rawKey in keys {
+            let key = AnyCodingKey(rawKey)
+            if let value = try? container.decodeIfPresent(Date.self, forKey: key) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func decodeJSONBlob(
+        _ container: KeyedDecodingContainer<AnyCodingKey>,
+        keys: [String]
+    ) -> JSONBlob? {
+        for rawKey in keys {
+            let key = AnyCodingKey(rawKey)
+            if let value = try? container.decodeIfPresent(JSONBlob.self, forKey: key) {
+                return value
+            }
+            if let raw = try? container.decodeIfPresent(String.self, forKey: key) {
+                if let data = raw.data(using: .utf8),
+                   let parsed = try? StoreDecoder.shared.decode(JSONBlob.self, from: data) {
+                    return parsed
+                }
+                return .string(raw)
+            }
+        }
+        return nil
+    }
+}
+
+private struct AnyCodingKey: CodingKey, Hashable {
+    let stringValue: String
+    let intValue: Int?
+
+    init(_ string: String) {
+        self.stringValue = string
+        self.intValue = Int(string)
+    }
+
+    init?(stringValue: String) {
+        self.init(stringValue)
+    }
+
+    init?(intValue: Int) {
+        self.stringValue = String(intValue)
+        self.intValue = intValue
     }
 }
 

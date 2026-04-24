@@ -2,7 +2,14 @@ import SwiftUI
 
 struct GhostBanner: View {
     let isVisible: Bool
+    let unmountedFrameNo: Int?
     let onClear: () -> Void
+
+    init(isVisible: Bool, unmountedFrameNo: Int? = nil, onClear: @escaping () -> Void) {
+        self.isVisible = isVisible
+        self.unmountedFrameNo = unmountedFrameNo
+        self.onClear = onClear
+    }
 
     var body: some View {
         if isVisible {
@@ -11,7 +18,7 @@ struct GhostBanner: View {
                     .font(.system(size: 12))
                     .foregroundColor(Theme.warning)
 
-                Text("This node is no longer in the running tree.")
+                Text(ghostMessage)
                     .font(.system(size: 12))
                     .foregroundColor(Theme.warning)
 
@@ -35,9 +42,16 @@ struct GhostBanner: View {
                 alignment: .bottom
             )
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("This node is no longer in the running tree")
+            .accessibilityLabel(ghostMessage)
             .accessibilityAddTraits(.isStaticText)
             .accessibilityIdentifier("inspector.ghost.banner")
         }
+    }
+
+    private var ghostMessage: String {
+        if let unmountedFrameNo {
+            return "This node is no longer in the running tree (unmounted at frame \(unmountedFrameNo))."
+        }
+        return "This node is no longer in the running tree."
     }
 }

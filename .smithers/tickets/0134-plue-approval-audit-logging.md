@@ -1,5 +1,10 @@
 # Plue: audit logging for human-in-the-loop approvals
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: Approvals table landed (4308aefb8); handlers wired per 0155.
+- Remaining: Immutable audit events for create/approve/reject/expire lifecycle not yet verified emitting; retention/query surface absent.
+
 ## Context
 
 Ticket 0110 adds the approvals entity and the decide route, but it explicitly leaves audit logging out of scope (`/Users/williamcory/gui/.smithers/tickets/0110-plue-approvals-implementation.md:26-30`). That creates a gap for a security-sensitive action: the mutable `approvals` row may tell the UI the current state, but it is not an immutable audit trail of who approved what and when.

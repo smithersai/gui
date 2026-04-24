@@ -60,7 +60,16 @@ fi
 
 WORKSPACE_TITLE="${PLUE_E2E_SEEDED_WORKSPACE_TITLE:-e2e-workspace}"
 
-PSQL=(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -tA)
+if command -v psql >/dev/null 2>&1; then
+  PSQL=(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -tA)
+elif command -v docker >/dev/null 2>&1 &&
+     [[ "$PGHOST" == "127.0.0.1" && "$PGPORT" == "5432" ]] &&
+     docker ps --format '{{.Names}}' | grep -qx 'plue-postgres-1'; then
+  PSQL=(docker exec -i -e "PGPASSWORD=$PGPASSWORD" plue-postgres-1 psql -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -tA)
+else
+  echo "seed-e2e-data.sh: psql not found; install psql or run the local plue postgres container" >&2
+  exit 1
+fi
 
 # Wait for postgres to accept queries. Cap at 60s — if it's not up by
 # then something is wrong with `make docker-up`.
@@ -131,6 +140,41 @@ BEGIN
             token_hash = EXCLUDED.token_hash,
             token_last_eight = EXCLUDED.token_last_eight,
             scopes = EXCLUDED.scopes,
+            updated_at = NOW();
+
+    -- Native iOS OAuth2 public client. This mirrors plue/db/seed.sql so
+    -- the E2E harness can exercise the real authorization-code + S256 PKCE
+    -- flow against a local plue database even when the docker seed has not
+    -- been re-run.
+    INSERT INTO oauth2_applications (
+        client_id,
+        client_secret_hash,
+        name,
+        redirect_uris,
+        scopes,
+        owner_id,
+        confidential,
+        created_at,
+        updated_at
+    )
+    VALUES (
+        'smithers-ios',
+        'public-client-no-secret',
+        'Smithers iOS',
+        ARRAY['smithers://oauth2/callback'],
+        ARRAY['read:user', 'read:repo', 'write:workspace', 'write:approval', 'write:agent'],
+        v_user_id,
+        FALSE,
+        NOW(),
+        NOW()
+    )
+    ON CONFLICT (client_id) DO UPDATE
+        SET client_secret_hash = EXCLUDED.client_secret_hash,
+            name = EXCLUDED.name,
+            redirect_uris = EXCLUDED.redirect_uris,
+            scopes = EXCLUDED.scopes,
+            owner_id = EXCLUDED.owner_id,
+            confidential = EXCLUDED.confidential,
             updated_at = NOW();
 
     -- Repository owned by our e2e user. The plue schema uses

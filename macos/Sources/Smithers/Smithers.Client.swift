@@ -360,7 +360,7 @@ class SmithersClient: ObservableObject {
 
     // MARK: Devtools
 
-    func streamDevTools(runId: String, fromSeq: Int? = nil) -> AsyncThrowingStream<DevToolsEvent, Error> {
+    func streamDevTools(runId: String, afterSeq: Int? = nil) -> AsyncThrowingStream<DevToolsEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task.detached { [weak self] in
                 guard let self else {
@@ -371,7 +371,10 @@ class SmithersClient: ObservableObject {
                     let stream = try await MainActor.run {
                         try self.stream("streamDevTools", args: [
                             "runId": AnyEncodable(runId),
-                            "fromSeq": AnyEncodable(fromSeq),
+                            "afterSeq": AnyEncodable(afterSeq),
+                            // Keep legacy compatibility with older gateways that still
+                            // consume `fromSeq`.
+                            "fromSeq": AnyEncodable(afterSeq),
                         ])
                     }
                     let decoder = JSONDecoder()

@@ -91,6 +91,28 @@ WebSocket PTY lands and 0120's transport graduates, flip shared
 callers off `TerminalView` (macOS-only) onto `TerminalSurface` and
 delete the daemon fallback.
 
+### Live-run DevTools reconnect + ghost budget
+
+Live-run inspector tabs keep a per-run stream cursor (`afterSeq`) and
+continue reconnecting from the last acknowledged sequence.
+
+- Reconnect behavior:
+  short blips (<2s) keep the current tree visible and avoid disruptive banners;
+  longer interruptions show a stale-state banner ("stale since …") while
+  preserving the last-known tree.
+- Gap resync behavior:
+  `GapResync` events force snapshot-first recovery (deltas are ignored until a
+  follow-up snapshot arrives).
+- Ghost retention:
+  unmounted task nodes are retained in a ghost map so inspector selection/history
+  stays resolvable.
+- Memory envelope:
+  `N × (active tree + buffered live events + ghost map)` for `N` concurrently
+  open run tabs. Ghost retention is capped and oldest entries are evicted.
+- Ghost cap:
+  set `SMITHERS_DEVTOOLS_GHOST_CAP=<positive int>` to override the default cap
+  (`256` ghost task entries per run store).
+
 ### Build-only
 
 | Dependency | Version | Purpose |
@@ -141,6 +163,57 @@ The project uses `build.zig` as a Makefile-style entrypoint. All common tasks go
 | `zig build clean` | `cargo clean` + `swift package clean`. |
 
 Pass `-Drelease=true` to any build step for release-mode compilation.
+
+### iOS Device Preview Backend
+
+Physical iPhones cannot reach the Mac's `localhost:4000`. For preview
+testing, build SmithersiOS with a reachable Plue base URL baked into
+`Info.plist`.
+
+**Internet-reachable review with ngrok:**
+
+```bash
+# Terminal 1: keep this running
+./ios/scripts/start-preview-tunnel.sh
+
+# Terminal 2: build/install with the generated tunnel URL
+source build/preview-tunnel/plue-preview.env
+DEVICE_ID=<device-identifier> INSTALL_ON_DEVICE=1 ./ios/scripts/build-for-device.sh
+```
+
+`start-preview-tunnel.sh` starts the local Plue Docker stack if
+`http://localhost:4000/api/health` is not already healthy, starts
+`ngrok http 4000`, captures the HTTPS URL as `PLUE_PREVIEW_URL`, and
+writes `PLUE_BASE_URL` exports to `build/preview-tunnel/plue-preview.env`.
+
+**Zero-egress LAN testing:**
+
+```bash
+./ios/scripts/build-for-device.sh
+```
+
+With no `PLUE_PREVIEW_URL` or `PLUE_BASE_URL`, the build script detects the
+Mac's LAN IP with `ipconfig getifaddr en0`, bakes
+`http://<LAN-IP>:4000` into `SmithersPlueBaseURL`, and generates a temporary
+Info.plist with a narrow ATS exception for that IP only. Override with
+`PLUE_LAN_IP=...` or `PLUE_DEVICE_BASE_URL=...` when needed.
+
+The OAuth2 redirect remains `smithers://oauth2/callback`; the app accepts
+the `smithers` callback scheme and derives the backend base URL from the
+baked `PLUE_BASE_URL` / `PLUE_PREVIEW_URL` value. No production Plue deploy
+is involved.
+
+Validation sequence:
+
+```bash
+./ios/scripts/start-preview-tunnel.sh
+source build/preview-tunnel/plue-preview.env
+DEVICE_ID=<device-identifier> INSTALL_ON_DEVICE=1 ./ios/scripts/build-for-device.sh
+# Launch on device, tap Sign In, complete OAuth2, and return via smithers://.
+
+LAN_URL="http://$(ipconfig getifaddr en0):4000"
+curl -fsS "$LAN_URL/api/health"
+```
 
 ### What actually gets built
 

@@ -2,7 +2,7 @@
 // the active UIWindow.
 //
 // Ticket 0109. Thin shim — all cross-platform logic lives in
-// Shared/Sources/SmithersAuth. The custom URL scheme `smithers://auth/callback`
+// Shared/Sources/SmithersAuth. The custom URL scheme `smithers://oauth2/callback`
 // is declared in `ios/Sources/SmithersiOS/Info.plist`.
 
 #if os(iOS)

@@ -8,6 +8,7 @@ struct TreeRowView: View {
     let hasFailedDescendant: Bool
     let failedDescendantCount: Int
     let isDimmed: Bool
+    let isGhost: Bool
     let isHighlighted: Bool
     let depth: Int
     let lastLogLine: String?
@@ -22,6 +23,7 @@ struct TreeRowView: View {
         hasFailedDescendant: Bool,
         failedDescendantCount: Int,
         isDimmed: Bool,
+        isGhost: Bool = false,
         isHighlighted: Bool,
         depth: Int,
         lastLogLine: String? = nil,
@@ -35,6 +37,7 @@ struct TreeRowView: View {
         self.hasFailedDescendant = hasFailedDescendant
         self.failedDescendantCount = failedDescendantCount
         self.isDimmed = isDimmed
+        self.isGhost = isGhost
         self.isHighlighted = isHighlighted
         self.depth = depth
         self.lastLogLine = lastLogLine
@@ -105,7 +108,7 @@ struct TreeRowView: View {
                     .accessibilityHidden(true)
             }
         }
-        .opacity(isDimmed ? 0.35 : 1.0)
+        .opacity(rowOpacity)
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
         .accessibilityElement(children: .ignore)
@@ -190,6 +193,20 @@ struct TreeRowView: View {
 
     private var stateBadge: some View {
         HStack(spacing: 3) {
+            if isGhost {
+                HStack(spacing: 2) {
+                    Image(systemName: "archivebox")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("Ghost")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundColor(Theme.textTertiary)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(Theme.textTertiary.opacity(0.14))
+                .clipShape(Capsule())
+            }
+
             Image(systemName: state.icon)
                 .font(.system(size: 10))
                 .foregroundColor(state.color)
@@ -217,7 +234,20 @@ struct TreeRowView: View {
         if isHighlighted {
             return Theme.accent.opacity(0.06)
         }
+        if isGhost {
+            return Theme.surface2.opacity(0.45)
+        }
         return state.rowBackground
+    }
+
+    private var rowOpacity: Double {
+        if isDimmed {
+            return 0.35
+        }
+        if isGhost {
+            return 0.58
+        }
+        return 1.0
     }
 
     private var pulseOpacity: Double { 0.6 }
@@ -229,6 +259,9 @@ struct TreeRowView: View {
         parts.append(state.label)
         if showsRunningCursor {
             parts.append("currently running at this frame")
+        }
+        if isGhost {
+            parts.append("unmounted ghost state")
         }
         if showsLastLog, let line = lastLogLine {
             parts.append("last log: \(line)")

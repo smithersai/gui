@@ -1,5 +1,10 @@
 # Design: dispatch-run semantics
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: Design doc `iOS-and-remote-sandboxes-dispatch-run.md` exists; Option A (keep implicit) chosen and documented.
+- Remaining: Main initiative spec not yet updated to reference the chosen contract; downstream tickets (0111) still unwired.
+
 ## Context
 
 From `.smithers/specs/ios-and-remote-sandboxes.md` (Changes Needed In Plue → Agent sessions). Plue's public repo-scoped API on `agent_sessions.go` has **no explicit `/dispatch-run` route**. Run dispatch happens implicitly when a `user`-role message is posted (`agent_sessions.go:280`). An earlier draft of the spec claimed an explicit `/dispatch-run` route exists; Codex flagged that as wrong. This ticket decides what the spec's actual posture should be.

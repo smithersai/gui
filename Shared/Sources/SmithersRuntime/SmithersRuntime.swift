@@ -149,6 +149,68 @@ public final class SmithersRuntime {
 }
 
 /// A single engine connection. Owns the transport + bounded cache in Zig.
+public final class RuntimePTY {
+    public private(set) var handle: UInt64?
+
+    #if canImport(CSmithersKit)
+    fileprivate var raw: UnsafeMutableRawPointer?
+    #endif
+
+    #if canImport(CSmithersKit)
+    fileprivate init(raw: UnsafeMutableRawPointer) {
+        self.raw = raw
+        self.handle = smithers_core_pty_public_handle(raw)
+    }
+    #endif
+
+    deinit {
+        detach()
+    }
+
+    public func write(_ bytes: Data) throws {
+        #if canImport(CSmithersKit)
+        guard let raw else { return }
+        guard !bytes.isEmpty else { return }
+
+        let err: smithers_error_s = bytes.withUnsafeBytes { rawBuffer in
+            let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress
+            return smithers_core_pty_write(raw, base, rawBuffer.count)
+        }
+        if err.code != 0 {
+            let msg = err.msg.map { String(cString: $0) } ?? "pty_write failed"
+            smithers_error_free(err)
+            throw SmithersRuntimeError(code: err.code, message: msg)
+        }
+        #else
+        _ = bytes
+        throw SmithersRuntimeError(code: -1, message: "CSmithersKit not available")
+        #endif
+    }
+
+    public func resize(cols: UInt16, rows: UInt16) throws {
+        #if canImport(CSmithersKit)
+        guard let raw else { return }
+        let err = smithers_core_pty_resize(raw, cols, rows)
+        if err.code != 0 {
+            let msg = err.msg.map { String(cString: $0) } ?? "pty_resize failed"
+            smithers_error_free(err)
+            throw SmithersRuntimeError(code: err.code, message: msg)
+        }
+        #else
+        _ = (cols, rows)
+        throw SmithersRuntimeError(code: -1, message: "CSmithersKit not available")
+        #endif
+    }
+
+    public func detach() {
+        #if canImport(CSmithersKit)
+        guard let raw else { return }
+        smithers_core_detach_pty(raw)
+        self.raw = nil
+        #endif
+    }
+}
+
 public final class RuntimeSession {
     #if canImport(CSmithersKit)
     fileprivate let raw: UnsafeMutableRawPointer
@@ -168,15 +230,35 @@ public final class RuntimeSession {
         #endif
     }
 
-    /// Install (or replace) the event callback. Dispatched on the Zig
-    /// event-loop thread — hop to your actor before touching UI state.
+    /// Install (or replace) the primary event callback. Dispatched on
+    /// the Zig event-loop thread — hop to your actor before touching UI
+    /// state.
     public func onEvent(_ handler: @escaping (RuntimeEvent) -> Void) {
         #if canImport(CSmithersKit)
-        self.eventBox.handler = handler
+        self.eventBox.setPrimaryHandler(handler)
         let ud = Unmanaged.passUnretained(self.eventBox).toOpaque()
         smithers_core_register_callback(raw, eventTrampoline, ud)
         #else
         _ = handler
+        #endif
+    }
+
+    @discardableResult
+    public func addEventListener(_ handler: @escaping (RuntimeEvent) -> Void) -> UUID {
+        #if canImport(CSmithersKit)
+        let token = self.eventBox.addHandler(handler)
+        let ud = Unmanaged.passUnretained(self.eventBox).toOpaque()
+        smithers_core_register_callback(raw, eventTrampoline, ud)
+        return token
+        #else
+        _ = handler
+        return UUID()
+        #endif
+    }
+
+    public func removeEventListener(_ token: UUID) {
+        #if canImport(CSmithersKit)
+        self.eventBox.removeHandler(token)
         #endif
     }
 
@@ -261,6 +343,24 @@ public final class RuntimeSession {
         #endif
     }
 
+    public func attachPTY(sessionID: String) throws -> RuntimePTY {
+        #if canImport(CSmithersKit)
+        return try sessionID.withCString { sid in
+            var err = smithers_error_s(code: 0, msg: nil)
+            let handle = smithers_core_attach_pty(raw, sid, &err)
+            if handle == nil {
+                let msg = err.msg.map { String(cString: $0) } ?? "attach_pty failed"
+                smithers_error_free(err)
+                throw SmithersRuntimeError(code: err.code, message: msg)
+            }
+            return RuntimePTY(raw: handle!)
+        }
+        #else
+        _ = sessionID
+        throw SmithersRuntimeError(code: -1, message: "CSmithersKit not available")
+        #endif
+    }
+
     public func wipeCache() throws {
         #if canImport(CSmithersKit)
         let e = smithers_core_cache_wipe(raw)
@@ -271,11 +371,6 @@ public final class RuntimeSession {
         }
         #endif
     }
-
-    // TODO(0120-followup): PTY attach returns an opaque handle that Swift
-    // boxes into a `RuntimePTY` object with write/resize/detach. The
-    // shape of that API is drafted here but its implementation awaits
-    // the 0094 WebSocket PTY wiring.
 
     // Test-only hook so SmithersRuntimeTests can drive the pump.
     internal func _tickForTest() {
@@ -290,7 +385,40 @@ public final class RuntimeSession {
 #if canImport(CSmithersKit)
 
 fileprivate final class EventBox {
-    var handler: ((RuntimeEvent) -> Void)? = nil
+    private let lock = NSLock()
+    private var primaryHandler: ((RuntimeEvent) -> Void)? = nil
+    private var handlers: [UUID: (RuntimeEvent) -> Void] = [:]
+
+    func setPrimaryHandler(_ handler: @escaping (RuntimeEvent) -> Void) {
+        lock.lock()
+        primaryHandler = handler
+        lock.unlock()
+    }
+
+    func addHandler(_ handler: @escaping (RuntimeEvent) -> Void) -> UUID {
+        let token = UUID()
+        lock.lock()
+        handlers[token] = handler
+        lock.unlock()
+        return token
+    }
+
+    func removeHandler(_ token: UUID) {
+        lock.lock()
+        handlers.removeValue(forKey: token)
+        lock.unlock()
+    }
+
+    func dispatch(_ event: RuntimeEvent) {
+        lock.lock()
+        let primary = primaryHandler
+        let callbacks = Array(handlers.values)
+        lock.unlock()
+        primary?(event)
+        for callback in callbacks {
+            callback(event)
+        }
+    }
 }
 
 fileprivate final class ProviderBox {
@@ -340,7 +468,7 @@ fileprivate let eventTrampoline: (@convention(c) (UnsafeMutableRawPointer?, smit
     case SMITHERS_CORE_EVENT_PTY_CLOSED: evt = .ptyClosed(payloadStr)
     default: evt = .stateChanged(payloadStr)
     }
-    box.handler?(evt)
+    box.dispatch(evt)
 }
 
 fileprivate func withOptionalCString<R>(_ value: String?, _ body: (UnsafePointer<CChar>?) throws -> R) rethrows -> R {

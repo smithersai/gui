@@ -49,8 +49,7 @@ final class SmithersiOSE2EFeatureFlagsTests: XCTestCase {
             return
         }
 
-        XCTAssertFalse(remoteEnabled, "Spec in ticket 0112 says remote_sandbox_enabled defaults to false")
-        XCTAssertNotEqual(remoteEnabled, true, "default remote_sandbox_enabled must not resolve to true")
+        XCTAssertEqual(remoteEnabled, false, "Ticket 0112 says remote_sandbox_enabled defaults to false")
     }
 
     func test_flag_kill_switch_disables_ws_pty() throws {

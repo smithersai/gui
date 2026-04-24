@@ -127,7 +127,7 @@ enum DevToolsClientError: Error, Equatable {
         case .invalidFrameNo:
             return "Frame numbers must be non-negative integers."
         case .seqOutOfRange:
-            return "Reconnect without fromSeq to resync."
+            return "Reconnect without afterSeq to resync."
         case .nodeNotFound:
             return "Select an existing node from the tree and retry."
         case .attemptNotFound:

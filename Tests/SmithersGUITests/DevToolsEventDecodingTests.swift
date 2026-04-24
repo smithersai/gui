@@ -19,6 +19,47 @@ final class DevToolsEventDecodingTests: XCTestCase {
     func testDecodesRealSnapshotEnvelope() throws {
         let json = Data("""
         {
+          "version": 1,
+          "kind": "snapshot",
+          "snapshot": {
+            "version": 1,
+            "runId": "run-1",
+            "frameNo": 2,
+            "seq": 2,
+            "root": {
+              "id": 0,
+              "type": "workflow",
+              "name": "ticket-kanban",
+              "props": {"state": "running"},
+              "task": null,
+              "children": [],
+              "depth": 0
+            },
+            "runState": {
+              "runId": "run-1",
+              "state": "running",
+              "computedAt": "2026-04-24T20:21:37.000Z"
+            }
+          }
+        }
+        """.utf8)
+
+        let event = try JSONDecoder().decode(DevToolsEvent.self, from: json)
+        guard case .snapshot(let snapshot) = event else {
+            XCTFail("Expected .snapshot, got \(event)")
+            return
+        }
+        XCTAssertEqual(snapshot.runId, "run-1")
+        XCTAssertEqual(snapshot.frameNo, 2)
+        XCTAssertEqual(snapshot.seq, 2)
+        XCTAssertEqual(snapshot.version, 1)
+        XCTAssertEqual(snapshot.root.type, .workflow)
+        XCTAssertEqual(snapshot.runState?.state, "running")
+    }
+
+    func testDecodesLegacySnapshotEnvelope() throws {
+        let json = Data("""
+        {
           "type": "snapshot",
           "runId": "run-1",
           "frameNo": 2,
@@ -43,7 +84,7 @@ final class DevToolsEventDecodingTests: XCTestCase {
         XCTAssertEqual(snapshot.runId, "run-1")
         XCTAssertEqual(snapshot.frameNo, 2)
         XCTAssertEqual(snapshot.seq, 2)
-        XCTAssertEqual(snapshot.root.type, .workflow)
+        XCTAssertEqual(snapshot.version, 1)
     }
 
     // MARK: - Regression: stale libsmithers fallback
@@ -65,7 +106,7 @@ final class DevToolsEventDecodingTests: XCTestCase {
                 XCTFail("Expected .keyNotFound, got \(decodingError)")
                 return
             }
-            XCTAssertEqual(key.stringValue, "type")
+            XCTAssertEqual(key.stringValue, "kind")
             XCTAssertTrue(context.codingPath.isEmpty, "Missing key should be at top level")
 
             let clientError = DevToolsClientError.from(decodingError: decodingError)
@@ -73,7 +114,7 @@ final class DevToolsEventDecodingTests: XCTestCase {
                 XCTFail("Expected .malformedEvent, got \(clientError)")
                 return
             }
-            XCTAssertTrue(detail.contains("type"), "Detail should mention missing key: \(detail)")
+            XCTAssertTrue(detail.contains("kind"), "Detail should mention missing key: \(detail)")
         } catch {
             XCTFail("Expected DecodingError, got \(type(of: error))")
         }
@@ -82,7 +123,7 @@ final class DevToolsEventDecodingTests: XCTestCase {
     // MARK: - Unknown type
 
     func testUnknownEventTypeProducesDataCorrupted() {
-        let json = Data(#"{"type":"surprise","runId":"run-1","frameNo":0,"seq":0}"#.utf8)
+        let json = Data(#"{"version":1,"kind":"surprise"}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(DevToolsEvent.self, from: json)) { error in
             guard let decodingError = error as? DecodingError,
                   case .dataCorrupted = decodingError else {
@@ -90,5 +131,34 @@ final class DevToolsEventDecodingTests: XCTestCase {
                 return
             }
         }
+    }
+
+    func testDecodesGapResyncEvent() throws {
+        let json = Data(#"{"type":"gapResync","fromSeq":17,"toSeq":31}"#.utf8)
+        let event = try JSONDecoder().decode(DevToolsEvent.self, from: json)
+        guard case .gapResync(let gapResync) = event else {
+            XCTFail("Expected .gapResync, got \(event)")
+            return
+        }
+        XCTAssertEqual(gapResync.fromSeq, 17)
+        XCTAssertEqual(gapResync.toSeq, 31)
+    }
+
+    func testGapResyncEventRoundTripsThroughNewEnvelope() throws {
+        let encoded = try JSONEncoder().encode(
+            DevToolsEvent.gapResync(DevToolsGapResync(fromSeq: 17, toSeq: 31))
+        )
+
+        let decoded = try JSONDecoder().decode(DevToolsEvent.self, from: encoded)
+        guard case .gapResync(let gapResync) = decoded else {
+            XCTFail("Expected .gapResync, got \(decoded)")
+            return
+        }
+        XCTAssertEqual(gapResync.fromSeq, 17)
+        XCTAssertEqual(gapResync.toSeq, 31)
+
+        let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        XCTAssertEqual(object?["kind"] as? String, "gapResync")
+        XCTAssertNil(object?["type"])
     }
 }

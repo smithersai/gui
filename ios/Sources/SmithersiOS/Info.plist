@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Ticket 0109: custom URL scheme registration for the OAuth2 callback.
+  Custom URL scheme registration for OAuth2 callbacks and deep links.
 
-  This plist is merged with XcodeGen's generated Info.plist (via
-  INFOPLIST_FILE in project.yml). It registers the `smithers` scheme so the
-  system delivers `smithers://auth/callback?code=...&state=...` back to us
-  via `ASWebAuthenticationSession`.
+  This plist is referenced by project.yml through INFOPLIST_FILE. It
+  registers the `smithers` scheme so the system delivers
+  `smithers://oauth2/callback?code=...&state=...` back to
+  ASWebAuthenticationSession, and so app-level deep links such as
+  `smithers://approvals/<id>` and `smithers://workspace/<uuid>` can be
+  routed by DeepLinkRouter.
 
   The scheme name is documented to be globally unique in the Smithers
   namespace. If another app registers the same scheme, iOS routes by
@@ -40,10 +42,19 @@
     <string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key>
     <string>$(CURRENT_PROJECT_VERSION)</string>
+    <!--
+      Device preview builds inject a reachable Plue URL here via
+      PLUE_BASE_URL. The app ignores unresolved build-setting literals, so
+      normal simulator/TestFlight builds keep their existing defaults.
+    -->
+    <key>SmithersPlueBaseURL</key>
+    <string>$(PLUE_BASE_URL)</string>
+    <key>SmithersPreviewURL</key>
+    <string>$(PLUE_PREVIEW_URL)</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
-    <key>UILaunchScreen</key>
-    <dict/>
+    <key>UILaunchStoryboardName</key>
+    <string>LaunchScreen</string>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>
@@ -61,7 +72,7 @@
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
             <key>CFBundleURLName</key>
-            <string>com.smithers.oauth2.callback</string>
+            <string>com.smithers.ios.deep-links</string>
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>smithers</string>

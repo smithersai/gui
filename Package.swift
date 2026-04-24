@@ -25,6 +25,8 @@ let package = Package(
         .library(name: "SmithersAuth", targets: ["SmithersAuth"]),
         // Ticket 0124: shared observable store layer over SmithersRuntime.
         .library(name: "SmithersStore", targets: ["SmithersStore"]),
+        // Env-var-gated E2E hooks used by iOS/macOS test harnesses.
+        .library(name: "SmithersE2ESupport", targets: ["SmithersE2ESupport"]),
     ],
     dependencies: [
         .package(url: "https://github.com/nalexn/ViewInspector.git", from: "0.10.0"),
@@ -56,7 +58,7 @@ let package = Package(
         // without compiling the whole SmithersGUI / CGhosttyKit graph.
         .executableTarget(
             name: "SmithersGUI",
-            dependencies: ["CGhosttyKit", "CSmithersKit", "SmithersAuth", "SmithersRuntime", "SmithersStore"],
+            dependencies: ["CGhosttyKit", "CSmithersKit", "SmithersAuth", "SmithersRuntime", "SmithersStore", "SmithersE2ESupport"],
             path: ".",
             exclude: [
                 "ghostty",
@@ -75,6 +77,8 @@ let package = Package(
                 "linux",
                 "ios",
                 "scripts",
+                "macos/Tests",
+                "macos/scripts",
                 "vercel",
                 "LICENSE",
                 "NOTICE",
@@ -93,6 +97,8 @@ let package = Package(
                 "build",
                 "SmithersGUI.xcodeproj",
                 "Shared",
+                "SmithersGUI/Views/RunInspector/NodeInspectorView.swift",
+                "SmithersGUI/Views/RunInspector/FrameScrubberView.swift",
             ],
             resources: [
                 .process("Resources"),
@@ -179,6 +185,14 @@ let package = Package(
             name: "SmithersStoreTests",
             dependencies: ["SmithersStore"],
             path: "Shared/Tests/SmithersStoreTests"
+        ),
+
+        // Env-var-gated E2E test hooks. Production code only observes this
+        // when PLUE_E2E_MODE=1, so normal app execution stays unchanged.
+        .target(
+            name: "SmithersE2ESupport",
+            dependencies: ["SmithersAuth"],
+            path: "Shared/Sources/SmithersE2ESupport"
         ),
     ]
 )

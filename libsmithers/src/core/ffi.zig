@@ -244,6 +244,11 @@ pub export fn smithers_core_attach_pty(
 
 const PtyBox = struct { session: *Session, handle: u64 };
 
+pub export fn smithers_core_pty_public_handle(h_opt: ?*PtyBox) u64 {
+    const h = h_opt orelse return 0;
+    return h.handle;
+}
+
 pub export fn smithers_core_pty_write(
     h_opt: ?*PtyBox,
     bytes: ?[*]const u8,

@@ -10,6 +10,7 @@ import SwiftUI
 public final class AuthViewModel: ObservableObject {
     public enum Phase: Equatable {
         case signedOut
+        case restoringSession
         case signingIn
         case signedIn
         case whitelistDenied(String)
@@ -22,20 +23,47 @@ public final class AuthViewModel: ObservableObject {
     public let tokens: TokenManager
     public let driver: AuthorizeSessionDriver
     public let callbackScheme: String
+    private let startupSessionValidator: (() async -> AccessTokenValidationResult)?
+    private var didAttemptStartupSessionValidation = false
 
     public init(
         client: OAuth2Client,
         tokens: TokenManager,
         driver: AuthorizeSessionDriver,
-        callbackScheme: String
+        callbackScheme: String,
+        startupSessionValidator: (() async -> AccessTokenValidationResult)? = nil
     ) {
         self.client = client
         self.tokens = tokens
         self.driver = driver
         self.callbackScheme = callbackScheme
-        // Restore from Keychain on init.
+        self.startupSessionValidator = startupSessionValidator
+        // Restore from storage on init. Some callers provide an async
+        // validator so we don't trust a restored access token until plue
+        // confirms it still authenticates.
         if tokens.hasSession {
-            self.phase = .signedIn
+            self.phase = startupSessionValidator == nil ? .signedIn : .restoringSession
+        }
+    }
+
+    /// Runs once for restored-session flows that want to revalidate the
+    /// cached access token before exposing signed-in UI.
+    public func resolveRestoredSessionIfNeeded() async {
+        guard phase == .restoringSession else { return }
+        guard !didAttemptStartupSessionValidation else { return }
+        didAttemptStartupSessionValidation = true
+
+        guard let startupSessionValidator else {
+            phase = .signedIn
+            return
+        }
+
+        switch await startupSessionValidator() {
+        case .valid, .indeterminate:
+            phase = .signedIn
+        case .invalid:
+            await tokens.localSignOut()
+            phase = .signedOut
         }
     }
 
@@ -45,7 +73,7 @@ public final class AuthViewModel: ObservableObject {
             // Proceed. `.error` retries are allowed (transient network,
             // etc.). `.whitelistDenied` is intentionally terminal.
             break
-        case .signingIn, .signedIn, .whitelistDenied:
+        case .restoringSession, .signingIn, .signedIn, .whitelistDenied:
             return
         }
         phase = .signingIn

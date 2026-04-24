@@ -1,5 +1,10 @@
 # PoC: Android core canary
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: `poc/android-core/` exists with `build.gradle.kts` and Zig build integration.
+- Remaining: CI wiring skeletal; Gradle/Kotlin test harness and emulator coverage not verified.
+
 ## Context
 
 From `.smithers/specs/ios-and-remote-sandboxes-execution.md`, PoC-C1, promoted to Stage 0. The main spec commits to an Android **continuous build canary** — no user-facing Android release in this pass, but `libsmithers-core` must compile for `aarch64-linux-android` and link into a minimal Kotlin test app on every PR. This canary exists so architectural decisions don't foreclose a future Android release. If we wait until Stage 2 to stand it up, any Stage 0 or Stage 1 choice that accidentally foreclosed Android won't surface until after it's been baked into code.

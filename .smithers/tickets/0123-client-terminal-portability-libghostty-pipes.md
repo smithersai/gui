@@ -1,5 +1,10 @@
 # Client: terminal portability via libghostty pipes backend
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: TerminalView split into cross-platform `TerminalSurface.swift` plus macOS-only `TerminalView+macOS.swift`.
+- Remaining: Remote pipes-backend wiring requires runtime verification with 0120; iOS cell renderer (0146) is a separate INCOMPLETE prerequisite for full portability.
+
 ## Context
 
 The current terminal stack is macOS AppKit code. `TerminalView.swift` imports `AppKit` at the top, owns a singleton `GhosttyApp` around `ghostty_app_t` (`430-543`), defines `TerminalSurfaceView: NSView` with AppKit key/mouse/clipboard handling (`572-1660`), exposes `TerminalSurfaceRepresentable: NSViewRepresentable` (`1687-1756`), and renders `TerminalView` on top of that (`1760-1815`). The surrounding macOS session layer still assumes native daemon-backed PTY attachment: `project.yml:121-123` bundles `smithers-session-daemon` and `smithers-session-connect`, `Smithers.SessionStore.swift:138-220` creates native terminal sessions, and `Smithers.SessionController.swift:93-183` launches and talks to the local session daemon.

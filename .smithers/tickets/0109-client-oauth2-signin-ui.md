@@ -1,5 +1,10 @@
 # Client: OAuth2 sign-in UI for iOS + macOS
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: ASWebAuthenticationSession + Keychain wrapper implemented; refresh/revoke wiring present; SignInView shipped with accessibility IDs (ticket 0156).
+- Remaining: End-to-end integration depends on 0106 (plue authorize flow), which is still INCOMPLETE — UI cannot be fully exercised until backend lands.
+
 ## Context
 
 Sibling of ticket 0106 (plue-side browser-native authorize flow). This ticket owns the gui/client side: iOS and macOS SwiftUI sign-in views, PKCE verifier generation, Keychain storage, refresh and revoke wiring. Cannot complete until 0106's authorize flow exists, but development of the client UI and unit-testable parts (PKCE code, Keychain wrapper) can proceed in parallel against a mocked server.

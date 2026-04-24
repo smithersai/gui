@@ -1,5 +1,10 @@
 # Client: macOS+iOS target and build-system split
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: iOS target added to CI matrix; Package.swift declares `iOS(.v17)` alongside `macOS(.v14)`; project.yml references iOS; shared sources wired.
+- Remaining: Verify macOS-only binaries are fully excluded from iOS target; confirm iOS archive builds cleanly in CI.
+
 ## Context
 
 The repo is still macOS-only at the build layer. `Package.swift:4-95` declares `.macOS(.v14)` as the only platform, links `AppKit`, and only defines the existing executable plus macOS tests. `project.yml:1-192` defines a single macOS app target, macOS unit tests, macOS UI tests, and bundles macOS-only resources such as `libsmithers/zig-out/bin/smithers-session-daemon` and `libsmithers/zig-out/bin/smithers-session-connect`.

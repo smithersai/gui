@@ -33,7 +33,7 @@ that this module talks to).
 
 ### iOS
 
-`smithers://auth/callback` — registered via `CFBundleURLTypes` in
+`smithers://oauth2/callback` — registered via `CFBundleURLTypes` in
 `ios/Sources/SmithersiOS/Info.plist`. Defense-in-depth against scheme
 hijacking: every callback URL is validated against the `state` parameter
 we generated for that authorize attempt.
@@ -41,13 +41,14 @@ we generated for that authorize attempt.
 ### macOS
 
 Two options, both supported:
-- Custom scheme `smithers://auth/callback` (identical to iOS).
+- Custom scheme `smithers://auth/callback`.
 - RFC 8252 loopback: `http://127.0.0.1:<port>/callback`. Use
   `LoopbackCallbackServer` in `macos/Sources/Smithers/Auth/` — binds to
   127.0.0.1, accepts exactly one request, returns a plaintext "done"
   page, and shuts down. Port is ephemeral per sign-in.
 
-Plue's registered redirect URIs (set by 0106) must include both.
+Plue's registered redirect URIs (set by 0106) must include the iOS
+custom scheme, the macOS custom scheme, and the macOS loopback route.
 
 ## Resetting the Keychain during testing
 

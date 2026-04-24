@@ -138,6 +138,7 @@ struct LiveRunTreeView: View {
                                 hasFailedDescendant: errorIndex.hasFailedDescendant(nodeId),
                                 failedDescendantCount: errorIndex.failedDescendantCount(nodeId),
                                 isDimmed: searchIndex.isDimmed(nodeId),
+                                isGhost: store.isGhostNode(node),
                                 isHighlighted: !searchQuery.isEmpty && searchIndex.isMatch(nodeId),
                                 depth: node.depth,
                                 lastLogLine: lastLogLine(for: node),
@@ -485,10 +486,15 @@ struct LiveRunTreeUITestHarnessView: View {
                 heartbeatMs: 1_000,
                 lastEventAt: store.lastEventAt,
                 lastSeq: store.seq,
+                runStateLabel: store.runStateView?.stateLabel,
+                runStateReason: store.runStateView?.reasonSummary,
+                connectionState: store.connectionState,
+                staleSince: store.staleSince,
                 onCancel: nil,
                 onHijack: nil,
                 onOpenLogs: nil,
-                onRefresh: { store.returnToLive() }
+                onRefresh: { store.returnToLive() },
+                onClearHistory: { store.clearHistory() }
             )
 
             FrameScrubberView(store: store) { frameNo in
@@ -722,6 +728,7 @@ struct LiveRunTreeUITestHarnessView: View {
     }
 }
 
+@MainActor
 private final class LiveRunFixtureDevToolsProvider: DevToolsStreamProvider, @unchecked Sendable {
     private let runId: String
     private let snapshotsByFrame: [Int: DevToolsSnapshot]
@@ -750,7 +757,7 @@ private final class LiveRunFixtureDevToolsProvider: DevToolsStreamProvider, @unc
         self.nextSeq = (frameOrder.max() ?? 0) + 1
     }
 
-    func streamDevTools(runId: String, fromSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error> {
+    func streamDevTools(runId: String, afterSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 guard runId == self.runId else {

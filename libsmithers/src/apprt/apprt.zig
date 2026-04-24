@@ -1,8 +1,6 @@
 pub const structs = @import("structs.zig");
 pub const action = @import("action.zig");
 pub const embedded = @import("embedded.zig");
-pub const gtk = @import("gtk.zig");
-pub const none = @import("none.zig");
 
 pub const Action = action.Action;
 pub const Target = action.Target;

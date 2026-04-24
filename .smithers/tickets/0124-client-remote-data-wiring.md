@@ -53,7 +53,7 @@ Bind the shared SwiftUI views to `libsmithers-core`’s production remote runtim
 - `.smithers/tickets/0109-client-oauth2-signin-ui.md`
 - `.smithers/tickets/0110-plue-approvals-implementation.md`
 - `.smithers/tickets/0111-plue-run-shape-route-reconciliation.md`
-- Tickets `0114`-`0117` (production shape slices, authored in parallel)
+- Tickets `0114`-`0118` (production shape slices, authored in parallel)
 - `macos/Sources/Smithers/Smithers.Client.swift:4-140`
 - `macos/Sources/Smithers/Smithers.Client.swift:1131-1237`
 - `DashboardView.swift`
@@ -78,6 +78,6 @@ See 0099. Until 0099 lands: reviewer verifies that the remote path does not sile
 
 ## Risks / unknowns
 
-- The shape boundaries from `0114`-`0117` are being defined in parallel, so the shared store API should stay entity-oriented rather than hard-coding table names everywhere in Swift.
+- The shape boundaries from `0114`-`0118` are being defined in parallel, so the shared store API should stay entity-oriented rather than hard-coding table names everywhere in Swift.
 - Some existing views likely assume request/response timing or local polling. Those assumptions will surface as subtle UI regressions during the migration.
 - If this ticket reaches into macOS-only product behavior, it will overlap with `0126`; keep the boundary at shared data/store wiring.

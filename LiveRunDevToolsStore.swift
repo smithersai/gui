@@ -40,8 +40,9 @@ struct ReconnectBackoff: Sendable {
 
 // MARK: - DevToolsStreamProvider
 
+@MainActor
 protocol DevToolsStreamProvider: Sendable {
-    func streamDevTools(runId: String, fromSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error>
+    func streamDevTools(runId: String, afterSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error>
     func getDevToolsSnapshot(runId: String, frameNo: Int?) async throws -> DevToolsSnapshot
     func jumpToFrame(runId: String, frameNo: Int, confirm: Bool) async throws -> DevToolsJumpResult
 }
@@ -61,16 +62,39 @@ enum LiveRunDevToolsMode: Equatable, Sendable {
     }
 }
 
+struct GhostNodeRecord: Equatable, Sendable {
+    let key: String
+    let node: DevToolsNode
+    let mountedFrameNo: Int
+    let unmountedFrameNo: Int
+    let unmountedSeq: Int
+    let capturedAt: Date
+
+    static func == (lhs: GhostNodeRecord, rhs: GhostNodeRecord) -> Bool {
+        lhs.key == rhs.key &&
+            lhs.node.id == rhs.node.id &&
+            lhs.mountedFrameNo == rhs.mountedFrameNo &&
+            lhs.unmountedFrameNo == rhs.unmountedFrameNo &&
+            lhs.unmountedSeq == rhs.unmountedSeq
+    }
+}
+
 // MARK: - LiveRunDevToolsStore
 
 @MainActor
 final class LiveRunDevToolsStore: ObservableObject {
+    static let staleBannerDelaySeconds: TimeInterval = 2.0
+    static let defaultGhostNodeCap: Int = 256
+
     @Published private(set) var tree: DevToolsNode?
     @Published private(set) var seq: Int = 0
     @Published private(set) var lastEventAt: Date?
     @Published var selectedNodeId: Int?
     @Published private(set) var isGhost: Bool = false
     @Published private(set) var connectionState: DevToolsConnectionState = .disconnected
+    @Published private(set) var staleSince: Date?
+    @Published private(set) var isStaleBannerVisible: Bool = false
+    @Published private(set) var ghostNodes: [String: GhostNodeRecord] = [:]
 
     @Published private(set) var mode: LiveRunDevToolsMode = .live
     @Published private(set) var latestFrameNo: Int = 0
@@ -94,20 +118,28 @@ final class LiveRunDevToolsStore: ObservableObject {
 
     @Published private(set) var runSupportsRetry: Bool = true
     @Published private(set) var runStatus: RunStatus = .unknown
+    @Published private(set) var runStateView: RunStateView?
     @Published private(set) var lastToastMessage: String?
 
     var runId: String?
 
     private var streamTask: Task<Void, Never>?
+    private var staleBannerTask: Task<Void, Never>?
     private var backoff = ReconnectBackoff()
     private let streamProvider: DevToolsStreamProvider?
-    private var ghostNode: DevToolsNode?
     private var shouldReconnect: Bool = false
+    private var stateRunId: String?
+    private var selectedNodeGhostKey: String?
+    private var lastSeqSeenByRunId: [String: Int] = [:]
+    private var mountedFrameByGhostKey: [String: Int] = [:]
+    private var ghostEvictionOrder: [String] = []
+    private let ghostNodeCap: Int
 
     private var liveTree: DevToolsNode?
     private var liveSeq: Int = 0
     private var liveLatestFrameNo: Int = 0
     private var bufferedLiveEvents: Int = 0
+    private var awaitingSnapshotAfterGapResync = false
 
     private let toastSink: (String) -> Void
 
@@ -117,12 +149,18 @@ final class LiveRunDevToolsStore: ObservableObject {
     }
 
     var selectedNode: DevToolsNode? {
-        guard let selectedNodeId else { return nil }
-        if let found = tree?.findNode(byId: selectedNodeId) {
+        if let selectedNodeId, let found = tree?.findNode(byId: selectedNodeId) {
             return found
         }
-        if isGhost { return ghostNode }
+        if isGhost, let selectedNodeGhostKey, let ghost = ghostNodes[selectedNodeGhostKey] {
+            return ghost.node
+        }
         return nil
+    }
+
+    var selectedGhostRecord: GhostNodeRecord? {
+        guard isGhost, let selectedNodeGhostKey else { return nil }
+        return ghostNodes[selectedNodeGhostKey]
     }
 
     var isRunFinished: Bool {
@@ -153,6 +191,7 @@ final class LiveRunDevToolsStore: ObservableObject {
 
     init(
         streamProvider: DevToolsStreamProvider? = nil,
+        ghostNodeCap: Int? = nil,
         toastSink: @escaping (String) -> Void = { message in
             AppLogger.ui.info("Live Run toast", metadata: [
                 "message_length": String(message.count),
@@ -160,14 +199,19 @@ final class LiveRunDevToolsStore: ObservableObject {
         }
     ) {
         self.streamProvider = streamProvider
+        self.ghostNodeCap = max(1, ghostNodeCap ?? Self.resolvedGhostNodeCap())
         self.toastSink = toastSink
     }
 
     // MARK: - Connect / Disconnect
 
     func connect(runId: String) {
-        disconnect()
+        streamTask?.cancel()
+        streamTask = nil
+        staleBannerTask?.cancel()
+        staleBannerTask = nil
 
+        let preservingExistingRunState = stateRunId == runId
         self.runId = runId
         shouldReconnect = true
         connectionState = .connecting
@@ -178,28 +222,34 @@ final class LiveRunDevToolsStore: ObservableObject {
         rewindError = nil
         rewindInFlight = false
         bufferedLiveEvents = 0
-        tree = nil
-        seq = 0
-        liveTree = nil
-        liveSeq = 0
-        latestFrameNo = 0
-        liveLatestFrameNo = 0
-        runStatus = .unknown
-        runningNodeCount = 0
-        runningNodeIds = []
+        staleSince = nil
+        isStaleBannerVisible = false
+        awaitingSnapshotAfterGapResync = false
+
+        if !preservingExistingRunState {
+            resetForNewRun(runId: runId)
+        } else {
+            syncDisplayedTreeWithLive()
+            updateGhostState()
+        }
+
+        let resumeSeq = preservingExistingRunState ? lastSeenSeq(for: runId) : nil
 
         AppLogger.network.info("DevTools connect", metadata: [
             "run_id": runId,
-            "from_seq": String(seq),
+            "after_seq": resumeSeq.map(String.init) ?? "nil",
+            "preserved_state": String(preservingExistingRunState),
         ])
 
-        startStream(runId: runId, fromSeq: nil)
+        startStream(runId: runId, afterSeq: resumeSeq)
     }
 
     func disconnect() {
         shouldReconnect = false
         streamTask?.cancel()
         streamTask = nil
+        staleBannerTask?.cancel()
+        staleBannerTask = nil
 
         if let runId {
             AppLogger.network.info("DevTools disconnect", metadata: [
@@ -209,6 +259,8 @@ final class LiveRunDevToolsStore: ObservableObject {
         }
 
         connectionState = .disconnected
+        staleSince = nil
+        isStaleBannerVisible = false
         runId = nil
     }
 
@@ -223,6 +275,9 @@ final class LiveRunDevToolsStore: ObservableObject {
         case .delta(let delta):
             eventType = "delta"
             applyDeltaEvent(delta)
+        case .gapResync(let gapResync):
+            eventType = "gap_resync"
+            applyGapResync(gapResync)
         }
 
         AppLogger.network.debug("DevTools applyEvent", metadata: [
@@ -234,13 +289,37 @@ final class LiveRunDevToolsStore: ObservableObject {
 
         lastEventAt = Date()
         eventsApplied += 1
-        backoff.reset()
+        markStreamHealthy()
 
         if mode.isHistorical {
             bufferedLiveEvents += 1
         } else {
             updateGhostState()
         }
+    }
+
+    func applyGapResync(_ gapResync: DevToolsGapResync) {
+        let preservedTree = tree?.deepCopy()
+        let preservedSeq = seq
+        liveTree = nil
+        liveSeq = gapResync.toSeq
+        if let runId {
+            lastSeqSeenByRunId[runId] = gapResync.toSeq
+        }
+        awaitingSnapshotAfterGapResync = true
+        if case .live = mode {
+            // Keep the currently displayed tree until the server follows up with
+            // a snapshot, so reconnect/resync does not blank the UI.
+            tree = preservedTree
+            seq = preservedSeq
+            latestFrameNo = liveLatestFrameNo
+        }
+
+        AppLogger.network.warning("DevTools gap resync", metadata: [
+            "run_id": runId ?? "",
+            "from_seq": String(gapResync.fromSeq),
+            "to_seq": String(gapResync.toSeq),
+        ])
     }
 
     func applySnapshot(_ snapshot: DevToolsSnapshot) {
@@ -368,6 +447,7 @@ final class LiveRunDevToolsStore: ObservableObject {
             let snapshot = try await provider.getDevToolsSnapshot(runId: runId, frameNo: nil)
 
             _ = applySnapshotToLiveState(snapshot)
+            pruneGhostNodesForRewind(targetFrameNo: frameNo)
             mode = .live
             bufferedLiveEvents = 0
             scrubError = nil
@@ -432,12 +512,10 @@ final class LiveRunDevToolsStore: ObservableObject {
 
     func selectNode(_ nodeId: Int?) {
         let previousId = selectedNodeId
-        if let nodeId {
-            if let node = tree?.findNode(byId: nodeId) {
-                ghostNode = node.deepCopy()
-            }
-        }
         selectedNodeId = nodeId
+        if let nodeId, let node = tree?.findNode(byId: nodeId) {
+            selectedNodeGhostKey = selectionKey(for: node)
+        }
         updateGhostState()
 
         AppLogger.state.info("DevTools selectNode", metadata: [
@@ -445,19 +523,27 @@ final class LiveRunDevToolsStore: ObservableObject {
             "node_id": nodeId.map(String.init) ?? "nil",
             "previous_node_id": previousId.map(String.init) ?? "nil",
             "is_ghost": String(isGhost),
+            "ghost_key": selectedNodeGhostKey ?? "nil",
         ])
     }
 
     func clearSelection() {
         let previousId = selectedNodeId
         selectedNodeId = nil
+        selectedNodeGhostKey = nil
         isGhost = false
-        ghostNode = nil
 
         AppLogger.state.info("DevTools clearSelection", metadata: [
             "run_id": runId ?? "",
             "previous_node_id": previousId.map(String.init) ?? "nil",
         ])
+    }
+
+    func clearHistory() {
+        ghostNodes.removeAll()
+        ghostEvictionOrder.removeAll()
+        mountedFrameByGhostKey.removeAll()
+        updateGhostState()
     }
 
     func retryNode(nodeId: String) {
@@ -470,28 +556,40 @@ final class LiveRunDevToolsStore: ObservableObject {
     private func updateGhostState() {
         guard let selectedNodeId else {
             isGhost = false
-            ghostNode = nil
+            selectedNodeGhostKey = nil
             return
         }
 
-        if tree?.findNode(byId: selectedNodeId) != nil {
+        if let activeNode = tree?.findNode(byId: selectedNodeId) {
+            selectedNodeGhostKey = selectionKey(for: activeNode)
             isGhost = false
-        } else if ghostNode != nil {
+        } else if let selectedNodeGhostKey, ghostNodes[selectedNodeGhostKey] != nil {
             isGhost = true
         } else {
             isGhost = false
             self.selectedNodeId = nil
+            self.selectedNodeGhostKey = nil
         }
+    }
+
+    func isGhostNode(_ node: DevToolsNode) -> Bool {
+        guard let key = ghostMapKey(for: node) else { return false }
+        return ghostNodes[key] != nil
+    }
+
+    func ghostRecord(for node: DevToolsNode) -> GhostNodeRecord? {
+        guard let key = ghostMapKey(for: node) else { return nil }
+        return ghostNodes[key]
     }
 
     // MARK: - Stream Management
 
-    private func startStream(runId: String, fromSeq: Int?) {
+    private func startStream(runId: String, afterSeq: Int?) {
         streamTask?.cancel()
         streamTask = Task { [weak self] in
             guard let self, let provider = self.streamProvider else { return }
 
-            let stream = provider.streamDevTools(runId: runId, fromSeq: fromSeq)
+            let stream = provider.streamDevTools(runId: runId, afterSeq: afterSeq)
 
             do {
                 await MainActor.run { self.connectionState = .connecting }
@@ -507,11 +605,11 @@ final class LiveRunDevToolsStore: ObservableObject {
                 }
 
                 guard !Task.isCancelled else { return }
-                await self.handleStreamEnd(runId: runId)
+                self.handleStreamEnd(runId: runId)
 
             } catch {
                 guard !Task.isCancelled else { return }
-                await self.handleStreamError(error, runId: runId)
+                self.handleStreamError(error, runId: runId)
             }
         }
     }
@@ -527,6 +625,7 @@ final class LiveRunDevToolsStore: ObservableObject {
             connectionState = .disconnected
             return
         }
+        markConnectionInterrupted()
         scheduleReconnect(runId: runId)
     }
 
@@ -542,6 +641,7 @@ final class LiveRunDevToolsStore: ObservableObject {
         ])
 
         connectionState = .error(clientError)
+        markConnectionInterrupted()
 
         guard shouldReconnect else { return }
         scheduleReconnect(runId: runId)
@@ -552,11 +652,11 @@ final class LiveRunDevToolsStore: ObservableObject {
         reconnectCount += 1
         let delay = backoff.currentDelay
 
-        let plannedFromSeq: Int?
+        let plannedAfterSeq: Int?
         if case .error(let err) = connectionState, case .malformedEvent = err {
-            plannedFromSeq = nil
+            plannedAfterSeq = nil
         } else {
-            plannedFromSeq = liveSeq > 0 ? liveSeq : nil
+            plannedAfterSeq = lastSeenSeq(for: runId)
         }
 
         AppLogger.network.warning("DevTools reconnect scheduled", metadata: [
@@ -564,7 +664,7 @@ final class LiveRunDevToolsStore: ObservableObject {
             "attempt": String(backoff.attempt),
             "retry_count": String(reconnectCount),
             "delay_s": String(format: "%.1f", delay),
-            "from_seq": plannedFromSeq.map(String.init) ?? "nil",
+            "after_seq": plannedAfterSeq.map(String.init) ?? "nil",
         ])
 
         streamTask?.cancel()
@@ -581,24 +681,25 @@ final class LiveRunDevToolsStore: ObservableObject {
             guard !Task.isCancelled else { return }
             guard let self, self.shouldReconnect else { return }
 
-            let fromSeq: Int?
+            let afterSeq: Int?
             if case .error(let err) = self.connectionState, case .malformedEvent = err {
-                fromSeq = nil
+                afterSeq = nil
             } else {
-                fromSeq = self.liveSeq > 0 ? self.liveSeq : nil
+                afterSeq = self.lastSeenSeq(for: runId)
             }
 
             await MainActor.run {
                 self.connectionState = .connecting
             }
-            self.startStream(runId: runId, fromSeq: fromSeq)
+            self.startStream(runId: runId, afterSeq: afterSeq)
         }
     }
 
     private func requestResync(runId: String) {
         guard shouldReconnect else { return }
         streamTask?.cancel()
-        startStream(runId: runId, fromSeq: nil)
+        awaitingSnapshotAfterGapResync = false
+        startStream(runId: runId, afterSeq: nil)
     }
 
     private func applySnapshotToLiveState(_ snapshot: DevToolsSnapshot) -> Bool {
@@ -611,7 +712,7 @@ final class LiveRunDevToolsStore: ObservableObject {
             return false
         }
 
-        if snapshot.seq <= liveSeq, liveSeq > 0 {
+        if snapshot.seq <= liveSeq, liveSeq > 0, !awaitingSnapshotAfterGapResync {
             AppLogger.network.warning("DevTools duplicate snapshot seq", metadata: [
                 "current_seq": String(liveSeq),
                 "received_seq": String(snapshot.seq),
@@ -619,14 +720,36 @@ final class LiveRunDevToolsStore: ObservableObject {
             return false
         }
 
+        if let previousLiveTree = liveTree {
+            captureGhostNodesRemovedBySnapshot(
+                previousRoot: previousLiveTree,
+                nextRoot: snapshot.root,
+                unmountedFrameNo: snapshot.frameNo,
+                unmountedSeq: snapshot.seq
+            )
+        }
+
+        awaitingSnapshotAfterGapResync = false
         liveTree = snapshot.root
         liveSeq = snapshot.seq
         liveLatestFrameNo = max(liveLatestFrameNo, snapshot.frameNo)
-        runStatus = statusForRoot(snapshot.root)
+        runStateView = snapshot.runState
+        runStatus = statusForSnapshot(snapshot)
+        recordMountedFrames(from: snapshot.root, frameNo: snapshot.frameNo)
+        stateRunId = snapshot.runId
+        lastSeqSeenByRunId[snapshot.runId] = snapshot.seq
         return true
     }
 
     private func applyDeltaToLiveState(_ delta: DevToolsDelta) -> Bool {
+        if awaitingSnapshotAfterGapResync {
+            AppLogger.network.warning("DevTools delta ignored while waiting for gap snapshot", metadata: [
+                "seq": String(delta.seq),
+                "base_seq": String(delta.baseSeq),
+            ])
+            return false
+        }
+
         if delta.seq <= liveSeq, liveSeq > 0 {
             AppLogger.network.warning("DevTools backwards seq", metadata: [
                 "current_seq": String(liveSeq),
@@ -635,12 +758,10 @@ final class LiveRunDevToolsStore: ObservableObject {
             return false
         }
 
-        let gap = delta.baseSeq - liveSeq
-        if gap > 100, liveSeq > 0 {
-            AppLogger.network.warning("DevTools large seq gap — requesting resync", metadata: [
+        if liveSeq > 0, delta.baseSeq != liveSeq {
+            AppLogger.network.warning("DevTools seq gap — requesting resync", metadata: [
                 "current_seq": String(liveSeq),
                 "delta_base_seq": String(delta.baseSeq),
-                "gap": String(gap),
             ])
             if let runId {
                 requestResync(runId: runId)
@@ -648,10 +769,17 @@ final class LiveRunDevToolsStore: ObservableObject {
             return false
         }
 
+        captureGhostNodes(from: delta)
+
         do {
             liveTree = try DevToolsDeltaApplier.applyDelta(delta, to: liveTree)
             liveSeq = delta.seq
             liveLatestFrameNo = max(liveLatestFrameNo, delta.seq)
+            let inferredFrameNo = max(liveLatestFrameNo, delta.seq)
+            recordMountedFrames(from: delta, frameNo: inferredFrameNo)
+            if let runId {
+                lastSeqSeenByRunId[runId] = delta.seq
+            }
             runStatus = statusForRoot(liveTree)
             return true
         } catch {
@@ -659,6 +787,9 @@ final class LiveRunDevToolsStore: ObservableObject {
                 "error": String(describing: error),
                 "seq": String(delta.seq),
             ])
+            if let runId {
+                requestResync(runId: runId)
+            }
             return false
         }
     }
@@ -705,6 +836,245 @@ final class LiveRunDevToolsStore: ObservableObject {
         }
     }
 
+    private func resetForNewRun(runId: String) {
+        stateRunId = runId
+        tree = nil
+        seq = 0
+        liveTree = nil
+        liveSeq = 0
+        latestFrameNo = 0
+        liveLatestFrameNo = 0
+        runStatus = .unknown
+        runStateView = nil
+        runningNodeCount = 0
+        runningNodeIds = []
+        selectedNodeId = nil
+        selectedNodeGhostKey = nil
+        clearHistory()
+    }
+
+    private func lastSeenSeq(for runId: String) -> Int? {
+        guard stateRunId == runId, liveTree != nil, liveSeq > 0 else { return nil }
+        let stored = max(lastSeqSeenByRunId[runId] ?? 0, liveSeq)
+        return stored > 0 ? stored : nil
+    }
+
+    private func markConnectionInterrupted() {
+        if staleSince == nil {
+            staleSince = Date()
+        }
+        scheduleStaleBannerReveal()
+    }
+
+    private func markStreamHealthy() {
+        backoff.reset()
+        staleBannerTask?.cancel()
+        staleBannerTask = nil
+        staleSince = nil
+        isStaleBannerVisible = false
+    }
+
+    private func scheduleStaleBannerReveal() {
+        guard let staleSince else { return }
+        staleBannerTask?.cancel()
+        staleBannerTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(Self.staleBannerDelaySeconds * 1_000_000_000))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                guard self.staleSince == staleSince else { return }
+                guard self.connectionState != .streaming else { return }
+                self.isStaleBannerVisible = true
+            }
+        }
+    }
+
+    private func ghostMapKey(for node: DevToolsNode) -> String? {
+        if let nodeId = node.task?.nodeId, !nodeId.isEmpty {
+            return nodeId
+        }
+        return nil
+    }
+
+    private func selectionKey(for node: DevToolsNode) -> String {
+        if let key = ghostMapKey(for: node) {
+            return key
+        }
+        return "selected:\(node.id)"
+    }
+
+    private func recordMountedFrames(from root: DevToolsNode, frameNo: Int) {
+        recordMountedFrame(node: root, frameNo: frameNo)
+        for child in root.children {
+            recordMountedFrames(from: child, frameNo: frameNo)
+        }
+    }
+
+    private func recordMountedFrames(from delta: DevToolsDelta, frameNo: Int) {
+        for op in delta.ops {
+            if case .addNode(_, _, let node) = op {
+                recordMountedFrames(from: node, frameNo: frameNo)
+            } else if case .replaceRoot(let node) = op {
+                recordMountedFrames(from: node, frameNo: frameNo)
+            }
+        }
+    }
+
+    private func recordMountedFrame(node: DevToolsNode, frameNo: Int) {
+        guard let key = ghostMapKey(for: node) else { return }
+        if let existing = mountedFrameByGhostKey[key] {
+            mountedFrameByGhostKey[key] = min(existing, frameNo)
+        } else {
+            mountedFrameByGhostKey[key] = frameNo
+        }
+    }
+
+    private func captureGhostNodesRemovedBySnapshot(
+        previousRoot: DevToolsNode,
+        nextRoot: DevToolsNode,
+        unmountedFrameNo: Int,
+        unmountedSeq: Int
+    ) {
+        var nextKeys = Set<String>()
+        collectGhostKeys(from: nextRoot, into: &nextKeys)
+        registerRemovedGhostNodes(
+            from: previousRoot,
+            activeKeys: nextKeys,
+            unmountedFrameNo: unmountedFrameNo,
+            unmountedSeq: unmountedSeq
+        )
+    }
+
+    private func collectGhostKeys(from node: DevToolsNode, into keys: inout Set<String>) {
+        if let key = ghostMapKey(for: node) {
+            keys.insert(key)
+        }
+        for child in node.children {
+            collectGhostKeys(from: child, into: &keys)
+        }
+    }
+
+    private func registerRemovedGhostNodes(
+        from node: DevToolsNode,
+        activeKeys: Set<String>,
+        unmountedFrameNo: Int,
+        unmountedSeq: Int
+    ) {
+        if let key = ghostMapKey(for: node), !activeKeys.contains(key) {
+            registerGhostSubtree(node, unmountedFrameNo: unmountedFrameNo, unmountedSeq: unmountedSeq)
+            return
+        }
+        for child in node.children {
+            registerRemovedGhostNodes(
+                from: child,
+                activeKeys: activeKeys,
+                unmountedFrameNo: unmountedFrameNo,
+                unmountedSeq: unmountedSeq
+            )
+        }
+    }
+
+    private func captureGhostNodes(from delta: DevToolsDelta) {
+        guard let liveTree else { return }
+        let unmountedFrameNo = max(liveLatestFrameNo, delta.seq)
+        for op in delta.ops {
+            if case .removeNode(let nodeID) = op {
+                if liveTree.id == nodeID {
+                    registerGhostSubtree(
+                        liveTree,
+                        unmountedFrameNo: unmountedFrameNo,
+                        unmountedSeq: delta.seq
+                    )
+                    continue
+                }
+                if let removed = liveTree.findNode(byId: nodeID) {
+                    registerGhostSubtree(
+                        removed,
+                        unmountedFrameNo: unmountedFrameNo,
+                        unmountedSeq: delta.seq
+                    )
+                }
+            } else if case .replaceRoot(let replacementRoot) = op {
+                captureGhostNodesRemovedBySnapshot(
+                    previousRoot: liveTree,
+                    nextRoot: replacementRoot,
+                    unmountedFrameNo: unmountedFrameNo,
+                    unmountedSeq: delta.seq
+                )
+            }
+        }
+    }
+
+    private func registerGhostSubtree(
+        _ node: DevToolsNode,
+        unmountedFrameNo: Int,
+        unmountedSeq: Int
+    ) {
+        registerGhostNode(node, unmountedFrameNo: unmountedFrameNo, unmountedSeq: unmountedSeq)
+        for child in node.children {
+            registerGhostSubtree(child, unmountedFrameNo: unmountedFrameNo, unmountedSeq: unmountedSeq)
+        }
+    }
+
+    private func registerGhostNode(
+        _ node: DevToolsNode,
+        unmountedFrameNo: Int,
+        unmountedSeq: Int
+    ) {
+        guard let key = ghostMapKey(for: node) else { return }
+        let mountedFrameNo = mountedFrameByGhostKey[key] ?? unmountedFrameNo
+        ghostNodes[key] = GhostNodeRecord(
+            key: key,
+            node: node.deepCopy(),
+            mountedFrameNo: mountedFrameNo,
+            unmountedFrameNo: unmountedFrameNo,
+            unmountedSeq: unmountedSeq,
+            capturedAt: Date()
+        )
+        ghostEvictionOrder.removeAll(where: { $0 == key })
+        ghostEvictionOrder.append(key)
+        enforceGhostBudget()
+    }
+
+    private func enforceGhostBudget() {
+        guard ghostNodes.count > ghostNodeCap else { return }
+        var keysToEvict: [String] = []
+        while ghostNodes.count - keysToEvict.count > ghostNodeCap, !ghostEvictionOrder.isEmpty {
+            let key = ghostEvictionOrder.removeFirst()
+            keysToEvict.append(key)
+        }
+        removeGhostRecords(keysToEvict)
+    }
+
+    private func pruneGhostNodesForRewind(targetFrameNo: Int) {
+        let keysToRemove = ghostNodes.values
+            .filter { $0.mountedFrameNo > targetFrameNo }
+            .map(\.key)
+        removeGhostRecords(keysToRemove)
+    }
+
+    private func removeGhostRecords(_ keys: [String]) {
+        guard !keys.isEmpty else { return }
+        let keySet = Set(keys)
+        for key in keySet {
+            ghostNodes.removeValue(forKey: key)
+            mountedFrameByGhostKey.removeValue(forKey: key)
+        }
+        ghostEvictionOrder.removeAll(where: { keySet.contains($0) })
+        if let selectedNodeGhostKey, keySet.contains(selectedNodeGhostKey) {
+            if let selectedNodeId, tree?.findNode(byId: selectedNodeId) != nil {
+                isGhost = false
+                self.selectedNodeGhostKey = nil
+            } else {
+                clearSelection()
+            }
+        }
+    }
+
     private func statusForRoot(_ root: DevToolsNode?) -> RunStatus {
         guard let root else { return runStatus }
         guard case .string(let rawState) = root.props["state"] else { return runStatus }
@@ -723,6 +1093,43 @@ final class LiveRunDevToolsStore: ObservableObject {
         default:
             return .unknown
         }
+    }
+
+    private func statusForSnapshot(_ snapshot: DevToolsSnapshot) -> RunStatus {
+        if let runState = snapshot.runState,
+           let mapped = runStatusFromRunState(runState.state) {
+            return mapped
+        }
+        return statusForRoot(snapshot.root)
+    }
+
+    private func runStatusFromRunState(_ rawState: String) -> RunStatus? {
+        switch rawState.lowercased() {
+        case "running", "recovering":
+            return .running
+        case "waiting-approval", "waitingapproval", "waiting-event", "waitingevent", "waiting-timer", "waitingtimer":
+            return .waitingApproval
+        case "succeeded", "success", "finished", "complete", "completed":
+            return .finished
+        case "failed":
+            return .failed
+        case "cancelled", "canceled":
+            return .cancelled
+        case "unknown", "stale", "orphaned":
+            return .unknown
+        default:
+            return nil
+        }
+    }
+
+    private static func resolvedGhostNodeCap() -> Int {
+        guard let raw = ProcessInfo.processInfo.environment["SMITHERS_DEVTOOLS_GHOST_CAP"] else {
+            return defaultGhostNodeCap
+        }
+        guard let parsed = Int(raw), parsed > 0 else {
+            return defaultGhostNodeCap
+        }
+        return parsed
     }
 
     private static func toClientError(_ error: Error) -> DevToolsClientError {

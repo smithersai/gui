@@ -1,5 +1,10 @@
 # Client: libsmithers-core production runtime
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: Production runtime skeleton landed; Electric + WS + HTTP transports promoted from PoCs (see 0140). Core runtime scaffolding merged.
+- Remaining: Full FFI surface, Swift wrapper completeness, and auth-token handoff not fully verified; end-to-end device runtime check pending.
+
 ## Context
 
 Section 4 of `.smithers/specs/ios-and-remote-sandboxes.md` says the client runtime is a session-per-engine-connection core that owns Electric shapes, WebSocket PTY, HTTP writes, SSE fallback, and a bounded SQLite cache. The current codebase is not shaped that way. `libsmithers/include/smithers.h:66-388` still centers the ABI on a process-lifetime `smithers_app_t`, separate `smithers_session_t`, a `smithers_client_t` described as “daemon/CLI transport,” and global persistence handles. `libsmithers/src/App.zig:21-146` owns workspaces, recents, and persisted session restore. `libsmithers/src/session/session.zig:43-225` still synthesizes local chat/run events. `libsmithers/src/client/client.zig:18-255` still multiplexes devtools helpers, local fallbacks, and CLI shell-outs. `libsmithers/src/persistence/sqlite.zig:73-260` still persists `workspace_sessions`, `workspace_chat_sessions`, and `recent_workspaces`.
@@ -51,7 +56,7 @@ Replace the current `libsmithers/src/App.zig`-centered architecture with the pro
 - `.smithers/tickets/0100-design-migration-strategy.md`
 - `.smithers/tickets/0106-plue-oauth2-pkce-for-mobile.md`
 - `.smithers/tickets/0109-client-oauth2-signin-ui.md`
-- Tickets `0114`-`0117` (production shape slices, authored in parallel)
+- Tickets `0114`-`0118` (production shape slices, authored in parallel)
 - `libsmithers/include/smithers.h:66-388`
 - `libsmithers/src/App.zig:21-146`
 - `libsmithers/src/client/client.zig:18-255`
@@ -83,5 +88,5 @@ See 0099. Until 0099 lands: reviewer verifies the remote path never shells out t
 ## Risks / unknowns
 
 - This is the biggest ABI churn in the client slice; downstream tickets should not start coding against unstable names.
-- The mirrored schema contract lives in plue, so generated types and cache schema changes will move with tickets `0114`-`0117`.
+- The mirrored schema contract lives in plue, so generated types and cache schema changes will move with tickets `0114`-`0118`.
 - A sloppy compatibility layer could leave both the old `App.zig` model and the new connection-session model live at once. The migration needs an explicit cut line.

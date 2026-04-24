@@ -579,6 +579,9 @@ SMITHERS_API smithers_pty_handle_t smithers_core_attach_pty(
     const char *session_id,
     smithers_error_s *out_err);
 
+SMITHERS_API uint64_t smithers_core_pty_public_handle(
+    smithers_pty_handle_t h);
+
 SMITHERS_API smithers_error_s smithers_core_pty_write(
     smithers_pty_handle_t h,
     const uint8_t *bytes,

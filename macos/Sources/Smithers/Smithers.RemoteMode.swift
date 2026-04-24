@@ -32,6 +32,9 @@ import SmithersStore
 #if canImport(SmithersRuntime)
 import SmithersRuntime
 #endif
+#if canImport(SmithersE2ESupport)
+import SmithersE2ESupport
+#endif
 
 // MARK: - Feature flag plumbing
 
@@ -236,7 +239,7 @@ final class RemoteModeController: ObservableObject {
             let clientConfig = OAuth2ClientConfig(
                 baseURL: effectiveBaseURL,
                 clientID: "smithers-macos",
-                redirectURI: "http://127.0.0.1:0/callback",
+                redirectURI: "smithers://auth/callback",
                 scopes: ["read", "write"],
                 audience: "smithers-api"
             )
@@ -254,10 +257,11 @@ final class RemoteModeController: ObservableObject {
         }
         self.authModel = resolvedAuthModel
 
+        let tokenManager = resolvedAuthModel.tokens
         self.featureFlags = featureFlags ?? FeatureFlagsClient(
             baseURL: effectiveBaseURL,
             bearerProvider: {
-                try? resolvedAuthModel.tokens.currentAccessToken()
+                try? tokenManager.currentAccessToken()
             }
         )
 
@@ -419,6 +423,8 @@ final class RemoteModeController: ObservableObject {
         switch authModel.phase {
         case .signedIn:
             await handleSignedInState()
+        case .restoringSession:
+            phase = .signingIn
         case .signedOut:
             featureFlagRefreshTask?.cancel()
             featureFlagRefreshTask = nil

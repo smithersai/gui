@@ -1,18 +1,16 @@
 // TerminalIOSRenderer.swift — ticket 0123.
 //
-// iOS-only renderer for the shared `TerminalSurface`. This is the
-// Stage-0 pipes-backed terminal: it consumes UTF-8 bytes from
-// `TerminalSurfaceModel.recentBytes` and draws them into a plain
-// UITextView. Full libghostty VT rendering (using the
-// `ghostty-vt.xcframework` from the 0092 PoC) replaces this body in a
-// follow-up; the plumbing (input, resize, focus, bell, title) is the
-// same either way so the later swap is contained.
+// iOS-only renderer for the shared `TerminalSurface`. Bytes arrive via
+// `TerminalSurfaceModel.recentBytes`, are decoded by `ghostty-vt`, and
+// are rendered into a fixed cell grid using CoreGraphics. The on-screen
+// input bar remains as the touch fallback while the renderer view itself
+// takes first responder and forwards basic hardware-keyboard input.
 //
 // The key acceptance bullet this file carries: the iOS simulator must
 // render bytes that arrived via `libsmithers-core`'s PTY transport,
 // not via any daemon socket or NSView path. Because bytes flow through
-// `TerminalSurfaceModel`, wiring this to the real libghostty VT
-// decoder later is a local change.
+// `TerminalSurfaceModel`, so the VT decoder stays local to the iOS
+// renderer and does not perturb the shared surface contract.
 
 #if os(iOS)
 import SwiftUI
@@ -46,8 +44,14 @@ struct TerminalIOSRendererBridge: View {
                             .accessibilityIdentifier("terminal.status.reconnecting")
                     }
             case .disconnected:
-                TerminalDisconnectedView(sessionID: sessionID)
-                    .accessibilityIdentifier("terminal.status.disconnected")
+                terminalBody
+                    .overlay {
+                        TerminalDisconnectedView(
+                            sessionID: sessionID,
+                            onReconnect: { model.retryConnection() }
+                        )
+                            .accessibilityIdentifier("terminal.status.disconnected")
+                    }
             }
         }
         .accessibilityElement(children: .contain)
@@ -124,6 +128,7 @@ private struct TerminalReconnectOverlay: View {
 
 private struct TerminalDisconnectedView: View {
     let sessionID: String?
+    let onReconnect: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
@@ -132,7 +137,7 @@ private struct TerminalDisconnectedView: View {
                 .foregroundStyle(.secondary)
             Text("Terminal disconnected")
                 .font(.headline)
-            Text("A live workspace session transport is not attached on this iOS surface yet.")
+            Text("The live workspace session transport is unavailable. Retry to reattach.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -142,6 +147,9 @@ private struct TerminalDisconnectedView: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
+            Button("Reconnect", action: onReconnect)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("terminal.status.disconnected.retry")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(16)
@@ -150,22 +158,21 @@ private struct TerminalDisconnectedView: View {
     }
 }
 
-/// UITextView-backed byte renderer. Intentionally simple: appends bytes
-/// as UTF-8 and scrolls to bottom. libghostty VT rendering replaces this
-/// body in a 0092 follow-up.
+/// UITextView-backed byte renderer. This keeps the iOS terminal surface
+/// usable when the optional Ghostty VT module is not linked.
 struct TerminalIOSTextView: UIViewRepresentable {
     @ObservedObject var model: TerminalSurfaceModel
 
     func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
-        tv.isEditable = false
-        tv.isSelectable = true
-        tv.backgroundColor = .black
-        tv.textColor = .green
-        tv.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        tv.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 48, right: 8)
-        tv.alwaysBounceVertical = true
-        return tv
+        let textView = UITextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.backgroundColor = .black
+        textView.textColor = .green
+        textView.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 48, right: 8)
+        textView.alwaysBounceVertical = true
+        return textView
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
@@ -180,7 +187,8 @@ struct TerminalIOSTextView: UIViewRepresentable {
 
 /// Floating input bar so the iOS user has a way to send stdin bytes
 /// back through the transport. Keeps the PTY two-way even without a
-/// hardware keyboard. Hardware-keyboard key events hook in later.
+/// hardware keyboard. The renderer view also becomes first responder and
+/// forwards basic hardware-keyboard input directly through the model.
 struct TerminalIOSInputBar: View {
     @ObservedObject var model: TerminalSurfaceModel
     @State private var pending: String = ""

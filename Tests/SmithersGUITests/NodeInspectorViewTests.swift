@@ -133,6 +133,12 @@ final class NodeInspectorViewTests: XCTestCase {
         XCTAssertTrue(cleared)
     }
 
+    func testGhostBannerShowsUnmountedFrameBadge() throws {
+        let banner = GhostBanner(isVisible: true, unmountedFrameNo: 42, onClear: {})
+        let inspected = try banner.inspect()
+        XCTAssertNoThrow(try inspected.find(text: "This node is no longer in the running tree (unmounted at frame 42)."))
+    }
+
     // MARK: - Error banner
 
     func testErrorBannerVisibleForFailedTask() throws {

@@ -65,6 +65,38 @@ final class StoreEntitiesTests: XCTestCase {
         XCTAssertEqual(rows[0].contentText, "hi")
     }
 
+    func testDevtoolsSnapshotDecodesFromTicket0107Shape() throws {
+        let json = Data(#"""
+        [
+          {
+            "snapshot_id": "snap_1",
+            "session_id": "sess_1",
+            "repository_id": 42,
+            "timestamp": 1714000000000,
+            "kind": "tool-state",
+            "payload": {
+              "step": "fetch",
+              "status": "running",
+              "attempt": 2
+            }
+          }
+        ]
+        """#.utf8)
+        let rows = try StoreDecoder.shared.decode([DevToolsSnapshotRow].self, from: json)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].id, "snap_1")
+        XCTAssertEqual(rows[0].sessionId, "sess_1")
+        XCTAssertEqual(rows[0].repositoryId, "42")
+        XCTAssertEqual(rows[0].kind, "tool-state")
+        let timestamp = try XCTUnwrap(rows[0].timestamp?.timeIntervalSince1970)
+        XCTAssertEqual(timestamp, 1_714_000_000, accuracy: 0.001)
+        guard case .object(let payload) = rows[0].payload else {
+            return XCTFail("payload should decode as object")
+        }
+        XCTAssertEqual(payload["status"], .string("running"))
+        XCTAssertEqual(payload["attempt"], .integer(2))
+    }
+
     func testTableNamesMatchShapeSliceContract() {
         XCTAssertEqual(StoreTable.workflowRuns, "workflow_runs")
         XCTAssertEqual(StoreTable.approvals, "approvals")
@@ -250,6 +282,65 @@ final class EndToEndStoreTests: XCTestCase {
     }
 }
 
+@MainActor
+final class DevToolsSnapshotsStoreTests: XCTestCase {
+    func testEnsureSubscribedUsesRepositoryAndSessionFilter() throws {
+        let session = FakeStoreRuntimeSession()
+        let store = DevToolsSnapshotsStore(session: session)
+
+        store.ensureSubscribed(repositoryId: 42, sessionId: "sess-1")
+        store.ensureSubscribed(repositoryId: 42, sessionId: "sess-1")
+
+        let calls = session.subscribeCalls()
+        XCTAssertEqual(calls.count, 1, "same scope should not double-subscribe")
+        XCTAssertEqual(calls.first?.shape, StoreTable.devtoolsSnapshots)
+
+        let whereClause = try XCTUnwrap(extractWhereClause(from: calls[0].paramsJSON))
+        XCTAssertEqual(
+            whereClause,
+            "repository_id IN (42) AND session_id IN ('sess-1')"
+        )
+    }
+
+    func testReleaseUnpinsAndUnsubscribesScope() {
+        let session = FakeStoreRuntimeSession()
+        let store = DevToolsSnapshotsStore(session: session)
+
+        store.ensureSubscribed(repositoryId: 42, sessionId: "sess-2")
+        store.release(repositoryId: 42, sessionId: "sess-2")
+
+        XCTAssertEqual(session.unpinCallCount(), 1)
+        XCTAssertEqual(session.unsubscribeCallCount(), 1)
+    }
+
+    func testReloadFromCacheSortsByTimestampDescending() async {
+        let session = FakeStoreRuntimeSession(cacheJSON: [
+            StoreTable.devtoolsSnapshots: #"""
+            [
+              {"snapshot_id":"old","session_id":"sess","repository_id":42,"timestamp":1714000000000,"kind":"command-output","payload":{"line":"old"}},
+              {"snapshot_id":"new","session_id":"sess","repository_id":42,"timestamp":1714000005000,"kind":"command-output","payload":{"line":"new"}}
+            ]
+            """#,
+        ])
+        let store = DevToolsSnapshotsStore(session: session)
+
+        store.reloadFromCache()
+
+        await waitUntil("devtools rows did not load from cache") {
+            store.rows.map(\.id) == ["new", "old"]
+        }
+    }
+
+    private func extractWhereClause(from paramsJSON: String) -> String? {
+        guard let data = paramsJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data, options: []),
+              let dict = object as? [String: Any] else {
+            return nil
+        }
+        return dict["where"] as? String
+    }
+}
+
 private final class FakeStoreRuntimeSession: StoreRuntimeSession, @unchecked Sendable {
     private let lock = NSLock()
     private var eventHandler: ((RuntimeEvent) -> Void)?
@@ -259,6 +350,10 @@ private final class FakeStoreRuntimeSession: StoreRuntimeSession, @unchecked Sen
     private var cacheJSON: [String: String]
     private var cacheQueryCounts: [String: Int] = [:]
     private var writeCalls: [(action: String, payloadJSON: String)] = []
+    private var subscribeCallsStore: [(shape: String, paramsJSON: String)] = []
+    private var unsubscribeCallsStore: [UInt64] = []
+    private var pinCallsStore: [UInt64] = []
+    private var unpinCallsStore: [UInt64] = []
 
     init(queuedFutures: [UInt64] = [], cacheJSON: [String: String] = [:]) {
         self.queuedFutures = queuedFutures
@@ -272,25 +367,30 @@ private final class FakeStoreRuntimeSession: StoreRuntimeSession, @unchecked Sen
     }
 
     func subscribe(shape: String, paramsJSON: String) throws -> UInt64 {
-        _ = shape
-        _ = paramsJSON
         lock.lock()
         defer { lock.unlock() }
+        subscribeCallsStore.append((shape: shape, paramsJSON: paramsJSON))
         let id = nextSubscription
         nextSubscription += 1
         return id
     }
 
     func unsubscribe(_ handle: UInt64) {
-        _ = handle
+        lock.lock()
+        unsubscribeCallsStore.append(handle)
+        lock.unlock()
     }
 
     func pin(_ handle: UInt64) {
-        _ = handle
+        lock.lock()
+        pinCallsStore.append(handle)
+        lock.unlock()
     }
 
     func unpin(_ handle: UInt64) {
-        _ = handle
+        lock.lock()
+        unpinCallsStore.append(handle)
+        lock.unlock()
     }
 
     func cacheQuery(table: String, whereSQL: String?, limit: Int32, offset: Int32) throws -> String {
@@ -336,6 +436,30 @@ private final class FakeStoreRuntimeSession: StoreRuntimeSession, @unchecked Sen
         lock.lock()
         defer { lock.unlock() }
         return writeCalls.count
+    }
+
+    func subscribeCalls() -> [(shape: String, paramsJSON: String)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return subscribeCallsStore
+    }
+
+    func unsubscribeCallCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return unsubscribeCallsStore.count
+    }
+
+    func pinCallCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return pinCallsStore.count
+    }
+
+    func unpinCallCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return unpinCallsStore.count
     }
 }
 

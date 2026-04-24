@@ -175,6 +175,16 @@ final class ApplyDeltaTests: XCTestCase {
         }
     }
 
+    func testReplaceRoot() throws {
+        let original = makeNode(id: 1, type: .workflow, name: "old-root")
+        let replacement = makeNode(id: 99, type: .workflow, name: "new-root")
+        let delta = DevToolsDelta(baseSeq: 0, seq: 1, ops: [.replaceRoot(node: replacement)])
+
+        let result = try DevToolsDeltaApplier.applyDelta(delta, to: original)
+        XCTAssertEqual(result?.id, 99)
+        XCTAssertEqual(result?.name, "new-root")
+    }
+
     // MARK: - Multi-op delta
 
     func testMultiOpDeltaAppliedInOrder() throws {
@@ -227,13 +237,15 @@ final class ApplyDeltaTests: XCTestCase {
             .removeNode(id: 3),
             .updateProps(id: 1, props: ["x": .number(1)]),
             .updateTask(id: 1, task: makeTask()),
+            .replaceRoot(node: makeNode(id: 999, type: .workflow, name: "replacement")),
         ]
         let delta = DevToolsDelta(baseSeq: 5, seq: 6, ops: ops)
         let data = try JSONEncoder().encode(delta)
         let decoded = try JSONDecoder().decode(DevToolsDelta.self, from: data)
+        XCTAssertEqual(decoded.version, 1)
         XCTAssertEqual(decoded.baseSeq, 5)
         XCTAssertEqual(decoded.seq, 6)
-        XCTAssertEqual(decoded.ops.count, 4)
+        XCTAssertEqual(decoded.ops.count, 5)
     }
 
     // MARK: - Input boundary tests
@@ -340,6 +352,17 @@ final class ApplyDeltaTests: XCTestCase {
             "task": .task,
             "forEach": .forEach,
             "conditional": .conditional,
+            "merge-queue": .mergeQueue,
+            "branch": .branch,
+            "loop": .loop,
+            "worktree": .worktree,
+            "approval": .approval,
+            "timer": .timer,
+            "subflow": .subflow,
+            "wait-for-event": .waitForEvent,
+            "saga": .saga,
+            "try-catch": .tryCatch,
+            "fragment": .fragment,
         ]
         for (raw, expected) in types {
             let data = "\"\(raw)\"".data(using: .utf8)!

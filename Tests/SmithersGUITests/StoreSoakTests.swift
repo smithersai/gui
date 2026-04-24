@@ -76,8 +76,9 @@ final class StoreSoakTests: XCTestCase {
     }
 }
 
+@MainActor
 private final class MockSoakStreamProvider: DevToolsStreamProvider, @unchecked Sendable {
-    func streamDevTools(runId: String, fromSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error> {
+    func streamDevTools(runId: String, afterSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error> {
         AsyncThrowingStream { continuation in
             continuation.finish()
         }

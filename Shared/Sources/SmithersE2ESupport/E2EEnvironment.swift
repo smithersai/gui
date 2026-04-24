@@ -97,7 +97,10 @@ public enum E2EEnvironment {
             return nil
         }
         guard let baseString = source.value(forKey: E2EEnvironmentKey.baseURL),
-              let baseURL = URL(string: baseString) else {
+              let baseURL = URL(string: baseString),
+              let scheme = baseURL.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              baseURL.host?.isEmpty == false else {
             return nil
         }
         let refresh = source.value(forKey: E2EEnvironmentKey.refreshToken)

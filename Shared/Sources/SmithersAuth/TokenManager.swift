@@ -49,6 +49,7 @@ public final class TokenManager {
     private let lock = NSLock()
     private var cached: OAuth2Tokens?
     private var inFlightRefresh: Task<OAuth2Tokens, Error>?
+    private var sessionGeneration: UInt64 = 0
 
     public init(client: OAuth2Client, store: TokenStore, wipeHandler: SessionWipeHandler? = nil) {
         self.client = client
@@ -74,12 +75,15 @@ public final class TokenManager {
     /// Install freshly-exchanged tokens (from the sign-in view model). Writes
     /// to the store and caches in memory.
     public func install(tokens: OAuth2Tokens) throws {
+        lock.lock()
+        defer { lock.unlock() }
         do {
             try store.save(tokens)
         } catch let e as TokenStoreError {
             throw TokenManagerError.persistenceFailed(e)
         }
-        lock.lock(); cached = tokens; lock.unlock()
+        sessionGeneration &+= 1
+        cached = tokens
     }
 
     /// Refresh the session once. Shared by the 401-retry helper below and
@@ -94,7 +98,7 @@ public final class TokenManager {
             guard let current = cached else {
                 return nil
             }
-            let task = makeRefreshTask(current: current)
+            let task = makeRefreshTask(current: current, generation: sessionGeneration)
             inFlightRefresh = task
             return task
         }
@@ -106,12 +110,33 @@ public final class TokenManager {
         return try await task.value
     }
 
-    private func setCached(_ t: OAuth2Tokens) {
-        lock.lock(); cached = t; lock.unlock()
+    private func persistRefreshedTokens(_ tokens: OAuth2Tokens, generation: UInt64) throws -> OAuth2Tokens {
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == sessionGeneration, cached != nil else {
+            throw TokenManagerError.notSignedIn
+        }
+        do {
+            try store.save(tokens)
+        } catch let e as TokenStoreError {
+            throw TokenManagerError.persistenceFailed(e)
+        }
+        cached = tokens
+        return tokens
     }
 
-    private func clearInflight() {
-        lock.lock(); inFlightRefresh = nil; lock.unlock()
+    private func clearInflight(ifGeneration generation: UInt64) {
+        lock.lock()
+        if generation == sessionGeneration {
+            inFlightRefresh = nil
+        }
+        lock.unlock()
+    }
+
+    private func isGenerationActive(_ generation: UInt64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation == sessionGeneration && cached != nil
     }
 
     private func withLock<T>(_ body: () throws -> T) rethrows -> T {
@@ -120,9 +145,9 @@ public final class TokenManager {
         return try body()
     }
 
-    private func makeRefreshTask(current: OAuth2Tokens) -> Task<OAuth2Tokens, Error> {
-        Task { [self, client, store] in
-            defer { clearInflight() }
+    private func makeRefreshTask(current: OAuth2Tokens, generation: UInt64) -> Task<OAuth2Tokens, Error> {
+        Task { [self, client] in
+            defer { clearInflight(ifGeneration: generation) }
 
             do {
                 let newTokens: OAuth2Tokens
@@ -137,18 +162,13 @@ public final class TokenManager {
 
                 // WRITE-BEFORE-RETURN. If this throws, the caller treats the
                 // user as signed out — see `refreshAndRetry` wiring.
-                do {
-                    try store.save(newTokens)
-                } catch let e as TokenStoreError {
-                    throw TokenManagerError.persistenceFailed(e)
-                }
-
-                setCached(newTokens)
-                return newTokens
+                return try persistRefreshedTokens(newTokens, generation: generation)
             } catch {
                 // A refresh failure (expired/rotated/revoked refresh token OR
                 // a store write failure) locks the user out. Wipe silently.
-                await localSignOut()
+                if isGenerationActive(generation) {
+                    await localSignOut()
+                }
                 throw error
             }
         }
@@ -170,12 +190,10 @@ public final class TokenManager {
         return second
     }
 
-    /// Full sign-out: prefer app-wide revoke on the server, fall back to
-    /// revoking the current access + refresh token pair when the server
-    /// build does not expose `/api/oauth2/revoke-all`, then wipe Keychain
-    /// and downstream caches. Idempotent.
+    /// Full sign-out: wipe Keychain and downstream caches before any network
+    /// call, then best-effort revoke the captured server token pair.
     public func signOut() async {
-        let snapshot = snapshotCached()
+        let snapshot = invalidateLocalSession()
         if let t = snapshot {
             let revokeAll = await client.revokeAll(accessToken: t.accessToken)
             if revokeAll == .unavailable {
@@ -183,23 +201,28 @@ public final class TokenManager {
                 await client.revoke(refreshToken: t.refreshToken)
             }
         }
-        await localSignOut()
-    }
-
-    private func snapshotCached() -> OAuth2Tokens? {
-        lock.lock(); defer { lock.unlock() }
-        return cached
     }
 
     /// Wipe everything local. Used by `signOut` and by refresh-failure
     /// lock-outs. Never hits the network.
     public func localSignOut() async {
-        try? store.clear()
-        clearCached()
-        wipeHandler?.wipeAfterSignOut()
+        _ = invalidateLocalSession()
     }
 
-    private func clearCached() {
-        lock.lock(); cached = nil; lock.unlock()
+    private func invalidateLocalSession() -> OAuth2Tokens? {
+        let snapshot: OAuth2Tokens?
+        let refreshToCancel: Task<OAuth2Tokens, Error>?
+        lock.lock()
+        snapshot = cached
+        sessionGeneration &+= 1
+        cached = nil
+        refreshToCancel = inFlightRefresh
+        inFlightRefresh = nil
+        lock.unlock()
+
+        refreshToCancel?.cancel()
+        try? store.clear()
+        wipeHandler?.wipeAfterSignOut()
+        return snapshot
     }
 }

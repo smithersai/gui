@@ -17,13 +17,24 @@
   runtime — it is present so a future opt-in does not need a new
   provisioning profile round-trip with Apple.
 
+  Push Notifications
+  ------------------
+  `aps-environment` is required for iOS to return an APNS device token from
+  `registerForRemoteNotifications()`. The build setting is `development` for
+  debug builds and `production` for release archives.
+
+  App Group
+  ---------
+  `group.com.smithers.ios` is shared with SmithersShareExtension so the
+  app and extension are provisioned for the same iOS group container.
+
   Associated Domains (universal links)
   -------------------------------------
-  Intentionally OMITTED for the TestFlight phase. The OAuth2 callback
-  uses the custom URL scheme `smithers://auth/callback` registered in
-  `Info.plist` (see 0109). Universal links are a later concern (App
-  Store phase) and require serving an `apple-app-site-association`
-  file from the plue origin — out of scope for 0125.
+  Placeholder for the production universal-link domain. This entitlement
+  alone does not make links work: the production domain must serve a valid
+  apple-app-site-association file and the provisioning profile must grant
+  Associated Domains. Until then, custom scheme links remain the reliable
+  path.
 
   App Sandbox / Hardened Runtime
   ------------------------------
@@ -36,6 +47,16 @@
     <key>keychain-access-groups</key>
     <array>
         <string>$(AppIdentifierPrefix)com.smithers.ios</string>
+    </array>
+    <key>aps-environment</key>
+    <string>$(APS_ENVIRONMENT)</string>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.smithers.ios</string>
+    </array>
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>applinks:smithers.ai</string>
     </array>
 </dict>
 </plist>

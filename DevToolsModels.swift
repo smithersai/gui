@@ -9,6 +9,17 @@ enum SmithersNodeType: String, Codable, Hashable, Sendable {
     case task
     case forEach = "forEach"
     case conditional
+    case mergeQueue = "merge-queue"
+    case branch
+    case loop
+    case worktree
+    case approval
+    case timer
+    case subflow
+    case waitForEvent = "wait-for-event"
+    case saga
+    case tryCatch = "try-catch"
+    case fragment
     case unknown
 
     init(from decoder: Decoder) throws {
@@ -109,10 +120,118 @@ final class DevToolsNode: Identifiable, Codable, Hashable, @unchecked Sendable {
 // MARK: - DevToolsSnapshot
 
 struct DevToolsSnapshot: Codable, Sendable {
+    let version: Int
     let runId: String
     let frameNo: Int
     let seq: Int
     let root: DevToolsNode
+    let runState: RunStateView?
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case runId
+        case frameNo
+        case seq
+        case root
+        case runState
+    }
+
+    init(
+        version: Int = 1,
+        runId: String,
+        frameNo: Int,
+        seq: Int,
+        root: DevToolsNode,
+        runState: RunStateView? = nil
+    ) {
+        self.version = version
+        self.runId = runId
+        self.frameNo = frameNo
+        self.seq = seq
+        self.root = root
+        self.runState = runState
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        runId = try container.decode(String.self, forKey: .runId)
+        frameNo = try container.decode(Int.self, forKey: .frameNo)
+        seq = try container.decode(Int.self, forKey: .seq)
+        root = try container.decode(DevToolsNode.self, forKey: .root)
+        runState = try container.decodeIfPresent(RunStateView.self, forKey: .runState)
+    }
+}
+
+struct RunStateView: Codable, Equatable, Sendable {
+    let runId: String
+    let state: String
+    let blocked: JSONValue?
+    let unhealthy: JSONValue?
+    let computedAt: String
+
+    var stateLabel: String {
+        state
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { word in
+                guard let first = word.first else { return "" }
+                return first.uppercased() + word.dropFirst().lowercased()
+            }
+            .joined(separator: " ")
+    }
+
+    var reasonSummary: String? {
+        if let blockedSummary = Self.summary(from: blocked) {
+            return blockedSummary
+        }
+        return Self.summary(from: unhealthy)
+    }
+
+    private static func summary(from value: JSONValue?) -> String? {
+        guard case .object(let object) = value else { return nil }
+        guard case .string(let kind)? = object["kind"] else { return nil }
+
+        switch kind {
+        case "approval":
+            if case .string(let nodeId)? = object["nodeId"] {
+                return "Waiting approval (\(nodeId))"
+            }
+            return "Waiting approval"
+        case "event":
+            if case .string(let correlationKey)? = object["correlationKey"] {
+                return "Waiting event (\(correlationKey))"
+            }
+            return "Waiting event"
+        case "timer":
+            if case .string(let wakeAt)? = object["wakeAt"] {
+                return "Waiting timer (\(wakeAt))"
+            }
+            return "Waiting timer"
+        case "provider":
+            if case .string(let code)? = object["code"] {
+                return "Provider blocked (\(code))"
+            }
+            return "Provider blocked"
+        case "tool":
+            if case .string(let toolName)? = object["toolName"] {
+                return "Tool blocked (\(toolName))"
+            }
+            return "Tool blocked"
+        case "engine-heartbeat-stale":
+            return "Engine heartbeat stale"
+        case "ui-heartbeat-stale":
+            return "UI heartbeat stale"
+        case "db-lock":
+            return "DB lock"
+        case "sandbox-unreachable":
+            return "Sandbox unreachable"
+        case "supervisor-backoff":
+            return "Supervisor backoff"
+        default:
+            return kind.replacingOccurrences(of: "-", with: " ")
+        }
+    }
 }
 
 // MARK: - DevToolsJumpResult
@@ -249,6 +368,7 @@ enum DevToolsDeltaOp: Codable, Equatable, Sendable {
     case removeNode(id: Int)
     case updateProps(id: Int, props: [String: JSONValue])
     case updateTask(id: Int, task: DevToolsTaskInfo?)
+    case replaceRoot(node: DevToolsNode)
 
     private enum CodingKeys: String, CodingKey {
         case op, parentId, index, node, id, props, task
@@ -275,6 +395,10 @@ enum DevToolsDeltaOp: Codable, Equatable, Sendable {
             self = .updateTask(
                 id: try container.decode(Int.self, forKey: .id),
                 task: try container.decodeIfPresent(DevToolsTaskInfo.self, forKey: .task)
+            )
+        case "replaceRoot":
+            self = .replaceRoot(
+                node: try container.decode(DevToolsNode.self, forKey: .node)
             )
         default:
             throw DecodingError.dataCorruptedError(
@@ -303,6 +427,9 @@ enum DevToolsDeltaOp: Codable, Equatable, Sendable {
             try container.encode("updateTask", forKey: .op)
             try container.encode(id, forKey: .id)
             try container.encode(task, forKey: .task)
+        case .replaceRoot(let node):
+            try container.encode("replaceRoot", forKey: .op)
+            try container.encode(node, forKey: .node)
         }
     }
 
@@ -316,6 +443,8 @@ enum DevToolsDeltaOp: Codable, Equatable, Sendable {
             return lid == rid && lp == rp
         case (.updateTask(let lid, let lt), .updateTask(let rid, let rt)):
             return lid == rid && lt == rt
+        case (.replaceRoot(let lnode), .replaceRoot(let rnode)):
+            return lnode.id == rnode.id
         default:
             return false
         }
@@ -325,9 +454,37 @@ enum DevToolsDeltaOp: Codable, Equatable, Sendable {
 // MARK: - DevToolsDelta
 
 struct DevToolsDelta: Codable, Sendable {
+    let version: Int
     let baseSeq: Int
     let seq: Int
     let ops: [DevToolsDeltaOp]
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case baseSeq
+        case seq
+        case ops
+    }
+
+    init(version: Int = 1, baseSeq: Int, seq: Int, ops: [DevToolsDeltaOp]) {
+        self.version = version
+        self.baseSeq = baseSeq
+        self.seq = seq
+        self.ops = ops
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        baseSeq = try container.decode(Int.self, forKey: .baseSeq)
+        seq = try container.decode(Int.self, forKey: .seq)
+        ops = try container.decode([DevToolsDeltaOp].self, forKey: .ops)
+    }
+}
+
+struct DevToolsGapResync: Codable, Equatable, Sendable {
+    let fromSeq: Int
+    let toSeq: Int
 }
 
 // MARK: - DevToolsEvent
@@ -335,34 +492,81 @@ struct DevToolsDelta: Codable, Sendable {
 enum DevToolsEvent: Codable, Sendable {
     case snapshot(DevToolsSnapshot)
     case delta(DevToolsDelta)
+    case gapResync(DevToolsGapResync)
 
     private enum CodingKeys: String, CodingKey {
+        case version
         case type
+        case kind
+        case snapshot
+        case delta
+        case gapResync
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let type = try container.decode(String.self, forKey: .type)
-        let singleContainer = try decoder.singleValueContainer()
-        switch type {
-        case "snapshot":
-            self = .snapshot(try singleContainer.decode(DevToolsSnapshot.self))
-        case "delta":
-            self = .delta(try singleContainer.decode(DevToolsDelta.self))
-        default:
-            throw DecodingError.dataCorruptedError(
-                forKey: .type, in: container,
-                debugDescription: "Unknown DevToolsEvent type: \(type)"
-            )
+        if let kind = try container.decodeIfPresent(String.self, forKey: .kind) {
+            switch kind {
+            case "snapshot":
+                self = .snapshot(try container.decode(DevToolsSnapshot.self, forKey: .snapshot))
+                return
+            case "delta":
+                self = .delta(try container.decode(DevToolsDelta.self, forKey: .delta))
+                return
+            case "gapResync":
+                self = .gapResync(try container.decode(DevToolsGapResync.self, forKey: .gapResync))
+                return
+            default:
+                throw DecodingError.dataCorruptedError(
+                    forKey: .kind,
+                    in: container,
+                    debugDescription: "Unknown DevToolsEvent kind: \(kind)"
+                )
+            }
         }
+
+        if let type = try container.decodeIfPresent(String.self, forKey: .type) {
+            let singleContainer = try decoder.singleValueContainer()
+            switch type {
+            case "snapshot":
+                self = .snapshot(try singleContainer.decode(DevToolsSnapshot.self))
+            case "delta":
+                self = .delta(try singleContainer.decode(DevToolsDelta.self))
+            case "gapResync":
+                self = .gapResync(try singleContainer.decode(DevToolsGapResync.self))
+            default:
+                throw DecodingError.dataCorruptedError(
+                    forKey: .type, in: container,
+                    debugDescription: "Unknown DevToolsEvent type: \(type)"
+                )
+            }
+            return
+        }
+
+        throw DecodingError.keyNotFound(
+            CodingKeys.kind,
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Expected either 'kind' or 'type' in DevToolsEvent"
+            )
+        )
     }
 
     func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .snapshot(let snapshot):
-            try snapshot.encode(to: encoder)
+            try container.encode(1, forKey: .version)
+            try container.encode("snapshot", forKey: .kind)
+            try container.encode(snapshot, forKey: .snapshot)
         case .delta(let delta):
-            try delta.encode(to: encoder)
+            try container.encode(1, forKey: .version)
+            try container.encode("delta", forKey: .kind)
+            try container.encode(delta, forKey: .delta)
+        case .gapResync(let gapResync):
+            try container.encode(1, forKey: .version)
+            try container.encode("gapResync", forKey: .kind)
+            try container.encode(gapResync, forKey: .gapResync)
         }
     }
 }
@@ -431,6 +635,8 @@ enum DevToolsDeltaApplier {
             }
             node.task = task
             return tree
+        case .replaceRoot(let node):
+            return node
         }
     }
 }

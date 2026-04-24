@@ -72,6 +72,17 @@ struct TreeSearchIndex: Sendable {
         case .task: return "Task"
         case .forEach: return "ForEach"
         case .conditional: return "Conditional"
+        case .mergeQueue: return "MergeQueue"
+        case .branch: return "Branch"
+        case .loop: return "Loop"
+        case .worktree: return "Worktree"
+        case .approval: return "Approval"
+        case .timer: return "Timer"
+        case .subflow: return "Subflow"
+        case .waitForEvent: return "WaitForEvent"
+        case .saga: return "Saga"
+        case .tryCatch: return "TryCatch"
+        case .fragment: return "Fragment"
         case .unknown: return nil
         }
     }

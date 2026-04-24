@@ -1,5 +1,10 @@
 # Plue: rate limits for terminal, Electric shapes, and approval decisions
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: Rate-limit middleware mounted on terminal, shape, approval, message, dispatch routes per 0153; Retry-After headers present.
+- Remaining: Per-surface tuning (terminal-specific token buckets vs generic middleware), abuse-specific metrics, and load-test validation not complete.
+
 ## Context
 
 The execution plan already calls out rate limits for these surfaces in D2 (`/Users/williamcory/gui/.smithers/specs/ios-and-remote-sandboxes-execution.md:115-119`), and plue has reusable HTTP token-bucket middleware in `plue/internal/middleware/rate_limit.go:40-248`. But the new remote-client surfaces are not actually covered in a targeted way yet:

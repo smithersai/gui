@@ -17,7 +17,8 @@ UIKit, no CLI, no local-only fallbacks.
 - `WorkspacesStore.swift` — `workspaces` + `workspace_sessions` shapes.
 - `AgentSessionsStore.swift` — `agent_sessions`, `agent_messages`,
   `agent_parts` shapes.
-- `DevToolsSnapshotsStore.swift` — `devtools_snapshots` shape (per-run pin).
+- `DevToolsSnapshotsStore.swift` — `devtools_snapshots` shape (per-session
+  + repository scoped pin).
 - `SessionLifecycle.swift` — auth token injection, reconnect, sign-out wipe.
 
 ## Data plane
@@ -31,6 +32,32 @@ UIKit, no CLI, no local-only fallbacks.
   arrives (pessimistic-write rule from the initiative spec).
 - SSE: intentionally NOT used here. Per-run event traces belong to the
   terminal / live-run layer (ticket 0123) which opens its own SSE stream.
+
+## Devtools snapshot contract (0107)
+
+`devtools_snapshots` rows are treated as the generic "what the agent is
+currently looking at" surface. The expected row fields are:
+
+- `session_id`
+- `repository_id`
+- `timestamp`
+- `kind` (`file-tree`, `screenshot`, `command-output`, `tool-state`, plus
+  future extensions)
+- `payload` (JSON blob, shape depends on `kind`)
+
+Subscription rule: the shape where-clause must include BOTH repository and
+session filters, e.g. `repository_id IN (...) AND session_id IN (...)`.
+Repo-less filters are rejected by plue's Electric auth proxy.
+
+Adding a new `kind`:
+
+1. Extend the producer in plue/guest-agent.
+2. Keep payload JSON-only and backward compatible.
+3. Add/extend client rendering; unknown kinds should fall back to generic JSON.
+
+Retention policy: this surface is latest-state, not history. Writers are
+expected to overwrite per `(session_id, kind)` and prune aggressively once
+sessions reach terminal state.
 
 ## Fake transport caveat
 

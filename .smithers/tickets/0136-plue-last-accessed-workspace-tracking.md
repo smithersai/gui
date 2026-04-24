@@ -1,5 +1,10 @@
 # Plue: last-accessed tracking for workspaces
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: `last_accessed_at` column + migration landed in 4308aefb8.
+- Remaining: Touchpoint updates on workspace-entry flows (open, attach, SSH connect) not fully wired; backfill for existing rows unverified.
+
 ## Context
 
 From `.smithers/specs/ios-and-remote-sandboxes.md:256-260`. The switcher is recent-first by last-accessed, not by creation time. Plue already stores `last_activity_at` on both `workspaces` and `workspace_sessions` (`/Users/williamcory/plue/oss/db/schema.sql:1301-1317`, `/Users/williamcory/plue/oss/db/schema.sql:1343-1358`) and updates it from provisioning, session creation, and SSH attach paths (`/Users/williamcory/plue/internal/services/workspace_provisioning.go:491-507`, `/Users/williamcory/plue/internal/services/workspace_provisioning.go:530-547`, `/Users/williamcory/plue/internal/services/workspace_provisioning.go:580-597`, `/Users/williamcory/plue/internal/services/workspace_exec.go:99-108`, `/Users/williamcory/plue/internal/services/workspace_ssh.go:74-88`).

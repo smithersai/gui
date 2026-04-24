@@ -1,6 +1,26 @@
 import Combine
 import Foundation
 
+public enum FeatureFlagsEnvironment {
+    public static let remoteSandboxEnvVar = "PLUE_REMOTE_SANDBOX_ENABLED"
+
+    public static func remoteSandboxEnabledOverride(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool? {
+        guard let raw = environment[remoteSandboxEnvVar]?.lowercased() else {
+            return nil
+        }
+        switch raw {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return nil
+        }
+    }
+}
+
 public struct FeatureFlagsSnapshot: Equatable, Sendable {
     public static let empty = FeatureFlagsSnapshot(flags: [:])
 
@@ -28,6 +48,14 @@ public struct FeatureFlagsSnapshot: Equatable, Sendable {
 
     public var isRunShapeEnabled: Bool {
         flag(named: "run_shape_enabled")
+    }
+
+    public func effectiveRemoteSandboxEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        FeatureFlagsEnvironment.remoteSandboxEnabledOverride(
+            environment: environment
+        ) ?? isRemoteSandboxEnabled
     }
 
     public func flag(named name: String) -> Bool {
@@ -82,14 +110,15 @@ public final class FeatureFlagsClient: ObservableObject {
     }
 
     public var isRemoteSandboxEnabled: Bool { snapshot.isRemoteSandboxEnabled }
+    public func effectiveRemoteSandboxEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        snapshot.effectiveRemoteSandboxEnabled(environment: environment)
+    }
     public var isApprovalsFlowEnabled: Bool { snapshot.isApprovalsFlowEnabled }
     public var isElectricClientEnabled: Bool { snapshot.isElectricClientEnabled }
     public var isDevtoolsSnapshotEnabled: Bool { snapshot.isDevtoolsSnapshotEnabled }
     public var isRunShapeEnabled: Bool { snapshot.isRunShapeEnabled }
-
-    public func setMockResponseProvider(_ provider: MockResponseProvider?) {
-        mockResponseProvider = provider
-    }
 
     @discardableResult
     public func refresh(force: Bool = false) async throws -> FeatureFlagsSnapshot {

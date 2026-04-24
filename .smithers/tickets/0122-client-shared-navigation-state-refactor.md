@@ -1,5 +1,10 @@
 # Client: shared navigation and state refactor
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: ContentView decomposed from 2450 → 1736 lines; `SharedNavigation.swift` and `DetailRouter.swift` extracted.
+- Remaining: Platform-specific shell separation incomplete; ContentView still 1736 lines; AppKit cleanup ongoing.
+
 ## Context
 
 `ContentView.swift` is 2450 lines and currently owns nearly every concern of the app shell. The same file constructs `SessionStore` and `SmithersClient` (`ContentView.swift:734-740`), owns dozens of navigation and palette state variables (`744-771`), contains the entire `detailContent` route switch (`826-1024`), renders the macOS `NavigationSplitView` shell (`1063-1225`), still performs AppKit-specific actions such as `NSOpenPanel`, `NSWorkspace.shared.open`, `NSApplication.shared.terminate`, and `NSPasteboard` operations (`1907-2166`), and even embeds `@main`, `SmithersRootView`, and `AppDelegate` at the bottom of the file (`2323-2431`).

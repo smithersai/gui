@@ -43,6 +43,29 @@ public enum WorkspaceSource: String, Sendable, Codable, Equatable, Hashable {
     case remote
 }
 
+public struct SwitcherRepoRef: Sendable, Codable, Equatable, Hashable, Identifiable {
+    public let owner: String
+    public let name: String
+
+    public init(owner: String, name: String) {
+        self.owner = owner
+        self.name = name
+    }
+
+    public static func normalized(owner: String?, name: String?) -> SwitcherRepoRef? {
+        guard
+            let owner = owner?.switcherTrimmedNonEmpty,
+            let name = name?.switcherTrimmedNonEmpty
+        else { return nil }
+        return SwitcherRepoRef(owner: owner, name: name)
+    }
+
+    public var id: String { "\(owner)/\(name)" }
+    public var label: String { id }
+    public var accessibilityKey: String { "\(owner)-\(name)" }
+    public var actionRepoRef: ActionRepoRef { ActionRepoRef(owner: owner, name: name) }
+}
+
 /// The switcher's view-facing workspace row.
 public struct SwitcherWorkspace: Sendable, Codable, Equatable, Hashable, Identifiable {
     public let id: String
@@ -88,12 +111,12 @@ public struct SwitcherWorkspace: Sendable, Codable, Equatable, Hashable, Identif
         }
     }
 
+    public var repoRef: SwitcherRepoRef? {
+        SwitcherRepoRef.normalized(owner: repoOwner, name: repoName)
+    }
+
     public var actionRepoRef: ActionRepoRef? {
-        guard
-            let repoOwner, !repoOwner.isEmpty,
-            let repoName, !repoName.isEmpty
-        else { return nil }
-        return ActionRepoRef(owner: repoOwner, name: repoName)
+        repoRef?.actionRepoRef
     }
 
     /// The sortable recency key. Matches 0135's server expression:
@@ -269,6 +292,9 @@ public protocol WorkspaceDeleter: AnyObject {
 @MainActor
 public final class WorkspaceSwitcherViewModel: ObservableObject {
     @Published public private(set) var state: WorkspaceSwitcherState = .loading
+    @Published public private(set) var errorMessage: String?
+    @Published public private(set) var isRefreshing = false
+    @Published public private(set) var selectedRepoFilter: SwitcherRepoRef?
     /// Row currently awaiting delete-confirmation. The UI MUST present an
     /// explicit confirm step — setting `pendingDeleteID` is NOT the same
     /// as actually deleting.
@@ -282,6 +308,7 @@ public final class WorkspaceSwitcherViewModel: ObservableObject {
     // This closure reads the current shape snapshot lazily so the view-
     // model doesn't keep a strong Combine dependency just for that.
     private let shapeSnapshot: (() -> [WorkspaceRow])?
+    private var unfilteredItems: [SwitcherWorkspace] = []
 
     public init(
         fetcher: RemoteWorkspaceFetcher,
@@ -300,34 +327,48 @@ public final class WorkspaceSwitcherViewModel: ObservableObject {
     /// Call on open / foreground. If the shape is live and already
     /// populated, we use it directly. Otherwise we fetch from 0135.
     public func refresh() async {
+        let previousState = state
+        let shouldPreserveVisibleState = previousState.supportsInlineErrorRecovery
+        isRefreshing = true
+        errorMessage = nil
+        defer { isRefreshing = false }
+
         if let probe = liveProbe, probe.isLive(), let snapshot = shapeSnapshot?() {
             applyShape(snapshot)
             return
         }
-        state = .loading
+        if !shouldPreserveVisibleState {
+            state = .loading
+        }
         do {
             let remote = try await fetcher.fetch(limit: limit)
+            errorMessage = nil
             if remote.isEmpty {
+                unfilteredItems = []
                 state = .emptySignedIn
                 return
             }
             let rows = remote.map { $0.asSwitcherWorkspace() }
-            state = .loaded(items: Self.orderedWithTiebreak(rows))
+            applyLoadedItems(rows)
         } catch RemoteWorkspaceFetchError.authExpired {
+            errorMessage = nil
+            unfilteredItems = []
             state = .signedOut
         } catch let RemoteWorkspaceFetchError.backendUnavailable(msg) {
-            state = .backendUnavailable(message: msg)
+            applyRefreshFailure(message: msg, previousState: previousState)
         } catch let RemoteWorkspaceFetchError.decode(msg) {
-            state = .backendUnavailable(message: "decode: \(msg)")
+            applyRefreshFailure(message: "decode: \(msg)", previousState: previousState)
         } catch {
-            state = .backendUnavailable(message: "\(error)")
+            applyRefreshFailure(message: "\(error)", previousState: previousState)
         }
     }
 
     /// Called when the 0116 shape emits new rows (via the parent
     /// subscribing to `WorkspacesStore.$workspaces` and forwarding).
     public func applyShape(_ rows: [WorkspaceRow]) {
+        errorMessage = nil
         if rows.isEmpty {
+            unfilteredItems = []
             state = .emptySignedIn
             return
         }
@@ -351,7 +392,25 @@ public final class WorkspaceSwitcherViewModel: ObservableObject {
                 source: .remote
             )
         }
-        state = .loaded(items: Self.orderedWithTiebreak(mapped))
+        applyLoadedItems(mapped)
+    }
+
+    public var repoFilterLabel: String {
+        selectedRepoFilter?.label ?? "All repos"
+    }
+
+    public func setRepoFilter(_ repo: SwitcherRepoRef?) {
+        selectedRepoFilter = repo
+        switch state {
+        case .loaded, .emptySignedIn:
+            applyCurrentFilterToState()
+        case .loading, .signedOut, .backendUnavailable:
+            break
+        }
+    }
+
+    public func clearRepoFilter() {
+        setRepoFilter(nil)
     }
 
     /// Ask for confirmation. This does NOT delete — the caller must
@@ -372,7 +431,7 @@ public final class WorkspaceSwitcherViewModel: ObservableObject {
         pendingDeleteID = nil
         guard let deleter else { return }
         guard case .loaded(let items) = state, let workspace = items.first(where: { $0.id == id }) else {
-            state = .backendUnavailable(message: "delete: missing workspace context")
+            errorMessage = "Delete failed: missing workspace context."
             return
         }
         do {
@@ -381,9 +440,62 @@ public final class WorkspaceSwitcherViewModel: ObservableObject {
                 await refresh()
             }
         } catch RemoteWorkspaceFetchError.authExpired {
+            errorMessage = nil
             state = .signedOut
         } catch {
-            state = .backendUnavailable(message: "delete: \(error)")
+            errorMessage = "Delete failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func applyRefreshFailure(message: String, previousState: WorkspaceSwitcherState) {
+        if previousState.supportsInlineErrorRecovery {
+            errorMessage = message
+            state = previousState
+        } else {
+            unfilteredItems = []
+            errorMessage = nil
+            state = .backendUnavailable(message: message)
+        }
+    }
+
+    private func applyLoadedItems(_ items: [SwitcherWorkspace]) {
+        unfilteredItems = Self.orderedWithTiebreak(items)
+        applyCurrentFilterToState()
+    }
+
+    private func applyCurrentFilterToState() {
+        guard !unfilteredItems.isEmpty else {
+            state = .emptySignedIn
+            return
+        }
+
+        state = .loaded(items: Self.filteredItems(unfilteredItems, by: selectedRepoFilter))
+    }
+
+    public nonisolated static func filteredItems(
+        _ items: [SwitcherWorkspace],
+        by repo: SwitcherRepoRef?
+    ) -> [SwitcherWorkspace] {
+        guard let repo else { return items }
+        return items.filter { $0.repoRef == repo }
+    }
+
+    public nonisolated static func uniqueRepos(from items: [SwitcherWorkspace]) -> [SwitcherRepoRef] {
+        var seen = Set<SwitcherRepoRef>()
+        var repos: [SwitcherRepoRef] = []
+
+        for item in items {
+            guard let repo = item.repoRef, seen.insert(repo).inserted else {
+                continue
+            }
+            repos.append(repo)
+        }
+
+        return repos.sorted {
+            if $0.owner == $1.owner {
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+            return $0.owner.localizedCaseInsensitiveCompare($1.owner) == .orderedAscending
         }
     }
 
@@ -397,6 +509,24 @@ public final class WorkspaceSwitcherViewModel: ObservableObject {
             }
             return lhs.id > rhs.id
         }
+    }
+}
+
+private extension WorkspaceSwitcherState {
+    var supportsInlineErrorRecovery: Bool {
+        switch self {
+        case .loaded, .emptySignedIn:
+            return true
+        case .loading, .signedOut, .backendUnavailable:
+            return false
+        }
+    }
+}
+
+private extension String {
+    var switcherTrimmedNonEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

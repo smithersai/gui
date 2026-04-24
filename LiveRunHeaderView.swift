@@ -8,11 +8,16 @@ struct LiveRunHeaderView: View {
     let heartbeatMs: Int
     let lastEventAt: Date?
     let lastSeq: Int
+    let runStateLabel: String?
+    let runStateReason: String?
+    let connectionState: DevToolsConnectionState
+    let staleSince: Date?
 
     var onCancel: (() -> Void)?
     var onHijack: (() -> Void)?
     var onOpenLogs: (() -> Void)?
     var onRefresh: (() -> Void)?
+    var onClearHistory: (() -> Void)?
     var onOpenWorkflow: (() -> Void)?
     var smithersVersion: String?
 
@@ -53,6 +58,20 @@ struct LiveRunHeaderView: View {
                         RunStatusPill.copyRunId(runId)
                     }
                     .help("Click to copy run ID")
+
+                if let runStateLabel, !runStateLabel.isEmpty {
+                    Text("· \(runStateLabel)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+
+                if let runStateReason, !runStateReason.isEmpty {
+                    Text("· \(runStateReason)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                }
             }
 
             Spacer()
@@ -71,6 +90,8 @@ struct LiveRunHeaderView: View {
                 lastSeq: lastSeq
             )
 
+            connectionIndicator
+
             overflowMenu
         }
         .padding(.horizontal, 12)
@@ -80,9 +101,59 @@ struct LiveRunHeaderView: View {
         .accessibilityLabel("Live run header")
     }
 
+    @ViewBuilder
+    private var connectionIndicator: some View {
+        switch connectionState {
+        case .connecting:
+            if staleSince != nil {
+                indicatorLabel(
+                    icon: "arrow.triangle.2.circlepath",
+                    text: "Reconnecting",
+                    color: Theme.warning
+                )
+            }
+        case .error:
+            if staleSince != nil {
+                indicatorLabel(
+                    icon: "wifi.exclamationmark",
+                    text: "Connection unstable",
+                    color: Theme.warning
+                )
+            }
+        case .disconnected:
+            if staleSince != nil {
+                indicatorLabel(
+                    icon: "wifi.slash",
+                    text: "Offline",
+                    color: Theme.warning
+                )
+            }
+        case .streaming:
+            EmptyView()
+        }
+    }
+
+    private func indicatorLabel(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+            Text(text)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(color.opacity(0.12))
+        .clipShape(Capsule())
+        .accessibilityIdentifier("liveRun.header.connectionIndicator")
+    }
+
     private var overflowMenu: some View {
         Menu {
             Button("Refresh") { onRefresh?() }
+            if onClearHistory != nil {
+                Button("Clear History") { onClearHistory?() }
+            }
             if onHijack != nil {
                 Button("Hijack") { onHijack?() }
             }

@@ -1,5 +1,10 @@
 # Plue: global cross-repo workspace listing endpoint
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: `GET /api/user/workspaces` endpoint + listing logic landed in 4308aefb8 per 0151.
+- Remaining: `GET /api/user/readable-repos` endpoint; full `last_accessed_at` wiring depends on 0136 (still partial).
+
 ## Context
 
 From `.smithers/specs/ios-and-remote-sandboxes.md:256-260`. The spec requires a single recent-first workspace switcher across repos. Today plue only mounts repo-scoped workspace listing at `GET /api/repos/{owner}/{repo}/workspaces` (`/Users/williamcory/plue/cmd/server/main.go:1195-1207`), the handler requires repo context (`/Users/williamcory/plue/internal/routes/workspace.go:132-160`), the service only lists by `(repository_id, user_id)` (`/Users/williamcory/plue/internal/services/workspace.go:311-346`), and the SQL orders by `created_at DESC` (`/Users/williamcory/plue/oss/db/queries/workspace.sql:28-40`).

@@ -65,9 +65,24 @@ struct NodeInspectorView: View {
         case .parallel: return "Runs all children concurrently."
         case .forEach: return "Iterates over a collection, running children for each item."
         case .conditional: return "Conditionally renders children based on a predicate."
+        case .mergeQueue: return "Coordinates merge queue execution for child tasks."
+        case .branch: return "Represents a branch of workflow execution."
+        case .loop: return "Repeats child execution while loop conditions hold."
+        case .worktree: return "Represents a worktree-scoped execution context."
+        case .approval: return "Represents an approval gate."
+        case .timer: return "Represents a timer-driven wait."
+        case .subflow: return "Runs a nested workflow."
+        case .waitForEvent: return "Waits for an external event signal."
+        case .saga: return "Coordinates saga-style compensating tasks."
+        case .tryCatch: return "Handles success/failure branches with catch/finally semantics."
+        case .fragment: return "Logical grouping node with no direct execution."
         case .task: return "Executable task unit."
         case .unknown: return "Unknown node type."
         }
+    }
+
+    private var selectedGhostUnmountedFrameNo: Int? {
+        store.selectedGhostRecord?.unmountedFrameNo
     }
 
     var body: some View {
@@ -101,7 +116,10 @@ struct NodeInspectorView: View {
             }
         )
 
-        GhostBanner(isVisible: store.isGhost) {
+        GhostBanner(
+            isVisible: store.isGhost,
+            unmountedFrameNo: selectedGhostUnmountedFrameNo
+        ) {
             store.clearSelection()
         }
 

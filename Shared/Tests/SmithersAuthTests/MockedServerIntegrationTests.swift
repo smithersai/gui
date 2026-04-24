@@ -237,6 +237,61 @@ final class MockedServerIntegrationTests: XCTestCase {
         XCTAssertEqual(refreshRequests(in: transport).count, 1)
     }
 
+    func test_validate_access_token_hits_api_user_with_bearer() async throws {
+        let transport = MockHTTPTransport()
+        transport.responses.append(.json(payload: [
+            "id": "user_123",
+        ]))
+        let client = OAuth2Client(config: makeConfig(), transport: transport)
+
+        let result = await client.validateAccessToken("ACCESS_OK")
+
+        XCTAssertEqual(result, .valid)
+        XCTAssertEqual(transport.recorded.count, 1)
+        XCTAssertEqual(transport.recorded[0].method, "GET")
+        XCTAssertEqual(transport.recorded[0].url.absoluteString, "https://plue.test/api/user")
+        XCTAssertEqual(transport.recorded[0].headers["Authorization"], "Bearer ACCESS_OK")
+        XCTAssertEqual(transport.recorded[0].headers["Accept"], "application/json")
+    }
+
+    func test_validate_access_token_maps_auth_failures_to_invalid() async throws {
+        let transport = MockHTTPTransport()
+        transport.responses.append(.error(status: 401, code: "unauthorized"))
+        let client = OAuth2Client(config: makeConfig(), transport: transport)
+
+        let result = await client.validateAccessToken("ACCESS_BAD")
+
+        XCTAssertEqual(result, .invalid)
+    }
+
+    @MainActor
+    func test_restored_session_validation_signs_out_invalid_cached_session() async throws {
+        let transport = MockHTTPTransport()
+        transport.responses.append(.error(status: 401, code: "unauthorized"))
+        let client = OAuth2Client(config: makeConfig(), transport: transport)
+        let store = InMemoryTokenStore(initial: OAuth2Tokens(accessToken: "ACCESS_BAD", refreshToken: "REFRESH_BAD"))
+        let manager = TokenManager(client: client, store: store)
+        let model = AuthViewModel(
+            client: client,
+            tokens: manager,
+            driver: MockAuthorizeSessionDriver(),
+            callbackScheme: "smithers",
+            startupSessionValidator: {
+                guard let accessToken = try? manager.currentAccessToken() else {
+                    return .invalid
+                }
+                return await client.validateAccessToken(accessToken)
+            }
+        )
+
+        XCTAssertEqual(model.phase, .restoringSession)
+
+        await model.resolveRestoredSessionIfNeeded()
+
+        XCTAssertEqual(model.phase, .signedOut)
+        XCTAssertNil(try store.load())
+    }
+
     @MainActor
     func test_signout_falls_back_to_access_and_refresh_revoke_when_revoke_all_missing() async throws {
         let transport = MockHTTPTransport()
@@ -265,6 +320,40 @@ final class MockedServerIntegrationTests: XCTestCase {
         XCTAssertTrue((revokeHits[1].bodyString ?? "").contains("token_type_hint=refresh_token"))
     }
 
+    func test_signout_invalidates_inflight_refresh_before_revoke_returns() async throws {
+        let transport = GatedRefreshTransport()
+        let client = OAuth2Client(config: makeConfig(), transport: transport)
+        let store = InMemoryTokenStore(initial: OAuth2Tokens(accessToken: "ACCESS_OLD", refreshToken: "REFRESH_OLD"))
+        let wipe = CountingWipeHandler()
+        let mgr = TokenManager(client: client, store: store, wipeHandler: wipe)
+
+        let refreshTask = Task {
+            try await mgr.refresh()
+        }
+        XCTAssertTrue(transport.waitForRefreshStarted(), "refresh request should be in flight before sign-out")
+
+        await mgr.signOut()
+
+        XCTAssertNil(try store.load())
+        XCTAssertFalse(mgr.hasSession)
+        XCTAssertEqual(wipe.wipeCount, 1)
+        XCTAssertEqual(transport.revokeAllCount, 1)
+
+        transport.releaseRefresh(accessToken: "ACCESS_NEW", refreshToken: "REFRESH_NEW")
+        do {
+            _ = try await refreshTask.value
+            XCTFail("Refresh must not complete after sign-out invalidated the session")
+        } catch TokenManagerError.notSignedIn {
+            // Expected: the refresh result belonged to a stale generation.
+        } catch {
+            XCTFail("Unexpected refresh error: \(error)")
+        }
+
+        XCTAssertNil(try store.load())
+        XCTAssertFalse(mgr.hasSession)
+        XCTAssertEqual(wipe.wipeCount, 1)
+    }
+
     // MARK: - CSRF state mismatch is rejected
 
     func test_parseCallback_rejects_state_mismatch() {
@@ -289,6 +378,53 @@ private func refreshRequests(in transport: MockHTTPTransport) -> [MockHTTPTransp
     transport.recorded.filter {
         $0.url.absoluteString.hasSuffix("/api/oauth2/token")
             && ($0.bodyString ?? "").contains("grant_type=refresh_token")
+    }
+}
+
+private final class GatedRefreshTransport: HTTPTransport {
+    private let lock = NSLock()
+    private let refreshStarted = DispatchSemaphore(value: 0)
+    private var refreshContinuation: CheckedContinuation<(Data, Int, [String: String]), Error>?
+    private(set) var revokeAllCount = 0
+
+    func send(_ request: URLRequest) async throws -> (Data, Int, [String: String]) {
+        let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        if request.url?.absoluteString.hasSuffix("/api/oauth2/token") == true,
+           body.contains("grant_type=refresh_token") {
+            return try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                refreshContinuation = continuation
+                lock.unlock()
+                refreshStarted.signal()
+            }
+        }
+
+        if request.url?.absoluteString.hasSuffix("/api/oauth2/revoke-all") == true {
+            lock.lock()
+            revokeAllCount += 1
+            lock.unlock()
+        }
+        let data = try JSONSerialization.data(withJSONObject: [:], options: [])
+        return (data, 200, ["Content-Type": "application/json"])
+    }
+
+    func waitForRefreshStarted() -> Bool {
+        refreshStarted.wait(timeout: .now() + .seconds(1)) == .success
+    }
+
+    func releaseRefresh(accessToken: String, refreshToken: String) {
+        let payload: [String: Any] = [
+            "access_token": accessToken,
+            "refresh_token": refreshToken,
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: payload, options: [])
+
+        lock.lock()
+        let continuation = refreshContinuation
+        refreshContinuation = nil
+        lock.unlock()
+
+        continuation?.resume(returning: (data, 200, ["Content-Type": "application/json"]))
     }
 }
 

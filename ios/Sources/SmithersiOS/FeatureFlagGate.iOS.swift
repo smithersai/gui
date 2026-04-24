@@ -4,24 +4,6 @@ import SwiftUI
 import SmithersAuth
 #endif
 
-private enum IOSRemoteSandboxFlag {
-    static let envVar = "PLUE_REMOTE_SANDBOX_ENABLED"
-
-    static func environmentOverride(
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> Bool? {
-        guard let raw = environment[envVar]?.lowercased() else { return nil }
-        switch raw {
-        case "1", "true", "yes", "on":
-            return true
-        case "0", "false", "no", "off":
-            return false
-        default:
-            return nil
-        }
-    }
-}
-
 @MainActor
 final class IOSRemoteAccessGateModel: ObservableObject {
     enum State: Equatable {
@@ -56,12 +38,12 @@ final class IOSRemoteAccessGateModel: ObservableObject {
 
     func activate() {
         guard refreshLoopTask == nil else { return }
-        if let override = IOSRemoteSandboxFlag.environmentOverride() {
+        if let override = FeatureFlagsEnvironment.remoteSandboxEnabledOverride() {
             state = override ? .enabled : .disabled
-            return
+        } else {
+            state = .checking
+            scheduleLoadingTimeout()
         }
-        state = .checking
-        scheduleLoadingTimeout()
 
         refreshLoopTask = Task { [weak self] in
             guard let self else { return }
@@ -86,16 +68,17 @@ final class IOSRemoteAccessGateModel: ObservableObject {
     }
 
     func refreshNow(force: Bool = true) async {
-        if let override = IOSRemoteSandboxFlag.environmentOverride() {
-            cancelLoadingTimeout()
-            state = override ? .enabled : .disabled
-            return
-        }
+        let override = FeatureFlagsEnvironment.remoteSandboxEnabledOverride()
         do {
             let snapshot = try await featureFlags.refresh(force: force)
             cancelLoadingTimeout()
-            state = snapshot.isRemoteSandboxEnabled ? .enabled : .disabled
+            let isEnabled = override ?? snapshot.isRemoteSandboxEnabled
+            state = isEnabled ? .enabled : .disabled
         } catch {
+            if let override {
+                cancelLoadingTimeout()
+                state = override ? .enabled : .disabled
+            }
             // Keep the current rendered state. The timeout task collapses
             // the initial `.checking` state after 3s using the best cached
             // value we have, which defaults to disabled/off.
@@ -109,7 +92,9 @@ final class IOSRemoteAccessGateModel: ObservableObject {
             try? await self.sleep(Self.nanoseconds(for: self.loadingTimeout))
             if Task.isCancelled { return }
             if self.state == .checking {
-                self.state = self.featureFlags.isRemoteSandboxEnabled ? .enabled : .disabled
+                self.state = self.featureFlags.effectiveRemoteSandboxEnabled()
+                    ? .enabled
+                    : .disabled
             }
         }
     }
@@ -126,10 +111,30 @@ final class IOSRemoteAccessGateModel: ObservableObject {
 
 struct SignedInRemoteAccessSurface: View {
     @ObservedObject var access: IOSRemoteAccessGateModel
+    @ObservedObject var featureFlags: FeatureFlagsClient
     let baseURL: URL
     let e2e: E2EConfig?
-    let bearerProvider: () -> String?
+    let bearerProvider: @Sendable () -> String?
     let onSignOut: () -> Void
+    let replayTour: () -> Void
+
+    init(
+        access: IOSRemoteAccessGateModel,
+        featureFlags: FeatureFlagsClient,
+        baseURL: URL,
+        e2e: E2EConfig?,
+        bearerProvider: @escaping @Sendable () -> String?,
+        onSignOut: @escaping () -> Void,
+        replayTour: @escaping () -> Void = {}
+    ) {
+        self.access = access
+        self.featureFlags = featureFlags
+        self.baseURL = baseURL
+        self.e2e = e2e
+        self.bearerProvider = bearerProvider
+        self.onSignOut = onSignOut
+        self.replayTour = replayTour
+    }
 
     var body: some View {
         Group {
@@ -140,10 +145,12 @@ struct SignedInRemoteAccessSurface: View {
                 RemoteAccessDisabledView(onSignOut: onSignOut)
             case .enabled:
                 IOSContentShell(
+                    featureFlags: featureFlags,
                     baseURL: baseURL,
                     e2e: e2e,
                     bearerProvider: bearerProvider,
-                    onSignOut: onSignOut
+                    onSignOut: onSignOut,
+                    replayTour: replayTour
                 )
             }
         }

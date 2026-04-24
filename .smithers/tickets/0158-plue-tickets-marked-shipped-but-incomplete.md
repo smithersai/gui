@@ -1,5 +1,10 @@
 # plue: multiple "shipped" initiative tickets never actually landed backend work
 
+## Status (audited 2026-04-24) — PARTIAL
+
+- Done: 4308aefb8 resolved most of the gaps this ticket flagged — 0105 migrations, 0107/0110/0134/0154/0155/0157 routing all landed.
+- Remaining: 0130 (SSH host-key verification), 0131 (protocol negotiation), 0139 (where-clause parser hardening), 0145 (workspace_snapshots shape), 0146 (iOS cell renderer) still INCOMPLETE and contribute to the original "shipped but incomplete" concern.
+
 ## Context
 
 Attempting to run the full e2e suite (now 108 scenarios after the 10-agent
