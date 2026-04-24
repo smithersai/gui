@@ -4,6 +4,24 @@ import SwiftUI
 import SmithersAuth
 #endif
 
+private enum IOSRemoteSandboxFlag {
+    static let envVar = "PLUE_REMOTE_SANDBOX_ENABLED"
+
+    static func environmentOverride(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool? {
+        guard let raw = environment[envVar]?.lowercased() else { return nil }
+        switch raw {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return nil
+        }
+    }
+}
+
 @MainActor
 final class IOSRemoteAccessGateModel: ObservableObject {
     enum State: Equatable {
@@ -38,6 +56,10 @@ final class IOSRemoteAccessGateModel: ObservableObject {
 
     func activate() {
         guard refreshLoopTask == nil else { return }
+        if let override = IOSRemoteSandboxFlag.environmentOverride() {
+            state = override ? .enabled : .disabled
+            return
+        }
         state = .checking
         scheduleLoadingTimeout()
 
@@ -64,6 +86,11 @@ final class IOSRemoteAccessGateModel: ObservableObject {
     }
 
     func refreshNow(force: Bool = true) async {
+        if let override = IOSRemoteSandboxFlag.environmentOverride() {
+            cancelLoadingTimeout()
+            state = override ? .enabled : .disabled
+            return
+        }
         do {
             let snapshot = try await featureFlags.refresh(force: force)
             cancelLoadingTimeout()

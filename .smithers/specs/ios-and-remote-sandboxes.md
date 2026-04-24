@@ -222,7 +222,7 @@ Desktop-local is structurally different enough from the iOS-and-remote-sandboxes
 ### Sign-out
 
 - **Sign-out always destroys local cache.** One mode, not two. Wipes: bounded SQLite, Keychain entries, any session-scoped `UserDefaults`, connection state. Prevents the class of bugs where a stale cache survives a credential change.
-- **Sign-out scope is app-wide for v1:** calling sign-out revokes every OAuth2 session for this user on this plue OAuth2 app, not just the local device. Threat-model rationale, "lost device" recovery, and the full set of secure-store decisions live in [`ios-and-remote-sandboxes-secure-store.md`](ios-and-remote-sandboxes-secure-store.md) (ticket 0133).
+- **Sign-out scope is app-wide for v1:** calling sign-out revokes every OAuth2 session for this user on this plue OAuth2 app, not just the local device. The client targets `POST /api/oauth2/revoke-all` with the current bearer token and falls back to revoking both the current access token and refresh token only when that route is unavailable. Threat-model rationale, "lost device" recovery, and the full set of secure-store decisions live in [`ios-and-remote-sandboxes-secure-store.md`](ios-and-remote-sandboxes-secure-store.md) (ticket 0133).
 - After sign-out, the user lands on the sign-in screen in the same state as a fresh install. Device-level settings (theme, font size, non-session prefs) persist.
 
 ### Desktop vs. iOS

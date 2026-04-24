@@ -28,6 +28,14 @@ final class RealIntegrationTests: XCTestCase {
         return url
     }
 
+    private func liveConfig(clientID: String) -> OAuth2ClientConfig {
+        OAuth2ClientConfig(
+            baseURL: plueURL!,
+            clientID: clientID,
+            redirectURI: "smithers://auth/callback"
+        )
+    }
+
     /// Real refresh-token rotation against a live plue. Requires:
     ///   PLUE_DEV_URL        = https://plue.dev.example
     ///   PLUE_DEV_CLIENT_ID  = registered public client id
@@ -77,5 +85,54 @@ final class RealIntegrationTests: XCTestCase {
         let url = client.authorizeURL(pkce: pair, state: "integration-state")
         XCTAssertEqual(url.host, base.host)
         XCTAssertTrue(url.path.hasSuffix("/api/oauth2/authorize"))
+    }
+
+    @MainActor
+    func test_real_signout_revokes_other_session_access_tokens() async throws {
+        guard ProcessInfo.processInfo.environment["POC_ELECTRIC_STACK"] == "1" else {
+            XCTAssertTrue(true, "POC_ELECTRIC_STACK unset; real revoke-all test no-op")
+            return
+        }
+        guard let base = plueURL else {
+            XCTAssertTrue(true, "PLUE_DEV_URL unset; real revoke-all test no-op")
+            return
+        }
+        guard let clientID = ProcessInfo.processInfo.environment["PLUE_DEV_CLIENT_ID"],
+              let refreshA = ProcessInfo.processInfo.environment["PLUE_DEV_REFRESH"],
+              let refreshB = ProcessInfo.processInfo.environment["PLUE_DEV_REFRESH_SECONDARY"] else {
+            XCTAssertTrue(true, "PLUE_DEV_CLIENT_ID or dual refresh tokens unset; revoke-all test no-op")
+            return
+        }
+
+        let client = OAuth2Client(config: liveConfig(clientID: clientID))
+        let tokensA = try await client.refresh(refreshToken: refreshA)
+        let tokensB = try await client.refresh(refreshToken: refreshB)
+        let managerA = TokenManager(client: client, store: InMemoryTokenStore(initial: tokensA))
+        let managerB = TokenManager(client: client, store: InMemoryTokenStore(initial: tokensB))
+
+        let statusBeforeSignOut = try await statusForAuthenticatedUserRequest(
+            baseURL: base,
+            token: try managerB.currentAccessToken()
+        )
+        XCTAssertEqual(statusBeforeSignOut, 200)
+
+        await managerA.signOut()
+
+        let statusAfterSignOut = try await statusForAuthenticatedUserRequest(
+            baseURL: base,
+            token: try managerB.currentAccessToken()
+        )
+        XCTAssertEqual(statusAfterSignOut, 401)
+    }
+
+    private func statusForAuthenticatedUserRequest(baseURL: URL, token: String) async throws -> Int {
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/user"))
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            XCTFail("Expected HTTPURLResponse")
+            return -1
+        }
+        return http.statusCode
     }
 }

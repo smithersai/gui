@@ -65,7 +65,7 @@ The v1 decision to *not* distinguish "remotely revoked" from "simply expired" on
 
 Rationale:
 
-- **Existing server capability.** `DeleteOAuth2RefreshTokensByAppAndUser` and `DeleteOAuth2AccessTokensByAppAndUser` are already on the service interface (`plue/internal/services/oauth2.go:45, 51`). Exposing them via a client-callable route is trivial; doing it without a route by calling them server-side on a higher-level "sign out of all devices" endpoint is the path 0109 takes.
+- **Existing server capability.** `DeleteOAuth2RefreshTokensByAppAndUser` and `DeleteOAuth2AccessTokensByAppAndUser` are already on the service interface (`plue/internal/services/oauth2.go:45, 51`). v1 exposes them at `POST /api/oauth2/revoke-all`, authenticated by the caller's bearer token, so the client can revoke every session for the current app + user in one call.
 - **Covers the lost-phone case cleanly.** The user's mental model is "nuke all my sessions"; app-wide revoke matches it exactly.
 - **Smallest surface area.** No new database columns, no device-id plumbing, no per-session UI — the latter would demand a full session-management screen, which is an explicit non-goal (§8).
 
@@ -87,7 +87,7 @@ Work explicitly created or named by this doc.
 
 Named drive-by inside 0109's existing scope (not a new ticket):
 
-- 0109 "sign out" acceptance criterion now reads: on sign-out, **call a plue endpoint that invokes `RevokeAllByAppAndUser`** (or, if that endpoint is not yet exposed, iterate `/api/oauth2/revoke` for both the access and refresh token this client currently holds and add a TODO referencing this doc). Either implementation path is acceptable; the eventual target is a single server-side "revoke all" call.
+- 0109 "sign out" acceptance criterion now reads: on sign-out, **call `POST /api/oauth2/revoke-all`**, which invokes `RevokeAllByAppAndUser`; if the client is pointed at an older plue build without that route, iterate `/api/oauth2/revoke` for both the access and refresh token this client currently holds. The target state is the single server-side revoke-all call.
 
 ## 8. Non-goals
 

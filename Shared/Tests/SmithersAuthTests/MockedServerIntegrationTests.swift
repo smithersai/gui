@@ -2,8 +2,8 @@
 // call → simulated 401 → refresh → retry → sign-out → revoked.
 //
 // Does NOT depend on 0106. Exercises the full client state machine with
-// mocked `/api/oauth2/token` + `/api/oauth2/revoke` and a mock
-// `ASWebAuthenticationSession` driver.
+// mocked `/api/oauth2/token`, `/api/oauth2/revoke`, `/api/oauth2/revoke-all`,
+// and a mock `ASWebAuthenticationSession` driver.
 //
 // Ticket 0109. Test-only credentials are clearly labeled FAKE.
 
@@ -55,7 +55,7 @@ final class MockedServerIntegrationTests: XCTestCase {
             "refresh_token": "FAKE_REFRESH_2",
             "expires_in": 3600,
         ]))
-        // Third response: revoke
+        // Third response: revoke-all
         transport.responses.append(.json(payload: [:]))
 
         let client = OAuth2Client(config: makeConfig(), transport: transport)
@@ -113,10 +113,9 @@ final class MockedServerIntegrationTests: XCTestCase {
         XCTAssertNil(try store.load())
         XCTAssertEqual(wipe.wipeCount, 1)
 
-        // Ensure /api/oauth2/revoke was actually hit.
-        let revokeHit = transport.recorded.last!
-        XCTAssertTrue(revokeHit.url.absoluteString.hasSuffix("/api/oauth2/revoke"))
-        XCTAssertTrue((revokeHit.bodyString ?? "").contains("token=FAKE_REFRESH_2"))
+        let revokeAllHits = transport.recorded.filter { $0.url.absoluteString.hasSuffix("/api/oauth2/revoke-all") }
+        XCTAssertEqual(revokeAllHits.count, 1, "sign-out should prefer revoke-all when the route exists")
+        XCTAssertEqual(revokeAllHits[0].headers["Authorization"], "Bearer FAKE_ACCESS_2")
     }
 
     // MARK: - Atomicity: Keychain write fails mid-rotation
@@ -236,6 +235,34 @@ final class MockedServerIntegrationTests: XCTestCase {
 
         XCTAssertTrue(results.allSatisfy { $0 == first })
         XCTAssertEqual(refreshRequests(in: transport).count, 1)
+    }
+
+    @MainActor
+    func test_signout_falls_back_to_access_and_refresh_revoke_when_revoke_all_missing() async throws {
+        let transport = MockHTTPTransport()
+        transport.responses.append(.error(status: 404, code: "not_found"))
+        transport.responses.append(.json(payload: [:]))
+        transport.responses.append(.json(payload: [:]))
+
+        let client = OAuth2Client(config: makeConfig(), transport: transport)
+        let store = InMemoryTokenStore(initial: OAuth2Tokens(accessToken: "ACCESS_A", refreshToken: "REFRESH_A"))
+        let wipe = CountingWipeHandler()
+        let mgr = TokenManager(client: client, store: store, wipeHandler: wipe)
+
+        await mgr.signOut()
+
+        XCTAssertNil(try store.load())
+        XCTAssertEqual(wipe.wipeCount, 1)
+
+        let revokeAllHits = transport.recorded.filter { $0.url.absoluteString.hasSuffix("/api/oauth2/revoke-all") }
+        XCTAssertEqual(revokeAllHits.count, 1)
+
+        let revokeHits = transport.recorded.filter { $0.url.absoluteString.hasSuffix("/api/oauth2/revoke") }
+        XCTAssertEqual(revokeHits.count, 2)
+        XCTAssertTrue((revokeHits[0].bodyString ?? "").contains("token=ACCESS_A"))
+        XCTAssertTrue((revokeHits[0].bodyString ?? "").contains("token_type_hint=access_token"))
+        XCTAssertTrue((revokeHits[1].bodyString ?? "").contains("token=REFRESH_A"))
+        XCTAssertTrue((revokeHits[1].bodyString ?? "").contains("token_type_hint=refresh_token"))
     }
 
     // MARK: - CSRF state mismatch is rejected

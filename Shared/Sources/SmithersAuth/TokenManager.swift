@@ -170,12 +170,18 @@ public final class TokenManager {
         return second
     }
 
-    /// Full sign-out: revoke on the server (best effort), wipe Keychain,
-    /// wipe downstream caches via the wipe handler. Idempotent.
+    /// Full sign-out: prefer app-wide revoke on the server, fall back to
+    /// revoking the current access + refresh token pair when the server
+    /// build does not expose `/api/oauth2/revoke-all`, then wipe Keychain
+    /// and downstream caches. Idempotent.
     public func signOut() async {
         let snapshot = snapshotCached()
         if let t = snapshot {
-            await client.revoke(refreshToken: t.refreshToken)
+            let revokeAll = await client.revokeAll(accessToken: t.accessToken)
+            if revokeAll == .unavailable {
+                await client.revoke(accessToken: t.accessToken)
+                await client.revoke(refreshToken: t.refreshToken)
+            }
         }
         await localSignOut()
     }

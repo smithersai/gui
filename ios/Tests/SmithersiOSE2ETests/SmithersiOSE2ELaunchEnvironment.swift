@@ -19,6 +19,7 @@ enum E2ELaunchKey {
     static let bearer = "SMITHERS_E2E_BEARER"
     static let baseURL = "PLUE_BASE_URL"
     static let refreshToken = "SMITHERS_E2E_REFRESH"
+    static let remoteFlag = "PLUE_REMOTE_SANDBOX_ENABLED"
     /// Seed marker. When set to "1", tests that expect a pre-seeded
     /// workspace row (`test_signs_in_and_sees_seeded_workspace`) will
     /// assert its presence; when "0", tests assert the empty state.
@@ -97,6 +98,9 @@ struct E2ELaunchEnvironment {
         app.launchEnvironment[E2ELaunchKey.baseURL] = baseURL
         if let refresh = refreshToken {
             app.launchEnvironment[E2ELaunchKey.refreshToken] = refresh
+        }
+        if let remoteFlag = ProcessInfo.processInfo.environment[E2ELaunchKey.remoteFlag], !remoteFlag.isEmpty {
+            app.launchEnvironment[E2ELaunchKey.remoteFlag] = remoteFlag
         }
         if seeded {
             app.launchEnvironment[E2ELaunchKey.seededData] = "1"

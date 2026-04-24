@@ -1,9 +1,9 @@
 // OAuth2Client.swift — wire-level OAuth2 exchange, refresh, revoke.
 //
-// Ticket 0109. Mirrors plue's `/api/oauth2/token` + `/api/oauth2/revoke`
-// routes (0106). Network I/O is injected via `HTTPTransport` so unit tests
-// can feed fixed responses and assert request shapes without touching the
-// real wire.
+// Ticket 0109. Mirrors plue's `/api/oauth2/token`, `/api/oauth2/revoke`,
+// and `/api/oauth2/revoke-all` routes. Network I/O is injected via
+// `HTTPTransport` so unit tests can feed fixed responses and assert request
+// shapes without touching the real wire.
 
 import Foundation
 
@@ -78,6 +78,12 @@ public struct OAuth2ErrorBody: Decodable, Equatable {
     public let error_description: String?
 }
 
+enum RevokeAllResult: Equatable {
+    case revoked
+    case unavailable
+    case failed
+}
+
 public final class OAuth2Client {
     public let config: OAuth2ClientConfig
     public let transport: HTTPTransport
@@ -134,14 +140,50 @@ public final class OAuth2Client {
         return try await postToken(body: form.percentEncodedQuery ?? "")
     }
 
+    /// Best-effort app-wide revoke. When the route does not exist on the
+    /// target plue build, returns `.unavailable` so callers can fall back
+    /// to per-token revocation. All other failures are non-fatal.
+    func revokeAll(accessToken: String) async -> RevokeAllResult {
+        var req = URLRequest(url: config.baseURL.appendingPathComponent("api/oauth2/revoke-all"))
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (_, status, _) = try await transport.send(req)
+            switch status {
+            case 200...299:
+                return .revoked
+            case 404, 405:
+                return .unavailable
+            default:
+                return .failed
+            }
+        } catch {
+            return .failed
+        }
+    }
+
+    /// Best-effort revoke. We treat network errors here as
+    /// non-fatal — the local wipe must still happen (per 0133 threat model).
+    public func revoke(accessToken: String) async {
+        await revoke(token: accessToken, tokenTypeHint: "access_token")
+    }
+
     /// Best-effort revoke. We treat network errors here as
     /// non-fatal — the local wipe must still happen (per 0133 threat model).
     public func revoke(refreshToken: String) async {
+        await revoke(token: refreshToken, tokenTypeHint: "refresh_token")
+    }
+
+    // MARK: - Internals
+
+    private func revoke(token: String, tokenTypeHint: String) async {
         var form = URLComponents()
         form.queryItems = [
-            .init(name: "token", value: refreshToken),
+            .init(name: "token", value: token),
             .init(name: "client_id", value: config.clientID),
-            .init(name: "token_type_hint", value: "refresh_token"),
+            .init(name: "token_type_hint", value: tokenTypeHint),
         ]
         var req = URLRequest(url: config.baseURL.appendingPathComponent("api/oauth2/revoke"))
         req.httpMethod = "POST"
@@ -149,8 +191,6 @@ public final class OAuth2Client {
         req.httpBody = (form.percentEncodedQuery ?? "").data(using: .utf8)
         _ = try? await transport.send(req)
     }
-
-    // MARK: - Internals
 
     private func postToken(body: String) async throws -> OAuth2Tokens {
         var req = URLRequest(url: config.baseURL.appendingPathComponent("api/oauth2/token"))

@@ -12,6 +12,7 @@ final class MockHTTPTransport: HTTPTransport {
         let url: URL
         let method: String
         let body: Data?
+        let headers: [String: String]
         var bodyString: String? {
             body.flatMap { String(data: $0, encoding: .utf8) }
         }
@@ -48,7 +49,8 @@ final class MockHTTPTransport: HTTPTransport {
             recorded.append(Recorded(
                 url: request.url!,
                 method: request.httpMethod ?? "GET",
-                body: request.httpBody
+                body: request.httpBody,
+                headers: request.allHTTPHeaderFields ?? [:]
             ))
             guard !responses.isEmpty else {
                 return (Data(), 500, [:])

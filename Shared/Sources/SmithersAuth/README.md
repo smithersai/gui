@@ -14,12 +14,15 @@ that this module talks to).
   disabled. Tokens have a redacted `CustomStringConvertible` to keep them
   out of crash/debug logs.
 - `OAuth2Client.swift` — wire-level `/api/oauth2/authorize` URL builder,
-  `/api/oauth2/token` exchange + refresh, `/api/oauth2/revoke`. Network
-  I/O injected via `HTTPTransport`.
+  `/api/oauth2/token` exchange + refresh, `/api/oauth2/revoke-all`
+  sign-out, plus `/api/oauth2/revoke` fallback. Network I/O injected via
+  `HTTPTransport`.
 - `TokenManager.swift` — sign-in lifecycle, atomic refresh rotation
   (write-before-retry), concurrent-401 deduplication, sign-out that
-  revokes server-side then invokes `SessionWipeHandler.wipeAfterSignOut()`
-  to drop the SQLite cache (per ticket 0133).
+  prefers `/api/oauth2/revoke-all` and falls back to revoking both the
+  current access token and refresh token before invoking
+  `SessionWipeHandler.wipeAfterSignOut()` to drop the SQLite cache (per
+  ticket 0133).
 - `AuthorizeSessionDriver.swift` — `ASWebAuthenticationSession` wrapper
   (iOS + macOS) + a `MockAuthorizeSessionDriver` for tests.
 - `AuthViewModel.swift` / `SignInView.swift` — SwiftUI shell, identical

@@ -68,6 +68,16 @@
       </CommandLineArguments>
       <EnvironmentVariables>
          <EnvironmentVariable
+            key = "PLUE_E2E_MODE"
+            value = "$(PLUE_E2E_MODE)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "PLUE_REMOTE_SANDBOX_ENABLED"
+            value = "$(PLUE_REMOTE_SANDBOX_ENABLED)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
             key = "SMITHERS_E2E_BEARER"
             value = "$(SMITHERS_E2E_BEARER)"
             isEnabled = "YES">
