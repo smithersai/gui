@@ -563,9 +563,9 @@ SMITHERS_API smithers_string_s smithers_core_cache_query(
 // --- Writes ---
 
 // Issue an HTTP JSON write. `action` is the plue write route identifier
-// (e.g. "agent_sessions.create"). `payload_json` is the request body.
+// (e.g. "agent_session.create"). `payload_json` is the request body.
 // Returns 0 on failure. The future resolves via WRITE_ACK event carrying
-// a JSON object: {"future": <id>, "ok": <bool>, "body": "...", "status": N}.
+// a JSON object: {"future_id": <id>, "ok": <bool>, "body": "...", "status": N}.
 SMITHERS_API smithers_write_future_t smithers_core_write(
     smithers_core_session_t s,
     const char *action,

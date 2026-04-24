@@ -293,13 +293,13 @@ pub const FakeTransport = struct {
 
 /// Action-kind → plue REST route mapping. The action kind is what Swift
 /// sends into `smithers_core_write`; this table translates into the HTTP
-/// path (a `{owner}/{repo}` pair is interpolated from the payload, which
-/// must carry `repo_owner` + `repo_name` fields).
+/// method + path (a `{owner}/{repo}` pair is interpolated from the payload,
+/// which must carry `repo_owner` + `repo_name` fields).
 ///
-/// See ticket 0140 §C for the canonical list. We fall back to
-/// `/api/actions/<kind>` for kinds not in this table — that keeps
-/// forward compatibility while the plue route set grows.
+/// Unknown action kinds are rejected explicitly. There is no
+/// `/api/actions/<kind>` fallback.
 const RouteTemplate = struct {
+    method: electric.http.WriteMethod = .POST,
     /// Path with `{id}` placeholders to be substituted from payload fields.
     path: []const u8,
     /// Payload field names to substitute into `{id}` / `{id2}` placeholders,
@@ -307,10 +307,31 @@ const RouteTemplate = struct {
     placeholders: []const []const u8 = &.{},
 };
 
+pub const ResolveActionPathError = error{
+    UnknownActionKind,
+    MissingField,
+    InvalidPayload,
+    OutOfMemory,
+};
+
+pub const ResolvedActionPath = struct {
+    method: electric.http.WriteMethod,
+    path: []u8,
+};
+
 const routes = std.StaticStringMap(RouteTemplate).initComptime(.{
     .{ "approval.decide", RouteTemplate{
         .path = "/api/repos/{owner}/{repo}/approvals/{id}/decide",
         .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "approval_id" },
+    } },
+    .{ "agent_session.create", RouteTemplate{
+        .path = "/api/repos/{owner}/{repo}/agent/sessions",
+        .placeholders = &[_][]const u8{ "repo_owner", "repo_name" },
+    } },
+    .{ "agent_session.delete", RouteTemplate{
+        .method = .DELETE,
+        .path = "/api/repos/{owner}/{repo}/agent/sessions/{id}",
+        .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "session_id" },
     } },
     .{ "agent_session.append_message", RouteTemplate{
         .path = "/api/repos/{owner}/{repo}/agent/sessions/{id}/messages",
@@ -325,6 +346,7 @@ const routes = std.StaticStringMap(RouteTemplate).initComptime(.{
         .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "workspace_id" },
     } },
     .{ "workspace.delete", RouteTemplate{
+        .method = .DELETE,
         .path = "/api/repos/{owner}/{repo}/workspaces/{id}",
         .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "workspace_id" },
     } },
@@ -336,35 +358,45 @@ const routes = std.StaticStringMap(RouteTemplate).initComptime(.{
         .path = "/api/repos/{owner}/{repo}/workspaces/{id}/resume",
         .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "workspace_id" },
     } },
+    .{ "workspace_snapshot.create", RouteTemplate{
+        .path = "/api/repos/{owner}/{repo}/workspaces/{id}/snapshot",
+        .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "workspace_id" },
+    } },
+    .{ "workspace_snapshot.delete", RouteTemplate{
+        .method = .DELETE,
+        .path = "/api/repos/{owner}/{repo}/workspace-snapshots/{id}",
+        .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "snapshot_id" },
+    } },
     .{ "workflow_run.cancel", RouteTemplate{
-        .path = "/api/repos/{owner}/{repo}/workflow/runs/{id}/cancel",
+        .path = "/api/repos/{owner}/{repo}/runs/{id}/cancel",
         .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "run_id" },
     } },
     .{ "workflow_run.rerun", RouteTemplate{
-        .path = "/api/repos/{owner}/{repo}/workflow/runs/{id}/rerun",
+        .path = "/api/repos/{owner}/{repo}/runs/{id}/rerun",
         .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "run_id" },
     } },
     .{ "workflow_run.resume", RouteTemplate{
-        .path = "/api/repos/{owner}/{repo}/workflow/runs/{id}/resume",
+        .path = "/api/repos/{owner}/{repo}/runs/{id}/resume",
         .placeholders = &[_][]const u8{ "repo_owner", "repo_name", "run_id" },
     } },
 });
 
-/// Resolve a concrete URL path from an action kind + payload JSON. Caller
-/// owns the returned slice. Returns an error if a required placeholder
-/// is missing — the write future is NACK'd with status 400.
+/// Resolve a concrete HTTP method + URL path from an action kind + payload
+/// JSON. Caller owns the returned path slice. Returns an error if the kind
+/// is unknown or a required placeholder is missing — the write future is
+/// NACK'd with status 400.
 pub fn resolveActionPath(
     allocator: Allocator,
     action_kind: []const u8,
     payload_json: []const u8,
-) ![]u8 {
-    const template = routes.get(action_kind) orelse {
-        // Unknown kinds route to `/api/actions/<kind>`.
-        return std.fmt.allocPrint(allocator, "/api/actions/{s}", .{action_kind});
-    };
+) ResolveActionPathError!ResolvedActionPath {
+    const template = routes.get(action_kind) orelse return error.UnknownActionKind;
 
     if (template.placeholders.len == 0) {
-        return try allocator.dupe(u8, template.path);
+        return .{
+            .method = template.method,
+            .path = allocator.dupe(u8, template.path) catch return error.OutOfMemory,
+        };
     }
 
     // Parse payload to pull field values.
@@ -401,12 +433,15 @@ pub fn resolveActionPath(
             else => return error.InvalidPayload,
         };
         const pos = std.mem.indexOf(u8, remaining, tok) orelse return error.MissingField;
-        try out.appendSlice(allocator, remaining[0..pos]);
-        try out.appendSlice(allocator, val);
+        out.appendSlice(allocator, remaining[0..pos]) catch return error.OutOfMemory;
+        out.appendSlice(allocator, val) catch return error.OutOfMemory;
         remaining = remaining[pos + tok.len ..];
     }
-    try out.appendSlice(allocator, remaining);
-    return out.toOwnedSlice(allocator);
+    out.appendSlice(allocator, remaining) catch return error.OutOfMemory;
+    return .{
+        .method = template.method,
+        .path = out.toOwnedSlice(allocator) catch return error.OutOfMemory,
+    };
 }
 
 /// Opaque hook used by RealTransport to fetch a fresh bearer. Ultimately
@@ -919,8 +954,9 @@ fn writeThread(job: *RealTransport.WriteJob) void {
     var owned_bearer = bearer_snap.bearer;
     defer self.allocator.free(owned_bearer);
 
-    const path = resolveActionPath(self.allocator, job.action, job.payload) catch |e| {
+    const resolved = resolveActionPath(self.allocator, job.action, job.payload) catch |e| {
         const msg = switch (e) {
+            error.UnknownActionKind => "{\"error\":\"unknown_action_kind\"}",
             error.MissingField => "{\"error\":\"missing_field\"}",
             error.InvalidPayload => "{\"error\":\"invalid_payload\"}",
             else => "{\"error\":\"route_resolution_failed\"}",
@@ -929,16 +965,24 @@ fn writeThread(job: *RealTransport.WriteJob) void {
         self.enqueueDelta(.{ .write_ack = .{ .future = job.future, .ok = false, .status = 400, .body = body } });
         return;
     };
-    defer self.allocator.free(path);
+    defer self.allocator.free(resolved.path);
 
     var attempt: u8 = 0;
     while (attempt < 2) : (attempt += 1) {
-        var resp = electric.http.post(self.allocator, .{
-            .host = self.cfg.api_host,
-            .port = self.cfg.api_port,
-            .path_and_query = path,
-            .bearer = owned_bearer,
-        }, job.payload) catch {
+        var resp = switch (resolved.method) {
+            .POST => electric.http.post(self.allocator, .{
+                .host = self.cfg.api_host,
+                .port = self.cfg.api_port,
+                .path_and_query = resolved.path,
+                .bearer = owned_bearer,
+            }, job.payload),
+            .DELETE => electric.http.delete(self.allocator, .{
+                .host = self.cfg.api_host,
+                .port = self.cfg.api_port,
+                .path_and_query = resolved.path,
+                .bearer = owned_bearer,
+            }, job.payload),
+        } catch {
             const body = self.allocator.dupe(u8, "{\"error\":\"io_error\"}") catch return;
             self.enqueueDelta(.{ .write_ack = .{ .future = job.future, .ok = false, .status = 0, .body = body } });
             return;
@@ -1140,10 +1184,10 @@ test "FakeTransport: write records action + fires via enqueued ack" {
     const ft = try FakeTransport.create(testing.allocator);
     defer ft.transport().destroy(testing.allocator);
     const t = ft.transport();
-    const fut = try t.write("agent_sessions.create", "{\"title\":\"hi\"}");
+    const fut = try t.write("agent_session.create", "{\"title\":\"hi\"}");
     try testing.expect(fut != 0);
     try testing.expectEqual(@as(usize, 1), ft.writes.items.len);
-    try testing.expectEqualStrings("agent_sessions.create", ft.writes.items[0].action);
+    try testing.expectEqualStrings("agent_session.create", ft.writes.items[0].action);
 }
 
 test "FakeTransport: PTY attach/write/resize/detach flow" {
@@ -1161,26 +1205,147 @@ test "FakeTransport: PTY attach/write/resize/detach flow" {
     try testing.expectEqual(@as(u16, 24), ft.resizes.items[0].rows);
 }
 
-test "resolveActionPath: approval.decide substitutes owner/repo/id" {
-    const p = try resolveActionPath(testing.allocator, "approval.decide",
-        \\{"repo_owner":"acme","repo_name":"widgets","approval_id":"a_42"}
-    );
-    defer testing.allocator.free(p);
-    try testing.expectEqualStrings("/api/repos/acme/widgets/approvals/a_42/decide", p);
+fn expectResolved(
+    action_kind: []const u8,
+    payload_json: []const u8,
+    expected_method: electric.http.WriteMethod,
+    expected_path: []const u8,
+) !void {
+    const resolved = try resolveActionPath(testing.allocator, action_kind, payload_json);
+    defer testing.allocator.free(resolved.path);
+    try testing.expectEqual(expected_method, resolved.method);
+    try testing.expectEqualStrings(expected_path, resolved.path);
 }
 
-test "resolveActionPath: workspace.create without id placeholder" {
-    const p = try resolveActionPath(testing.allocator, "workspace.create",
-        \\{"repo_owner":"o","repo_name":"r"}
+test "resolveActionPath: workspace.create" {
+    try expectResolved(
+        "workspace.create",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\"}",
+        .POST,
+        "/api/repos/acme/widgets/workspaces",
     );
-    defer testing.allocator.free(p);
-    try testing.expectEqualStrings("/api/repos/o/r/workspaces", p);
 }
 
-test "resolveActionPath: unknown kind falls back to /api/actions/<kind>" {
-    const p = try resolveActionPath(testing.allocator, "custom.thing", "{}");
-    defer testing.allocator.free(p);
-    try testing.expectEqualStrings("/api/actions/custom.thing", p);
+test "resolveActionPath: workspace.suspend" {
+    try expectResolved(
+        "workspace.suspend",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"workspace_id\":\"ws_1\"}",
+        .POST,
+        "/api/repos/acme/widgets/workspaces/ws_1/suspend",
+    );
+}
+
+test "resolveActionPath: workspace.resume" {
+    try expectResolved(
+        "workspace.resume",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"workspace_id\":\"ws_1\"}",
+        .POST,
+        "/api/repos/acme/widgets/workspaces/ws_1/resume",
+    );
+}
+
+test "resolveActionPath: workspace.delete" {
+    try expectResolved(
+        "workspace.delete",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"workspace_id\":\"ws_1\"}",
+        .DELETE,
+        "/api/repos/acme/widgets/workspaces/ws_1",
+    );
+}
+
+test "resolveActionPath: workspace.fork" {
+    try expectResolved(
+        "workspace.fork",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"workspace_id\":\"ws_1\"}",
+        .POST,
+        "/api/repos/acme/widgets/workspaces/ws_1/fork",
+    );
+}
+
+test "resolveActionPath: workspace_snapshot.create" {
+    try expectResolved(
+        "workspace_snapshot.create",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"workspace_id\":\"ws_1\"}",
+        .POST,
+        "/api/repos/acme/widgets/workspaces/ws_1/snapshot",
+    );
+}
+
+test "resolveActionPath: workspace_snapshot.delete" {
+    try expectResolved(
+        "workspace_snapshot.delete",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"snapshot_id\":\"snap_1\"}",
+        .DELETE,
+        "/api/repos/acme/widgets/workspace-snapshots/snap_1",
+    );
+}
+
+test "resolveActionPath: workflow_run.cancel" {
+    try expectResolved(
+        "workflow_run.cancel",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"run_id\":123}",
+        .POST,
+        "/api/repos/acme/widgets/runs/123/cancel",
+    );
+}
+
+test "resolveActionPath: workflow_run.rerun" {
+    try expectResolved(
+        "workflow_run.rerun",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"run_id\":\"run_1\"}",
+        .POST,
+        "/api/repos/acme/widgets/runs/run_1/rerun",
+    );
+}
+
+test "resolveActionPath: workflow_run.resume" {
+    try expectResolved(
+        "workflow_run.resume",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"run_id\":\"run_1\"}",
+        .POST,
+        "/api/repos/acme/widgets/runs/run_1/resume",
+    );
+}
+
+test "resolveActionPath: approval.decide" {
+    try expectResolved(
+        "approval.decide",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"approval_id\":\"a_42\"}",
+        .POST,
+        "/api/repos/acme/widgets/approvals/a_42/decide",
+    );
+}
+
+test "resolveActionPath: agent_session.create" {
+    try expectResolved(
+        "agent_session.create",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"title\":\"triage\"}",
+        .POST,
+        "/api/repos/acme/widgets/agent/sessions",
+    );
+}
+
+test "resolveActionPath: agent_session.delete" {
+    try expectResolved(
+        "agent_session.delete",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"session_id\":\"sess_1\"}",
+        .DELETE,
+        "/api/repos/acme/widgets/agent/sessions/sess_1",
+    );
+}
+
+test "resolveActionPath: agent_session.append_message" {
+    try expectResolved(
+        "agent_session.append_message",
+        "{\"repo_owner\":\"acme\",\"repo_name\":\"widgets\",\"session_id\":\"sess_1\"}",
+        .POST,
+        "/api/repos/acme/widgets/agent/sessions/sess_1/messages",
+    );
+}
+
+test "resolveActionPath: unknown kind errors" {
+    const p = resolveActionPath(testing.allocator, "custom.thing", "{}");
+    try testing.expectError(error.UnknownActionKind, p);
 }
 
 test "resolveActionPath: missing field errors" {
@@ -1188,12 +1353,4 @@ test "resolveActionPath: missing field errors" {
         \\{"repo_owner":"a"}
     );
     try testing.expectError(error.MissingField, r);
-}
-
-test "resolveActionPath: workflow_run.cancel with numeric id" {
-    const p = try resolveActionPath(testing.allocator, "workflow_run.cancel",
-        \\{"repo_owner":"o","repo_name":"r","run_id":123}
-    );
-    defer testing.allocator.free(p);
-    try testing.expectEqualStrings("/api/repos/o/r/workflow/runs/123/cancel", p);
 }

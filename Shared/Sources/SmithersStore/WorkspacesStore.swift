@@ -20,9 +20,13 @@ public final class WorkspacesStore: ObservableObject {
 
     internal var subscriptionHandle: UInt64 = 0
     internal var sessionsSubscriptionHandle: UInt64 = 0
-    private let session: RuntimeSession
+    private let session: any StoreRuntimeSession
 
-    public init(session: RuntimeSession) {
+    public convenience init(session: RuntimeSession) {
+        self.init(session: session as any StoreRuntimeSession)
+    }
+
+    internal init(session: any StoreRuntimeSession) {
         self.session = session
         reloadFromCache()
     }

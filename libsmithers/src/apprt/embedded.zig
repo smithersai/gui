@@ -167,7 +167,7 @@ pub export fn smithers_client_call(
     out_err: ?*structs.Error,
 ) structs.String {
     const ptr = client orelse {
-        log.warn("smithers_client_call: client is null", .{});
+        log.debug("smithers_client_call: client is null", .{});
         if (out_err) |err| err.* = ffi.errorMessage(1, "client is null");
         return ffi.stringDup("null");
     };
@@ -183,7 +183,7 @@ pub export fn smithers_client_stream(
     out_err: ?*structs.Error,
 ) ?*EventStream {
     const ptr = client orelse {
-        log.warn("smithers_client_stream: client is null", .{});
+        log.debug("smithers_client_stream: client is null", .{});
         if (out_err) |err| err.* = ffi.errorMessage(1, "client is null");
         return null;
     };
@@ -256,7 +256,7 @@ pub export fn smithers_persistence_open(db_path: ?[*:0]const u8, out_err: ?*stru
     const path_slice = ffi.spanZ(db_path);
     log.info("ffi smithers_persistence_open path={s}", .{path_slice});
     const p = Persistence.open(ffi.allocator, path_slice) catch |err| {
-        logx.catchErr(log, "smithers_persistence_open", err);
+        logx.catchDebug(log, "smithers_persistence_open", err);
         if (out_err) |out| out.* = ffi.errorFrom("persistence open", err);
         return null;
     };

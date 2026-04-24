@@ -211,14 +211,13 @@ fn childExec(
             _ = std.c.write(fd, msg.ptr, msg.len);
         }
     }
-    posix.execvpeZ(shell_path, argv, envp) catch |err| {
-        const fd: i32 = 2;
-        var buf: [256]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "smithers-pty: execvpe(\"{s}\") failed: {s}\n", .{
-            std.mem.sliceTo(shell_path, 0), @errorName(err),
-        }) catch "smithers-pty: execvpe failed\n";
-        _ = std.c.write(fd, msg.ptr, msg.len);
-    };
+    const err = posix.execvpeZ(shell_path, argv, envp);
+    const fd: i32 = 2;
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, "smithers-pty: execvpe(\"{s}\") failed: {s}\n", .{
+        std.mem.sliceTo(shell_path, 0), @errorName(err),
+    }) catch "smithers-pty: execvpe failed\n";
+    _ = std.c.write(fd, msg.ptr, msg.len);
     std.c._exit(127);
 }
 

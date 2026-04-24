@@ -15,10 +15,14 @@ public final class DevToolsSnapshotsStore: ObservableObject {
     @Published public private(set) var rows: [DevToolsSnapshotRow] = []
     @Published public private(set) var lastError: String? = nil
 
-    private let session: RuntimeSession
+    private let session: any StoreRuntimeSession
     private var perRunHandles: [String: UInt64] = [:]
 
-    public init(session: RuntimeSession) {
+    public convenience init(session: RuntimeSession) {
+        self.init(session: session as any StoreRuntimeSession)
+    }
+
+    internal init(session: any StoreRuntimeSession) {
         self.session = session
     }
 

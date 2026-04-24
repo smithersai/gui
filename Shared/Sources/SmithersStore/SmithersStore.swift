@@ -39,7 +39,7 @@ public protocol SmithersStoreProtocol: AnyObject {
     /// The returned payload is the `writeAck` body (if any); stores
     /// re-read from cache on the echo event — callers generally do not
     /// need to inspect the ack payload.
-    func dispatch(action: String, payloadJSON: String, echoTable: String?) async throws -> String?
+    func dispatch(_ request: ActionRequest, echoTable: String?) async throws -> String?
 
     /// Wipe the local cache and drop all subscriptions. Called from
     /// `SessionWipeHandler` on sign-out.
@@ -54,7 +54,7 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
     public let agentSessions: AgentSessionsStore
     public let devtoolsSnapshots: DevToolsSnapshotsStore
 
-    private let session: RuntimeSession
+    private let session: any StoreRuntimeSession
     private let eventQueue = DispatchQueue(label: "smithers.store.events", qos: .userInitiated)
     private let dispatchLock = NSLock()
     private var pendingEchoes: [UInt64: PendingEcho] = [:]
@@ -66,9 +66,16 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
     private struct PendingEcho {
         let table: String?
         let continuation: CheckedContinuation<String?, Error>
+        var ackPayload: String?
+        var didAck: Bool = false
+        var didSeeShapeEcho: Bool = false
     }
 
-    public init(session: RuntimeSession) {
+    public convenience init(session: RuntimeSession) {
+        self.init(session: session as any StoreRuntimeSession)
+    }
+
+    internal init(session: any StoreRuntimeSession) {
         self.session = session
         self.runs = RunsStore(session: session)
         self.approvals = ApprovalsStore(session: session)
@@ -141,15 +148,15 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
 
     private func routeShapeDelta(_ payload: String?) {
         guard let payload = payload, let data = payload.data(using: .utf8) else { return }
-        // Payload shape: `{"table":"workflow_runs","changes":N,...}`. We only
-        // need the table name to decide which sub-store reloads.
+        // Payload shape: `{"shape":"workflow_runs","pk":"...","op":"...","future_id":N?}`.
         guard
             let raw = try? JSONSerialization.jsonObject(with: data, options: []),
             let obj = raw as? [String: Any],
-            let table = obj["table"] as? String
+            let shape = obj["shape"] as? String
         else { return }
+        let futureID = uint64Value(obj["future_id"])
 
-        switch table {
+        switch shape {
         case StoreTable.workflowRuns: runs.reloadFromCache()
         case StoreTable.approvals: approvals.reloadFromCache()
         case StoreTable.workspaces, StoreTable.workspaceSessions: workspaces.reloadFromCache()
@@ -158,44 +165,70 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
         default: break
         }
 
-        // Any writer awaiting this table's echo can resume.
+        guard let futureID else { return }
+
         dispatchLock.lock()
-        let resumed = pendingEchoes.filter { $0.value.table == table || $0.value.table == nil }
-        for (fid, _) in resumed { pendingEchoes.removeValue(forKey: fid) }
-        dispatchLock.unlock()
-        for (_, pending) in resumed {
-            pending.continuation.resume(returning: nil)
+        guard var pending = pendingEchoes[futureID] else {
+            dispatchLock.unlock()
+            return
         }
+        guard pending.table == shape else {
+            dispatchLock.unlock()
+            return
+        }
+
+        pending.didSeeShapeEcho = true
+        if pending.didAck {
+            pendingEchoes.removeValue(forKey: futureID)
+            dispatchLock.unlock()
+            pending.continuation.resume(returning: pending.ackPayload)
+            return
+        }
+
+        pendingEchoes[futureID] = pending
+        dispatchLock.unlock()
     }
 
     private func completeWrite(_ payload: String?) {
-        // `payload` is expected to be `{"future_id":N,"ok":true,...}`. We
-        // resume the awaiting continuation ONLY after we've also seen the
-        // shape-delta for the write's target table (pessimistic rule). If
-        // the ack arrives first, store the payload on the pending record
-        // so the delta-side can forward it.
+        // `payload` is expected to be `{"future_id":N,"ok":true,...}`.
         guard
             let payload = payload,
             let data = payload.data(using: .utf8),
             let raw = try? JSONSerialization.jsonObject(with: data, options: []),
             let obj = raw as? [String: Any],
-            let fid = (obj["future_id"] as? UInt64) ?? (obj["future_id"] as? Int).map(UInt64.init)
+            let fid = uint64Value(obj["future_id"])
         else { return }
+        let ok = boolValue(obj["ok"]) ?? false
 
         dispatchLock.lock()
-        let pending = pendingEchoes[fid]
-        // If echoTable is nil the caller opted out of the pessimistic wait
-        // and we resume immediately on ack.
-        if let pending = pending, pending.table == nil {
+        guard var pending = pendingEchoes[fid] else {
+            dispatchLock.unlock()
+            return
+        }
+
+        pending.ackPayload = payload
+        pending.didAck = true
+        if pending.table == nil || !ok || pending.didSeeShapeEcho {
             pendingEchoes.removeValue(forKey: fid)
             dispatchLock.unlock()
             pending.continuation.resume(returning: payload)
             return
         }
+
+        pendingEchoes[fid] = pending
         dispatchLock.unlock()
     }
 
     // MARK: - Pessimistic write
+
+    public func dispatch(_ request: ActionRequest, echoTable: String?) async throws -> String? {
+        let fid = try session.write(action: request.kind.rawValue, payloadJSON: request.payloadJSON)
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String?, Error>) in
+            dispatchLock.lock()
+            pendingEchoes[fid] = PendingEcho(table: echoTable, continuation: cont)
+            dispatchLock.unlock()
+        }
+    }
 
     public func dispatch(action: String, payloadJSON: String, echoTable: String?) async throws -> String? {
         let fid = try session.write(action: action, payloadJSON: payloadJSON)
@@ -217,6 +250,33 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
         workspaces.clear()
         agentSessions.clear()
         devtoolsSnapshots.clear()
+    }
+}
+
+private func uint64Value(_ raw: Any?) -> UInt64? {
+    switch raw {
+    case let value as UInt64:
+        return value
+    case let value as Int:
+        return value >= 0 ? UInt64(value) : nil
+    case let value as NSNumber:
+        let intValue = value.int64Value
+        return intValue >= 0 ? UInt64(intValue) : nil
+    case let value as String:
+        return UInt64(value)
+    default:
+        return nil
+    }
+}
+
+private func boolValue(_ raw: Any?) -> Bool? {
+    switch raw {
+    case let value as Bool:
+        return value
+    case let value as NSNumber:
+        return value.boolValue
+    default:
+        return nil
     }
 }
 

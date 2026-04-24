@@ -29,9 +29,13 @@ public final class AgentSessionsStore: ObservableObject {
     internal var sessionsHandle: UInt64 = 0
     internal var messagesHandle: UInt64 = 0
     internal var partsHandle: UInt64 = 0
-    private let session: RuntimeSession
+    private let session: any StoreRuntimeSession
 
-    public init(session: RuntimeSession) {
+    public convenience init(session: RuntimeSession) {
+        self.init(session: session as any StoreRuntimeSession)
+    }
+
+    internal init(session: any StoreRuntimeSession) {
         self.session = session
         // Subscribe unconditionally — the shell surfaces use agent sessions
         // from the home tab onwards, and these tables are small per-user.

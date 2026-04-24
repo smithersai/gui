@@ -63,6 +63,12 @@ const PtyAttachment = struct {
     transport_handle: u64,
 };
 
+const PendingShapeEcho = struct {
+    future: u64,
+    shape: schema.Shape,
+    expected_pk_owned: ?[]u8 = null,
+};
+
 /// URL parse helper: split "scheme://host:port" into host + port. Defaults
 /// to port 80 for `http://`, 443 for `https://`, 4000 if unspecified.
 fn parseHostPort(url: []const u8, default_port: u16) !struct { host: []const u8, port: u16 } {
@@ -136,6 +142,7 @@ pub const Session = struct {
     state: ConnectionState = .disconnected,
     subscriptions: std.ArrayList(Subscription) = .empty,
     pty_attachments: std.ArrayList(PtyAttachment) = .empty,
+    pending_shape_echoes: std.ArrayList(PendingShapeEcho) = .empty,
 
     next_public_sub: u64 = 1,
     next_public_pty: u64 = 1,
@@ -253,6 +260,10 @@ pub const Session = struct {
         for (self.subscriptions.items) |sub| self.allocator.free(sub.shape_name_owned);
         self.subscriptions.deinit(self.allocator);
         self.pty_attachments.deinit(self.allocator);
+        for (self.pending_shape_echoes.items) |pending| {
+            if (pending.expected_pk_owned) |pk| self.allocator.free(pk);
+        }
+        self.pending_shape_echoes.deinit(self.allocator);
         self.mutex.unlock();
 
         if (self.owns_transport) self.transport_impl.destroy(self.allocator);
@@ -355,7 +366,83 @@ pub const Session = struct {
         action: []const u8,
         payload_json: []const u8,
     ) !u64 {
-        return self.transport_impl.write(action, payload_json) catch CoreError.TransportError;
+        const future = self.transport_impl.write(action, payload_json) catch return CoreError.TransportError;
+        self.recordPendingShapeEcho(future, action, payload_json);
+        return future;
+    }
+
+    fn recordPendingShapeEcho(self: *Session, future: u64, action: []const u8, payload_json: []const u8) void {
+        const shape = expectedShapeForAction(action) orelse return;
+        const expected_pk = if (expectedPkFieldForAction(action)) |field|
+            extractStringOrIntegerFieldOwned(self.allocator, payload_json, field)
+        else
+            null;
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.pending_shape_echoes.append(self.allocator, .{
+            .future = future,
+            .shape = shape,
+            .expected_pk_owned = expected_pk,
+        }) catch {
+            if (expected_pk) |pk| self.allocator.free(pk);
+        };
+    }
+
+    fn reconcilePendingShapeEchoFromAck(self: *Session, future: u64, ok: bool, body: []const u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var i: usize = 0;
+        while (i < self.pending_shape_echoes.items.len) : (i += 1) {
+            if (self.pending_shape_echoes.items[i].future != future) continue;
+            if (!ok) {
+                const removed = self.pending_shape_echoes.orderedRemove(i);
+                if (removed.expected_pk_owned) |pk| self.allocator.free(pk);
+                return;
+            }
+            if (self.pending_shape_echoes.items[i].expected_pk_owned != null) return;
+            const expected_pk = extractPrimaryKeyForShapeOwned(
+                self.allocator,
+                body,
+                self.pending_shape_echoes.items[i].shape,
+            ) orelse return;
+            self.pending_shape_echoes.items[i].expected_pk_owned = expected_pk;
+            return;
+        }
+    }
+
+    fn takePendingFutureForDelta(self: *Session, shape: schema.Shape, pk: []const u8) ?u64 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var exact_index: ?usize = null;
+        var unknown_index: ?usize = null;
+        var unknown_count: usize = 0;
+
+        for (self.pending_shape_echoes.items, 0..) |pending, i| {
+            if (pending.shape != shape) continue;
+            if (pending.expected_pk_owned) |expected_pk| {
+                if (std.mem.eql(u8, expected_pk, pk)) {
+                    exact_index = i;
+                    break;
+                }
+            } else {
+                unknown_count += 1;
+                if (unknown_index == null) unknown_index = i;
+            }
+        }
+
+        const resolved_index = exact_index orelse blk: {
+            if (unknown_count == 1) break :blk unknown_index;
+            break :blk null;
+        };
+        if (resolved_index) |idx| {
+            const pending = self.pending_shape_echoes.orderedRemove(idx);
+            defer if (pending.expected_pk_owned) |owned_pk| self.allocator.free(owned_pk);
+            return pending.future;
+        }
+        return null;
     }
 
     // --- PTY ------------------------------------------------------------
@@ -432,14 +519,14 @@ pub const Session = struct {
                         self.cache.upsertRow(shape, sub_id, v.pk, v.row_json) catch continue;
                     }
                     // Emit a SHAPE_DELTA event with a compact JSON payload.
-                    self.emitDeltaEvent(v.shape, v.pk, "upsert");
+                    self.emitDeltaEvent(v.shape, v.pk, "upsert", self.takePendingFutureForDelta(shape, v.pk));
                 },
                 .row_delete => |v| {
                     const shape = schema.Shape.parse(v.shape) orelse continue;
                     if (shape.hasLiveAdapter()) {
                         self.cache.deleteRow(shape, v.pk) catch continue;
                     }
-                    self.emitDeltaEvent(v.shape, v.pk, "delete");
+                    self.emitDeltaEvent(v.shape, v.pk, "delete", self.takePendingFutureForDelta(shape, v.pk));
                 },
                 .up_to_date => |v| {
                     const shape = schema.Shape.parse(v.shape) orelse continue;
@@ -453,9 +540,10 @@ pub const Session = struct {
                     self.emitSimpleEvent(.auth_expired, null);
                 },
                 .write_ack => |v| {
+                    self.reconcilePendingShapeEchoFromAck(v.future, v.ok, v.body);
                     var buf: std.ArrayList(u8) = .empty;
                     defer buf.deinit(self.allocator);
-                    buf.print(self.allocator, "{{\"future\":{d},\"ok\":{},\"status\":{d},\"body\":", .{ v.future, v.ok, v.status }) catch continue;
+                    buf.print(self.allocator, "{{\"future_id\":{d},\"ok\":{},\"status\":{d},\"body\":", .{ v.future, v.ok, v.status }) catch continue;
                     appendJsonString(&buf, self.allocator, v.body) catch continue;
                     buf.append(self.allocator, '}') catch continue;
                     const z = self.allocator.dupeZ(u8, buf.items) catch continue;
@@ -522,7 +610,7 @@ pub const Session = struct {
         return null;
     }
 
-    fn emitDeltaEvent(self: *Session, shape: []const u8, pk: []const u8, op: []const u8) void {
+    fn emitDeltaEvent(self: *Session, shape: []const u8, pk: []const u8, op: []const u8, future_id: ?u64) void {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.allocator);
         buf.appendSlice(self.allocator, "{\"shape\":") catch return;
@@ -531,6 +619,9 @@ pub const Session = struct {
         appendJsonString(&buf, self.allocator, pk) catch return;
         buf.appendSlice(self.allocator, ",\"op\":") catch return;
         appendJsonString(&buf, self.allocator, op) catch return;
+        if (future_id) |future| {
+            buf.print(self.allocator, ",\"future_id\":{d}", .{future}) catch return;
+        }
         buf.append(self.allocator, '}') catch return;
         const z = self.allocator.dupeZ(u8, buf.items) catch return;
         defer self.allocator.free(z);
@@ -547,6 +638,99 @@ pub const Session = struct {
         f(userdata, tag, payload);
     }
 };
+
+fn expectedShapeForAction(action: []const u8) ?schema.Shape {
+    if (std.mem.eql(u8, action, "workflow_run.cancel") or
+        std.mem.eql(u8, action, "workflow_run.rerun") or
+        std.mem.eql(u8, action, "workflow_run.resume"))
+    {
+        return .workflow_runs;
+    }
+    if (std.mem.eql(u8, action, "workspace.create") or
+        std.mem.eql(u8, action, "workspace.delete") or
+        std.mem.eql(u8, action, "workspace.suspend") or
+        std.mem.eql(u8, action, "workspace.resume") or
+        std.mem.eql(u8, action, "workspace.fork"))
+    {
+        return .workspaces;
+    }
+    if (std.mem.eql(u8, action, "approval.decide"))
+    {
+        return .approvals;
+    }
+    if (std.mem.eql(u8, action, "agent_session.create") or
+        std.mem.eql(u8, action, "agent_session.delete"))
+    {
+        return .agent_sessions;
+    }
+    if (std.mem.eql(u8, action, "agent_session.append_message"))
+    {
+        return .agent_messages;
+    }
+    return null;
+}
+
+fn expectedPkFieldForAction(action: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, action, "workflow_run.cancel") or
+        std.mem.eql(u8, action, "workflow_run.rerun") or
+        std.mem.eql(u8, action, "workflow_run.resume"))
+    {
+        return "run_id";
+    }
+    if (std.mem.eql(u8, action, "workspace.delete") or
+        std.mem.eql(u8, action, "workspace.suspend") or
+        std.mem.eql(u8, action, "workspace.resume") or
+        std.mem.eql(u8, action, "workspace.fork"))
+    {
+        return "workspace_id";
+    }
+    if (std.mem.eql(u8, action, "approval.decide"))
+    {
+        return "approval_id";
+    }
+    if (std.mem.eql(u8, action, "agent_session.delete")) {
+        return "session_id";
+    }
+    return null;
+}
+
+fn primaryKeyFieldForShape(shape: schema.Shape) []const u8 {
+    return switch (shape) {
+        .agent_sessions => "session_id",
+        .agent_messages => "message_id",
+        .agent_parts => "part_id",
+        .workspaces => "workspace_id",
+        .workspace_sessions => "workspace_session_id",
+        .approvals => "approval_id",
+        .workflow_runs => "run_id",
+        .devtools_snapshots => "snapshot_id",
+    };
+}
+
+fn extractPrimaryKeyForShapeOwned(
+    allocator: std.mem.Allocator,
+    json_text: []const u8,
+    shape: schema.Shape,
+) ?[]u8 {
+    return extractStringOrIntegerFieldOwned(allocator, json_text, primaryKeyFieldForShape(shape)) orelse
+        extractStringOrIntegerFieldOwned(allocator, json_text, "id");
+}
+
+fn extractStringOrIntegerFieldOwned(
+    allocator: std.mem.Allocator,
+    json_text: []const u8,
+    field: []const u8,
+) ?[]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, json_text, .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    const value = parsed.value.object.get(field) orelse return null;
+    return switch (value) {
+        .string => |s| allocator.dupe(u8, s) catch null,
+        .integer => |n| std.fmt.allocPrint(allocator, "{d}", .{n}) catch null,
+        else => null,
+    };
+}
 
 /// Minimal JSON string escaper sufficient for shape names, pks, and
 /// opaque bodies treated as text. Not a full RFC 8259 implementation —
@@ -765,7 +949,7 @@ test "Session: write issues future + ack fires WRITE_ACK" {
     defer log.deinit();
     s.registerCallback(recordEvent, @ptrCast(&log));
 
-    const fut = try s.write("agent_sessions.create", "{\"title\":\"hi\"}");
+    const fut = try s.write("agent_session.create", "{\"title\":\"hi\"}");
     try testing.expect(fut != 0);
 
     try ft.enqueue(.{ .write_ack = .{
@@ -776,11 +960,68 @@ test "Session: write issues future + ack fires WRITE_ACK" {
     } });
     try s.tick();
 
-    var saw = false;
-    for (log.events.items) |e| if (e.tag == .write_ack) {
-        saw = true;
-    };
-    try testing.expect(saw);
+    var saw_payload: ?[]const u8 = null;
+    log.mutex.lock();
+    defer log.mutex.unlock();
+    for (log.events.items) |e| {
+        if (e.tag != .write_ack) continue;
+        saw_payload = e.payload;
+        break;
+    }
+    try testing.expect(saw_payload != null);
+    try testing.expect(std.mem.indexOf(u8, saw_payload.?, "\"future_id\":") != null);
+    try testing.expect(std.mem.indexOf(u8, saw_payload.?, "\"future\":") == null);
+}
+
+test "Session: shape delta carries matching future_id for concurrent writes on same row" {
+    const core = try Core.create(testing.allocator, credsOk, null);
+    defer core.destroy();
+    core.testing_use_fake_transport = true;
+    const s = try core.connect(.{ .engine_id = "e1", .base_url = "http://x" });
+    const ft: *transport.FakeTransport = @ptrCast(@alignCast(s.transport_impl.ctx.?));
+
+    _ = try s.subscribe("workflow_runs", "{}");
+
+    var log = EventLog{ .allocator = testing.allocator };
+    defer log.deinit();
+    s.registerCallback(recordEvent, @ptrCast(&log));
+
+    const fut_one = try s.write("workflow_run.cancel", "{\"repo_owner\":\"acme\",\"repo_name\":\"repo\",\"run_id\":\"run-1\"}");
+    const fut_two = try s.write("workflow_run.rerun", "{\"repo_owner\":\"acme\",\"repo_name\":\"repo\",\"run_id\":\"run-1\"}");
+    try testing.expect(fut_one != fut_two);
+
+    try ft.enqueue(.{ .row_upsert = .{
+        .shape = try testing.allocator.dupe(u8, "workflow_runs"),
+        .pk = try testing.allocator.dupe(u8, "run-1"),
+        .row_json = try testing.allocator.dupe(u8, "{\"run_id\":\"run-1\",\"status\":\"cancelled\"}"),
+    } });
+    try ft.enqueue(.{ .row_upsert = .{
+        .shape = try testing.allocator.dupe(u8, "workflow_runs"),
+        .pk = try testing.allocator.dupe(u8, "run-1"),
+        .row_json = try testing.allocator.dupe(u8, "{\"run_id\":\"run-1\",\"status\":\"queued\"}"),
+    } });
+    try s.tick();
+
+    log.mutex.lock();
+    defer log.mutex.unlock();
+    var deltas: [2][]const u8 = undefined;
+    var delta_count: usize = 0;
+    for (log.events.items) |e| {
+        if (e.tag != .shape_delta) continue;
+        if (e.payload) |payload| {
+            if (delta_count < deltas.len) {
+                deltas[delta_count] = payload;
+                delta_count += 1;
+            }
+        }
+    }
+    try testing.expectEqual(@as(usize, 2), delta_count);
+    const first_expected = try std.fmt.allocPrint(testing.allocator, "\"future_id\":{d}", .{fut_one});
+    defer testing.allocator.free(first_expected);
+    const second_expected = try std.fmt.allocPrint(testing.allocator, "\"future_id\":{d}", .{fut_two});
+    defer testing.allocator.free(second_expected);
+    try testing.expect(std.mem.indexOf(u8, deltas[0], first_expected) != null);
+    try testing.expect(std.mem.indexOf(u8, deltas[1], second_expected) != null);
 }
 
 test "Session: attach / write / resize / detach PTY" {
