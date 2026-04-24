@@ -37,32 +37,41 @@ import SmithersRuntime
 
 /// Reads the `remote_sandbox_enabled` feature flag (0112).
 ///
-/// v1 strategy (per ticket 0126 pragmatic note):
-///   1. If `PLUE_REMOTE_SANDBOX_ENABLED` env var is set to "1"/"true"/"yes",
-///      the flag is enabled for this process.
-///   2. Otherwise read `UserDefaults["remote_sandbox_enabled"]` — allows
-///      local testing + a future plue `/api/feature-flags` bridge to write
-///      cached values here after sign-in.
+/// Startup precedence:
+///   1. `PLUE_REMOTE_SANDBOX_ENABLED` when explicitly set to a true/false-ish
+///      value. This remains the highest-priority dev/test override.
+///   2. Otherwise read `UserDefaults["remote_sandbox_enabled"]` — the last
+///      server-backed value persisted after a successful `/api/feature-flags`
+///      refresh.
 ///   3. Off by default. With flag off, the macOS app preserves its existing
 ///      local-only behaviour verbatim (no sign-in UI, no remote sections).
-///
-/// TODO(runtime): once `smithers_core_feature_flag(const char* key)` FFI
-/// lands, resolve the flag via the runtime so plue-driven cohorts apply
-/// without a process restart. For now the UserDefaults cache is written by
-/// the sign-in code path once plue replies with flags.
 enum RemoteSandboxFlag {
     static let key = "remote_sandbox_enabled"
     static let envVar = "PLUE_REMOTE_SANDBOX_ENABLED"
+
+    static func environmentOverride(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool? {
+        guard let raw = environment[envVar]?.lowercased() else { return nil }
+        switch raw {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            return nil
+        }
+    }
+
+    static func persisted(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? false
+    }
 
     static func isEnabled(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaults: UserDefaults = .standard
     ) -> Bool {
-        if let raw = environment[envVar]?.lowercased(),
-           ["1", "true", "yes", "on"].contains(raw) {
-            return true
-        }
-        return defaults.bool(forKey: key)
+        environmentOverride(environment: environment) ?? persisted(defaults: defaults)
     }
 
     /// Persist a flag value reported by plue (`/api/feature-flags`) so the
@@ -157,6 +166,7 @@ final class RemoteModeController: ObservableObject {
     @Published private(set) var phase: RemoteModePhase
     @Published private(set) var openWorkspaceTabs: [RemoteWorkspaceTab] = []
     @Published private(set) var remoteWorkspaces: [WorkspaceRow] = []
+    @Published private(set) var isRemoteFeatureEnabled: Bool
 
     // Auth plumbing.
     let authModel: AuthViewModel
@@ -169,7 +179,12 @@ final class RemoteModeController: ObservableObject {
     private var authExpiredObserver: NSObjectProtocol?
     private var workspacesObservation: Task<Void, Never>?
     private var slowBootTimer: Task<Void, Never>?
-    private let remoteEnabled: Bool
+    private var featureFlagRefreshTask: Task<Void, Never>?
+    private let featureFlags: FeatureFlagsClient
+    private let serverBaseURL: URL
+    private let environment: [String: String]
+    private let defaults: UserDefaults
+    private let featureFlagRefreshInterval: TimeInterval
 
     /// macOS E2E bypass (ticket macos-e2e-harness). When `PLUE_E2E_MODE=1`
     /// is set, we short-circuit the entire production auth + lifecycle
@@ -179,47 +194,74 @@ final class RemoteModeController: ObservableObject {
     /// XCUITest bundle does not depend on Electric shape bring-up.
     private let e2eConfig: E2EConfig?
 
-    private init() {
-        let parsedE2E = E2EEnvironment.parse()
-        self.e2eConfig = parsedE2E
-        // In E2E mode the flag is force-on regardless of defaults so the
-        // REMOTE sidebar section always renders for the test harness.
-        self.remoteEnabled = parsedE2E != nil || RemoteSandboxFlag.isEnabled()
+    init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        defaults: UserDefaults = .standard,
+        e2eConfig: E2EConfig? = E2EEnvironment.parse(),
+        featureFlags: FeatureFlagsClient? = nil,
+        authModel: AuthViewModel? = nil,
+        featureFlagRefreshInterval: TimeInterval = 60
+    ) {
+        self.environment = environment
+        self.defaults = defaults
+        self.e2eConfig = e2eConfig
+        self.featureFlagRefreshInterval = featureFlagRefreshInterval
+        let initialRemoteFeatureEnabled = e2eConfig != nil || RemoteSandboxFlag.isEnabled(
+            environment: environment,
+            defaults: defaults
+        )
+        self.isRemoteFeatureEnabled = initialRemoteFeatureEnabled
 
-        // Build the auth stack. This is cheap (no network, no keychain write).
-        // In E2E mode, swap the Keychain-backed store for an in-memory one
-        // pre-seeded with the injected bearer so `AuthViewModel.phase`
-        // resolves to `.signedIn` from init without any OAuth round trip.
-        let tokenStore: TokenStore
-        let effectiveBaseURL: URL
-        if let e2e = parsedE2E {
-            tokenStore = InMemoryTokenStore(initial: E2EEnvironment.syntheticTokens(from: e2e))
-            effectiveBaseURL = e2e.baseURL
+        let effectiveBaseURL = authModel?.client.config.baseURL ?? Self.resolveBaseURL(
+            environment: environment,
+            e2eBaseURL: e2eConfig?.baseURL
+        )
+        self.serverBaseURL = effectiveBaseURL
+
+        let resolvedAuthModel: AuthViewModel
+        if let authModel {
+            resolvedAuthModel = authModel
         } else {
-            tokenStore = KeychainTokenStore()
-            effectiveBaseURL = URL(string: "https://jjhub.smithers.ai")!
+            // Build the auth stack. This is cheap (no network, no keychain write).
+            // In E2E mode, swap the Keychain-backed store for an in-memory one
+            // pre-seeded with the injected bearer so `AuthViewModel.phase`
+            // resolves to `.signedIn` from init without any OAuth round trip.
+            let tokenStore: TokenStore
+            if let e2eConfig {
+                tokenStore = InMemoryTokenStore(initial: E2EEnvironment.syntheticTokens(from: e2eConfig))
+            } else {
+                tokenStore = KeychainTokenStore()
+            }
+            let transport = URLSessionHTTPTransport()
+            let clientConfig = OAuth2ClientConfig(
+                baseURL: effectiveBaseURL,
+                clientID: "smithers-macos",
+                redirectURI: "http://127.0.0.1:0/callback",
+                scopes: ["read", "write"],
+                audience: "smithers-api"
+            )
+            let oauthClient = OAuth2Client(config: clientConfig, transport: transport)
+            let tokenManager = TokenManager(client: oauthClient, store: tokenStore)
+
+            let presenter = MacOSWebAuthPresenter()
+            let driver = WebAuthSessionDriver(presenter: presenter)
+            resolvedAuthModel = AuthViewModel(
+                client: oauthClient,
+                tokens: tokenManager,
+                driver: driver,
+                callbackScheme: "smithers"
+            )
         }
-        let transport = URLSessionHTTPTransport()
-        let clientConfig = OAuth2ClientConfig(
+        self.authModel = resolvedAuthModel
+
+        self.featureFlags = featureFlags ?? FeatureFlagsClient(
             baseURL: effectiveBaseURL,
-            clientID: "smithers-macos",
-            redirectURI: "http://127.0.0.1:0/callback",
-            scopes: ["read", "write"],
-            audience: "smithers-api"
-        )
-        let oauthClient = OAuth2Client(config: clientConfig, transport: transport)
-        let tokenManager = TokenManager(client: oauthClient, store: tokenStore)
-
-        let presenter = MacOSWebAuthPresenter()
-        let driver = WebAuthSessionDriver(presenter: presenter)
-        self.authModel = AuthViewModel(
-            client: oauthClient,
-            tokens: tokenManager,
-            driver: driver,
-            callbackScheme: "smithers"
+            bearerProvider: {
+                try? resolvedAuthModel.tokens.currentAccessToken()
+            }
         )
 
-        if !remoteEnabled {
+        if !initialRemoteFeatureEnabled {
             self.phase = .disabled
             return
         }
@@ -227,7 +269,7 @@ final class RemoteModeController: ObservableObject {
         // E2E fast path: bypass the full SmithersSessionLifecycle (which
         // requires Electric shape bring-up and a runtime cache directory)
         // and populate `remoteWorkspaces` via a direct plue REST call.
-        if let e2e = parsedE2E {
+        if let e2e = e2eConfig {
             self.phase = .active
             wireAuthObservation()
             Task { [weak self] in
@@ -239,12 +281,12 @@ final class RemoteModeController: ObservableObject {
         // Seed phase from Keychain. If a session already exists we restore
         // into `.bootBlocked` until the first snapshot lands; otherwise
         // we're signed out.
-        self.phase = authModel.phase == .signedIn ? .bootBlocked(since: Date()) : .signedOut
+        self.phase = resolvedAuthModel.phase == .signedIn ? .bootBlocked(since: Date()) : .signedOut
 
         // Observe auth model phase transitions.
         wireAuthObservation()
-        if authModel.phase == .signedIn {
-            Task { await bootstrapLifecycle() }
+        if resolvedAuthModel.phase == .signedIn {
+            Task { await handleSignedInState() }
         }
     }
 
@@ -304,11 +346,12 @@ final class RemoteModeController: ObservableObject {
         if let o = snapshotObserver { NotificationCenter.default.removeObserver(o) }
         if let o = reconnectObserver { NotificationCenter.default.removeObserver(o) }
         if let o = authExpiredObserver { NotificationCenter.default.removeObserver(o) }
+        workspacesObservation?.cancel()
+        slowBootTimer?.cancel()
+        featureFlagRefreshTask?.cancel()
     }
 
     // MARK: Public surface
-
-    var isRemoteFeatureEnabled: Bool { remoteEnabled }
 
     var isSignedIn: Bool {
         switch phase {
@@ -321,7 +364,7 @@ final class RemoteModeController: ObservableObject {
 
     /// Present the system browser for OAuth2. Idempotent.
     func beginSignIn() async {
-        guard remoteEnabled else { return }
+        guard isRemoteFeatureEnabled else { return }
         phase = .signingIn
         await authModel.signIn()
         // Phase gets finalized by `wireAuthObservation()`.
@@ -330,17 +373,15 @@ final class RemoteModeController: ObservableObject {
     /// Wipe remote credentials + shape cache + open remote tabs. Local tabs
     /// (`WorkspaceManager`) are untouched.
     func signOut() async {
-        // Close remote tabs first so any in-flight shape deltas don't try
-        // to repaint a dying session.
-        openWorkspaceTabs.removeAll()
-        remoteWorkspaces.removeAll()
-
-        // Order: drop session → wipe cache → revoke tokens.
-        lifecycle?.wipeForSignOut()
-        lifecycle = nil
-
+        featureFlagRefreshTask?.cancel()
+        featureFlagRefreshTask = nil
+        teardownRemoteSession()
         await authModel.signOut()
-        phase = .signedOut
+        phase = isRemoteFeatureEnabled ? .signedOut : .disabled
+    }
+
+    func refreshFeatureFlagsNow(force: Bool = true) async {
+        await refreshFeatureFlags(force: force)
     }
 
     /// Add a remote sandbox tab. The shell uses the returned identifier to
@@ -375,26 +416,14 @@ final class RemoteModeController: ObservableObject {
     }
 
     private func handleAuthChanged() async {
-        guard remoteEnabled else { return }
         switch authModel.phase {
         case .signedIn:
-            // In E2E mode we deliberately skip `bootstrapLifecycle` — the
-            // remote workspace list is hydrated via `bootstrapE2EWorkspaces`
-            // at init time and the Electric shape stack is not needed.
-            if e2eConfig != nil {
-                return
-            }
-            if lifecycle == nil {
-                await bootstrapLifecycle()
-            }
+            await handleSignedInState()
         case .signedOut:
-            if lifecycle != nil {
-                lifecycle?.wipeForSignOut()
-                lifecycle = nil
-                openWorkspaceTabs.removeAll()
-                remoteWorkspaces.removeAll()
-            }
-            phase = .signedOut
+            featureFlagRefreshTask?.cancel()
+            featureFlagRefreshTask = nil
+            teardownRemoteSession()
+            phase = isRemoteFeatureEnabled ? .signedOut : .disabled
         case .signingIn:
             phase = .signingIn
         case .whitelistDenied(let m):
@@ -413,9 +442,9 @@ final class RemoteModeController: ObservableObject {
             let tokenSource = AuthTokenSourceShim(auth: authModel)
             let config = EngineConfig(
                 engineID: "default",
-                baseURL: "https://jjhub.smithers.ai",
-                shapeProxyURL: "https://jjhub.smithers.ai/shapes",
-                wsPtyURL: "wss://jjhub.smithers.ai/pty",
+                baseURL: serverBaseURL.absoluteString,
+                shapeProxyURL: serverBaseURL.appendingPathComponent("shapes").absoluteString,
+                wsPtyURL: Self.websocketURL(from: serverBaseURL.appendingPathComponent("pty")).absoluteString,
                 cacheDir: RemoteModeController.cacheDirectory(),
                 cacheMaxMB: 512
             )
@@ -434,6 +463,71 @@ final class RemoteModeController: ObservableObject {
             )
             phase = .error(error.localizedDescription)
             cancelSlowBootTimer()
+        }
+    }
+
+    private func handleSignedInState() async {
+        startFeatureFlagRefreshLoopIfNeeded()
+
+        // In E2E mode we deliberately skip `bootstrapLifecycle` — the
+        // remote workspace list is hydrated via `bootstrapE2EWorkspaces`
+        // at init time and the Electric shape stack is not needed.
+        if e2eConfig != nil {
+            return
+        }
+
+        await refreshFeatureFlags(force: true)
+        guard isRemoteFeatureEnabled else { return }
+        if lifecycle == nil {
+            await bootstrapLifecycle()
+        }
+    }
+
+    private func startFeatureFlagRefreshLoopIfNeeded() {
+        guard featureFlagRefreshTask == nil else { return }
+        guard e2eConfig == nil else { return }
+        guard RemoteSandboxFlag.environmentOverride(environment: environment) == nil else { return }
+        featureFlagRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.nanoseconds(for: self.featureFlagRefreshInterval))
+                if Task.isCancelled { break }
+                await self.refreshFeatureFlags(force: true)
+            }
+        }
+    }
+
+    private func refreshFeatureFlags(force: Bool) async {
+        do {
+            let snapshot = try await featureFlags.refresh(force: force)
+            RemoteSandboxFlag.persist(snapshot.isRemoteSandboxEnabled, defaults: defaults)
+            applyRemoteFeatureFlag(snapshot.isRemoteSandboxEnabled)
+            if isRemoteFeatureEnabled, authModel.phase == .signedIn, lifecycle == nil, e2eConfig == nil {
+                await bootstrapLifecycle()
+            }
+        } catch {
+            AppLogger.ui.warning(
+                "Remote feature flag refresh failed",
+                metadata: ["error": error.localizedDescription]
+            )
+        }
+    }
+
+    private func applyRemoteFeatureFlag(_ serverEnabled: Bool) {
+        let effectiveEnabled = RemoteSandboxFlag.environmentOverride(environment: environment) ?? serverEnabled
+        let wasEnabled = isRemoteFeatureEnabled
+        isRemoteFeatureEnabled = effectiveEnabled
+
+        if !effectiveEnabled {
+            teardownRemoteSession()
+            phase = .disabled
+            return
+        }
+
+        if !wasEnabled {
+            phase = authModel.phase == .signedIn ? .bootBlocked(since: Date()) : .signedOut
+        } else if case .disabled = phase {
+            phase = authModel.phase == .signedIn ? .bootBlocked(since: Date()) : .signedOut
         }
     }
 
@@ -515,6 +609,28 @@ final class RemoteModeController: ObservableObject {
         await signOut()
     }
 
+    private func teardownRemoteSession() {
+        openWorkspaceTabs.removeAll()
+        remoteWorkspaces.removeAll()
+        workspacesObservation?.cancel()
+        workspacesObservation = nil
+        if let snapshotObserver {
+            NotificationCenter.default.removeObserver(snapshotObserver)
+            self.snapshotObserver = nil
+        }
+        if let reconnectObserver {
+            NotificationCenter.default.removeObserver(reconnectObserver)
+            self.reconnectObserver = nil
+        }
+        if let authExpiredObserver {
+            NotificationCenter.default.removeObserver(authExpiredObserver)
+            self.authExpiredObserver = nil
+        }
+        cancelSlowBootTimer()
+        lifecycle?.wipeForSignOut()
+        lifecycle = nil
+    }
+
     // MARK: Helpers
 
     private static func cacheDirectory() -> String {
@@ -524,6 +640,38 @@ final class RemoteModeController: ObservableObject {
         let dir = base.appendingPathComponent("SmithersRemoteCache", isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.path
+    }
+
+    private static func resolveBaseURL(
+        environment: [String: String],
+        e2eBaseURL: URL?
+    ) -> URL {
+        if let e2eBaseURL {
+            return e2eBaseURL
+        }
+        if let dev = environment["SMITHERS_PLUE_URL"].flatMap(URL.init(string:)) {
+            return dev
+        }
+        return URL(string: "https://jjhub.smithers.ai")!
+    }
+
+    private static func websocketURL(from url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        switch components.scheme {
+        case "https":
+            components.scheme = "wss"
+        case "http":
+            components.scheme = "ws"
+        default:
+            break
+        }
+        return components.url ?? url
+    }
+
+    private static func nanoseconds(for seconds: TimeInterval) -> UInt64 {
+        UInt64((seconds * 1_000_000_000).rounded())
     }
 }
 

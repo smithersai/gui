@@ -35,28 +35,21 @@ struct IOSContentShell: View {
     @State private var showSwitcher: Bool = false
     @State private var openedWorkspace: SwitcherWorkspace? = nil
 
+    let baseURL: URL
     let e2e: E2EConfig?
     let onSignOut: () -> Void
 
     init(
+        baseURL: URL,
         e2e: E2EConfig?,
         bearerProvider: @escaping () -> String?,
         onSignOut: @escaping () -> Void
     ) {
+        self.baseURL = baseURL
         self.e2e = e2e
         self.onSignOut = onSignOut
-        // Base URL: either the E2E override or the SMITHERS_PLUE_URL dev
-        // knob, with the production Smithers endpoint as final fallback.
-        let base: URL
-        if let e2e {
-            base = e2e.baseURL
-        } else if let dev = ProcessInfo.processInfo.environment["SMITHERS_PLUE_URL"].flatMap(URL.init(string:)) {
-            base = dev
-        } else {
-            base = URL(string: "https://app.smithers.sh")!
-        }
         let fetcher = URLSessionRemoteWorkspaceFetcher(
-            baseURL: base,
+            baseURL: baseURL,
             bearer: bearerProvider
         )
         _switcherVM = StateObject(

@@ -355,6 +355,8 @@ targets:
       - path: ios/Tests/SmithersiOSTests
     dependencies:
       - target: SmithersiOS
+      - package: ViewInspector
+        product: ViewInspector
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersiOSTests

@@ -16,7 +16,7 @@ struct SidebarView: View {
     // the sidebar reacts to sign-in/out without plumbing bindings through
     // ContentView (which 0122 just refactored and the ticket asks us to keep
     // narrow).
-    @ObservedObject private var remoteMode: RemoteModeController = .shared
+    @ObservedObject private var remoteMode: RemoteModeController
     #endif
     @Binding var destination: NavDestination
     @Binding private var developerDebugPanelVisible: Bool
@@ -34,9 +34,11 @@ struct SidebarView: View {
         return (info?["CFBundleShortVersionString"] as? String) ?? "0.0.1"
     }()
 
+    @MainActor
     init(
         store: SessionStore,
         destination: Binding<NavDestination>,
+        remoteMode: RemoteModeController? = nil,
         developerDebugPanelVisible: Binding<Bool> = .constant(false),
         developerDebugAvailable: Bool = DeveloperDebugMode.isEnabled,
         onOpenNewTabPicker: @escaping () -> Void = {},
@@ -48,6 +50,9 @@ struct SidebarView: View {
         self.developerDebugAvailable = developerDebugAvailable
         self.onOpenNewTabPicker = onOpenNewTabPicker
         self.versionProvider = versionProvider
+        #if os(macOS)
+        self._remoteMode = ObservedObject(wrappedValue: remoteMode ?? .shared)
+        #endif
     }
 
     var body: some View {

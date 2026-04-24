@@ -20,6 +20,10 @@
 # Env knobs:
 #   PLUE_CHECKOUT       path to the plue repo (default: ../plue)
 #   PLUE_BASE_URL       override base URL (default: http://localhost:4000)
+#   PLUE_REMOTE_SANDBOX_ENABLED
+#                     plue-side remote sandbox flag for the local stack
+#                     (default: 1 so the production kill switch path is on
+#                     during the iOS e2e suite)
 #   E2E_KEEP_STACK      if "1", do NOT tear down on exit (leave postgres
 #                       + api running so you can re-run tests cheaply).
 #   E2E_SIMULATOR_NAME  default "iPhone 16"
@@ -30,6 +34,7 @@ set -euo pipefail
 
 PLUE_CHECKOUT="${PLUE_CHECKOUT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/../plue}"
 PLUE_BASE_URL="${PLUE_BASE_URL:-http://localhost:4000}"
+PLUE_REMOTE_SANDBOX_ENABLED="${PLUE_REMOTE_SANDBOX_ENABLED:-1}"
 E2E_KEEP_STACK="${E2E_KEEP_STACK:-0}"
 E2E_SIMULATOR_NAME="${E2E_SIMULATOR_NAME:-iPhone 16}"
 E2E_SIMULATOR_OS="${E2E_SIMULATOR_OS:-18.6}"
@@ -75,6 +80,7 @@ cleanup() {
 trap cleanup EXIT
 
 export_clean_env
+export PLUE_REMOTE_SANDBOX_ENABLED
 
 # ---------------------------------------------------------------------------
 # 1. Plue stack
@@ -108,6 +114,32 @@ until curl -sf -o /dev/null -w '%{http_code}' "$PLUE_BASE_URL/api/health" 2>/dev
     sleep 2
 done
 log "plue api reachable"
+
+REMOTE_FLAG=$(
+    curl -sf "$PLUE_BASE_URL/api/feature-flags" \
+        | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin).get("flags", {}).get("remote_sandbox_enabled", False))' \
+        2>/dev/null || true
+)
+if [[ "$PLUE_REMOTE_SANDBOX_ENABLED" == "1" && "$REMOTE_FLAG" != "True" ]]; then
+    log "remote_sandbox_enabled is off on the running plue stack; recycling with PLUE_REMOTE_SANDBOX_ENABLED=1"
+    (cd "$PLUE_CHECKOUT" && docker compose down -v >/dev/null 2>&1 || true)
+    (cd "$PLUE_CHECKOUT" && make docker-up)
+    deadline=$((SECONDS + 120))
+    until curl -sf -o /dev/null -w '%{http_code}' "$PLUE_BASE_URL/api/health" 2>/dev/null | grep -qE '^(200|404|401)$'; do
+        if (( SECONDS >= deadline )); then
+            die "plue api not reachable at $PLUE_BASE_URL after remote-flag recycle"
+        fi
+        sleep 2
+    done
+    REMOTE_FLAG=$(
+        curl -sf "$PLUE_BASE_URL/api/feature-flags" \
+            | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin).get("flags", {}).get("remote_sandbox_enabled", False))' \
+            2>/dev/null || true
+    )
+fi
+if [[ "$PLUE_REMOTE_SANDBOX_ENABLED" == "1" && "$REMOTE_FLAG" != "True" ]]; then
+    die "remote_sandbox_enabled is still off at $PLUE_BASE_URL/api/feature-flags"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Seed test data

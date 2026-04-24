@@ -20,6 +20,7 @@ import SwiftUI
 @main
 struct SmithersiOSApp: App {
     @StateObject private var authModel: AuthViewModel
+    @StateObject private var featureFlags: FeatureFlagsClient
     // The E2E config is captured at `init` so every child view
     // (switcher, content shell) can see the overridden base URL + bearer
     // without having to re-parse env vars.
@@ -29,12 +30,19 @@ struct SmithersiOSApp: App {
         let parsedE2E = E2EEnvironment.parse()
         self.e2e = parsedE2E
         let model = Self.makeAuthModel(e2e: parsedE2E)
+        let flags = FeatureFlagsClient(
+            baseURL: model.client.config.baseURL,
+            bearerProvider: {
+                try? model.tokens.currentAccessToken()
+            }
+        )
         _authModel = StateObject(wrappedValue: model)
+        _featureFlags = StateObject(wrappedValue: flags)
     }
 
     var body: some Scene {
         WindowGroup {
-            RootSurface(model: authModel, e2e: e2e)
+            RootSurface(model: authModel, featureFlags: featureFlags, e2e: e2e)
         }
     }
 
@@ -85,12 +93,29 @@ struct SmithersiOSApp: App {
 
 private struct RootSurface: View {
     @ObservedObject var model: AuthViewModel
+    @ObservedObject var featureFlags: FeatureFlagsClient
     let e2e: E2EConfig?
+    @StateObject private var access: IOSRemoteAccessGateModel
+
+    init(
+        model: AuthViewModel,
+        featureFlags: FeatureFlagsClient,
+        e2e: E2EConfig?
+    ) {
+        self.model = model
+        self.featureFlags = featureFlags
+        self.e2e = e2e
+        _access = StateObject(
+            wrappedValue: IOSRemoteAccessGateModel(featureFlags: featureFlags)
+        )
+    }
 
     var body: some View {
         switch model.phase {
         case .signedIn:
-            IOSContentShell(
+            SignedInRemoteAccessSurface(
+                access: access,
+                baseURL: model.client.config.baseURL,
                 e2e: e2e,
                 bearerProvider: { [weak model] in
                     // Safe to read on any thread — TokenManager internals
