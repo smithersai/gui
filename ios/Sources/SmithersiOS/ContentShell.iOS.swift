@@ -18,7 +18,9 @@
 // stable accessibility identifiers: `app.root.ios` (shell root),
 // `content.ios.open-switcher`, `content.ios.sign-out`,
 // `content.ios.workspace-detail`, and the switcher's own
-// `switcher.ios.root` / `switcher.state.*` identifiers. When
+// `switcher.ios.root`, `switcher.loading`, `switcher.empty.signedIn`,
+// `switcher.empty.signedOut`, `switcher.empty.backendUnavailable`, and
+// `switcher.rows` identifiers. When
 // `PLUE_E2E_MODE=1` is set, the shell wires a real
 // `URLSessionRemoteWorkspaceFetcher` against `PLUE_BASE_URL` so
 // `/api/user/workspaces` is exercised end-to-end.
@@ -216,6 +218,10 @@ private struct WorkspaceDetailPlaceholder: View {
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("content.ios.workspace-detail.terminal-gate")
             if let sessionID = seededSessionID {
+                // TODO(ticket 0156): replace this env-gated mount with
+                // real workspace-session lifecycle state so the
+                // `terminal.status.*` identifiers reflect live websocket
+                // status instead of only "seeded session id exists".
                 // Mount the shared terminal surface so the e2e harness
                 // can assert `terminal.ios.surface` is present. The
                 // surface is detached (transport=nil) in v1 — a live

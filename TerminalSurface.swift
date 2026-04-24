@@ -60,6 +60,13 @@ public struct TerminalSurfaceCallbacks {
     }
 }
 
+public enum TerminalSurfaceConnectionState: Equatable {
+    case connecting
+    case connected
+    case reconnecting
+    case disconnected
+}
+
 // MARK: - Transport
 
 /// A platform-neutral PTY transport. Concrete implementations live
@@ -95,6 +102,7 @@ public final class TerminalSurfaceModel: ObservableObject {
     @Published public private(set) var title: String = ""
     @Published public private(set) var workingDirectory: String = ""
     @Published public private(set) var isClosed: Bool = false
+    @Published public private(set) var connectionState: TerminalSurfaceConnectionState = .disconnected
 
     /// Rolling VT byte buffer used by the iOS placeholder renderer until
     /// the full libghostty VT decoder lands (see `0092` follow-up).
@@ -110,8 +118,15 @@ public final class TerminalSurfaceModel: ObservableObject {
         self.callbacks = callbacks
     }
 
+    public func prepareForDisplay(hasTransport: Bool) {
+        isClosed = false
+        connectionState = hasTransport ? .connecting : .disconnected
+    }
+
     public func attach(_ transport: TerminalPTYTransport) {
         self._transport = transport
+        isClosed = false
+        connectionState = .connecting
         transport.start(
             onBytes: { [weak self] data in
                 Task { @MainActor in self?.appendBytes(data) }
@@ -135,6 +150,16 @@ public final class TerminalSurfaceModel: ObservableObject {
         _transport = nil
     }
 
+    public func markReconnecting() {
+        guard connectionState != .disconnected else { return }
+        connectionState = .reconnecting
+    }
+
+    public func markConnected() {
+        isClosed = false
+        connectionState = .connected
+    }
+
     // Host-visible setters. Called by the platform renderer as it
     // decodes OSC sequences / bell events.
     public func setTitle(_ newValue: String) {
@@ -156,6 +181,8 @@ public final class TerminalSurfaceModel: ObservableObject {
     }
 
     private func appendBytes(_ data: Data) {
+        isClosed = false
+        connectionState = .connected
         if recentBytes.count + data.count > recentBytesCap {
             let dropCount = recentBytes.count + data.count - recentBytesCap
             if dropCount < recentBytes.count {
@@ -169,6 +196,7 @@ public final class TerminalSurfaceModel: ObservableObject {
 
     private func markClosed() {
         isClosed = true
+        connectionState = .disconnected
         callbacks.onProcessExited?()
     }
 }
@@ -176,11 +204,14 @@ public final class TerminalSurfaceModel: ObservableObject {
 // MARK: - Runtime-backed PTY transport
 
 #if canImport(CSmithersKit)
-// SmithersRuntime types (RuntimeSession, etc.) are compiled into the
-// same target as this file (see project.yml), so no explicit import is
-// needed. This keeps the shared surface buildable in both macOS
-// (SmithersGUI) and iOS (SmithersiOS) targets without a cross-module
-// dependency graph change.
+// SmithersRuntime types (RuntimeSession, etc.) are either compiled into
+// the same target as this file (xcodegen/project.yml macOS+iOS targets)
+// OR exposed as a separate SwiftPM module (via Package.swift, used by
+// `swift build` / `zig build run`). The canImport guard below covers the
+// SwiftPM path without breaking the xcodegen path.
+#if canImport(SmithersRuntime)
+import SmithersRuntime
+#endif
 
 /// `TerminalPTYTransport` backed by `libsmithers-core`'s WebSocket PTY
 /// layer. This is the remote path required by the ticket: the shared
@@ -335,6 +366,7 @@ public struct TerminalSurface: View {
             }
         }
         .onAppear {
+            model.prepareForDisplay(hasTransport: transport != nil)
             if let transport {
                 model.attach(transport)
             }

@@ -22,9 +22,8 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
         _ = applyE2ELaunchEnvironment(to: app, bypassAuth: false)
         app.launch()
 
-        let signInPrompt = signInPrompt(in: app)
         XCTAssertTrue(
-            signInPrompt.waitForExistence(timeout: 10),
+            waitForSignInShell(in: app, timeout: 10),
             "cold launch should show the sign-in shell"
         )
         XCTAssertFalse(
@@ -46,7 +45,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
             "signed-in iOS shell should mount with the seeded E2E bearer"
         )
         XCTAssertFalse(
-            signInPrompt(in: app).exists,
+            isSignInShellVisible(in: app),
             "sign-in shell must not be visible with a valid bearer"
         )
     }
@@ -63,9 +62,8 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
         app.launchEnvironment[E2ELaunchKey.bearer] = "jjhub_0000000000000000000000000000000000000000"
         app.launch()
 
-        let signInPrompt = signInPrompt(in: app)
         XCTAssertTrue(
-            signInPrompt.waitForExistence(timeout: 10),
+            waitForSignInShell(in: app, timeout: 10),
             "invalid bearer should return the app to the sign-in shell"
         )
         assertNeverAppears(
@@ -87,9 +85,8 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
         app.launchEnvironment[E2ELaunchKey.bearer] = "not_a_jjhub_token"
         app.launch()
 
-        let signInPrompt = signInPrompt(in: app)
         XCTAssertTrue(
-            signInPrompt.waitForExistence(timeout: 10),
+            waitForSignInShell(in: app, timeout: 10),
             "malformed bearer should leave the sign-in shell visible"
         )
         assertNeverAppears(
@@ -109,7 +106,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
 
         XCTAssertTrue(appRoot(in: app).waitForExistence(timeout: 15))
         XCTAssertFalse(
-            signInPrompt(in: app).exists,
+            isSignInShellVisible(in: app),
             "sign-in shell must not be visible before sign-out"
         )
 
@@ -118,7 +115,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
         signOut.tap()
 
         XCTAssertTrue(
-            signInPrompt(in: app).waitForExistence(timeout: 10),
+            waitForSignInShell(in: app, timeout: 10),
             "sign-in shell should return after sign-out"
         )
         XCTAssertFalse(
@@ -138,7 +135,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
         XCTAssertTrue(appRoot(in: first).waitForExistence(timeout: 15))
         XCTAssertTrue(signOutButton(in: first).waitForExistence(timeout: 5))
         signOutButton(in: first).tap()
-        XCTAssertTrue(signInPrompt(in: first).waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForSignInShell(in: first, timeout: 10))
         XCTAssertFalse(
             appRoot(in: first).exists,
             "signed-in shell should be gone before relaunch"
@@ -152,7 +149,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
         relaunched.launch()
 
         XCTAssertTrue(
-            signInPrompt(in: relaunched).waitForExistence(timeout: 10),
+            waitForSignInShell(in: relaunched, timeout: 10),
             "relaunch after sign-out should stay on the sign-in shell"
         )
         assertNeverAppears(
@@ -186,7 +183,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
             "shell should still mount when a refresh token is also forwarded"
         )
         XCTAssertFalse(
-            signInPrompt(in: app).exists,
+            isSignInShellVisible(in: app),
             "sign-in shell must not be visible when bearer + refresh token are forwarded"
         )
     }
@@ -201,7 +198,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
 
         XCTAssertTrue(appRoot(in: app).waitForExistence(timeout: 15))
         XCTAssertFalse(
-            signInPrompt(in: app).exists,
+            isSignInShellVisible(in: app),
             "sign-in shell must not be visible before backgrounding"
         )
 
@@ -213,7 +210,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
             "signed-in shell should still be mounted after foregrounding"
         )
         XCTAssertFalse(
-            signInPrompt(in: app).exists,
+            isSignInShellVisible(in: app),
             "sign-in shell must not reappear after foregrounding"
         )
     }
@@ -228,7 +225,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
 
         XCTAssertTrue(appRoot(in: app).waitForExistence(timeout: 15))
         XCTAssertFalse(
-            signInPrompt(in: app).exists,
+            isSignInShellVisible(in: app),
             "sign-in shell must not be visible in the signed-in path"
         )
         XCTAssertTrue(
@@ -247,7 +244,7 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
 
         XCTAssertTrue(appRoot(in: app).waitForExistence(timeout: 15))
         XCTAssertFalse(
-            signInPrompt(in: app).exists,
+            isSignInShellVisible(in: app),
             "sign-in shell must not be visible in the signed-in path"
         )
         XCTAssertTrue(
@@ -264,8 +261,24 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
             .firstMatch
     }
 
-    private func signInPrompt(in app: XCUIApplication) -> XCUIElement {
+    private func signInRoot(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(identifier: "auth.signin.root")
+            .firstMatch
+    }
+
+    private func signInPromptCopy(in app: XCUIApplication) -> XCUIElement {
         app.staticTexts["Sign in to Smithers"]
+    }
+
+    private func waitForSignInShell(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        waitUntil(timeout: timeout) {
+            self.isSignInShellVisible(in: app)
+        }
+    }
+
+    private func isSignInShellVisible(in app: XCUIApplication) -> Bool {
+        signInRoot(in: app).exists || signInPromptCopy(in: app).exists
     }
 
     private func openSwitcherButton(in app: XCUIApplication) -> XCUIElement {
@@ -292,6 +305,21 @@ final class SmithersiOSE2EAuthTests: XCTestCase {
             }
             Thread.sleep(forTimeInterval: 0.5)
         }
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval,
+        pollInterval: TimeInterval = 0.25,
+        condition: () -> Bool
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() {
+                return true
+            }
+            Thread.sleep(forTimeInterval: pollInterval)
+        }
+        return condition()
     }
 }
 #endif

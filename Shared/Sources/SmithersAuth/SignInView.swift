@@ -38,6 +38,7 @@ public struct SignInView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("auth.signin.primary-cta")
 
                 case .signingIn:
                     ProgressView("Opening browser…")
@@ -77,6 +78,7 @@ public struct SignInView: View {
         }
         .padding(32)
         .frame(maxWidth: 480)
+        .accessibilityIdentifier("auth.signin.root")
     }
 
     private func phaseKey(_ phase: AuthViewModel.Phase) -> String {

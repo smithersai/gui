@@ -26,6 +26,35 @@ struct TerminalIOSRendererBridge: View {
     var workingDirectory: String?
 
     var body: some View {
+        ZStack {
+            switch model.connectionState {
+            case .connecting:
+                TerminalStatusCard(
+                    systemImage: "hourglass",
+                    title: "Connecting terminal…",
+                    subtitle: "Waiting for the workspace session transport to open.",
+                    showSpinner: true
+                )
+                .accessibilityIdentifier("terminal.status.connecting")
+            case .connected:
+                terminalBody
+                    .accessibilityIdentifier("terminal.status.connected")
+            case .reconnecting:
+                terminalBody
+                    .overlay {
+                        TerminalReconnectOverlay()
+                            .accessibilityIdentifier("terminal.status.reconnecting")
+                    }
+            case .disconnected:
+                TerminalDisconnectedView(sessionID: sessionID)
+                    .accessibilityIdentifier("terminal.status.disconnected")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("terminal.ios.surface")
+    }
+
+    private var terminalBody: some View {
         VStack(spacing: 0) {
             if !model.title.isEmpty {
                 Text(model.title)
@@ -42,8 +71,82 @@ struct TerminalIOSRendererBridge: View {
                     TerminalIOSInputBar(model: model)
                 }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("terminal.ios.surface")
+    }
+}
+
+private struct TerminalStatusCard: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    let showSpinner: Bool
+
+    var body: some View {
+        VStack(spacing: 12) {
+            if showSpinner {
+                ProgressView()
+                    .progressViewStyle(.circular)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: 28))
+                    .foregroundStyle(.secondary)
+            }
+            Text(title)
+                .font(.headline)
+            Text(subtitle)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(16)
+        .background(Color.black.opacity(0.92))
+        .foregroundStyle(.white)
+    }
+}
+
+private struct TerminalReconnectOverlay: View {
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.7)
+            TerminalStatusCard(
+                systemImage: "arrow.clockwise",
+                title: "Reconnecting…",
+                subtitle: "The terminal transport dropped. Waiting to reattach.",
+                showSpinner: true
+            )
+            .frame(maxWidth: 260)
+            .background(Color.clear)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct TerminalDisconnectedView: View {
+    let sessionID: String?
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "network.slash")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("Terminal disconnected")
+                .font(.headline)
+            Text("A live workspace session transport is not attached on this iOS surface yet.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+            if let sessionID, !sessionID.isEmpty {
+                Text(sessionID)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(16)
+        .background(Color.black.opacity(0.92))
+        .foregroundStyle(.white)
     }
 }
 
