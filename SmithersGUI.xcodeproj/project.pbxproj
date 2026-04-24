@@ -78,6 +78,7 @@
 		3CB9E2F712A948574DA38DA6 /* ScoresView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41F9874E753853F117649D32 /* ScoresView.swift */; };
 		3D0836D34216C9FB6AF91EBF /* PKCE.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD91D5626780ABF64B661114 /* PKCE.swift */; };
 		3D5680EA25EE317086A1DDE9 /* SessionPersistenceE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2959640581AF7E41AA2617AE /* SessionPersistenceE2ETests.swift */; };
+		3E478E68D107F2BDC2C0E938 /* SmithersiOSE2ETerminalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02840EF7CE285A648282E3AA /* SmithersiOSE2ETerminalTests.swift */; };
 		3EABA8E4A0E1B85F48EAD6A8 /* UnifiedDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 618B233151E620C348F5B982 /* UnifiedDiffView.swift */; };
 		3EE9A31897F909BC28C56A65 /* OutputTabE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A031D8D56736E6B4EF4E232 /* OutputTabE2ETests.swift */; };
 		424C6494A8BD00C292A427E9 /* BootstrapStage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A437FD454E07E1CC4532FC /* BootstrapStage.swift */; };
@@ -172,12 +173,15 @@
 		8C64238F73C676E3FFA448B1 /* SmithersGUIUITestCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68F446A36C51967DB8A3E6A9 /* SmithersGUIUITestCase.swift */; };
 		8D46FB192C80012B9ACE7894 /* TerminalWorkspaceShortcutDispatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64FD84AEFD359D3E4F6375A9 /* TerminalWorkspaceShortcutDispatcherTests.swift */; };
 		8DEEF92EF5A2446551D0881E /* GhostBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DC1E3F85E3D2ED4A7CE953 /* GhostBanner.swift */; };
+		8EFB980546ED7C28E6AEF305 /* SmithersMacOSE2ELaunchEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F85EBD68929B6B16407871 /* SmithersMacOSE2ELaunchEnvironment.swift */; };
 		90F9AF08A60D8FE062A9AB71 /* ApprovalsE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DC87D91597FAC181A269856 /* ApprovalsE2ETests.swift */; };
 		928CBF72E70508EAECC6D1F0 /* KeyboardShortcutRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83D764BB1F72080C3B23ED20 /* KeyboardShortcutRecorder.swift */; };
 		92B7F132368E69B092E832C6 /* RunsScoresMemoryE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 903BABEE4FCDFCEB64EABEA2 /* RunsScoresMemoryE2ETests.swift */; };
 		92BDA2B86665F9C195BD22E7 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4629F0B9B43F8AF7731E4919 /* TerminalView.swift */; };
+		92C37BAFA068ECD4E49C799A /* SmithersiOSE2EApprovalsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F88716DF9EE01DB030F59274 /* SmithersiOSE2EApprovalsTests.swift */; };
 		936E7199903C80AD8A33AE95 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3DD6440C9F6629BE503E05FA /* Metal.framework */; };
 		94B1836972D6754DABBDB236 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 44338B1B1002218C169AFD31 /* Security.framework */; };
+		95B1BE7EED750F15E38BDA2A /* SmithersiOSE2EReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F99D83382074C2F8D77E317 /* SmithersiOSE2EReconnectTests.swift */; };
 		963DF589B6D93AE12542B043 /* WorkspacesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BBE027F30551DD855DD47BB /* WorkspacesStore.swift */; };
 		964313B6989536FCBAE46BBF /* SQLBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74495EDF1269E4DFA99893AC /* SQLBrowserView.swift */; };
 		98275475B2164EB359BC5552 /* BrowserSurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A651903DF667C49FCEC8257B /* BrowserSurfaceView.swift */; };
@@ -268,6 +272,7 @@
 		E3F2660A2ACBA39B5F784510 /* WorkspaceSwitcherPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E908641156999FA8A8230581 /* WorkspaceSwitcherPresenter.swift */; };
 		E3F7E11015E3A7C71D209FFE /* UITestSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C24885533E0CF98ACF1806FB /* UITestSupportTests.swift */; };
 		E4BFE3405D90F31359F7076B /* ApplyDeltaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A32DD4E7157360C36385B1F2 /* ApplyDeltaTests.swift */; };
+		E58B817B620330381585B3E8 /* SmithersMacOSE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29D24A61C3C320AEEDCD21E9 /* SmithersMacOSE2ETests.swift */; };
 		E6270A97E8E6C5F8F53FA33A /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE54F1DB326B147AE6E6BE5C /* SignInView.swift */; };
 		E651389FB6F6B36FE89DE126 /* LiveRunDevToolsE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B3DBA39F594CFDE2F564899 /* LiveRunDevToolsE2ETests.swift */; };
 		E9038EAA3B9633BAC72262CE /* StoreEntities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CAFC808DC4614009EA3AF52 /* StoreEntities.swift */; };
@@ -285,6 +290,7 @@
 		F72DF3F7E7AEEF647ED4F51E /* LogsTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81708C8F351548996C60CA6 /* LogsTabTests.swift */; };
 		F742B759992C5DCE1278E1E2 /* OutputTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C0D1D16B0D589031300F30 /* OutputTabTests.swift */; };
 		F8907CA3F2B945D6C12F4E6D /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 17F017DCB3D690AAEC40A72C /* SystemConfiguration.framework */; };
+		FA610A9C21FD681932DF5550 /* E2EEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7290A5EAC1B0139250AFE77D /* E2EEnvironment.swift */; };
 		FB2AA3B6AA630AFC24868EF2 /* ChatBlockRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C57F4D5216AAC8AE0F989981 /* ChatBlockRendererTests.swift */; };
 		FBBAF1CD2FF2F9EF6F10AE9C /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5999F7A627E65CF8A0A39E3C /* UIKit.framework */; };
 		FD6CF3EEBBC617553FA30DBA /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DCC2CE3160AC54559D9346 /* CommandPaletteView.swift */; };
@@ -296,6 +302,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		16DD2E00298BDB0224CA4F94 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D6F30F9C5B160B7C79E2EB79 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 69F5907E894FBC315BA26239;
+			remoteInfo = SmithersGUI;
+		};
 		386A14429117313CBBA60FD0 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D6F30F9C5B160B7C79E2EB79 /* Project object */;
@@ -337,6 +350,7 @@
 		01BCA6B4521AB9972F0876DC /* WorkspaceSurfaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSurfaceModels.swift; sourceTree = "<group>"; };
 		02219E60CC698AAEEFED8416 /* Smithers.Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Session.swift; sourceTree = "<group>"; };
 		025CC7666F918B6205254424 /* RunStatusPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunStatusPill.swift; sourceTree = "<group>"; };
+		02840EF7CE285A648282E3AA /* SmithersiOSE2ETerminalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersiOSE2ETerminalTests.swift; sourceTree = "<group>"; };
 		06983F229A9AA5A68E65C689 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		06B509816D08D577E5E546C1 /* SessionLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLifecycle.swift; sourceTree = "<group>"; };
 		07EDE06A807DA4DCDD186222 /* LastLogPerNodeStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LastLogPerNodeStoreTests.swift; sourceTree = "<group>"; };
@@ -371,11 +385,13 @@
 		1E9879F0E36EB69E3C34575B /* LandingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingsView.swift; sourceTree = "<group>"; };
 		1FF16B322F2706E4DA679D5E /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		21E09F47B97A3312134C4629 /* ApprovalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsView.swift; sourceTree = "<group>"; };
+		21F85EBD68929B6B16407871 /* SmithersMacOSE2ELaunchEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersMacOSE2ELaunchEnvironment.swift; sourceTree = "<group>"; };
 		222BBAD1B7A3D2D98EAAE607 /* Smithers.SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.SessionStore.swift; sourceTree = "<group>"; };
 		24FDA72CE6C7DF5BAC7EA36B /* WorkflowFrontendView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowFrontendView.swift; sourceTree = "<group>"; };
 		25B2C6CB62AC5D02B812295D /* CryptoKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CryptoKit.framework; path = System/Library/Frameworks/CryptoKit.framework; sourceTree = SDKROOT; };
 		27CF11A1F5B460B8FBFDFA3F /* WorkspaceSwitcherModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSwitcherModel.swift; sourceTree = "<group>"; };
 		2959640581AF7E41AA2617AE /* SessionPersistenceE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPersistenceE2ETests.swift; sourceTree = "<group>"; };
+		29D24A61C3C320AEEDCD21E9 /* SmithersMacOSE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersMacOSE2ETests.swift; sourceTree = "<group>"; };
 		2AFAA5B66424A6170F8E29B1 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		2BC8F51D9407A4AF34C5262D /* Smithers.Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Workspace.swift; sourceTree = "<group>"; };
 		2C6D9A7C3644EB54DAECAEE0 /* Smithers.Error.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Error.swift; sourceTree = "<group>"; };
@@ -415,6 +431,7 @@
 		4CFB8CE7D8B7C4F0CBF809FE /* ModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsTests.swift; sourceTree = "<group>"; };
 		4D8F7623EE0C47CA5C947A9D /* Smithers.PlatformAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.PlatformAdapters.swift; sourceTree = "<group>"; };
 		4E0D23E643ED2DC3DAA9AEE4 /* SessionStoreHijackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStoreHijackTests.swift; sourceTree = "<group>"; };
+		4F99D83382074C2F8D77E317 /* SmithersiOSE2EReconnectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersiOSE2EReconnectTests.swift; sourceTree = "<group>"; };
 		500357187567D3E3CB776BA8 /* SessionStoreForkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStoreForkTests.swift; sourceTree = "<group>"; };
 		5164C3322610BAC5B8BB2D6E /* AuthPKCETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthPKCETests.swift; sourceTree = "<group>"; };
 		5251EE3D835C95BD4997C3AB /* StoreSoakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreSoakTests.swift; sourceTree = "<group>"; };
@@ -505,6 +522,7 @@
 		A651903DF667C49FCEC8257B /* BrowserSurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSurfaceView.swift; sourceTree = "<group>"; };
 		A6B3A9716668A183ED39CE50 /* ApprovalsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsStore.swift; sourceTree = "<group>"; };
 		A6F2AD52B198BA505D208010 /* SurfaceNotificationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceNotificationStore.swift; sourceTree = "<group>"; };
+		A80ECD17FEC1029DC66C6E33 /* SmithersMacOSE2ETests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SmithersMacOSE2ETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A8CDE6436EE63BE626BD050B /* RunInspectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunInspectView.swift; sourceTree = "<group>"; };
 		AB1D0B8E8A454BA1131DAB5C /* ChatBlockFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatBlockFilter.swift; sourceTree = "<group>"; };
 		AB5B9BD35F6D5E3807B5FBF6 /* UITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestSupport.swift; sourceTree = "<group>"; };
@@ -580,7 +598,6 @@
 		E908641156999FA8A8230581 /* WorkspaceSwitcherPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSwitcherPresenter.swift; sourceTree = "<group>"; };
 		E9E8993BA70F518248B64ED6 /* MarkdownSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownSurface.swift; sourceTree = "<group>"; };
 		EA1F8B36C5DA7B89C3E44678 /* Smithers.SessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.SessionController.swift; sourceTree = "<group>"; };
-		EBE61F27E13569E27A11B2CC /* SmithersiOSE2ETests.xctestplan */ = {isa = PBXFileReference; path = SmithersiOSE2ETests.xctestplan; sourceTree = "<group>"; };
 		EC16B2F6350BA50C4DB25AE4 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		EE85F5E8BD1A8BDBC986ADDF /* RunsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsStore.swift; sourceTree = "<group>"; };
 		F0143EC17D00CE6555654949 /* Smithers.Client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Client.swift; sourceTree = "<group>"; };
@@ -591,6 +608,7 @@
 		F65C9ED458C8EA93A69040A6 /* IssuesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IssuesView.swift; sourceTree = "<group>"; };
 		F687CE4126D9E126E088DBDD /* OutputFailedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputFailedView.swift; sourceTree = "<group>"; };
 		F793E0EC1492EAF5925C22E9 /* KeyboardShortcutController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutController.swift; sourceTree = "<group>"; };
+		F88716DF9EE01DB030F59274 /* SmithersiOSE2EApprovalsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersiOSE2EApprovalsTests.swift; sourceTree = "<group>"; };
 		F9C19FDBE0CC88E1387DAD59 /* macOSPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = macOSPresenter.swift; sourceTree = "<group>"; };
 		FADAFB0CF3E41DE6B5AC3564 /* OutputTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputTab.swift; sourceTree = "<group>"; };
 		FBE7CBBD2648B75803580850 /* SmithersGUIUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SmithersGUIUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -668,6 +686,16 @@
 			path = ios/Tests/SmithersiOSUITests;
 			sourceTree = "<group>";
 		};
+		0C81E9DD17D5D75E90EDDD5E /* SmithersMacOSE2ETests */ = {
+			isa = PBXGroup;
+			children = (
+				21F85EBD68929B6B16407871 /* SmithersMacOSE2ELaunchEnvironment.swift */,
+				29D24A61C3C320AEEDCD21E9 /* SmithersMacOSE2ETests.swift */,
+			);
+			name = SmithersMacOSE2ETests;
+			path = macos/Tests/SmithersMacOSE2ETests;
+			sourceTree = "<group>";
+		};
 		11075296A4DE0BD4A59039E0 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
@@ -712,6 +740,7 @@
 				4CD3C38FFCF6099CB91557FF /* SmithersiOSE2ETests.xctest */,
 				FF79B64A6F31F9BB573E30AA /* SmithersiOSTests.xctest */,
 				D863218E765AAACF2A5D7995 /* SmithersiOSUITests.xctest */,
+				A80ECD17FEC1029DC66C6E33 /* SmithersMacOSE2ETests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -911,6 +940,7 @@
 				EB7315018022301C00E2C78B /* SmithersiOSE2ETests */,
 				C764B14A497D9FD1B0438EB2 /* SmithersiOSTests */,
 				0BFDFC305220266B65576B6B /* SmithersiOSUITests */,
+				0C81E9DD17D5D75E90EDDD5E /* SmithersMacOSE2ETests */,
 				BC20D472B718E400890F94EF /* SmithersRuntime */,
 				2D8AF419A6B7F47E1E230CD4 /* SmithersStore */,
 				11075296A4DE0BD4A59039E0 /* Frameworks */,
@@ -1065,9 +1095,11 @@
 		EB7315018022301C00E2C78B /* SmithersiOSE2ETests */ = {
 			isa = PBXGroup;
 			children = (
+				F88716DF9EE01DB030F59274 /* SmithersiOSE2EApprovalsTests.swift */,
 				D173AD5348D079CA164BDF2B /* SmithersiOSE2ELaunchEnvironment.swift */,
+				4F99D83382074C2F8D77E317 /* SmithersiOSE2EReconnectTests.swift */,
+				02840EF7CE285A648282E3AA /* SmithersiOSE2ETerminalTests.swift */,
 				770E4C55924595CDE2B25249 /* SmithersiOSE2ETests.swift */,
-				EBE61F27E13569E27A11B2CC /* SmithersiOSE2ETests.xctestplan */,
 			);
 			name = SmithersiOSE2ETests;
 			path = ios/Tests/SmithersiOSE2ETests;
@@ -1158,6 +1190,24 @@
 			productReference = 60661F637E190B01E6933B42 /* SmithersGUI.app */;
 			productType = "com.apple.product-type.application";
 		};
+		6B5FEB5EAFDD15B0DDBB2D77 /* SmithersMacOSE2ETests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B580B953B9093E6B7AD23D85 /* Build configuration list for PBXNativeTarget "SmithersMacOSE2ETests" */;
+			buildPhases = (
+				B1782A54AB715527657732A5 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D66235CEADFF90AE5D29ED7B /* PBXTargetDependency */,
+			);
+			name = SmithersMacOSE2ETests;
+			packageProductDependencies = (
+			);
+			productName = SmithersMacOSE2ETests;
+			productReference = A80ECD17FEC1029DC66C6E33 /* SmithersMacOSE2ETests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		BF71A70BD55F4E9B313275C5 /* SmithersiOSUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 90A6AD51934F8A78D05DF9D7 /* Build configuration list for PBXNativeTarget "SmithersiOSUITests" */;
@@ -1238,6 +1288,10 @@
 					69F5907E894FBC315BA26239 = {
 						ProvisioningStyle = Manual;
 					};
+					6B5FEB5EAFDD15B0DDBB2D77 = {
+						ProvisioningStyle = Manual;
+						TestTargetID = 69F5907E894FBC315BA26239;
+					};
 					BF71A70BD55F4E9B313275C5 = {
 						ProvisioningStyle = Manual;
 						TestTargetID = 26A245BE143602B4DDD94149;
@@ -1272,6 +1326,7 @@
 				69F5907E894FBC315BA26239 /* SmithersGUI */,
 				CE151C93825240BDBABE0232 /* SmithersGUITests */,
 				2C255C31DA24DEEB42C16B2D /* SmithersGUIUITests */,
+				6B5FEB5EAFDD15B0DDBB2D77 /* SmithersMacOSE2ETests */,
 				26A245BE143602B4DDD94149 /* SmithersiOS */,
 				61E2E47C9780EFE5397A5CE6 /* SmithersiOSE2ETests */,
 				FE897213E31A44DE73C0A174 /* SmithersiOSTests */,
@@ -1405,6 +1460,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B1782A54AB715527657732A5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8EFB980546ED7C28E6AEF305 /* SmithersMacOSE2ELaunchEnvironment.swift in Sources */,
+				E58B817B620330381585B3E8 /* SmithersMacOSE2ETests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D09A3FFEB908A30FF8253F2A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -1437,6 +1501,7 @@
 				D0263877A4BF2B1734DF689C /* DiffFileView.swift in Sources */,
 				46985FE0CFBD08A8CBA7DA13 /* DiffHunkView.swift in Sources */,
 				4BF92AA13FCEC6668ECF6EC5 /* DiffTab.swift in Sources */,
+				FA610A9C21FD681932DF5550 /* E2EEnvironment.swift in Sources */,
 				E15B97C22F2011D400FABCF3 /* ElapsedTimeView.swift in Sources */,
 				80EC3607D5A77491B892D850 /* FrameScrubberView.swift in Sources */,
 				9E493791E532DA0DB2FB5F95 /* GUIControlSidebar.swift in Sources */,
@@ -1562,7 +1627,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				92C37BAFA068ECD4E49C799A /* SmithersiOSE2EApprovalsTests.swift in Sources */,
 				C6C6691917671B73639797EF /* SmithersiOSE2ELaunchEnvironment.swift in Sources */,
+				95B1BE7EED750F15E38BDA2A /* SmithersiOSE2EReconnectTests.swift in Sources */,
+				3E478E68D107F2BDC2C0E938 /* SmithersiOSE2ETerminalTests.swift in Sources */,
 				5490CB045C476434E710C67B /* SmithersiOSE2ETests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1633,6 +1701,11 @@
 			isa = PBXTargetDependency;
 			target = 26A245BE143602B4DDD94149 /* SmithersiOS */;
 			targetProxy = 386A14429117313CBBA60FD0 /* PBXContainerItemProxy */;
+		};
+		D66235CEADFF90AE5D29ED7B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 69F5907E894FBC315BA26239 /* SmithersGUI */;
+			targetProxy = 16DD2E00298BDB0224CA4F94 /* PBXContainerItemProxy */;
 		};
 		DC785D24545A5648A333EDD3 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1770,6 +1843,24 @@
 				SWIFT_VERSION = 5.9;
 			};
 			name = Debug;
+		};
+		7BA0AE312574AB5E8C125DD3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.smithers.SmithersMacOSE2ETests;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				TEST_TARGET_NAME = SmithersGUI;
+			};
+			name = Release;
 		};
 		868C7418F0D5F1218F78477C /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -2020,6 +2111,24 @@
 			};
 			name = Release;
 		};
+		C7BAD4E64EF8B102858CF52D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.smithers.SmithersMacOSE2ETests;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				TEST_TARGET_NAME = SmithersGUI;
+			};
+			name = Debug;
+		};
 		DB394ABF64ADCB32558CB3D6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -2142,6 +2251,15 @@
 			buildConfigurations = (
 				40DBAA47462393B1AD8DE5AE /* Debug */,
 				C7355B94080DF79BBDEE6B56 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B580B953B9093E6B7AD23D85 /* Build configuration list for PBXNativeTarget "SmithersMacOSE2ETests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C7BAD4E64EF8B102858CF52D /* Debug */,
+				7BA0AE312574AB5E8C125DD3 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

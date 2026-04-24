@@ -79,6 +79,7 @@ struct SidebarView: View {
                         SidebarSection(title: "REMOTE") {
                             remoteSectionContent
                         }
+                        .accessibilityIdentifier("sidebar.remote.section")
                     }
                     #endif
 
@@ -477,7 +478,7 @@ struct SidebarView: View {
                 remoteMode.closeRemoteWorkspace(id: tab.id)
             }
         }
-        .accessibilityIdentifier("sidebar.remote.workspace.\(tab.id)")
+        .accessibilityIdentifier("sidebar.remote.row.\(tab.id)")
     }
     #endif
 

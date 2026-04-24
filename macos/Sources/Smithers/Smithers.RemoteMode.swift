@@ -171,14 +171,37 @@ final class RemoteModeController: ObservableObject {
     private var slowBootTimer: Task<Void, Never>?
     private let remoteEnabled: Bool
 
+    /// macOS E2E bypass (ticket macos-e2e-harness). When `PLUE_E2E_MODE=1`
+    /// is set, we short-circuit the entire production auth + lifecycle
+    /// path: tokens come from `SMITHERS_E2E_BEARER`, the base URL from
+    /// `PLUE_BASE_URL`, the flag is force-enabled, and the remote
+    /// workspace list is fetched directly via a single REST call so the
+    /// XCUITest bundle does not depend on Electric shape bring-up.
+    private let e2eConfig: E2EConfig?
+
     private init() {
-        self.remoteEnabled = RemoteSandboxFlag.isEnabled()
+        let parsedE2E = E2EEnvironment.parse()
+        self.e2eConfig = parsedE2E
+        // In E2E mode the flag is force-on regardless of defaults so the
+        // REMOTE sidebar section always renders for the test harness.
+        self.remoteEnabled = parsedE2E != nil || RemoteSandboxFlag.isEnabled()
 
         // Build the auth stack. This is cheap (no network, no keychain write).
-        let tokenStore = KeychainTokenStore()
+        // In E2E mode, swap the Keychain-backed store for an in-memory one
+        // pre-seeded with the injected bearer so `AuthViewModel.phase`
+        // resolves to `.signedIn` from init without any OAuth round trip.
+        let tokenStore: TokenStore
+        let effectiveBaseURL: URL
+        if let e2e = parsedE2E {
+            tokenStore = InMemoryTokenStore(initial: E2EEnvironment.syntheticTokens(from: e2e))
+            effectiveBaseURL = e2e.baseURL
+        } else {
+            tokenStore = KeychainTokenStore()
+            effectiveBaseURL = URL(string: "https://jjhub.smithers.ai")!
+        }
         let transport = URLSessionHTTPTransport()
         let clientConfig = OAuth2ClientConfig(
-            baseURL: URL(string: "https://jjhub.smithers.ai")!,
+            baseURL: effectiveBaseURL,
             clientID: "smithers-macos",
             redirectURI: "http://127.0.0.1:0/callback",
             scopes: ["read", "write"],
@@ -200,6 +223,19 @@ final class RemoteModeController: ObservableObject {
             self.phase = .disabled
             return
         }
+
+        // E2E fast path: bypass the full SmithersSessionLifecycle (which
+        // requires Electric shape bring-up and a runtime cache directory)
+        // and populate `remoteWorkspaces` via a direct plue REST call.
+        if let e2e = parsedE2E {
+            self.phase = .active
+            wireAuthObservation()
+            Task { [weak self] in
+                await self?.bootstrapE2EWorkspaces(config: e2e)
+            }
+            return
+        }
+
         // Seed phase from Keychain. If a session already exists we restore
         // into `.bootBlocked` until the first snapshot lands; otherwise
         // we're signed out.
@@ -209,6 +245,58 @@ final class RemoteModeController: ObservableObject {
         wireAuthObservation()
         if authModel.phase == .signedIn {
             Task { await bootstrapLifecycle() }
+        }
+    }
+
+    /// Fetch `/api/user/workspaces` with the E2E bearer, decode the plue
+    /// response shape, and populate `remoteWorkspaces` + auto-open the
+    /// seeded workspace so the sidebar shows a `sidebar.remote.row.<id>`
+    /// button. Any failure flips the phase to `.error(...)` so the test
+    /// harness fails loudly instead of silently asserting an empty list.
+    private func bootstrapE2EWorkspaces(config: E2EConfig) async {
+        struct PlueWorkspace: Decodable {
+            let workspace_id: String
+            let workspace_title: String
+            let state: String
+        }
+        let fetchURL = config.baseURL.appendingPathComponent("api/user/workspaces")
+        AppLogger.ui.info("E2E: fetching \(fetchURL.absoluteString)")
+        var req = URLRequest(url: fetchURL)
+        req.setValue("Bearer \(config.bearer)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+                self.phase = .error("E2E fetch status=\(code)")
+                return
+            }
+            let rows = try JSONDecoder().decode([PlueWorkspace].self, from: data)
+            let mapped = rows.map { row in
+                WorkspaceRow(
+                    workspaceId: row.workspace_id,
+                    name: row.workspace_title,
+                    status: row.state,
+                    engineId: nil,
+                    createdAt: nil,
+                    updatedAt: nil,
+                    suspendedAt: nil
+                )
+            }
+            self.remoteWorkspaces = mapped
+            // Auto-open each seeded workspace as a sidebar tab. The test
+            // harness expects the seeded workspace to appear as a
+            // `sidebar.remote.row.<id>` button BEFORE the user interacts.
+            self.openWorkspaceTabs = mapped.map { row in
+                RemoteWorkspaceTab(
+                    workspaceId: row.workspaceId,
+                    name: row.name,
+                    engineId: row.engineId
+                )
+            }
+            AppLogger.ui.info("E2E: hydrated \(mapped.count) workspace(s)")
+        } catch {
+            AppLogger.ui.error("E2E fetch threw: \(error.localizedDescription)")
+            self.phase = .error("E2E fetch err: \(error.localizedDescription)")
         }
     }
 
@@ -290,6 +378,12 @@ final class RemoteModeController: ObservableObject {
         guard remoteEnabled else { return }
         switch authModel.phase {
         case .signedIn:
+            // In E2E mode we deliberately skip `bootstrapLifecycle` — the
+            // remote workspace list is hydrated via `bootstrapE2EWorkspaces`
+            // at init time and the Electric shape stack is not needed.
+            if e2eConfig != nil {
+                return
+            }
             if lifecycle == nil {
                 await bootstrapLifecycle()
             }
@@ -444,7 +538,9 @@ private final class AuthTokenSourceShim: StoreTokenSource {
     init(auth: AuthViewModel) { self.auth = auth }
 
     func currentAccessTokenOrNil() -> String? {
-        return try? auth.tokens.currentAccessToken()
+        return MainActor.assumeIsolated {
+            try? auth.tokens.currentAccessToken()
+        }
     }
 
     func expiresAt() -> Date? {

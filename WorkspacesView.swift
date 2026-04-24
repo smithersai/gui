@@ -66,6 +66,22 @@ struct WorkspacesView: View {
             }
         }
         .background(Theme.surface1)
+        // E2E harness entry point for the macOS remote-workspace detail
+        // surface. The XCUITest bundle taps a `sidebar.remote.row.*`
+        // button which routes to `.workspaces` → `WorkspacesView`; the
+        // tests assert this identifier renders. We stamp it on an
+        // invisible descendant so both `workspaces.root` and
+        // `content.macos.workspace-detail` are queryable without a
+        // double-modifier override.
+        #if os(macOS)
+        .overlay(
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("content.macos.workspace-detail")
+        )
+        #endif
         .accessibilityIdentifier("workspaces.root")
         .task { await loadData() }
         .confirmationDialog(
