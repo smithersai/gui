@@ -25,6 +25,7 @@
 //! Each of the above is marked with `TODO(0120-followup): ...`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 pub const cache = @import("cache.zig");
 pub const transport = @import("transport.zig");
 pub const session = @import("session.zig");
@@ -98,6 +99,12 @@ pub const Core = struct {
     /// Integration tests gated on `POC_ELECTRIC_STACK=1` leave this off.
     testing_use_fake_transport: bool = false,
 
+    /// Test-only override for the per-session background event pump.
+    /// Production builds always enable it; `zig test` keeps it off by
+    /// default so `_tickForTest()` remains deterministic unless a test
+    /// explicitly opts back in.
+    testing_enable_background_event_pump: bool = false,
+
     pub fn create(
         allocator: std.mem.Allocator,
         credentials_cb: CredentialsFn,
@@ -135,10 +142,15 @@ pub const Core = struct {
 
     pub fn connect(self: *Core, cfg: EngineConfig) !*Session {
         const s = try Session.create(self, cfg);
+        errdefer s.destroy();
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.sessions.append(self.allocator, s);
         return s;
+    }
+
+    pub fn shouldAutoPumpSessions(self: *const Core) bool {
+        return !builtin.is_test or self.testing_enable_background_event_pump;
     }
 
     /// Called by Session.destroy to unregister itself from the core.

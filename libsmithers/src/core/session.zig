@@ -143,6 +143,11 @@ pub const Session = struct {
     event_cb: ?EventFn = null,
     event_userdata: ?*anyopaque = null,
 
+    tick_mutex: std.Thread.Mutex = .{},
+    pump_thread: ?std.Thread = null,
+    pump_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    auto_pump_enabled: bool = false,
+
     const ConfigStorage = struct {
         engine_id: []u8,
         base_url: []u8,
@@ -150,6 +155,8 @@ pub const Session = struct {
         ws_pty_url: ?[]u8,
         cache_dir: ?[]u8,
     };
+
+    const pump_sleep_ns = 5 * std.time.ns_per_ms;
 
     pub fn create(core: *Core, cfg_in: EngineConfig) !*Session {
         const a = core.allocator;
@@ -203,6 +210,7 @@ pub const Session = struct {
             const rt = transport.RealTransport.create(a, c, real_cfg, refresher) catch return CoreError.TransportError;
             break :blk rt.transport();
         };
+        errdefer if (owns) t_impl.destroy(a);
 
         self.* = .{
             .core = core,
@@ -220,6 +228,7 @@ pub const Session = struct {
             .transport_impl = t_impl,
             .owns_transport = owns,
             .state = .connecting,
+            .auto_pump_enabled = core.shouldAutoPumpSessions(),
         };
 
         // Probe credentials once to catch the "sign in required" case
@@ -231,10 +240,15 @@ pub const Session = struct {
         } else |_| {
             self.state = .disconnected;
         }
+        if (self.auto_pump_enabled) {
+            self.startPump() catch return CoreError.TransportError;
+        }
         return self;
     }
 
     pub fn destroy(self: *Session) void {
+        self.stopPump();
+
         self.mutex.lock();
         for (self.subscriptions.items) |sub| self.allocator.free(sub.shape_name_owned);
         self.subscriptions.deinit(self.allocator);
@@ -395,10 +409,13 @@ pub const Session = struct {
 
     // --- Event pump -----------------------------------------------------
 
-    /// Tick the transport, apply deltas, and dispatch events. Callers in
-    /// production drive this from a background thread; tests call it
-    /// inline for determinism.
+    /// Single event-pump step. Production sessions run this from an
+    /// internal background pump; tests may call it inline for
+    /// deterministic stepping.
     pub fn tick(self: *Session) !void {
+        self.tick_mutex.lock();
+        defer self.tick_mutex.unlock();
+
         var drained: std.ArrayList(transport.Delta) = .empty;
         defer {
             for (drained.items) |d| transport.freeDelta(self.allocator, d);
@@ -467,6 +484,26 @@ pub const Session = struct {
         }
     }
 
+    fn startPump(self: *Session) !void {
+        self.pump_stop.store(false, .release);
+        self.pump_thread = try std.Thread.spawn(.{}, pumpThreadMain, .{self});
+    }
+
+    fn stopPump(self: *Session) void {
+        const thread = self.pump_thread orelse return;
+        self.pump_stop.store(true, .release);
+        self.pump_thread = null;
+        thread.join();
+    }
+
+    fn pumpThreadMain(self: *Session) void {
+        while (!self.pump_stop.load(.acquire)) {
+            self.tick() catch {};
+            if (self.pump_stop.load(.acquire)) break;
+            std.Thread.sleep(pump_sleep_ns);
+        }
+    }
+
     fn cacheSubForShape(self: *Session, shape: schema.Shape) ?i64 {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -501,8 +538,13 @@ pub const Session = struct {
     }
 
     fn emitSimpleEvent(self: *Session, tag: EventTag, payload: ?[*:0]const u8) void {
-        const cb = self.event_cb orelse return;
-        cb(self.event_userdata, tag, payload);
+        self.mutex.lock();
+        const cb = self.event_cb;
+        const userdata = self.event_userdata;
+        self.mutex.unlock();
+
+        const f = cb orelse return;
+        f(userdata, tag, payload);
     }
 };
 
@@ -549,11 +591,14 @@ fn credsExpired(_: ?*anyopaque, out: *Credentials) callconv(.c) bool {
 }
 
 const EventLog = struct {
+    mutex: std.Thread.Mutex = .{},
     events: std.ArrayList(Entry) = .empty,
     allocator: std.mem.Allocator,
     const Entry = struct { tag: EventTag, payload: ?[]u8 };
 
     fn deinit(self: *EventLog) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         for (self.events.items) |e| if (e.payload) |p| self.allocator.free(p);
         self.events.deinit(self.allocator);
     }
@@ -569,8 +614,12 @@ fn recordEvent(ud: ?*anyopaque, tag: EventTag, payload: ?[*:0]const u8) callconv
         }
         break :blk null;
     };
+    log.mutex.lock();
+    defer log.mutex.unlock();
     log.events.append(log.allocator, .{ .tag = tag, .payload = owned }) catch {};
 }
+
+fn noopEvent(_: ?*anyopaque, _: EventTag, _: ?[*:0]const u8) callconv(.c) void {}
 
 test "Session: subscribe agent_sessions + apply delta via tick" {
     const core = try Core.create(testing.allocator, credsOk, null);
@@ -613,6 +662,56 @@ test "Session: subscribe agent_sessions + apply delta via tick" {
     // One SHAPE_DELTA event dispatched.
     try testing.expect(log.events.items.len >= 1);
     try testing.expectEqual(EventTag.shape_delta, log.events.items[0].tag);
+}
+
+test "Session: background pump drains FakeTransport without manual tick" {
+    const core = try Core.create(testing.allocator, credsOk, null);
+    defer core.destroy();
+    core.testing_use_fake_transport = true;
+    core.testing_enable_background_event_pump = true;
+
+    const s = try core.connect(.{
+        .engine_id = "e1",
+        .base_url = "http://localhost",
+    });
+
+    const ft: *transport.FakeTransport = @ptrCast(@alignCast(s.transport_impl.ctx.?));
+    _ = try s.subscribe("agent_sessions", "{}");
+
+    var log = EventLog{ .allocator = testing.allocator };
+    defer log.deinit();
+    s.registerCallback(recordEvent, @ptrCast(&log));
+    defer s.registerCallback(noopEvent, null);
+
+    try ft.enqueue(.{ .row_upsert = .{
+        .shape = try testing.allocator.dupe(u8, "agent_sessions"),
+        .pk = try testing.allocator.dupe(u8, "as_bg"),
+        .row_json = try testing.allocator.dupe(u8, "{\"id\":\"as_bg\",\"title\":\"pump\"}"),
+    } });
+
+    var saw_delta = false;
+    var saw_row = false;
+    var attempt: usize = 0;
+    while (attempt < 200) : (attempt += 1) {
+        log.mutex.lock();
+        for (log.events.items) |e| {
+            if (e.tag == .shape_delta) {
+                saw_delta = true;
+                break;
+            }
+        }
+        log.mutex.unlock();
+
+        const rows = try s.queryCache("agent_sessions", 0, 0);
+        saw_row = std.mem.indexOf(u8, rows, "as_bg") != null;
+        testing.allocator.free(rows);
+
+        if (saw_delta and saw_row) break;
+        std.Thread.sleep(std.time.ns_per_ms);
+    }
+
+    try testing.expect(saw_delta);
+    try testing.expect(saw_row);
 }
 
 test "Session: unsubscribe drops rows + allows resubscribe" {
