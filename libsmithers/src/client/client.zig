@@ -16,7 +16,19 @@ pub const Client = @This();
 
 allocator: std.mem.Allocator,
 app: *App,
+// Mutex serializes the body of `callImpl` / `streamImpl`. The lifetime of the
+// Client struct is governed by `ref_count` + `closed`, NOT by this mutex.
 mutex: std.Thread.Mutex = .{},
+// Atomic refcount mirroring EventStream.retain/release. `create` returns a
+// Client with ref_count == 1 (the "original" strong ref owned by whoever
+// called create). Each public entrypoint that touches the struct is wrapped
+// by an `acquire` / `release` pair so a concurrent `destroy` cannot free the
+// struct while a caller is still inside a method.
+ref_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(1),
+// Set by `destroy` before it drops the original strong ref. Methods consult
+// this with `acquire` semantics so a caller that races with `destroy` gets a
+// clean `ClientClosed` error instead of UAF.
+closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
 pub fn create(app: *App) !*Client {
     const c = try app.allocator.create(Client);
@@ -24,13 +36,78 @@ pub fn create(app: *App) !*Client {
     return c;
 }
 
+/// Drop the original strong reference. After `destroy` returns, no NEW callers
+/// may enter `call` / `stream` (their `acquire` will fail with `ClientClosed`).
+/// If in-flight calls are still holding a ref, the struct is freed when the
+/// last one releases. If `destroy` is the last holder, the struct is freed
+/// before this returns.
+///
+/// The previous implementation was `mutex.lock(); mutex.unlock(); destroy()`,
+/// which was racy: a caller that had loaded the pointer but not yet entered
+/// the locked critical section could be passed by the lock/unlock fence and
+/// then UAF on the freed mutex memory. The refcount + closed-flag pair fixes
+/// that under the contract that callers either (a) hold their own retained
+/// ref (mirror Arc) or (b) follow the per-handle single-threaded ABI rule.
 pub fn destroy(self: *Client) void {
-    self.mutex.lock();
-    self.mutex.unlock();
+    self.closed.store(true, .release);
+    self.release();
+}
+
+/// Add a strong reference. Mirrors `EventStream.retain`. Callers handing a
+/// `*Client` to another thread should `retain` first; that thread must
+/// `release` (or call a method like `call`/`stream`, which take a transient
+/// ref of their own — but the caller's strong ref keeps the struct alive
+/// until the callee gets a chance to take its own ref).
+pub fn retain(self: *Client) *Client {
+    // Relaxed is fine for the increment itself: any caller doing a retain
+    // already holds a ref and so already happens-after the prior release of
+    // the struct's initialization. We only need release/acquire on the
+    // transitions across zero, which `release` handles.
+    const prev = self.ref_count.fetchAdd(1, .monotonic);
+    std.debug.assert(prev > 0);
+    return self;
+}
+
+/// Drop a strong reference. The last holder frees the struct.
+pub fn release(self: *Client) void {
+    const prev = self.ref_count.fetchSub(1, .release);
+    std.debug.assert(prev > 0);
+    if (prev != 1) return;
+    // Synchronize with all prior releases before deallocating.
+    _ = self.ref_count.load(.acquire);
     self.allocator.destroy(self);
 }
 
+/// Try to take a transient reference for the duration of one method call.
+/// Returns false if the client has already been closed; callers must surface
+/// that as an error and NOT touch any other field of `self` after a failed
+/// acquire.
+fn acquireForCall(self: *Client) bool {
+    // Increment first, then check `closed`. If destroy() ran between our
+    // load and increment, `closed` is true and we release immediately.
+    const prev = self.ref_count.fetchAdd(1, .monotonic);
+    if (prev == 0) {
+        // Already freed by the time we got here — should be impossible if
+        // the caller is following the lifetime contract, but defensively
+        // refuse rather than touch freed memory.
+        // (We won't hit `release` here because we never logically owned the
+        // ref; the fetchAdd from 0 is an indicator of UAF in the caller.)
+        return false;
+    }
+    if (self.closed.load(.acquire)) {
+        self.release();
+        return false;
+    }
+    return true;
+}
+
 pub fn call(self: *Client, method: []const u8, args_json: []const u8, out_err: ?*structs.Error) structs.String {
+    if (!self.acquireForCall()) {
+        if (out_err) |err| err.* = ffi.errorMessage(1, "client closed");
+        return ffi.stringDup("null");
+    }
+    defer self.release();
+
     self.mutex.lock();
     defer self.mutex.unlock();
     if (out_err) |err| err.* = ffi.errorSuccess();
@@ -41,6 +118,12 @@ pub fn call(self: *Client, method: []const u8, args_json: []const u8, out_err: ?
 }
 
 pub fn stream(self: *Client, method: []const u8, args_json: []const u8, out_err: ?*structs.Error) ?*EventStream {
+    if (!self.acquireForCall()) {
+        if (out_err) |err| err.* = ffi.errorMessage(1, "client closed");
+        return null;
+    }
+    defer self.release();
+
     self.mutex.lock();
     defer self.mutex.unlock();
     if (out_err) |err| err.* = ffi.errorSuccess();
