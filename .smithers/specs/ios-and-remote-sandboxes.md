@@ -247,9 +247,9 @@ Desktop-local is structurally different enough from the iOS-and-remote-sandboxes
 ### Quota
 
 - Every authenticated user is allowed **up to 100 active workspaces**. No payment or plan tiers in this pass.
-- **What counts as "active":** only workspaces whose state is **not** `deleted` (or whatever plue's equivalent soft-delete state ends up being). Today plue's `DeleteWorkspace` (`internal/services/workspace_lifecycle.go:53`) only stops the VM and leaves the row in place — so for the quota promise to work, ticket 0105 must either (a) transition the row to a `deleted` terminal state that this count excludes, or (b) add a hard-delete path that the client calls. The "delete one to continue" UX copy depends on the choice — pick it in 0105.
-- **Enforcement paths:** plue must count against the cap at every path that can produce a new workspace for a user — at least `POST .../workspaces`, `POST .../workspaces/{id}/fork`, and any other creator. Note that `POST .../workspaces` on the same repo may reuse the primary workspace rather than creating a new one (`internal/services/workspace_provisioning.go:131`); the enforcement logic must match that semantic so reuse doesn't falsely count.
-- Over-quota returns a structured error the client renders as "you've reached your workspace limit — delete one to continue." Precise text may evolve based on the hard-delete vs. soft-delete decision in 0105.
+- **What counts as "active":** only workspaces whose `deleted_at` is `NULL`. Ticket 0105 chose **soft delete** (option a): `DeleteWorkspace` stamps `deleted_at` and forces `status = stopped`, keeping the row for Electric sync and admin recovery. The tombstoned row drops out of the quota count immediately, so "delete one to continue" works as promised. Migration `000031_workspace_soft_delete_and_quota.sql` adds the column and the partial index `idx_workspaces_user_active` that makes the count query cheap.
+- **Enforcement paths:** `POST .../workspaces` (non-reuse branch), `POST .../workspaces/{id}/fork`, and the snapshot-restore branch of `POST .../workspaces`. Reuse of an existing primary workspace is explicitly **excluded** — the user is resuming, not allocating new state.
+- Over-quota returns HTTP 429 with `{"code":"quota_exceeded","message":"sandbox limit reached: N of 100 workspaces in use — delete one to continue"}`. Clients should branch on `code`, not `message`.
 
 ### First run (new user)
 
