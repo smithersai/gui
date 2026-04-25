@@ -12,7 +12,9 @@ export const providers = {
 } as const;
 
 export const agents = {
-  cheapFast: [providers.claudeSonnet],
+  cheapFast: [providers.codex],
   smart: [providers.codex, providers.claude],
-  smartTool: [providers.claude, providers.codex],
+  smartTool: [providers.codex, providers.claude],
+  frontendcheap: [providers.codex],
+  reviewSmart: [providers.codex],
 } as const satisfies Record<string, AgentLike[]>;
