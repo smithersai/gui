@@ -4,9 +4,14 @@ import { createSmithers, Sequence, Parallel, Worktree } from "smithers-orchestra
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod/v4";
-import { agents } from "../agents";
+import { agents, providers } from "../agents";
 import { ValidationLoop, implementOutputSchema, validateOutputSchema } from "../components/ValidationLoop";
 import { reviewOutputSchema } from "../components/Review";
+
+const planOutputSchema = z.object({
+  summary: z.string(),
+  planFile: z.string().default(".smithers-plan.md"),
+});
 
 const ticketResultSchema = z.object({
   ticketId: z.string(),
@@ -22,6 +27,7 @@ const mergeResultSchema = z.object({
 });
 
 const { Workflow, Task, smithers, outputs } = createSmithers({
+  ticketPlan: planOutputSchema,
   implement: implementOutputSchema,
   validate: validateOutputSchema,
   review: reviewOutputSchema,
@@ -110,12 +116,21 @@ export default smithers((ctx) => {
                 branch={`ticket/${ticket.slug}`}
               >
                 <Sequence>
+                  <Task
+                    id={`${ticket.slug}:plan`}
+                    output={outputs.ticketPlan}
+                    agent={agents.smart}
+                    timeoutMs={1_800_000}
+                    heartbeatTimeoutMs={600_000}
+                  >
+                    {`Write an implementation plan for the ticket below and save it to .smithers-plan.md at the worktree root. The plan should cover: scope, files to change, sequencing, validation strategy, and known risks. Keep it concise but complete. After writing the file, return a short summary and confirm the path.\n\nTICKET FILE: .smithers/tickets/${ticket.id}\n\n${ticket.content}`}
+                  </Task>
                   <ValidationLoop
                     idPrefix={ticket.slug}
-                    prompt={`Implement the ticket below.\n\nTICKET FILE: .smithers/tickets/${ticket.id}\n\n${ticket.content}`}
-                    implementAgents={agents.smart}
-                    validateAgents={agents.smart}
-                    reviewAgents={agents.smart}
+                    prompt={`Implement the ticket below. FIRST read .smithers-plan.md at the worktree root and follow that plan; if the plan is missing or wrong, update it before continuing.\n\nTICKET FILE: .smithers/tickets/${ticket.id}\n\n${ticket.content}`}
+                    implementAgents={agents.frontendcheap}
+                    validateAgents={agents.cheapFast}
+                    reviewAgents={agents.reviewSmart}
                     feedback={feedback}
                     done={done}
                     maxIterations={3}
@@ -139,7 +154,7 @@ export default smithers((ctx) => {
         </Parallel>
 
         {/* Agent merges completed branches back into main */}
-        <Task id="merge" output={outputs.merge} agent={agents.smart}>
+        <Task id="merge" output={outputs.merge} agent={providers.claudeSonnet}>
           {`Merge the completed ticket branches back into the main branch.
 
 The following tickets were implemented in worktree branches:
