@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 enum DeveloperDebugMode {
     static let environmentKey = "SMITHERS_GUI_DEBUG"
@@ -208,7 +211,10 @@ struct DeveloperDebugSnapshot: Equatable {
 
 private enum DeveloperDebugTab: String, CaseIterable, Identifiable {
     case state = "State"
+    case telemetry = "Metrics"
+    case events = "Events"
     case logs = "Logs"
+    case actions = "Actions"
 
     var id: String { rawValue }
 }
@@ -217,6 +223,7 @@ private enum DeveloperDebugTab: String, CaseIterable, Identifiable {
 struct DeveloperDebugPanel: View {
     @ObservedObject var store: SessionStore
     @ObservedObject var smithers: SmithersClient
+    @ObservedObject private var telemetry = DevTelemetryStore.shared
     let destination: NavDestination
     let onClose: () -> Void
     let onOpenLogs: () -> Void
@@ -226,8 +233,11 @@ struct DeveloperDebugPanel: View {
     @State private var logEntries: [LogEntry] = []
     @State private var logLevelFilter: LogLevel?
     @State private var logSearchText = ""
+    @State private var eventLevelFilter: LogLevel?
+    @State private var eventSearchText = ""
     @State private var autoRefresh = true
     @State private var refreshTimer: Timer?
+    @State private var actionFeedback: String?
 
     private var snapshot: DeveloperDebugSnapshot {
         DeveloperDebugSnapshot.capture(
@@ -270,17 +280,29 @@ struct DeveloperDebugPanel: View {
                 switch selectedTab {
                 case .state:
                     stateTab(snapshot)
+                case .telemetry:
+                    telemetryTab()
+                case .events:
+                    eventsTab()
                 case .logs:
                     logsTab(snapshot)
+                case .actions:
+                    actionsTab()
                 }
             }
         }
-        .frame(minWidth: 380, idealWidth: 440, maxWidth: 560, maxHeight: .infinity)
+        .frame(minWidth: 420, idealWidth: 480, maxWidth: 640, maxHeight: .infinity)
         .background(Theme.surface1)
         .border(Theme.border, edges: [.leading])
         .task { await refreshDiagnostics() }
-        .onAppear { startAutoRefresh() }
-        .onDisappear { stopAutoRefresh() }
+        .onAppear {
+            startAutoRefresh()
+            telemetry.start()
+        }
+        .onDisappear {
+            stopAutoRefresh()
+            telemetry.stop()
+        }
         .onChange(of: autoRefresh) { _, newValue in
             if newValue { startAutoRefresh() } else { stopAutoRefresh() }
         }
@@ -378,9 +400,35 @@ struct DeveloperDebugPanel: View {
                         }
                     }
                 }
+
+                DeveloperDebugSection(title: "Libsmithers obs") {
+                    DeveloperDebugRows(rows: telemetryStateRows())
+                }
             }
             .padding(12)
         }
+    }
+
+    private func telemetryStateRows() -> [DeveloperDebugStateRow] {
+        let snap = telemetry.snapshot
+        let topMethods = snap.methods
+            .sorted { $0.count > $1.count }
+            .prefix(3)
+            .map { "\($0.key.suffix(28)) n=\($0.count) avg=\(Int($0.avgMs))ms" }
+            .joined(separator: "; ")
+        let topLine = topMethods.isEmpty ? "no calls yet" : topMethods
+        let totalErrors = snap.methods.reduce(0) { $0 + $1.errors }
+        return [
+            DeveloperDebugStateRow(label: "Polling", value: telemetry.isPolling ? "on" : "off",
+                                   tone: telemetry.isPolling ? .good : .warning),
+            DeveloperDebugStateRow(label: "Total events", value: "\(snap.totalEventSeq)"),
+            DeveloperDebugStateRow(label: "Dropped", value: "\(snap.droppedEvents)",
+                                   tone: snap.droppedEvents > 0 ? .warning : .normal),
+            DeveloperDebugStateRow(label: "Tracked methods", value: "\(snap.methods.count)"),
+            DeveloperDebugStateRow(label: "Method errors", value: "\(totalErrors)",
+                                   tone: totalErrors > 0 ? .danger : .normal),
+            DeveloperDebugStateRow(label: "Top methods", value: topLine),
+        ]
     }
 
     private func logsTab(_ snapshot: DeveloperDebugSnapshot) -> some View {
@@ -443,6 +491,274 @@ struct DeveloperDebugPanel: View {
                 }
             }
         }
+    }
+
+    private func telemetryTab() -> some View {
+        let snap = telemetry.snapshot
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                DeveloperDebugSection(title: "Runtime") {
+                    DeveloperDebugRows(rows: telemetryRuntimeRows(snap))
+                }
+
+                DeveloperDebugSection(title: "Counters") {
+                    if snap.counters.isEmpty {
+                        DeveloperDebugEmptyRow(text: "No counters recorded yet")
+                    } else {
+                        DeveloperDebugRows(rows: snap.counters.map {
+                            DeveloperDebugStateRow(label: $0.0, value: "\($0.1)")
+                        })
+                    }
+                }
+
+                DeveloperDebugSection(title: "Method latency") {
+                    if snap.methods.isEmpty {
+                        DeveloperDebugEmptyRow(text: "No method calls observed yet")
+                    } else {
+                        VStack(spacing: 6) {
+                            ForEach(snap.methods) { method in
+                                DeveloperMethodLatencyRow(method: method)
+                            }
+                        }
+                    }
+                }
+
+                if let err = telemetry.lastPollError {
+                    DeveloperDebugSection(title: "Telemetry health") {
+                        DeveloperDebugRows(rows: [
+                            DeveloperDebugStateRow(label: "Last poll error", value: err, tone: .danger)
+                        ])
+                    }
+                }
+            }
+            .padding(12)
+        }
+        .accessibilityIdentifier("developerDebug.telemetry.scroll")
+    }
+
+    private func telemetryRuntimeRows(_ snap: DevTelemetrySnapshot) -> [DeveloperDebugStateRow] {
+        let uptime = max(0, snap.nowMs - snap.startedAtMs)
+        return [
+            DeveloperDebugStateRow(label: "Polling", value: telemetry.isPolling ? "on (2s)" : "off",
+                                   tone: telemetry.isPolling ? .good : .warning),
+            DeveloperDebugStateRow(label: "Uptime", value: "\(uptime / 1000)s"),
+            DeveloperDebugStateRow(label: "Events emitted", value: "\(snap.totalEventSeq)"),
+            DeveloperDebugStateRow(label: "Events dropped",
+                                   value: "\(snap.droppedEvents)",
+                                   tone: snap.droppedEvents > 0 ? .warning : .normal),
+            DeveloperDebugStateRow(label: "Ring capacity", value: "\(snap.ringCapacity)"),
+            DeveloperDebugStateRow(label: "Min level (Zig)", value: levelName(snap.minLevel)),
+            DeveloperDebugStateRow(label: "UI buffer", value: "\(telemetry.events.count)/1000"),
+        ]
+    }
+
+    private func levelName(_ raw: Int) -> String {
+        switch raw {
+        case 0: return "trace"
+        case 1: return "debug"
+        case 2: return "info"
+        case 3: return "warn"
+        default: return "error"
+        }
+    }
+
+    private var filteredTelemetryEvents: [DevTelemetryEvent] {
+        let query = eventSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return telemetry.events.reversed().filter { event in
+            if let eventLevelFilter, event.level != eventLevelFilter { return false }
+            guard !query.isEmpty else { return true }
+            return event.subsystem.lowercased().contains(query)
+                || event.name.lowercased().contains(query)
+                || (event.fieldsJSON?.lowercased().contains(query) ?? false)
+        }
+    }
+
+    private func eventsTab() -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Picker("Level", selection: $eventLevelFilter) {
+                    Text("All").tag(LogLevel?.none)
+                    ForEach(LogLevel.allCases, id: \.self) { level in
+                        Text(level.rawValue.capitalized).tag(LogLevel?.some(level))
+                    }
+                }
+                .frame(width: 110)
+                .accessibilityIdentifier("developerDebug.events.levelFilter")
+
+                TextField("Filter events", text: $eventSearchText)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("developerDebug.events.search")
+
+                Button {
+                    telemetry.poll()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .help("Force telemetry poll")
+
+                Button {
+                    telemetry.clearLocalBuffer()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+                .help("Clear local event buffer")
+                .accessibilityIdentifier("developerDebug.events.clear")
+            }
+            .padding(12)
+
+            Divider().overlay(Theme.border)
+
+            let visible = filteredTelemetryEvents
+            if visible.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 24))
+                        .foregroundColor(Theme.textTertiary)
+                    Text(telemetry.events.isEmpty ? "No events yet — interact with the app" : "No events match filters")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(visible) { event in
+                            DeveloperTelemetryEventRow(event: event)
+                        }
+                    }
+                    .padding(10)
+                }
+            }
+        }
+    }
+
+    private func actionsTab() -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                DeveloperDebugSection(title: "Telemetry") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        actionButton(title: "Force poll now", system: "arrow.clockwise") {
+                            telemetry.poll()
+                            actionFeedback = "Polled libsmithers obs ring"
+                        }
+                        actionButton(title: "Clear local event buffer", system: "trash") {
+                            telemetry.clearLocalBuffer()
+                            actionFeedback = "Cleared \(telemetry.events.count) events"
+                        }
+                        actionButton(title: "Emit test event", system: "bolt") {
+                            DevTelemetryRecorder.emit(
+                                level: .info,
+                                subsystem: "swift.devtools",
+                                name: "user_test_event",
+                                fields: ["source": "DeveloperDebugPanel"]
+                            )
+                            actionFeedback = "Emitted swift.devtools.user_test_event"
+                        }
+                        actionButton(title: "Increment test counter", system: "plus.circle") {
+                            DevTelemetryRecorder.incrementCounter("test.dev_panel.clicks")
+                            actionFeedback = "test.dev_panel.clicks++"
+                        }
+                    }
+                }
+
+                DeveloperDebugSection(title: "Levels") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach(LogLevel.allCases, id: \.self) { level in
+                                Button(level.rawValue.capitalized) {
+                                    DevTelemetryRecorder.setMinLevel(level)
+                                    actionFeedback = "Set Zig obs min level to \(level.rawValue)"
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
+                    }
+                }
+
+                DeveloperDebugSection(title: "Diagnostics") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        actionButton(title: "Copy diagnostics JSON", system: "doc.on.doc") {
+                            copyDiagnosticsToPasteboard()
+                            actionFeedback = "Diagnostics JSON copied to clipboard"
+                        }
+                        actionButton(title: "Open full log viewer", system: "arrow.up.right.square") {
+                            onOpenLogs()
+                        }
+                    }
+                }
+
+                if let actionFeedback {
+                    Text(actionFeedback)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(Theme.success)
+                        .padding(.top, 4)
+                        .accessibilityIdentifier("developerDebug.actions.feedback")
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    private func actionButton(title: String, system: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: system)
+                Text(title)
+                    .font(.system(size: 12))
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(Theme.surface2.opacity(0.7))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Theme.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func copyDiagnosticsToPasteboard() {
+        let snap = snapshot
+        let tel = telemetry.snapshot
+        let payload: [String: Any] = [
+            "captured_at": ISO8601DateFormatter().string(from: snap.capturedAt),
+            "destination": snap.destinationLabel,
+            "destination_details": snap.destinationDetails,
+            "app_rows": snap.appRows.map { ["label": $0.label, "value": $0.value, "tone": String(describing: $0.tone)] },
+            "session_rows": snap.sessionRows.map { ["label": $0.label, "value": $0.value] },
+            "log_rows": snap.logRows.map { ["label": $0.label, "value": $0.value] },
+            "telemetry": [
+                "started_at_ms": tel.startedAtMs,
+                "now_ms": tel.nowMs,
+                "events_seq": tel.totalEventSeq,
+                "events_dropped": tel.droppedEvents,
+                "counters": Dictionary(uniqueKeysWithValues: tel.counters.map { ($0.0, $0.1) }),
+                "methods": tel.methods.map { method -> [String: Any] in
+                    [
+                        "key": method.key,
+                        "count": method.count,
+                        "errors": method.errors,
+                        "max_ms": method.maxMs,
+                        "last_ms": method.lastMs,
+                        "avg_ms": method.avgMs,
+                    ]
+                }
+            ]
+        ]
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
+            let text = String(data: data, encoding: .utf8)
+        else { return }
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #endif
     }
 
     @MainActor
@@ -637,6 +953,144 @@ private struct DeveloperDebugBadge: View {
             .padding(.vertical, 2)
             .background(color.opacity(0.14))
             .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+}
+
+private struct DeveloperMethodLatencyRow: View {
+    let method: DevTelemetryMethodStat
+
+    private var p99Index: Int? {
+        guard method.count > 0 else { return nil }
+        let total = method.buckets.reduce(0, +)
+        guard total > 0 else { return nil }
+        let target = Double(total) * 0.99
+        var running: UInt64 = 0
+        for (idx, bucket) in method.buckets.enumerated() {
+            running += bucket
+            if Double(running) >= target { return idx }
+        }
+        return method.buckets.count - 1
+    }
+
+    private var maxBucket: UInt64 { method.buckets.max() ?? 0 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(method.key)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                if method.errors > 0 {
+                    Text("\(method.errors) err")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.danger)
+                }
+                Text("n=\(method.count)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            HStack(spacing: 10) {
+                Text("avg \(Int(method.avgMs))ms")
+                Text("last \(method.lastMs)ms")
+                Text("max \(method.maxMs)ms")
+                if let p99Index, p99Index < method.bucketUpperMs.count {
+                    let upper = method.bucketUpperMs[p99Index]
+                    Text("p99 ≤ \(upper < 0 ? "∞" : "\(upper)")ms")
+                }
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundColor(Theme.textTertiary)
+            histogramBar
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .background(Theme.surface2.opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(method.errors > 0 ? Theme.danger.opacity(0.4) : Theme.border, lineWidth: 1)
+        )
+    }
+
+    private var histogramBar: some View {
+        GeometryReader { geo in
+            let total = max(1, method.buckets.reduce(0, +))
+            let widths = method.buckets.map { CGFloat($0) / CGFloat(total) }
+            HStack(spacing: 1) {
+                ForEach(Array(method.buckets.enumerated()), id: \.offset) { idx, bucket in
+                    let intensity = Double(bucket) / Double(max(1, maxBucket))
+                    Rectangle()
+                        .fill(Theme.accent.opacity(0.25 + 0.55 * intensity))
+                        .frame(width: max(1, geo.size.width * widths[idx]))
+                        .help("≤\(method.bucketUpperMs[idx] < 0 ? "∞" : "\(method.bucketUpperMs[idx])")ms: \(bucket)")
+                }
+            }
+        }
+        .frame(height: 6)
+    }
+}
+
+private struct DeveloperTelemetryEventRow: View {
+    let event: DevTelemetryEvent
+
+    private var levelColor: Color {
+        switch event.level {
+        case .debug: return Theme.textTertiary
+        case .info: return Theme.info
+        case .warning: return Theme.warning
+        case .error: return Theme.danger
+        }
+    }
+
+    private var sourceBadgeColor: Color {
+        event.source == .zig ? Theme.accent : Theme.success
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(DateFormatters.hourMinuteSecondMillisecond.string(from: event.timestamp))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+                Text(event.source.rawValue.uppercased())
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(sourceBadgeColor)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(sourceBadgeColor.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                Text(event.level.rawValue.uppercased())
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(levelColor)
+                Text(event.subsystem)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+                    .lineLimit(1)
+                Spacer()
+                if let durationMs = event.durationMs {
+                    Text("\(durationMs)ms")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(Theme.textSecondary)
+                }
+            }
+            Text(event.name)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(Theme.textPrimary)
+            if let fields = event.fieldsJSON {
+                Text(fields)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+                    .lineLimit(2)
+            }
+        }
+        .textSelection(.enabled)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Theme.surface2.opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
     }
 }
 

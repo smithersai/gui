@@ -169,6 +169,125 @@ struct RunStateView: Codable, Equatable, Sendable {
     let blocked: JSONValue?
     let unhealthy: JSONValue?
     let computedAt: String
+    let engineHeartbeatAtMs: Int?
+    let viewersHeartbeatAtMs: Int?
+    let engineHeartbeatMs: Int?
+    let viewersHeartbeatMs: Int?
+    let engineHeartbeatAtISO8601: String?
+    let viewersHeartbeatAtISO8601: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case runId
+        case runIdSnake = "run_id"
+        case state
+        case blocked
+        case unhealthy
+        case computedAt
+        case computedAtSnake = "computed_at"
+        case engineHeartbeatAtMs
+        case engineHeartbeatAtMsSnake = "engine_heartbeat_at_ms"
+        case engineHeartbeatMs
+        case engineHeartbeatMsSnake = "engine_heartbeat_ms"
+        case viewersHeartbeatAtMs
+        case viewersHeartbeatAtMsSnake = "viewers_heartbeat_at_ms"
+        case uiHeartbeatAtMs
+        case uiHeartbeatAtMsSnake = "ui_heartbeat_at_ms"
+        case viewersHeartbeatMs
+        case viewersHeartbeatMsSnake = "viewers_heartbeat_ms"
+        case uiHeartbeatMs
+        case uiHeartbeatMsSnake = "ui_heartbeat_ms"
+        case engineHeartbeatAt
+        case engineHeartbeatAtSnake = "engine_heartbeat_at"
+        case viewersHeartbeatAt
+        case viewersHeartbeatAtSnake = "viewers_heartbeat_at"
+        case uiHeartbeatAt
+        case uiHeartbeatAtSnake = "ui_heartbeat_at"
+    }
+
+    init(
+        runId: String,
+        state: String,
+        blocked: JSONValue? = nil,
+        unhealthy: JSONValue? = nil,
+        computedAt: String,
+        engineHeartbeatAtMs: Int? = nil,
+        viewersHeartbeatAtMs: Int? = nil,
+        engineHeartbeatMs: Int? = nil,
+        viewersHeartbeatMs: Int? = nil,
+        engineHeartbeatAtISO8601: String? = nil,
+        viewersHeartbeatAtISO8601: String? = nil
+    ) {
+        self.runId = runId
+        self.state = state
+        self.blocked = blocked
+        self.unhealthy = unhealthy
+        self.computedAt = computedAt
+        self.engineHeartbeatAtMs = engineHeartbeatAtMs
+        self.viewersHeartbeatAtMs = viewersHeartbeatAtMs
+        self.engineHeartbeatMs = engineHeartbeatMs
+        self.viewersHeartbeatMs = viewersHeartbeatMs
+        self.engineHeartbeatAtISO8601 = engineHeartbeatAtISO8601
+        self.viewersHeartbeatAtISO8601 = viewersHeartbeatAtISO8601
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        runId = try container.decodeIfPresent(String.self, forKey: .runId)
+            ?? container.decode(String.self, forKey: .runIdSnake)
+        state = try container.decode(String.self, forKey: .state)
+        blocked = try container.decodeIfPresent(JSONValue.self, forKey: .blocked)
+        unhealthy = try container.decodeIfPresent(JSONValue.self, forKey: .unhealthy)
+        computedAt = try container.decodeIfPresent(String.self, forKey: .computedAt)
+            ?? container.decodeIfPresent(String.self, forKey: .computedAtSnake)
+            ?? ""
+
+        engineHeartbeatAtMs = Self.decodeLossyInt(
+            from: container,
+            keys: [.engineHeartbeatAtMs, .engineHeartbeatAtMsSnake]
+        )
+        viewersHeartbeatAtMs = Self.decodeLossyInt(
+            from: container,
+            keys: [.viewersHeartbeatAtMs, .viewersHeartbeatAtMsSnake, .uiHeartbeatAtMs, .uiHeartbeatAtMsSnake]
+        )
+        engineHeartbeatMs = Self.decodeLossyInt(
+            from: container,
+            keys: [.engineHeartbeatMs, .engineHeartbeatMsSnake]
+        )
+        viewersHeartbeatMs = Self.decodeLossyInt(
+            from: container,
+            keys: [.viewersHeartbeatMs, .viewersHeartbeatMsSnake, .uiHeartbeatMs, .uiHeartbeatMsSnake]
+        )
+
+        engineHeartbeatAtISO8601 = try container.decodeIfPresent(String.self, forKey: .engineHeartbeatAt)
+            ?? container.decodeIfPresent(String.self, forKey: .engineHeartbeatAtSnake)
+        viewersHeartbeatAtISO8601 = try container.decodeIfPresent(String.self, forKey: .viewersHeartbeatAt)
+            ?? container.decodeIfPresent(String.self, forKey: .viewersHeartbeatAtSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .uiHeartbeatAt)
+            ?? container.decodeIfPresent(String.self, forKey: .uiHeartbeatAtSnake)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(runId, forKey: .runId)
+        try container.encode(state, forKey: .state)
+        try container.encodeIfPresent(blocked, forKey: .blocked)
+        try container.encodeIfPresent(unhealthy, forKey: .unhealthy)
+        try container.encode(computedAt, forKey: .computedAt)
+        try container.encodeIfPresent(engineHeartbeatAtMs, forKey: .engineHeartbeatAtMs)
+        try container.encodeIfPresent(viewersHeartbeatAtMs, forKey: .viewersHeartbeatAtMs)
+        try container.encodeIfPresent(engineHeartbeatMs, forKey: .engineHeartbeatMs)
+        try container.encodeIfPresent(viewersHeartbeatMs, forKey: .viewersHeartbeatMs)
+        try container.encodeIfPresent(engineHeartbeatAtISO8601, forKey: .engineHeartbeatAt)
+        try container.encodeIfPresent(viewersHeartbeatAtISO8601, forKey: .viewersHeartbeatAt)
+    }
+
+    var engineHeartbeatAt: Date? {
+        Self.date(ms: engineHeartbeatAtMs, iso8601: engineHeartbeatAtISO8601)
+    }
+
+    var viewersHeartbeatAt: Date? {
+        Self.date(ms: viewersHeartbeatAtMs, iso8601: viewersHeartbeatAtISO8601)
+    }
 
     var stateLabel: String {
         state
@@ -232,6 +351,33 @@ struct RunStateView: Codable, Equatable, Sendable {
             return kind.replacingOccurrences(of: "-", with: " ")
         }
     }
+
+    private static func decodeLossyInt(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        keys: [CodingKeys]
+    ) -> Int? {
+        for key in keys {
+            if let value = try? container.decodeIfPresent(Int.self, forKey: key) {
+                return value
+            }
+            if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
+                return Int(value)
+            }
+            if let raw = try? container.decodeIfPresent(String.self, forKey: key),
+               let value = Int(raw) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func date(ms: Int?, iso8601: String?) -> Date? {
+        if let ms {
+            return Date(timeIntervalSince1970: Double(ms) / 1000)
+        }
+        guard let iso8601, !iso8601.isEmpty else { return nil }
+        return ISO8601DateFormatter().date(from: iso8601)
+    }
 }
 
 // MARK: - DevToolsJumpResult
@@ -244,6 +390,64 @@ struct DevToolsJumpResult: Codable, Equatable, Sendable {
     let deletedAttempts: Int?
     let invalidatedDiffs: Int?
     let durationMs: Int?
+    let auditRowId: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case newFrameNo
+        case revertedSandboxes
+        case deletedFrames
+        case deletedAttempts
+        case invalidatedDiffs
+        case durationMs
+        case auditRowId
+        case auditRowIdSnake = "audit_row_id"
+    }
+
+    init(
+        ok: Bool,
+        newFrameNo: Int? = nil,
+        revertedSandboxes: Int? = nil,
+        deletedFrames: Int? = nil,
+        deletedAttempts: Int? = nil,
+        invalidatedDiffs: Int? = nil,
+        durationMs: Int? = nil,
+        auditRowId: String? = nil
+    ) {
+        self.ok = ok
+        self.newFrameNo = newFrameNo
+        self.revertedSandboxes = revertedSandboxes
+        self.deletedFrames = deletedFrames
+        self.deletedAttempts = deletedAttempts
+        self.invalidatedDiffs = invalidatedDiffs
+        self.durationMs = durationMs
+        self.auditRowId = auditRowId
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        newFrameNo = try container.decodeIfPresent(Int.self, forKey: .newFrameNo)
+        revertedSandboxes = try container.decodeIfPresent(Int.self, forKey: .revertedSandboxes)
+        deletedFrames = try container.decodeIfPresent(Int.self, forKey: .deletedFrames)
+        deletedAttempts = try container.decodeIfPresent(Int.self, forKey: .deletedAttempts)
+        invalidatedDiffs = try container.decodeIfPresent(Int.self, forKey: .invalidatedDiffs)
+        durationMs = try container.decodeIfPresent(Int.self, forKey: .durationMs)
+        auditRowId = try container.decodeIfPresent(String.self, forKey: .auditRowId)
+            ?? container.decodeIfPresent(String.self, forKey: .auditRowIdSnake)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(ok, forKey: .ok)
+        try container.encodeIfPresent(newFrameNo, forKey: .newFrameNo)
+        try container.encodeIfPresent(revertedSandboxes, forKey: .revertedSandboxes)
+        try container.encodeIfPresent(deletedFrames, forKey: .deletedFrames)
+        try container.encodeIfPresent(deletedAttempts, forKey: .deletedAttempts)
+        try container.encodeIfPresent(invalidatedDiffs, forKey: .invalidatedDiffs)
+        try container.encodeIfPresent(durationMs, forKey: .durationMs)
+        try container.encodeIfPresent(auditRowId, forKey: .auditRowId)
+    }
 }
 
 // MARK: - NodeOutputResponse

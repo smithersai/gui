@@ -144,6 +144,49 @@ final class DevToolsEventDecodingTests: XCTestCase {
         XCTAssertEqual(gapResync.toSeq, 31)
     }
 
+    func testDecodesRunStateHeartbeatAliases() throws {
+        let json = Data("""
+        {
+          "version": 1,
+          "kind": "snapshot",
+          "snapshot": {
+            "runId": "run-1",
+            "frameNo": 2,
+            "seq": 2,
+            "root": {
+              "id": 0,
+              "type": "workflow",
+              "name": "ticket-kanban",
+              "props": {"state": "running"},
+              "task": null,
+              "children": [],
+              "depth": 0
+            },
+            "runState": {
+              "runId": "run-1",
+              "state": "running",
+              "computedAt": "2026-04-24T20:21:37.000Z",
+              "engine_heartbeat_ms": 1000,
+              "engine_heartbeat_at_ms": 1714000000000,
+              "ui_heartbeat_ms": 1500,
+              "ui_heartbeat_at": "2026-04-24T20:21:38.000Z"
+            }
+          }
+        }
+        """.utf8)
+
+        let event = try JSONDecoder().decode(DevToolsEvent.self, from: json)
+        guard case .snapshot(let snapshot) = event else {
+            XCTFail("Expected .snapshot, got \(event)")
+            return
+        }
+
+        XCTAssertEqual(snapshot.runState?.engineHeartbeatMs, 1000)
+        XCTAssertEqual(snapshot.runState?.viewersHeartbeatMs, 1500)
+        XCTAssertNotNil(snapshot.runState?.engineHeartbeatAt)
+        XCTAssertNotNil(snapshot.runState?.viewersHeartbeatAt)
+    }
+
     func testGapResyncEventRoundTripsThroughNewEnvelope() throws {
         let encoded = try JSONEncoder().encode(
             DevToolsEvent.gapResync(DevToolsGapResync(fromSeq: 17, toSeq: 31))
