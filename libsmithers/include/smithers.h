@@ -609,6 +609,83 @@ SMITHERS_API smithers_error_s smithers_core_cache_wipe(
 // shipping code path is a bug.
 SMITHERS_API void smithers_core_tick_for_test(smithers_core_session_t s);
 
+//------------------------------------------------------------------------------
+// Observability runtime
+//
+// libsmithers maintains a process-wide ring buffer of structured events plus
+// per-method latency histograms and named counters. The host has two ways to
+// consume events:
+//
+//   * Push: register a callback via smithers_obs_set_callback. Called inline
+//     from whatever thread emitted the event. Keep the callback short — copy
+//     out anything you need synchronously; pointer arguments are NOT valid
+//     after the callback returns.
+//
+//   * Pull: poll smithers_obs_drain_json(after_seq) on your own cadence to
+//     receive everything emitted since `after_seq`. The Swift dev tools use
+//     this for the "Events" tab.
+//
+// Both are safe to use in parallel: the ring is the same; the callback fires
+// in addition to recording.
+//
+// Levels: 0=trace, 1=debug, 2=info, 3=warn, 4=error. Default minimum is debug.
+// Set with smithers_obs_set_min_level().
+
+typedef void (*smithers_obs_event_fn)(
+    smithers_userdata_t userdata,
+    uint64_t seq,                    // monotonically increasing
+    int64_t timestamp_ms,            // wall clock
+    int32_t level,                   // 0..4
+    const char *subsystem,           // NUL-terminated; valid only during call
+    const char *name,                // NUL-terminated; valid only during call
+    int64_t duration_ms,             // -1 if not a timed event
+    const char *fields_json_or_null  // NUL-terminated JSON object or NULL
+);
+
+SMITHERS_API void smithers_obs_set_callback(
+    smithers_obs_event_fn cb,        // pass NULL to clear
+    smithers_userdata_t userdata);
+
+SMITHERS_API void smithers_obs_set_min_level(int32_t level);
+
+// Returns a JSON array string of all events with seq > `after_seq`. Each
+// element is an object with shape:
+//   {"seq", "ts_ms", "level", "subsystem", "name",
+//    "duration_ms"?, "fields"?}
+// Caller frees with smithers_string_free.
+SMITHERS_API smithers_string_s smithers_obs_drain_json(uint64_t after_seq);
+
+// JSON snapshot of metrics: counters + per-method latency histograms +
+// global ring buffer state. Caller frees with smithers_string_free. Shape:
+//   {
+//     "started_at_ms", "now_ms",
+//     "events_seq", "events_dropped", "events_capacity", "min_level",
+//     "counters": { "<name>": <u64>, ... },
+//     "methods":  { "<key>": {"count","errors","max_ms","last_ms","avg_ms",
+//                              "buckets":[..],"bucket_upper_ms":[..]}, ... }
+//   }
+// `bucket_upper_ms` includes -1 as a sentinel for the +Inf bucket.
+SMITHERS_API smithers_string_s smithers_obs_metrics_json(void);
+
+// Host-side emission helpers — let the Swift/GTK shell push its own events
+// into the same ring so the dev-tools timeline shows both Zig + native
+// signals. `duration_ms < 0` means "no duration".
+SMITHERS_API void smithers_obs_emit(
+    int32_t level,
+    const char *subsystem,           // required, NUL-terminated
+    const char *name,                // required, NUL-terminated
+    int64_t duration_ms,             // -1 for none
+    const char *fields_json_or_null);
+
+SMITHERS_API void smithers_obs_record_method(
+    const char *method,              // stable key, e.g. "client.call.listWorkflows"
+    int64_t duration_ms,
+    bool is_error);
+
+SMITHERS_API void smithers_obs_increment_counter(
+    const char *name,
+    uint64_t delta);
+
 #ifdef __cplusplus
 }
 #endif

@@ -11,10 +11,14 @@ pub const session = @import("session/session.zig");
 pub const terminal = @import("terminal/tmux.zig");
 pub const workspace = @import("workspace/mod.zig");
 
+pub const obs = @import("obs.zig");
+
 comptime {
     _ = apprt.embedded;
     // Ensure the new core FFI exports are pulled into the static archive.
     _ = @import("core/ffi.zig");
+    // Observability runtime exports (smithers_obs_*).
+    _ = @import("obs_ffi.zig");
 }
 
 test {
