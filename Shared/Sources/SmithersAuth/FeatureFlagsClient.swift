@@ -123,9 +123,14 @@ public final class FeatureFlagsClient: ObservableObject {
     @discardableResult
     public func refresh(force: Bool = false) async throws -> FeatureFlagsSnapshot {
         if !force,
-           let cachedAt,
-           now().timeIntervalSince(cachedAt) < ttl {
-            return snapshot
+           let cachedAt {
+            let age = now().timeIntervalSince(cachedAt)
+            // Treat negative age (clock rewound: DST, NTP, manual change) as
+            // an expired cache. Without this clamp `age < ttl` is trivially
+            // true for any negative value and the cache freezes indefinitely.
+            if age >= 0, age < ttl {
+                return snapshot
+            }
         }
 
         if let inFlightRefresh {

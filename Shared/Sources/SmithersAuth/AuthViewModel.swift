@@ -26,6 +26,18 @@ public final class AuthViewModel: ObservableObject {
     private let startupSessionValidator: (() async -> AccessTokenValidationResult)?
     private var didAttemptStartupSessionValidation = false
 
+    /// Active in-flight `signIn` task. Cancelled by `signOut` so a still-
+    /// suspended sign-in cannot resurrect the session by installing tokens
+    /// after the user has explicitly signed out. (Security: an attacker who
+    /// times a `signOut` against an in-flight `signIn` should not be able to
+    /// leave the user signed in.)
+    private var activeSignInTask: Task<Void, Never>?
+    /// Monotonic id for the currently-installed `activeSignInTask`. Used
+    /// because `Task` is a value type and not identity-comparable, so we
+    /// match generations to know whether a finishing task is still the
+    /// "current" one or has already been displaced by a fresher signIn.
+    private var activeSignInGeneration: UInt64 = 0
+
     public init(
         client: OAuth2Client,
         tokens: TokenManager,
@@ -78,6 +90,32 @@ public final class AuthViewModel: ObservableObject {
         }
         phase = .signingIn
 
+        // Kick off the sign-in body in a child task so `signOut` can cancel
+        // it. The public API stays `async` — callers still await completion
+        // via `task.value` so the perceived behavior is unchanged when no
+        // cancellation occurs. If `signOut` cancels mid-flight, the post-
+        // suspension `Task.isCancelled` checks short-circuit before any
+        // tokens are installed or `.signedIn` is published.
+        activeSignInGeneration &+= 1
+        let myGeneration = activeSignInGeneration
+        let task: Task<Void, Never> = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runSignIn()
+        }
+        self.activeSignInTask = task
+        await task.value
+        // Only clear if this is still the same task — a later signIn tap
+        // could have replaced it.
+        if self.activeSignInGeneration == myGeneration {
+            self.activeSignInTask = nil
+        }
+    }
+
+    /// Body of the in-flight sign-in. Each `await` is followed by a
+    /// `Task.isCancelled` checkpoint so a `signOut`-driven cancellation
+    /// never lets a still-suspended sign-in resurrect the session by
+    /// installing tokens or publishing `.signedIn`.
+    private func runSignIn() async {
         do {
             let pkce = try PKCE.generate()
             let state = try Self.randomState()
@@ -87,10 +125,24 @@ public final class AuthViewModel: ObservableObject {
                 callbackScheme: callbackScheme,
                 expectedState: state
             )
+            if Task.isCancelled { return }
             let newTokens = try await client.exchange(code: cb.code, verifier: pkce.verifier)
+            if Task.isCancelled { return }
             try tokens.install(tokens: newTokens)
+            if Task.isCancelled {
+                // Tokens slipped through the gate — undo immediately so a
+                // racing signOut isn't defeated.
+                await tokens.localSignOut()
+                return
+            }
             phase = .signedIn
+        } catch is CancellationError {
+            // Cancelled mid-await. `signOut` already drove the phase to
+            // `.signedOut`; do not republish or surface a user-visible
+            // error.
+            return
         } catch let err as OAuth2Error {
+            if Task.isCancelled { return }
             switch err {
             case .whitelistDenied(let msg):
                 // Per ticket: static page. Do not auto-retry.
@@ -99,17 +151,33 @@ public final class AuthViewModel: ObservableObject {
                 phase = .error(Self.describe(err))
             }
         } catch let err as AuthorizeSessionError {
+            if Task.isCancelled { return }
             if case .userCancelled = err {
                 phase = .signedOut
             } else {
                 phase = .error(Self.describe(err))
             }
         } catch {
+            if Task.isCancelled { return }
             phase = .error(error.localizedDescription)
         }
     }
 
     public func signOut() async {
+        // Cancel any in-flight sign-in BEFORE wiping tokens so a still-
+        // suspended sign-in cannot install fresh tokens after we clear
+        // them. See `runSignIn`'s `Task.isCancelled` checkpoints.
+        //
+        // NOTE: `AuthorizeSessionDriver` does not expose a synchronous
+        // cancel hook (`ASWebAuthenticationSession` would need to be torn
+        // down explicitly). `Task.cancel()` propagates to the underlying
+        // `await` and the post-await `Task.isCancelled` gates short-
+        // circuit token install. The browser sheet may remain open
+        // briefly until the user dismisses it; the resulting code is
+        // discarded. Documented gap; see ticket follow-up to wire a
+        // driver-level cancel.
+        activeSignInTask?.cancel()
+        activeSignInTask = nil
         await tokens.signOut()
         phase = .signedOut
     }
