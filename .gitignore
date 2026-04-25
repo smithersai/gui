@@ -1,4 +1,6 @@
 .build/
+.build-review/
+.build-review2/
 build/
 .zig-cache/
 zig-out/
@@ -15,3 +17,8 @@ run-*.log
 vendor/
 .claude/scheduled_tasks.lock
 tmux/
+.worktrees/
+.swiftpm/
+.DS_Store
+*.xcuserstate
+xcuserdata/
