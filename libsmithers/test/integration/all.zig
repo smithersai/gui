@@ -9,4 +9,5 @@ comptime {
     _ = @import("json_edges.zig");
     _ = @import("error_paths.zig");
     _ = @import("memory_stress.zig");
+    _ = @import("concurrent_ffi.zig");
 }
