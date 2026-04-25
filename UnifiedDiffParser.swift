@@ -247,7 +247,10 @@ enum UnifiedDiffParser {
                     oldLineNumber: nil,
                     newLineNumber: newLine
                 ))
-                newLine += 1
+                // Overflow-safe increment: clamp at Int.max so pathological
+                // hunk headers (Int.max line numbers from a fuzz / malicious
+                // diff) don't trap the runtime.
+                newLine = newLine &+ (newLine == Int.max ? 0 : 1)
                 continue
             }
 
@@ -258,7 +261,7 @@ enum UnifiedDiffParser {
                     oldLineNumber: oldLine,
                     newLineNumber: nil
                 ))
-                oldLine += 1
+                oldLine = oldLine &+ (oldLine == Int.max ? 0 : 1)
                 continue
             }
 
@@ -269,8 +272,8 @@ enum UnifiedDiffParser {
                     oldLineNumber: oldLine,
                     newLineNumber: newLine
                 ))
-                oldLine += 1
-                newLine += 1
+                oldLine = oldLine &+ (oldLine == Int.max ? 0 : 1)
+                newLine = newLine &+ (newLine == Int.max ? 0 : 1)
                 continue
             }
 
@@ -287,8 +290,8 @@ enum UnifiedDiffParser {
                 oldLineNumber: oldLine,
                 newLineNumber: newLine
             ))
-            oldLine += 1
-            newLine += 1
+            oldLine = oldLine &+ (oldLine == Int.max ? 0 : 1)
+            newLine = newLine &+ (newLine == Int.max ? 0 : 1)
         }
 
         flushCurrentHunk()

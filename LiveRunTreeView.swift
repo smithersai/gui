@@ -5,7 +5,7 @@ import AppKit
 #endif
 
 struct LiveRunTreeView: View {
-    @ObservedObject var store: LiveRunDevToolsStore
+    @ObservedObject var store: DevToolsStore
     @ObservedObject var lastLogStore: LastLogPerNodeStore
     @ObservedObject private var expansionStore: LiveRunTreeExpansionStore
     var onInspectNode: ((Int) -> Void)?
@@ -19,7 +19,7 @@ struct LiveRunTreeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
-        store: LiveRunDevToolsStore,
+        store: DevToolsStore,
         lastLogStore: LastLogPerNodeStore,
         expansionStore: LiveRunTreeExpansionStore = .shared,
         onInspectNode: ((Int) -> Void)? = nil
@@ -432,7 +432,7 @@ struct LiveRunTreeUITestHarnessView: View {
 
     private let defaultSelectedNodeId = 5
 
-    @StateObject private var store: LiveRunDevToolsStore
+    @StateObject private var store: DevToolsStore
     @StateObject private var smithers: SmithersClient
     @StateObject private var fixtureLogsStreamProvider: UITestFixtureChatStreamProvider
     @StateObject private var lastLogStore: LastLogPerNodeStore
@@ -469,7 +469,7 @@ struct LiveRunTreeUITestHarnessView: View {
             streamEnabled: streamEnabled,
             rewindErrorMode: rewindErrorMode
         )
-        _store = StateObject(wrappedValue: LiveRunDevToolsStore(streamProvider: provider))
+        _store = StateObject(wrappedValue: DevToolsStore(streamProvider: provider))
         _smithers = StateObject(wrappedValue: SmithersClient())
         let fixtureStream = UITestFixtureChatStreamProvider()
         _fixtureLogsStreamProvider = StateObject(wrappedValue: fixtureStream)
@@ -483,9 +483,11 @@ struct LiveRunTreeUITestHarnessView: View {
                 workflowName: "Live Run Tree",
                 runId: runId,
                 startedAt: startedAt,
-                heartbeatMs: 1_000,
+                heartbeatMs: store.runStateView?.engineHeartbeatMs ?? 1_000,
                 lastEventAt: store.lastEventAt,
                 lastSeq: store.seq,
+                viewersLastEventAt: store.runStateView?.viewersHeartbeatAt,
+                viewersHeartbeatMs: store.runStateView?.viewersHeartbeatMs,
                 runStateLabel: store.runStateView?.stateLabel,
                 runStateReason: store.runStateView?.reasonSummary,
                 connectionState: store.connectionState,

@@ -139,6 +139,46 @@ final class NodeInspectorViewTests: XCTestCase {
         XCTAssertNoThrow(try inspected.find(text: "This node is no longer in the running tree (unmounted at frame 42)."))
     }
 
+    func testSelectedGhostKeepsLastKnownValuesAndShowsUnmountedFrameBadge() throws {
+        let store = makeStore()
+        let node = makeTaskNode(
+            id: 5,
+            name: "GhostedTask",
+            state: "failed",
+            nodeId: "task:ghosted:5",
+            props: [
+                "state": .string("failed"),
+                "output": .string("last-known-output"),
+                "error": .string("boom"),
+            ]
+        )
+        store.applyEvent(.snapshot(DevToolsSnapshot(
+            runId: "run-1",
+            frameNo: 10,
+            seq: 10,
+            root: DevToolsNode(id: 0, type: .workflow, name: "Root", children: [node])
+        )))
+        store.selectNode(5)
+        store.applyEvent(.snapshot(DevToolsSnapshot(
+            runId: "run-1",
+            frameNo: 11,
+            seq: 11,
+            root: DevToolsNode(id: 0, type: .workflow, name: "Root", children: [])
+        )))
+
+        XCTAssertTrue(store.isGhost)
+        XCTAssertEqual(store.selectedGhostRecord?.unmountedFrameNo, 11)
+        XCTAssertEqual(store.selectedNode?.props["output"], .string("last-known-output"))
+        XCTAssertEqual(store.selectedNode?.props["error"], .string("boom"))
+
+        var tab: InspectorTab = .output
+        let binding = Binding(get: { tab }, set: { tab = $0 })
+        let inspected = try NodeInspectorView(store: store, selectedTab: binding).inspect()
+
+        XCTAssertNoThrow(try inspected.find(text: "<GhostedTask>"))
+        XCTAssertNoThrow(try inspected.find(text: "This node is no longer in the running tree (unmounted at frame 11)."))
+    }
+
     // MARK: - Error banner
 
     func testErrorBannerVisibleForFailedTask() throws {
@@ -221,5 +261,36 @@ final class NodeInspectorViewTests: XCTestCase {
         store.clearSelection()
         XCTAssertNil(store.selectedNodeId)
         XCTAssertFalse(store.isGhost)
+    }
+
+    func testNodeSelectionUpdatesInspectorWithinOneFrameBudget() throws {
+        let store = makeStore()
+        let first = makeTaskNode(id: 1, name: "TaskOne", nodeId: "task:1")
+        let second = makeTaskNode(id: 2, name: "TaskTwo", nodeId: "task:2")
+        let snapshot = DevToolsSnapshot(
+            runId: "run-1",
+            frameNo: 1,
+            seq: 1,
+            root: DevToolsNode(id: 0, type: .workflow, name: "Root", children: [first, second])
+        )
+        store.applyEvent(.snapshot(snapshot))
+        store.selectNode(1)
+
+        var tab: InspectorTab = .logs
+        let binding = Binding(get: { tab }, set: { tab = $0 })
+        let view = NodeInspectorView(store: store, selectedTab: binding)
+        _ = try view.inspect()
+
+        let start = CFAbsoluteTimeGetCurrent()
+        store.selectNode(2)
+        let inspected = try view.inspect()
+        XCTAssertNoThrow(try inspected.find(text: "<TaskTwo>"))
+
+        let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
+        XCTAssertLessThan(
+            elapsedMs,
+            16.7,
+            "Inspector selection handoff budget is one frame (16.7ms @60fps)."
+        )
     }
 }

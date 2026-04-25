@@ -114,6 +114,27 @@ final class LiveRunTreeViewTests: XCTestCase {
         XCTAssertEqual(rows.last?.id, 50)
     }
 
+    func testVisibleTreeRowsForTenThousandNodesMeetsFrameBudget() {
+        let root = makeNode(
+            id: 1,
+            type: .workflow,
+            children: (0..<10_000).map { index in
+                makeNode(id: index + 2, type: .task, name: "Task \(index)", depth: 1)
+            }
+        )
+
+        let start = CFAbsoluteTimeGetCurrent()
+        let rows = visibleTreeRows(root: root, expandedIds: [1])
+        let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
+
+        XCTAssertEqual(rows.count, 10_001)
+        XCTAssertLessThan(
+            elapsedMs,
+            16.7,
+            "Tree flattening budget for the 10k-node fixture is one frame (16.7ms @60fps). Validate with Instruments for production builds."
+        )
+    }
+
     func testKeyPropsSummaryTruncatesLongLabel() {
         let longLabel = String(repeating: "x", count: 500)
         let node = makeNode(

@@ -17,6 +17,13 @@ final class ApplyDeltaTests: XCTestCase {
         DevToolsTaskInfo(nodeId: nodeId, kind: kind, agent: "claude", label: nil, outputTableName: nil, iteration: 0)
     }
 
+    private func canonicalJSONString<T: Encodable>(_ value: T) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(value)
+        return String(decoding: data, as: UTF8.self)
+    }
+
     // MARK: - addNode
 
     func testAddNodeToNilTreeWithRootParent() throws {
@@ -333,6 +340,125 @@ final class ApplyDeltaTests: XCTestCase {
         _ = try JSONDecoder().decode(DevToolsSnapshot.self, from: data)
         let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
         XCTAssertLessThan(elapsed, 50.0, "500-node snapshot decode should be < 50ms")
+    }
+
+    func testDeltaReplayMatchesFreshSnapshotFixtureByteIdentical() throws {
+        let initialRoot = makeNode(
+            id: 1,
+            type: .workflow,
+            name: "Workflow",
+            props: ["state": .string("running")],
+            children: [
+                makeNode(
+                    id: 2,
+                    type: .task,
+                    name: "Build",
+                    props: ["state": .string("running"), "durationMs": .number(2_100)],
+                    task: makeTask(nodeId: "task:build")
+                ),
+            ]
+        )
+
+        let initialSnapshot = DevToolsSnapshot(
+            runId: "run-fixture-1",
+            frameNo: 1,
+            seq: 1,
+            root: initialRoot,
+            runState: RunStateView(
+                runId: "run-fixture-1",
+                state: "running",
+                computedAt: "2026-04-25T00:00:00Z"
+            )
+        )
+
+        let deltas: [DevToolsDelta] = [
+            DevToolsDelta(
+                baseSeq: 1,
+                seq: 2,
+                ops: [
+                    .updateProps(id: 2, props: ["state": .string("finished"), "durationMs": .number(2_300)]),
+                ]
+            ),
+            DevToolsDelta(
+                baseSeq: 2,
+                seq: 3,
+                ops: [
+                    .addNode(
+                        parentId: 1,
+                        index: 1,
+                        node: makeNode(
+                            id: 3,
+                            type: .task,
+                            name: "Deploy",
+                            props: ["state": .string("finished"), "durationMs": .number(850)],
+                            task: makeTask(nodeId: "task:deploy")
+                        )
+                    ),
+                ]
+            ),
+            DevToolsDelta(
+                baseSeq: 3,
+                seq: 4,
+                ops: [
+                    .updateProps(id: 1, props: ["state": .string("finished")]),
+                ]
+            ),
+        ]
+
+        var replayedTree: DevToolsNode? = initialSnapshot.root.deepCopy()
+        for delta in deltas {
+            replayedTree = try DevToolsDeltaApplier.applyDelta(delta, to: replayedTree)
+        }
+        let replayedSnapshot = DevToolsSnapshot(
+            runId: "run-fixture-1",
+            frameNo: 4,
+            seq: 4,
+            root: try XCTUnwrap(replayedTree),
+            runState: RunStateView(
+                runId: "run-fixture-1",
+                state: "succeeded",
+                computedAt: "2026-04-25T00:00:04Z"
+            )
+        )
+
+        let freshSnapshot = DevToolsSnapshot(
+            runId: "run-fixture-1",
+            frameNo: 4,
+            seq: 4,
+            root: makeNode(
+                id: 1,
+                type: .workflow,
+                name: "Workflow",
+                props: ["state": .string("finished")],
+                children: [
+                    makeNode(
+                        id: 2,
+                        type: .task,
+                        name: "Build",
+                        props: ["state": .string("finished"), "durationMs": .number(2_300)],
+                        task: makeTask(nodeId: "task:build")
+                    ),
+                    makeNode(
+                        id: 3,
+                        type: .task,
+                        name: "Deploy",
+                        props: ["state": .string("finished"), "durationMs": .number(850)],
+                        task: makeTask(nodeId: "task:deploy")
+                    ),
+                ]
+            ),
+            runState: RunStateView(
+                runId: "run-fixture-1",
+                state: "succeeded",
+                computedAt: "2026-04-25T00:00:04Z"
+            )
+        )
+
+        XCTAssertEqual(
+            try canonicalJSONString(replayedSnapshot),
+            try canonicalJSONString(freshSnapshot),
+            "Delta-replayed snapshot should match fresh snapshot fixture byte-for-byte (sorted keys)."
+        )
     }
 
     // MARK: - SmithersNodeType

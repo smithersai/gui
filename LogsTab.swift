@@ -378,7 +378,7 @@ private struct LogsBottomOffsetPreferenceKey: PreferenceKey {
 }
 
 struct LogsTab: View {
-    @ObservedObject var store: LiveRunDevToolsStore
+    @ObservedObject var store: DevToolsStore
 
     @StateObject private var model: LogsTabModel
     @AppStorage("liverun.logs.autoResumeAtBottom") private var autoResumeAtBottom = true
@@ -388,7 +388,7 @@ struct LogsTab: View {
 
     @MainActor
     init(
-        store: LiveRunDevToolsStore,
+        store: DevToolsStore,
         streamProvider: ChatStreamProviding = EmptyChatStreamProvider.shared,
         historyProvider: ChatHistoryProviding = EmptyChatHistoryProvider.shared,
         pasteboard: TranscriptPasteboarding = SystemTranscriptPasteboard()

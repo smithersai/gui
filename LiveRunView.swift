@@ -8,15 +8,17 @@ import AppKit
 struct LiveRunView: View {
     @ObservedObject var smithers: SmithersClient
     private let devToolsClient: DevToolsClient
+    private let sessionRegistry: LiveRunSessionRegistry
     let runId: String
     let nodeId: String?
     var onOpenTerminalCommand: ((String, String, String) -> Void)? = nil
     var onOpenWorkflow: ((String) -> Void)? = nil
     var onOpenPrompt: (() -> Void)? = nil
     var onRunSummaryRefreshed: ((RunSummary) -> Void)? = nil
+    var onOpenAuditHistory: ((String) -> Void)? = nil
     var onClose: () -> Void = {}
 
-    @StateObject private var store: LiveRunDevToolsStore
+    @StateObject private var store: DevToolsStore
     @StateObject private var lastLogStore: LastLogPerNodeStore
 
     @State private var selectedTab: InspectorTab = .logs
@@ -29,6 +31,7 @@ struct LiveRunView: View {
     @State private var appearsAt = Date()
 
     @State private var actionMessage: String?
+    @State private var actionAuditRowId: String?
     @State private var actionMessageColor: Color = Theme.textTertiary
 
     @State private var hijacking = false
@@ -78,8 +81,24 @@ struct LiveRunView: View {
         store.runStateView?.reasonSummary
     }
 
+    private var engineHeartbeatMs: Int {
+        store.runStateView?.engineHeartbeatMs ?? 1_000
+    }
+
+    private var viewersLastEventAt: Date? {
+        store.runStateView?.viewersHeartbeatAt
+    }
+
+    private var viewersHeartbeatMs: Int? {
+        store.runStateView?.viewersHeartbeatMs
+    }
+
     private var canCancel: Bool {
         !effectiveStatus.isTerminal
+    }
+
+    private var canResume: Bool {
+        effectiveStatus == .failed || effectiveStatus == .cancelled
     }
 
     private var canApprove: Bool {
@@ -95,7 +114,9 @@ struct LiveRunView: View {
         onOpenWorkflow: ((String) -> Void)? = nil,
         onOpenPrompt: (() -> Void)? = nil,
         onRunSummaryRefreshed: ((RunSummary) -> Void)? = nil,
-        onClose: @escaping () -> Void = {}
+        onOpenAuditHistory: ((String) -> Void)? = nil,
+        onClose: @escaping () -> Void = {},
+        sessionRegistry: LiveRunSessionRegistry? = nil
     ) {
         self.smithers = smithers
         self.runId = runId
@@ -104,13 +125,14 @@ struct LiveRunView: View {
         self.onOpenWorkflow = onOpenWorkflow
         self.onOpenPrompt = onOpenPrompt
         self.onRunSummaryRefreshed = onRunSummaryRefreshed
+        self.onOpenAuditHistory = onOpenAuditHistory
         self.onClose = onClose
-        let devToolsClient = DevToolsClient(smithers: smithers)
-        self.devToolsClient = devToolsClient
-        _store = StateObject(wrappedValue: LiveRunDevToolsStore(streamProvider: devToolsClient))
-        _lastLogStore = StateObject(
-            wrappedValue: LastLogPerNodeStore(streamProvider: smithers, historyProvider: smithers)
-        )
+        let resolvedRegistry = sessionRegistry ?? LiveRunSessionRegistry.shared
+        self.sessionRegistry = resolvedRegistry
+        let session = resolvedRegistry.session(for: runId, smithers: smithers)
+        self.devToolsClient = session.client
+        _store = StateObject(wrappedValue: session.store)
+        _lastLogStore = StateObject(wrappedValue: session.lastLogStore)
     }
 
     var body: some View {
@@ -137,9 +159,19 @@ struct LiveRunView: View {
                 runLoadError = nil
             }
         }
+        .onChange(of: store.lastToastMessage) { _, message in
+            guard let message else { return }
+            setActionMessage(
+                message,
+                color: Theme.success,
+                auditRowId: store.lastAuditRowId
+            )
+        }
         .onDisappear {
             guard !useLiveRunTreeHarness else { return }
-            teardown()
+            let keepBackgroundStreams = sessionRegistry.isPinned(runId: runId)
+            teardown(disconnectStreams: !keepBackgroundStreams)
+            sessionRegistry.releaseIfUnpinned(runId: runId)
         }
         .rewindConfirmationDialog(isPresented: $showRewindConfirmation, frameNo: pendingRewindFrameNo) { frameNo in
             pendingRewindFrameNo = nil
@@ -206,9 +238,11 @@ struct LiveRunView: View {
                 workflowName: workflowName,
                 runId: runId,
                 startedAt: runSummary?.startedAt,
-                heartbeatMs: 1_000,
+                heartbeatMs: engineHeartbeatMs,
                 lastEventAt: store.lastEventAt,
                 lastSeq: store.seq,
+                viewersLastEventAt: viewersLastEventAt,
+                viewersHeartbeatMs: viewersHeartbeatMs,
                 runStateLabel: runStateLabel,
                 runStateReason: runStateReason,
                 connectionState: store.connectionState,
@@ -216,6 +250,13 @@ struct LiveRunView: View {
                 onCancel: canCancel ? { showCancelConfirmation = true } : nil,
                 onHijack: startHijack,
                 onOpenLogs: openLogsInTerminal,
+                onResume: canResume ? {
+                    Task { await resumeRun() }
+                } : nil,
+                onRewind: store.isRewindEligible ? {
+                    pendingRewindFrameNo = store.displayedFrameNo
+                    showRewindConfirmation = true
+                } : nil,
                 onRefresh: {
                     Task {
                         store.returnToLive()
@@ -359,8 +400,17 @@ struct LiveRunView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
+            if let auditRowId = actionAuditRowId, !auditRowId.isEmpty {
+                Button("Open History") {
+                    openAuditHistory(auditRowId)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+            }
             Button("Dismiss") {
                 actionMessage = nil
+                actionAuditRowId = nil
             }
             .buttonStyle(.plain)
             .font(.system(size: 10, weight: .medium))
@@ -439,8 +489,25 @@ struct LiveRunView: View {
             "node_id": nodeId ?? "",
         ])
 
-        store.connect(runId: runId)
-        lastLogStore.connect(runId: runId)
+        let hasExistingRunSession = store.runId == runId && lastLogStore.activeRunId == runId
+        let hasActiveConnection: Bool = {
+            switch store.connectionState {
+            case .disconnected:
+                return false
+            case .connecting, .streaming, .error:
+                return true
+            }
+        }()
+
+        if hasExistingRunSession && hasActiveConnection {
+            AppLogger.network.debug("LiveRunView reusing background stream", metadata: [
+                "run_id": runId,
+                "connection_state": String(describing: store.connectionState),
+            ])
+        } else {
+            store.connect(runId: runId)
+            lastLogStore.connect(runId: runId)
+        }
         await refreshRunSummary()
         startPollingRunSummary()
         applyDeepLinkSelectionIfNeeded()
@@ -451,24 +518,27 @@ struct LiveRunView: View {
         }
     }
 
-    private func teardown() {
+    private func teardown(disconnectStreams: Bool) {
         pollTask?.cancel()
         pollTask = nil
 
-        store.disconnect()
-        lastLogStore.disconnect()
-        if store.connectionState != .disconnected || store.runId != nil {
-            AppLogger.ui.warning("LiveRunView teardown anomaly", metadata: [
-                "run_id": runId,
-                "connection_state": String(describing: store.connectionState),
-                "store_run_id": store.runId ?? "nil",
-            ])
+        if disconnectStreams {
+            store.disconnect()
+            lastLogStore.disconnect()
+            if store.connectionState != .disconnected || store.runId != nil {
+                AppLogger.ui.warning("LiveRunView teardown anomaly", metadata: [
+                    "run_id": runId,
+                    "connection_state": String(describing: store.connectionState),
+                    "store_run_id": store.runId ?? "nil",
+                ])
+            }
         }
 
         let durationMs = Int(Date().timeIntervalSince(appearsAt) * 1000)
         AppLogger.ui.info("LiveRunView close", metadata: [
             "run_id": runId,
             "duration_ms": String(durationMs),
+            "disconnect_streams": String(disconnectStreams),
         ])
     }
 
@@ -559,11 +629,25 @@ struct LiveRunView: View {
 
         do {
             let result = try await devToolsClient.cancel(runId: runId)
-            setActionMessage(actionMessage("Run cancelled.", auditRowId: result.auditRowId), color: Theme.success)
+            setActionMessage("Run cancelled.", color: Theme.success, auditRowId: result.auditRowId)
             await refreshRunSummary()
         } catch {
-            setActionMessage("Cancel error: \(error.localizedDescription)", color: Theme.danger)
+            setActionMessage("Cancel error: \(error.localizedDescription)", color: Theme.danger, auditRowId: nil)
             AppLogger.error.error("LiveRunView cancel failed", metadata: [
+                "run_id": runId,
+                "error": error.localizedDescription,
+            ])
+        }
+    }
+
+    private func resumeRun() async {
+        do {
+            let result = try await devToolsClient.resume(runId: runId)
+            setActionMessage("Run resumed.", color: Theme.success, auditRowId: result.auditRowId)
+            await refreshRunSummary()
+        } catch {
+            setActionMessage("Resume error: \(error.localizedDescription)", color: Theme.danger, auditRowId: nil)
+            AppLogger.error.error("LiveRunView resume failed", metadata: [
                 "run_id": runId,
                 "error": error.localizedDescription,
             ])
@@ -578,12 +662,13 @@ struct LiveRunView: View {
         do {
             let result = try await devToolsClient.approve(runId: runId, nodeId: task.nodeId, iteration: task.iteration)
             setActionMessage(
-                actionMessage("Approved \(task.nodeId).", auditRowId: result.auditRowId),
-                color: Theme.success
+                "Approved \(task.nodeId).",
+                color: Theme.success,
+                auditRowId: result.auditRowId
             )
             await refreshRunSummary()
         } catch {
-            setActionMessage("Approve error: \(error.localizedDescription)", color: Theme.danger)
+            setActionMessage("Approve error: \(error.localizedDescription)", color: Theme.danger, auditRowId: nil)
             AppLogger.error.error("LiveRunView approve failed", metadata: [
                 "run_id": runId,
                 "node_id": task.nodeId,
@@ -599,10 +684,10 @@ struct LiveRunView: View {
 
         do {
             let result = try await devToolsClient.deny(runId: runId, nodeId: task.nodeId, iteration: task.iteration)
-            setActionMessage(actionMessage("Denied \(task.nodeId).", auditRowId: result.auditRowId), color: Theme.success)
+            setActionMessage("Denied \(task.nodeId).", color: Theme.success, auditRowId: result.auditRowId)
             await refreshRunSummary()
         } catch {
-            setActionMessage("Deny error: \(error.localizedDescription)", color: Theme.danger)
+            setActionMessage("Deny error: \(error.localizedDescription)", color: Theme.danger, auditRowId: nil)
             AppLogger.error.error("LiveRunView deny failed", metadata: [
                 "run_id": runId,
                 "node_id": task.nodeId,
@@ -614,7 +699,7 @@ struct LiveRunView: View {
     private func startHijack() {
         guard !hijacking else { return }
         hijacking = true
-        setActionMessage("Starting hijack session...", color: Theme.accent)
+        setActionMessage("Starting hijack session...", color: Theme.accent, auditRowId: nil)
 
         AppLogger.state.info("LiveRunView hijack start", metadata: [
             "run_id": runId,
@@ -626,7 +711,11 @@ struct LiveRunView: View {
             do {
                 let session = try await smithers.hijackRun(runId)
                 guard session.supportsResume else {
-                    setActionMessage("This agent does not support resumable hijack sessions.", color: Theme.warning)
+                    setActionMessage(
+                        "This agent does not support resumable hijack sessions.",
+                        color: Theme.warning,
+                        auditRowId: nil
+                    )
                     AppLogger.state.warning("LiveRunView hijack complete", metadata: [
                         "run_id": runId,
                         "result": "unsupported",
@@ -635,7 +724,11 @@ struct LiveRunView: View {
                 }
 
                 guard let invocation = session.launchInvocation() else {
-                    setActionMessage("Hijack session is missing resume details.", color: Theme.danger)
+                    setActionMessage(
+                        "Hijack session is missing resume details.",
+                        color: Theme.danger,
+                        auditRowId: nil
+                    )
                     AppLogger.state.warning("LiveRunView hijack complete", metadata: [
                         "run_id": runId,
                         "result": "missing_invocation",
@@ -653,13 +746,13 @@ struct LiveRunView: View {
                     try await launchHijackInTerminal(command: command, workingDirectory: invocation.workingDirectory)
                 }
 
-                setActionMessage("Hijack session launched.", color: Theme.success)
+                setActionMessage("Hijack session launched.", color: Theme.success, auditRowId: nil)
                 AppLogger.state.info("LiveRunView hijack complete", metadata: [
                     "run_id": runId,
                     "result": "launched",
                 ])
             } catch {
-                setActionMessage("Hijack error: \(error.localizedDescription)", color: Theme.danger)
+                setActionMessage("Hijack error: \(error.localizedDescription)", color: Theme.danger, auditRowId: nil)
                 AppLogger.error.error("LiveRunView hijack failed", metadata: [
                     "run_id": runId,
                     "error": error.localizedDescription,
@@ -674,14 +767,26 @@ struct LiveRunView: View {
         onOpenTerminalCommand(command, FileManager.default.currentDirectoryPath, "Logs \(shortRunID)")
     }
 
-    private func setActionMessage(_ message: String, color: Color) {
+    private func setActionMessage(_ message: String, color: Color, auditRowId: String?) {
         actionMessage = message
         actionMessageColor = color
+        actionAuditRowId = auditRowId
     }
 
-    private func actionMessage(_ base: String, auditRowId: String?) -> String {
-        guard let auditRowId, !auditRowId.isEmpty else { return base }
-        return "\(base) Audit: \(auditRowId)"
+    private func openAuditHistory(_ auditRowId: String) {
+        if let onOpenAuditHistory {
+            onOpenAuditHistory(auditRowId)
+            return
+        }
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(auditRowId, forType: .string)
+        #endif
+        setActionMessage(
+            "Audit row copied: \(auditRowId)",
+            color: Theme.textSecondary,
+            auditRowId: nil
+        )
     }
 
     private func isRunNotFoundError(_ error: Error) -> Bool {

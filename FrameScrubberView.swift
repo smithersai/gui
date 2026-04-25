@@ -82,7 +82,7 @@ final class FrameScrubDebouncer {
 }
 
 struct FrameScrubberView: View {
-    @ObservedObject var store: LiveRunDevToolsStore
+    @ObservedObject var store: DevToolsStore
 
     var onRequestRewind: ((Int) -> Void)?
 
@@ -91,7 +91,7 @@ struct FrameScrubberView: View {
     @State private var debouncer: FrameScrubDebouncer
 
     init(
-        store: LiveRunDevToolsStore,
+        store: DevToolsStore,
         debounceMs: Int = 50,
         debouncer: FrameScrubDebouncer? = nil,
         onRequestRewind: ((Int) -> Void)? = nil

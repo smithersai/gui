@@ -8,6 +8,7 @@ struct RunInspectorView: View {
     var onOpenWorkflow: ((String) -> Void)? = nil
     var onOpenPrompt: (() -> Void)? = nil
     var onRunSummaryRefreshed: ((RunSummary) -> Void)? = nil
+    var onOpenAuditHistory: ((String) -> Void)? = nil
     var onClose: () -> Void = {}
 
     var body: some View {
@@ -19,6 +20,7 @@ struct RunInspectorView: View {
             onOpenWorkflow: onOpenWorkflow,
             onOpenPrompt: onOpenPrompt,
             onRunSummaryRefreshed: onRunSummaryRefreshed,
+            onOpenAuditHistory: onOpenAuditHistory,
             onClose: onClose
         )
     }

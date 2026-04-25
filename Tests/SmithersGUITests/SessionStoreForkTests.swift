@@ -224,6 +224,23 @@ final class SessionStoreForkTests: XCTestCase {
         XCTAssertEqual(forkedTab.title, "My Claude")
     }
 
+    func testRunTabPinningTracksLifecycleForBackgroundDevToolsStreams() throws {
+        LiveRunSessionRegistry.shared.resetForTests()
+        defer { LiveRunSessionRegistry.shared.resetForTests() }
+
+        let context = try makeStoreContext()
+        defer { context.cleanup() }
+
+        let store = context.makeStore()
+        let runId = "run-pin-lifecycle"
+        store.addRunTab(runId: runId, title: "Workflow", preview: "RUNNING")
+
+        XCTAssertTrue(LiveRunSessionRegistry.shared.isPinned(runId: runId))
+
+        store.removeRunTab(runId)
+        XCTAssertFalse(LiveRunSessionRegistry.shared.isPinned(runId: runId))
+    }
+
     // MARK: - Context
 
     private func makeStoreContext() throws -> StoreContext {

@@ -8,6 +8,8 @@ struct LiveRunHeaderView: View {
     let heartbeatMs: Int
     let lastEventAt: Date?
     let lastSeq: Int
+    let viewersLastEventAt: Date?
+    let viewersHeartbeatMs: Int?
     let runStateLabel: String?
     let runStateReason: String?
     let connectionState: DevToolsConnectionState
@@ -16,6 +18,8 @@ struct LiveRunHeaderView: View {
     var onCancel: (() -> Void)?
     var onHijack: (() -> Void)?
     var onOpenLogs: (() -> Void)?
+    var onResume: (() -> Void)? = nil
+    var onRewind: (() -> Void)? = nil
     var onRefresh: (() -> Void)?
     var onClearHistory: (() -> Void)?
     var onOpenWorkflow: (() -> Void)?
@@ -87,7 +91,9 @@ struct LiveRunHeaderView: View {
             HeartbeatIndicator(
                 lastEventAt: lastEventAt,
                 heartbeatMs: heartbeatMs,
-                lastSeq: lastSeq
+                lastSeq: lastSeq,
+                viewersLastEventAt: viewersLastEventAt,
+                viewersHeartbeatMs: viewersHeartbeatMs
             )
 
             connectionIndicator
@@ -153,6 +159,12 @@ struct LiveRunHeaderView: View {
             Button("Refresh") { onRefresh?() }
             if onClearHistory != nil {
                 Button("Clear History") { onClearHistory?() }
+            }
+            if onResume != nil {
+                Button("Resume Run") { onResume?() }
+            }
+            if onRewind != nil {
+                Button("Rewind") { onRewind?() }
             }
             if onHijack != nil {
                 Button("Hijack") { onHijack?() }

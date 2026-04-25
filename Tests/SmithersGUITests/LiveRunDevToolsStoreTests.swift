@@ -74,6 +74,53 @@ final class MockDevToolsStreamProvider: DevToolsStreamProvider, @unchecked Senda
     }
 }
 
+@MainActor
+private final class ReconnectFixtureStreamProvider: DevToolsStreamProvider, @unchecked Sendable {
+    var streamCalls: [(runId: String, afterSeq: Int?)] = []
+
+    func streamDevTools(runId: String, afterSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error> {
+        streamCalls.append((runId, afterSeq))
+        let attempt = streamCalls.count
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                switch attempt {
+                case 1:
+                    let root = makeNode(id: 1, type: .workflow, name: "wf")
+                    continuation.yield(.snapshot(makeSnapshot(runId: runId, frameNo: 1, seq: 1, root: root)))
+                    continuation.yield(.delta(DevToolsDelta(
+                        baseSeq: 1,
+                        seq: 2,
+                        ops: [.addNode(parentId: 1, index: 0, node: makeNode(id: 2, name: "first"))]
+                    )))
+                    continuation.finish(throwing: URLError(.networkConnectionLost))
+                default:
+                    continuation.yield(.delta(DevToolsDelta(
+                        baseSeq: 2,
+                        seq: 3,
+                        ops: [.addNode(parentId: 1, index: 1, node: makeNode(id: 3, name: "second"))]
+                    )))
+                    while !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 100_000_000)
+                    }
+                    continuation.finish()
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
+    }
+
+    func getDevToolsSnapshot(runId: String, frameNo: Int?) async throws -> DevToolsSnapshot {
+        throw DevToolsClientError.runNotFound(runId)
+    }
+
+    func jumpToFrame(runId: String, frameNo: Int, confirm: Bool) async throws -> DevToolsJumpResult {
+        throw DevToolsClientError.runNotFound(runId)
+    }
+}
+
 // MARK: - Helpers
 
 private func makeNode(
@@ -302,6 +349,8 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         let restored = makeNode(id: 1, children: [makeNode(id: 2, name: "back")])
         store.applyEvent(.snapshot(DevToolsSnapshot(runId: "run_test", frameNo: 3, seq: 3, root: restored)))
         XCTAssertFalse(store.isGhost, "Ghost should auto-clear when node reappears")
+        XCTAssertTrue(store.ghostNodes.isEmpty, "Ghost map entry should be removed once node is active again")
+        XCTAssertFalse(store.isGhostNode(restored.children[0]))
     }
 
     func testGhostEvictionHonorsConfiguredCap() {
@@ -406,6 +455,29 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         XCTAssertEqual(store.connectionState, .connecting)
     }
 
+    func testIntegrationFixtureStreamAppliesLiveUpdates() async {
+        let provider = MockDevToolsStreamProvider()
+        let initialRoot = makeNode(id: 1, type: .workflow, children: [])
+        provider.events = [
+            .snapshot(makeSnapshot(runId: "run_test", frameNo: 1, seq: 1, root: initialRoot)),
+            .delta(
+                DevToolsDelta(
+                    baseSeq: 1,
+                    seq: 2,
+                    ops: [.addNode(parentId: 1, index: 0, node: makeNode(id: 2, name: "live-child"))]
+                )
+            ),
+        ]
+
+        let store = LiveRunDevToolsStore(streamProvider: provider)
+        store.connect(runId: "run_test")
+        try? await Task.sleep(nanoseconds: 40_000_000)
+
+        XCTAssertEqual(store.connectionState, .streaming)
+        XCTAssertEqual(store.seq, 2)
+        XCTAssertEqual(store.tree?.findNode(byId: 2)?.name, "live-child")
+    }
+
     func testDisconnectSetsDisconnected() {
         let provider = MockDevToolsStreamProvider()
         let store = LiveRunDevToolsStore(streamProvider: provider)
@@ -436,6 +508,21 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         store.connect(runId: "run_test")
 
         XCTAssertEqual(provider.lastAfterSeq, 9)
+    }
+
+    func testReconnectAfterMidStreamDropReplaysMissingDeltas() async {
+        let provider = ReconnectFixtureStreamProvider()
+        let store = LiveRunDevToolsStore(streamProvider: provider)
+        defer { store.disconnect() }
+
+        store.connect(runId: "run_test")
+        try? await Task.sleep(nanoseconds: 1_300_000_000)
+
+        XCTAssertGreaterThanOrEqual(provider.streamCalls.count, 2)
+        XCTAssertNil(provider.streamCalls[0].afterSeq)
+        XCTAssertEqual(provider.streamCalls[1].afterSeq, 2)
+        XCTAssertEqual(store.seq, 3)
+        XCTAssertEqual(store.tree?.children.map(\.name), ["first", "second"])
     }
 
     func testSwitchingBackToRunRequestsFreshSnapshotAfterTreeReset() async {

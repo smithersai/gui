@@ -150,7 +150,15 @@ struct MarkdownWebViewRepresentable: NSViewRepresentable {
     static func setContentScript(for content: String) -> String {
         let encoded = (try? JSONEncoder().encode(content))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
-        return "window.smithersMarkdown.setContent(\(encoded));"
+        // JSONEncoder leaves U+2028 and U+2029 unescaped, but those code
+        // points are line terminators in JavaScript pre-ES2019 string
+        // literals — they break the wrapped `setContent("...")` expression
+        // we hand to `evaluateJavaScript`. Escape them explicitly so the
+        // payload is safe in any JS engine WKWebView might delegate to.
+        let safeForJS = encoded
+            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+        return "window.smithersMarkdown.setContent(\(safeForJS));"
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {

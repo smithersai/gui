@@ -75,7 +75,29 @@ func extractState(from node: DevToolsNode) -> TaskExecutionState {
     if let stateValue = node.props["state"] {
         switch stateValue {
         case .string(let s):
-            return TaskExecutionState(rawValue: s) ?? .unknown
+            let normalized = s
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: "-", with: "")
+                .replacingOccurrences(of: "_", with: "")
+            switch normalized {
+            case "pending":
+                return .pending
+            case "running", "inprogress":
+                return .running
+            case "finished", "complete", "completed", "success", "succeeded", "done":
+                return .finished
+            case "failed", "error":
+                return .failed
+            case "blocked":
+                return .blocked
+            case "waitingapproval":
+                return .waitingApproval
+            case "cancelled", "canceled":
+                return .cancelled
+            default:
+                return TaskExecutionState(rawValue: s) ?? .unknown
+            }
         default:
             break
         }
@@ -122,6 +144,47 @@ func elapsedText(from node: DevToolsNode) -> String? {
         }
     }
     return nil
+}
+
+func nodeTypeIcon(for type: SmithersNodeType) -> String {
+    switch type {
+    case .workflow:
+        return "point.3.filled.connected.trianglepath.dotted"
+    case .sequence:
+        return "list.number"
+    case .parallel:
+        return "square.grid.3x1.folder.badge.plus"
+    case .task:
+        return "hammer"
+    case .forEach:
+        return "repeat"
+    case .conditional:
+        return "arrow.triangle.branch"
+    case .mergeQueue:
+        return "arrow.triangle.merge"
+    case .branch:
+        return "arrowshape.split.3.right"
+    case .loop:
+        return "arrow.clockwise"
+    case .worktree:
+        return "folder"
+    case .approval:
+        return "checkmark.shield"
+    case .timer:
+        return "timer"
+    case .subflow:
+        return "square.stack.3d.forward.dottedline"
+    case .waitForEvent:
+        return "bell"
+    case .saga:
+        return "link"
+    case .tryCatch:
+        return "shield.lefthalf.filled"
+    case .fragment:
+        return "rectangle.3.group"
+    case .unknown:
+        return "questionmark.square.dashed"
+    }
 }
 
 private func formatDuration(ms: Double) -> String {

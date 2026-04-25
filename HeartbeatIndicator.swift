@@ -4,6 +4,22 @@ struct HeartbeatIndicator: View {
     let lastEventAt: Date?
     let heartbeatMs: Int
     let lastSeq: Int
+    let viewersLastEventAt: Date?
+    let viewersHeartbeatMs: Int?
+
+    init(
+        lastEventAt: Date?,
+        heartbeatMs: Int,
+        lastSeq: Int,
+        viewersLastEventAt: Date? = nil,
+        viewersHeartbeatMs: Int? = nil
+    ) {
+        self.lastEventAt = lastEventAt
+        self.heartbeatMs = heartbeatMs
+        self.lastSeq = lastSeq
+        self.viewersLastEventAt = viewersLastEventAt
+        self.viewersHeartbeatMs = viewersHeartbeatMs
+    }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var enginePulse = false
@@ -11,7 +27,10 @@ struct HeartbeatIndicator: View {
     var body: some View {
         HStack(spacing: 4) {
             engineDot
-            UIHeartbeatDot()
+            UIHeartbeatDot(
+                lastEventAt: viewersLastEventAt,
+                heartbeatMs: viewersHeartbeatMs ?? heartbeatMs
+            )
         }
         .onChange(of: lastEventAt) { _, _ in
             guard !reduceMotion else { return }
@@ -79,19 +98,55 @@ extension HeartbeatColor {
 }
 
 struct UIHeartbeatDot: View {
+    let lastEventAt: Date?
+    let heartbeatMs: Int
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
+            let color = HeartbeatState.color(
+                now: context.date,
+                lastEventAt: lastEventAt,
+                heartbeatMs: max(heartbeatMs, 1)
+            )
             let phase = Int(context.date.timeIntervalSince1970) % 2 == 0
             Circle()
-                .fill(Theme.success.opacity(0.7))
+                .fill(color.swiftUIColor.opacity(0.8))
                 .frame(width: 6, height: 6)
                 .scaleEffect(phase && !reduceMotion ? 1.3 : 1.0)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.5), value: phase)
-                .accessibilityLabel("UI heartbeat \u{2014} responding")
+                .accessibilityLabel(accessibilityLabel(color: color))
                 .accessibilityRemoveTraits(.isImage)
-                .help("UI heartbeat \u{2014} SwiftUI main thread responsive")
+                .help(tooltip(color: color))
         }
+    }
+
+    private func tooltip(color: HeartbeatColor) -> String {
+        let stateWord: String
+        switch color {
+        case .green: stateWord = "healthy"
+        case .amber: stateWord = "stale"
+        case .red: stateWord = "unresponsive"
+        }
+        if let lastEventAt {
+            let formatter = ISO8601DateFormatter()
+            return "Viewers heartbeat\nLast: \(formatter.string(from: lastEventAt))\nInterval: \(heartbeatMs)ms\nState: \(stateWord)"
+        }
+        return "Viewers heartbeat\nLast: none\nInterval: \(heartbeatMs)ms\nState: \(stateWord)"
+    }
+
+    private func accessibilityLabel(color: HeartbeatColor) -> String {
+        let stateWord: String
+        switch color {
+        case .green: stateWord = "healthy"
+        case .amber: stateWord = "stale"
+        case .red: stateWord = "unresponsive"
+        }
+        if let lastEventAt {
+            let ago = max(0, Int(Date().timeIntervalSince(lastEventAt)))
+            return "Viewers heartbeat \u{2014} last event \(ago) seconds ago, \(stateWord)."
+        }
+        return "Viewers heartbeat \u{2014} no events received, \(stateWord)."
     }
 }

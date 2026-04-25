@@ -144,11 +144,11 @@ final class OutputTabController: ObservableObject {
 }
 
 struct OutputTab: View {
-    @ObservedObject var store: LiveRunDevToolsStore
+    @ObservedObject var store: DevToolsStore
 
     @StateObject private var controller: OutputTabController
 
-    init(store: LiveRunDevToolsStore, outputProvider: NodeOutputProvider) {
+    init(store: DevToolsStore, outputProvider: NodeOutputProvider) {
         self.store = store
         _controller = StateObject(wrappedValue: OutputTabController(outputProvider: outputProvider))
     }

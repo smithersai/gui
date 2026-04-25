@@ -2,7 +2,7 @@ import SwiftUI
 import os
 
 struct NodeInspectorView: View {
-    @ObservedObject var store: LiveRunDevToolsStore
+    @ObservedObject var store: DevToolsStore
     @Binding var selectedTab: InspectorTab
     private let outputProvider: NodeOutputProvider
     private let logsStreamProvider: ChatStreamProviding
@@ -11,9 +11,16 @@ struct NodeInspectorView: View {
 
     @State private var buildStart: CFAbsoluteTime = 0
 
+    private struct InspectorToolCall: Identifiable, Equatable {
+        let id: String
+        let name: String
+        let sideEffect: String?
+        let status: String?
+    }
+
     @MainActor
     init(
-        store: LiveRunDevToolsStore,
+        store: DevToolsStore,
         selectedTab: Binding<InspectorTab>,
         outputProvider: NodeOutputProvider? = nil,
         logsStreamProvider: ChatStreamProviding? = nil,
@@ -55,6 +62,18 @@ struct NodeInspectorView: View {
     private var hasLogs: Bool {
         guard let node else { return false }
         return node.props["logs"] != nil
+    }
+
+    private var toolCalls: [InspectorToolCall] {
+        guard let node else { return [] }
+        let keys = ["toolCalls", "tool_calls", "tools"]
+        for key in keys {
+            guard let value = node.props[key] else { continue }
+            if let parsed = parseToolCalls(from: value), !parsed.isEmpty {
+                return parsed
+            }
+        }
+        return []
     }
 
     private var nodeRoleDescription: String {
@@ -127,6 +146,9 @@ struct NodeInspectorView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     propsSection(node)
+                    if !toolCalls.isEmpty {
+                        toolCallsSection(toolCalls)
+                    }
                 }
             }
 
@@ -169,6 +191,57 @@ struct NodeInspectorView: View {
             PropsTableView(props: node.props, onOpenPrompt: onOpenPrompt)
         }
         .padding(12)
+    }
+
+    private func toolCallsSection(_ calls: [InspectorToolCall]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("tool calls")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(Theme.textTertiary)
+                .textCase(.uppercase)
+
+            ForEach(calls) { call in
+                HStack(spacing: 8) {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+
+                    Text(call.name)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if let status = call.status, !status.isEmpty {
+                        Text(status)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+
+                    Spacer()
+
+                    if let sideEffect = call.sideEffect, !sideEffect.isEmpty {
+                        sideEffectBadge(sideEffect)
+                    }
+                }
+                .accessibilityIdentifier("inspector.toolCall.\(call.id)")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
+        .accessibilityIdentifier("inspector.toolCalls")
+    }
+
+    private func sideEffectBadge(_ sideEffect: String) -> some View {
+        let style = sideEffectStyle(sideEffect)
+        return Text(style.label)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(style.color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(style.color.opacity(0.12))
+            .clipShape(Capsule())
+            .accessibilityLabel("Side effect: \(style.label)")
     }
 
     private var nonTaskFooter: some View {
@@ -229,5 +302,66 @@ struct NodeInspectorView: View {
             "prop_count": String(node.props.count),
             "build_ms": String(buildMs),
         ])
+    }
+
+    private func parseToolCalls(from value: JSONValue) -> [InspectorToolCall]? {
+        guard case .array(let values) = value else { return nil }
+        return values.enumerated().compactMap { index, item in
+            guard case .object(let object) = item else { return nil }
+            let id = stringValue(object["id"])
+                ?? stringValue(object["callId"])
+                ?? stringValue(object["toolCallId"])
+                ?? "tool-call-\(index)"
+            let name = stringValue(object["name"])
+                ?? stringValue(object["tool"])
+                ?? stringValue(object["toolName"])
+                ?? stringValue(object["function"])
+                ?? "tool-call-\(index + 1)"
+            let sideEffect = stringValue(object["sideEffect"])
+                ?? stringValue(object["side_effect"])
+                ?? stringValue(object["effect"])
+                ?? stringValue(object["effects"])
+            let status = stringValue(object["status"]) ?? stringValue(object["state"])
+            return InspectorToolCall(id: id, name: name, sideEffect: sideEffect, status: status)
+        }
+    }
+
+    private func sideEffectStyle(_ rawValue: String) -> (label: String, color: Color) {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.isEmpty {
+            return ("UNKNOWN", Theme.textTertiary)
+        }
+        if normalized.contains("read") || normalized == "none" {
+            return (normalized.uppercased(), Theme.textTertiary)
+        }
+        if normalized.contains("write") ||
+            normalized.contains("mutat") ||
+            normalized.contains("network") ||
+            normalized.contains("shell") ||
+            normalized.contains("external") ||
+            normalized.contains("file") ||
+            normalized.contains("delete") ||
+            normalized.contains("create") ||
+            normalized.contains("modify") {
+            return (normalized.uppercased(), Theme.warning)
+        }
+        return (normalized.uppercased(), Theme.accent)
+    }
+
+    private func stringValue(_ value: JSONValue?) -> String? {
+        guard let value else { return nil }
+        switch value {
+        case .string(let value):
+            return value
+        case .number(let value):
+            if value.rounded() == value {
+                return String(Int(value))
+            }
+            return String(value)
+        case .bool(let value):
+            return value ? "true" : "false"
+        default:
+            return nil
+        }
     }
 }

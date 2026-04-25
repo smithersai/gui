@@ -114,6 +114,11 @@ final class TreeRowStateTests: XCTestCase {
         XCTAssertEqual(extractState(from: node), .unknown)
     }
 
+    func testExtractStateWaitingApprovalWithHyphenatedValue() {
+        let node = DevToolsNode(id: 1, type: .task, name: "Test", props: ["state": .string("waiting-approval")])
+        XCTAssertEqual(extractState(from: node), .waitingApproval)
+    }
+
     func testExtractStateMissing() {
         let node = DevToolsNode(id: 1, type: .task, name: "Test", props: [:])
         XCTAssertEqual(extractState(from: node), .unknown)
@@ -174,5 +179,17 @@ final class TreeRowStateTests: XCTestCase {
         let node = DevToolsNode(id: 1, type: .task, name: "Task", task: task)
         let summary = keyPropsSummary(for: node)
         XCTAssertFalse(summary.contains("iter="))
+    }
+
+    func testNodeTypeIconCoverage() {
+        let coveredIcons = [
+            nodeTypeIcon(for: .workflow),
+            nodeTypeIcon(for: .sequence),
+            nodeTypeIcon(for: .parallel),
+            nodeTypeIcon(for: .task),
+            nodeTypeIcon(for: .approval),
+            nodeTypeIcon(for: .unknown),
+        ]
+        XCTAssertTrue(coveredIcons.allSatisfy { !$0.isEmpty })
     }
 }

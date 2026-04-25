@@ -166,17 +166,24 @@ struct TreeRowView: View {
     }
 
     private var tagLabel: some View {
-        Text("<\(node.name)>")
-            .font(.system(size: 12, design: .monospaced))
-            .foregroundColor(state.tagForeground)
-            .strikethrough(state.isStrikethrough)
-            .opacity(state.shouldPulse && !reduceMotion ? pulseOpacity : 1.0)
-            .animation(
-                state.shouldPulse && !reduceMotion
-                    ? .easeInOut(duration: 1.0).repeatForever(autoreverses: true)
-                    : .default,
-                value: state.shouldPulse
-            )
+        HStack(spacing: 4) {
+            Image(systemName: nodeTypeIcon(for: node.type))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(state.tagForeground.opacity(0.9))
+                .accessibilityHidden(true)
+
+            Text("<\(node.name)>")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(state.tagForeground)
+                .strikethrough(state.isStrikethrough)
+                .opacity(state.shouldPulse && !reduceMotion ? pulseOpacity : 1.0)
+                .animation(
+                    state.shouldPulse && !reduceMotion
+                        ? .easeInOut(duration: 1.0).repeatForever(autoreverses: true)
+                        : .default,
+                    value: state.shouldPulse
+                )
+        }
     }
 
     @ViewBuilder
@@ -254,6 +261,7 @@ struct TreeRowView: View {
 
     private var accessibilityLabelText: String {
         var parts = ["<\(node.name)>"]
+        parts.append("type \(node.type.rawValue)")
         let summary = keyPropsSummary(for: node)
         if !summary.isEmpty { parts.append(summary) }
         parts.append(state.label)
