@@ -1245,11 +1245,10 @@ class SmithersClient: ObservableObject {
             serverReachable = true
         } else {
             isConnected = version != nil
-            // Remote mode absent → local-only; transport is .none. We
-            // intentionally do NOT fall back to .cli for the remote data
-            // plane — tickets 0124/0126 require a real sign-in before the
-            // remote UI renders against shape reads.
-            connectionTransport = version == nil ? .none : .none
+            // Remote mode absent → local-only. We keep the local transport
+            // marker as `.cli`; remote mode only flips to `.http` when the
+            // runtime-backed provider is installed.
+            connectionTransport = version == nil ? .none : .cli
             serverReachable = false
         }
     }
@@ -1400,6 +1399,13 @@ struct AnyEncodable: Encodable {
 
 private extension SmithersClient {
     func requireRemoteRepoRef() async throws -> ActionRepoRef {
+        if let remote = remoteProvider,
+           let repo = remote.preferredActionRepoRef() {
+            return repo
+        }
+        if remoteProvider != nil {
+            throw ActionContractError.missingRepoContext
+        }
         let repo = try await getCurrentRepo()
         guard
             let owner = repo.owner?.trimmingCharacters(in: .whitespacesAndNewlines),

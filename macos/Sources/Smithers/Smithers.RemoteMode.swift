@@ -170,6 +170,12 @@ final class RemoteModeController: ObservableObject {
     @Published private(set) var openWorkspaceTabs: [RemoteWorkspaceTab] = []
     @Published private(set) var remoteWorkspaces: [WorkspaceRow] = []
     @Published private(set) var isRemoteFeatureEnabled: Bool
+    // Runtime-backed provider installed into `SmithersClient` whenever the
+    // production lifecycle is live (non-E2E path).
+    @Published private(set) var runtimeProvider: SmithersRemoteProvider?
+    // Root-shell route toggle. Welcome uses this to enter the remote shell
+    // without requiring a local folder to be opened first.
+    @Published private(set) var shouldPresentRemoteShell: Bool = false
 
     // Auth plumbing.
     let authModel: AuthViewModel
@@ -177,9 +183,9 @@ final class RemoteModeController: ObservableObject {
     // Lifecycle (nil until sign-in completes). The session is owned here so
     // it survives as long as the user is signed in.
     private(set) var lifecycle: SmithersSessionLifecycle?
-    private var snapshotObserver: NSObjectProtocol?
     private var reconnectObserver: NSObjectProtocol?
     private var authExpiredObserver: NSObjectProtocol?
+    private var authObservationTask: Task<Void, Never>?
     private var workspacesObservation: Task<Void, Never>?
     private var slowBootTimer: Task<Void, Never>?
     private var featureFlagRefreshTask: Task<Void, Never>?
@@ -347,9 +353,9 @@ final class RemoteModeController: ObservableObject {
     }
 
     deinit {
-        if let o = snapshotObserver { NotificationCenter.default.removeObserver(o) }
         if let o = reconnectObserver { NotificationCenter.default.removeObserver(o) }
         if let o = authExpiredObserver { NotificationCenter.default.removeObserver(o) }
+        authObservationTask?.cancel()
         workspacesObservation?.cancel()
         slowBootTimer?.cancel()
         featureFlagRefreshTask?.cancel()
@@ -405,13 +411,31 @@ final class RemoteModeController: ObservableObject {
         openWorkspaceTabs.removeAll { $0.id == id }
     }
 
+    /// Bridge from the REST workspace picker (which yields id + name) to the
+    /// shape-backed `WorkspaceRow` that `openRemoteWorkspace` expects.
+    /// Idempotent: calling this twice for the same workspace id does nothing.
+    func openWorkspaceById(id: String, name: String, engineId: String? = nil) {
+        let row = WorkspaceRow(workspaceId: id, name: name, status: "active", engineId: engineId)
+        openRemoteWorkspace(row)
+    }
+
+    func presentRemoteShell() {
+        guard isRemoteFeatureEnabled else { return }
+        shouldPresentRemoteShell = true
+    }
+
+    func dismissRemoteShell() {
+        shouldPresentRemoteShell = false
+    }
+
     // MARK: Bootstrap
 
     private func wireAuthObservation() {
         // Subscribe to phase changes on the AuthViewModel. SwiftUI already
         // re-renders; we just need to react to signIn completions.
         // Poll on objectWillChange so we don't need to own a Combine sink.
-        Task { [weak self] in
+        authObservationTask?.cancel()
+        authObservationTask = Task { [weak self] in
             guard let self else { return }
             for await _ in self.authModel.objectWillChange.values {
                 await self.handleAuthChanged()
@@ -459,6 +483,7 @@ final class RemoteModeController: ObservableObject {
                 engineConfig: config
             )
             self.lifecycle = lc
+            self.runtimeProvider = SmithersRemoteProvider(lifecycle: lc)
             wireStoreObservation(lifecycle: lc)
             // We still wait for the first workspaces snapshot before flipping
             // to `.active`. `wireStoreObservation` handles that transition.
@@ -542,19 +567,20 @@ final class RemoteModeController: ObservableObject {
         // lastRefreshedAt set" as the first snapshot; the 0124 store sets
         // `lastRefreshedAt` on every reloadFromCache (including empty result
         // sets), which fires once the initial shape sync completes.
+        //
+        // Important: the store may already have a refreshed snapshot by the
+        // time this observer is wired (bootstrap race). We therefore apply an
+        // immediate snapshot first, then keep listening for subsequent deltas.
         workspacesObservation?.cancel()
         workspacesObservation = Task { [weak self, weak lifecycle] in
             guard let self, let lifecycle else { return }
             for await _ in lifecycle.store.workspaces.objectWillChange.values {
                 await MainActor.run {
-                    self.remoteWorkspaces = lifecycle.store.workspaces.workspaces
-                    if lifecycle.store.workspaces.lastRefreshedAt != nil {
-                        self.phase = .active
-                        self.cancelSlowBootTimer()
-                    }
+                    self.applyWorkspacesSnapshot(lifecycle.store.workspaces)
                 }
             }
         }
+        applyWorkspacesSnapshot(lifecycle.store.workspaces)
 
         reconnectObserver = NotificationCenter.default.addObserver(
             forName: .smithersReconnected,
@@ -581,6 +607,24 @@ final class RemoteModeController: ObservableObject {
             Task { @MainActor [weak self] in
                 await self?.signOut()
             }
+        }
+    }
+
+    private func applyWorkspacesSnapshot(_ store: WorkspacesStore) {
+        remoteWorkspaces = store.workspaces
+        guard store.lastRefreshedAt != nil else { return }
+
+        switch phase {
+        case .bootBlocked, .slowBoot, .stalledBoot:
+            phase = .active
+            cancelSlowBootTimer()
+        case .active:
+            cancelSlowBootTimer()
+        case .reconnecting:
+            // Keep reconnect messaging visible until its timer clears.
+            break
+        default:
+            break
         }
     }
 
@@ -616,14 +660,12 @@ final class RemoteModeController: ObservableObject {
     }
 
     private func teardownRemoteSession() {
+        shouldPresentRemoteShell = false
         openWorkspaceTabs.removeAll()
         remoteWorkspaces.removeAll()
+        runtimeProvider = nil
         workspacesObservation?.cancel()
         workspacesObservation = nil
-        if let snapshotObserver {
-            NotificationCenter.default.removeObserver(snapshotObserver)
-            self.snapshotObserver = nil
-        }
         if let reconnectObserver {
             NotificationCenter.default.removeObserver(reconnectObserver)
             self.reconnectObserver = nil

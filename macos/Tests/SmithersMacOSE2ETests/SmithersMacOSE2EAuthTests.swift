@@ -219,5 +219,16 @@ final class SmithersMacOSE2EAuthTests: XCTestCase {
             "signed-in manage control should disappear after sign-out"
         )
     }
+
+    func test_signed_in_welcome_exposes_browse_sandboxes_entry() throws {
+        let app = XCUIApplication()
+        _ = applyE2ELaunchEnvironment(to: app, bypassAuth: true, remoteFlag: true, autoOpen: false)
+        MacE2ETestSupport.launchAndWaitForForeground(app)
+
+        XCTAssertTrue(
+            app.buttons["welcome.remote.browse"].waitForExistence(timeout: 45),
+            "signed-in Welcome surface should expose the remote browse entry"
+        )
+    }
 }
 #endif

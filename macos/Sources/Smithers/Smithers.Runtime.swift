@@ -28,6 +28,8 @@ import SmithersStore
 final class SmithersRemoteProvider: ObservableObject {
     let lifecycle: SmithersSessionLifecycle
     var store: SmithersStore { lifecycle.store }
+    private static let repoOwnerEnvKeys = ["SMITHERS_REMOTE_REPO_OWNER", "PLUE_E2E_REPO_OWNER"]
+    private static let repoNameEnvKeys = ["SMITHERS_REMOTE_REPO_NAME", "PLUE_E2E_REPO_NAME"]
 
     init (lifecycle: SmithersSessionLifecycle) {
         self.lifecycle = lifecycle
@@ -68,6 +70,44 @@ final class SmithersRemoteProvider: ObservableObject {
         // TODO(0126): workspace snapshots aren't in the 0116/0117 slices yet;
         // this returns the last-known cache once the shape lands.
         []
+    }
+
+    /// Resolve repo owner/name for remote writes without consulting local CLI
+    /// state. Prefers workspace rows from the runtime store, then falls back to
+    /// explicit environment overrides used by the macOS E2E harness.
+    func preferredActionRepoRef(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> ActionRepoRef? {
+        Self.resolveActionRepoRef(
+            workspaceRows: store.workspaces.workspaces,
+            environment: environment
+        )
+    }
+
+    static func resolveActionRepoRef(
+        workspaceRows: [WorkspaceRow],
+        environment: [String: String]
+    ) -> ActionRepoRef? {
+        if let repo = workspaceRows.lazy.compactMap(\.actionRepoRef).first {
+            return repo
+        }
+        let owner = firstEnvironmentValue(in: environment, keys: repoOwnerEnvKeys)
+        let name = firstEnvironmentValue(in: environment, keys: repoNameEnvKeys)
+        guard let owner, let name else { return nil }
+        return ActionRepoRef(owner: owner, name: name)
+    }
+
+    private static func firstEnvironmentValue(
+        in environment: [String: String],
+        keys: [String]
+    ) -> String? {
+        for key in keys {
+            if let raw = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !raw.isEmpty {
+                return raw
+            }
+        }
+        return nil
     }
 
     // MARK: Writes — pessimistic.
@@ -270,5 +310,19 @@ extension Workspace {
             status: row.status,
             createdAt: row.createdAt.map { iso8601Formatter.string(from: $0) }
         )
+    }
+}
+
+private extension WorkspaceRow {
+    var actionRepoRef: ActionRepoRef? {
+        guard
+            let owner = repoOwner?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !owner.isEmpty,
+            let name = repoName?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !name.isEmpty
+        else {
+            return nil
+        }
+        return ActionRepoRef(owner: owner, name: name)
     }
 }

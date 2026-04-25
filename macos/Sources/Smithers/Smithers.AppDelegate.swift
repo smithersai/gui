@@ -56,15 +56,19 @@ struct SmithersRootView: View {
             if let path = manager.activeWorkspacePath {
                 ContentView(workspacePath: path)
                     .id(path)
-            } else if remoteMode.isSignedIn && remoteMode.phase.allowsRemoteSurface {
-                // Signed in remote user with no local folder open → show the
-                // Welcome view (which now exposes the sandbox picker + local
-                // "Open Folder…"). The shell inside ContentView only loads
-                // once the user picks a concrete workspace (local or
-                // remote). For remote workspaces the detail surface is
-                // served by `WorkspacesView` today; 0138 replaces this with
-                // a dedicated full-screen switcher.
-                WelcomeView(manager: manager)
+            } else if remoteMode.shouldPresentRemoteShell,
+                      remoteMode.isSignedIn {
+                // 0126 desktop-remote path: a signed-in user can enter the
+                // shell without selecting a local folder first. The remote
+                // entry starts on `.workspaces` (sandbox browser). If the
+                // first snapshot is still booting, WorkspacesView shows the
+                // blocked/slow-boot state instead of blanking the shell.
+                ContentView(
+                    workspacePath: nil,
+                    initialDestination: .workspaces,
+                    remoteMode: remoteMode
+                )
+                .id("remote-shell")
             } else {
                 WelcomeView(manager: manager)
             }
