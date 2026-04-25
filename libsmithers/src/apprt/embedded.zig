@@ -10,6 +10,7 @@ const Palette = @import("../commands/palette.zig");
 const slash = @import("../commands/slash.zig");
 const cwd = @import("../workspace/cwd.zig");
 const Persistence = @import("../persistence/sqlite.zig");
+const obs = @import("../obs.zig");
 
 const log = std.log.scoped(.smithers_core_embedded);
 
@@ -41,11 +42,15 @@ pub export fn smithers_info() structs.Info {
 
 pub export fn smithers_app_new(cfg: ?*const structs.RuntimeConfig) ?*App {
     log.debug("ffi smithers_app_new", .{});
+    const t = logx.startTimer();
     const runtime = if (cfg) |ptr| ptr.* else structs.RuntimeConfig{};
-    return App.create(ffi.allocator, runtime) catch |err| {
+    const result = App.create(ffi.allocator, runtime) catch |err| {
         logx.catchErr(log, "smithers_app_new", err);
+        obs.record(.err, "smithers_core_embedded", "app_new", t.elapsedMs(), "{\"ok\":false}");
         return null;
     };
+    obs.record(.info, "smithers_core_embedded", "app_new", t.elapsedMs(), "{\"ok\":true}");
+    return result;
 }
 
 pub export fn smithers_app_free(app: ?*App) void {
@@ -97,17 +102,31 @@ pub export fn smithers_app_remove_recent_workspace(app: ?*App, path: ?[*:0]const
 pub export fn smithers_session_new(app: ?*App, opts: structs.SessionOptions) ?*Session {
     const ptr = app orelse {
         log.warn("smithers_session_new: app is null", .{});
+        obs.record(.warn, "smithers_core_embedded", "session_new", null, "{\"err\":\"app_null\"}");
         return null;
     };
     log.debug("ffi smithers_session_new kind={}", .{@intFromEnum(opts.kind)});
-    return Session.create(ptr, opts) catch |err| {
+    const t = logx.startTimer();
+    const result = Session.create(ptr, opts) catch |err| {
         logx.catchWarn(log, "smithers_session_new", err);
+        var fbuf: [128]u8 = undefined;
+        const f = std.fmt.bufPrint(&fbuf, "{{\"kind\":{d},\"ok\":false}}", .{@intFromEnum(opts.kind)}) catch null;
+        obs.record(.err, "smithers_core_embedded", "session_new", t.elapsedMs(), f);
         return null;
     };
+    var fbuf: [128]u8 = undefined;
+    const f = std.fmt.bufPrint(&fbuf, "{{\"kind\":{d},\"ok\":true}}", .{@intFromEnum(opts.kind)}) catch null;
+    obs.record(.info, "smithers_core_embedded", "session_new", t.elapsedMs(), f);
+    obs.incrementCounter("session.created", 1);
+    return result;
 }
 
 pub export fn smithers_session_free(session: ?*Session) void {
-    if (session) |ptr| ptr.destroy();
+    if (session) |ptr| {
+        ptr.destroy();
+        obs.record(.debug, "smithers_core_embedded", "session_free", null, null);
+        obs.incrementCounter("session.destroyed", 1);
+    }
 }
 
 pub export fn smithers_session_kind(session: ?*Session) structs.SessionKind {
@@ -173,7 +192,19 @@ pub export fn smithers_client_call(
     };
     const method_slice = ffi.spanZ(method);
     log.debug("ffi smithers_client_call method={s}", .{method_slice});
-    return ptr.call(method_slice, ffi.spanZ(args_json), out_err);
+    const t = logx.startTimer();
+    const result = ptr.call(method_slice, ffi.spanZ(args_json), out_err);
+    const is_error = if (out_err) |err| err.code != 0 else false;
+    // Record both a generic span and a per-method observation. The per-method
+    // observation uses a stable "client.call.<method>" key so the metrics
+    // snapshot can show p50/max latency by RPC.
+    var fbuf: [192]u8 = undefined;
+    const fields = std.fmt.bufPrint(&fbuf, "{{\"method\":\"{s}\",\"err\":{}}}", .{ method_slice, is_error }) catch null;
+    obs.record(if (is_error) .warn else .debug, "smithers_core_ffi", "client_call", t.elapsedMs(), fields);
+    var key_buf: [128]u8 = undefined;
+    const key = std.fmt.bufPrint(&key_buf, "client.call.{s}", .{method_slice}) catch "client.call.unknown";
+    obs.recordMethod(key, t.elapsedMs(), is_error);
+    return result;
 }
 
 pub export fn smithers_client_stream(
@@ -189,7 +220,14 @@ pub export fn smithers_client_stream(
     };
     const method_slice = ffi.spanZ(method);
     log.debug("ffi smithers_client_stream method={s}", .{method_slice});
-    return ptr.stream(method_slice, ffi.spanZ(args_json), out_err);
+    const t = logx.startTimer();
+    const result = ptr.stream(method_slice, ffi.spanZ(args_json), out_err);
+    const is_error = result == null or (if (out_err) |err| err.code != 0 else false);
+    var fbuf: [192]u8 = undefined;
+    const fields = std.fmt.bufPrint(&fbuf, "{{\"method\":\"{s}\",\"err\":{}}}", .{ method_slice, is_error }) catch null;
+    obs.record(if (is_error) .warn else .info, "smithers_core_ffi", "client_stream_open", t.elapsedMs(), fields);
+    obs.incrementCounter(if (is_error) "client.stream_open.error" else "client.stream_open.ok", 1);
+    return result;
 }
 
 pub export fn smithers_palette_new(app: ?*App) ?*Palette {
