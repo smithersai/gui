@@ -54,10 +54,10 @@ export function ValidationLoop({
   return (
     <Loop id={`${idPrefix}:loop`} until={done} maxIterations={maxIterations} onMaxReached="return-last">
       <Sequence>
-        <Task id={`${idPrefix}:implement`} output={implementOutputSchema} agent={implementAgents} timeoutMs={1_800_000} heartbeatTimeoutMs={600_000}>
+        <Task id={`${idPrefix}:implement`} output={implementOutputSchema} agent={implementAgents} timeoutMs={1_800_000} heartbeatTimeoutMs={1_800_000}>
           <ImplementPrompt prompt={implementPrompt} />
         </Task>
-        <Task id={`${idPrefix}:validate`} output={validateOutputSchema} agent={validationChain} timeoutMs={1_800_000} heartbeatTimeoutMs={600_000}>
+        <Task id={`${idPrefix}:validate`} output={validateOutputSchema} agent={validationChain} timeoutMs={1_800_000} heartbeatTimeoutMs={1_800_000}>
           <ValidatePrompt prompt={promptText} />
         </Task>
         <Review idPrefix={`${idPrefix}:review`} prompt={promptText} agents={reviewAgents} />
