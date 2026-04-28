@@ -9,12 +9,12 @@ final class RuntimePTYTransportTests: XCTestCase {
     private var cancellables: Set<AnyCancellable> = []
 
     func test_successfulAttach_setsStateConnected() async {
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         let session = FakeRuntimeSession(
             results: [.success(FakeRuntimePTY())],
-            now: { clock.elapsedSeconds }
+            now: { sleeper.elapsedSeconds }
         )
-        let transport = RuntimePTYTransport(session: session, sessionID: "session-success", clock: clock)
+        let transport = RuntimePTYTransport(session: session, sessionID: "session-success", sleeper: sleeper)
         defer { transport.stop() }
 
         transport.start(onBytes: { _ in }, onClosed: {})
@@ -27,12 +27,12 @@ final class RuntimePTYTransportTests: XCTestCase {
     }
 
     func test_attachFailure_entersReconnectingAndRetriesAfterOneSecond() async {
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         let session = FakeRuntimeSession(results: [
             .failure(FakeRuntimeError.attachFailed),
             .success(FakeRuntimePTY()),
-        ], now: { clock.elapsedSeconds })
-        let transport = RuntimePTYTransport(session: session, sessionID: "session-retry-once", clock: clock)
+        ], now: { sleeper.elapsedSeconds })
+        let transport = RuntimePTYTransport(session: session, sessionID: "session-retry-once", sleeper: sleeper)
         defer { transport.stop() }
 
         transport.start(onBytes: { _ in }, onClosed: {})
@@ -42,8 +42,8 @@ final class RuntimePTYTransportTests: XCTestCase {
         }
         XCTAssertTrue(reconnecting)
 
-        await clock.waitForSleepCallCount(1)
-        clock.advance(by: .seconds(1))
+        await sleeper.waitForSleepCallCount(1)
+        sleeper.advance(bySeconds: 1)
 
         let retried = await waitUntil(timeout: 1) {
             session.attachCount >= 2
@@ -61,18 +61,18 @@ final class RuntimePTYTransportTests: XCTestCase {
     }
 
     func test_fiveFailedRetries_disconnectAndStopRetryingWithoutUserAction() async {
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         var closedCount = 0
         let session = FakeRuntimeSession(
             defaultResult: .failure(FakeRuntimeError.attachFailed),
-            now: { clock.elapsedSeconds }
+            now: { sleeper.elapsedSeconds }
         )
-        let transport = RuntimePTYTransport(session: session, sessionID: "session-exhaust", clock: clock)
+        let transport = RuntimePTYTransport(session: session, sessionID: "session-exhaust", sleeper: sleeper)
         defer { transport.stop() }
 
         transport.start(onBytes: { _ in }, onClosed: { closedCount += 1 })
 
-        await exhaustRetryBudget(clock: clock)
+        await exhaustRetryBudget(sleeper: sleeper)
 
         let exhausted = await waitUntil(timeout: 1) {
             session.attachCount >= 6 && transport.connectionState == .disconnected
@@ -81,18 +81,18 @@ final class RuntimePTYTransportTests: XCTestCase {
         XCTAssertEqual(closedCount, 1)
 
         let attemptsAfterDisconnect = session.attachCount
-        clock.advance(by: .seconds(60))
+        sleeper.advance(bySeconds: 60)
         await Task.yield()
         XCTAssertEqual(session.attachCount, attemptsAfterDisconnect)
     }
 
     func test_explicitRetryAfterDisconnected_setsConnectingAndResetsRetryBudget() async {
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         let session = FakeRuntimeSession(
             defaultResult: .failure(FakeRuntimeError.attachFailed),
-            now: { clock.elapsedSeconds }
+            now: { sleeper.elapsedSeconds }
         )
-        let transport = RuntimePTYTransport(session: session, sessionID: "session-manual-retry", clock: clock)
+        let transport = RuntimePTYTransport(session: session, sessionID: "session-manual-retry", sleeper: sleeper)
         var observedStates: [TerminalSurfaceConnectionState] = []
         transport.connectionStatePublisher
             .sink { observedStates.append($0) }
@@ -101,7 +101,7 @@ final class RuntimePTYTransportTests: XCTestCase {
 
         transport.start(onBytes: { _ in }, onClosed: {})
 
-        await exhaustRetryBudget(clock: clock)
+        await exhaustRetryBudget(sleeper: sleeper)
 
         let disconnected = await waitUntil(timeout: 1) {
             transport.connectionState == .disconnected
@@ -117,8 +117,8 @@ final class RuntimePTYTransportTests: XCTestCase {
         transport.reconnect()
 
         XCTAssertTrue(observedStates.contains(.connecting))
-        await clock.waitForSleepCallCount(6)
-        clock.advance(by: .seconds(1))
+        await sleeper.waitForSleepCallCount(6)
+        sleeper.advance(bySeconds: 1)
 
         let connected = await waitUntil(timeout: 1) {
             transport.connectionState == .connected
@@ -127,17 +127,17 @@ final class RuntimePTYTransportTests: XCTestCase {
     }
 
     func test_backoffIntervalsFollowOneTwoFourEightSixteenSeconds() async {
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         let session = FakeRuntimeSession(
             defaultResult: .failure(FakeRuntimeError.attachFailed),
-            now: { clock.elapsedSeconds }
+            now: { sleeper.elapsedSeconds }
         )
-        let transport = RuntimePTYTransport(session: session, sessionID: "session-backoff", clock: clock)
+        let transport = RuntimePTYTransport(session: session, sessionID: "session-backoff", sleeper: sleeper)
         defer { transport.stop() }
 
         transport.start(onBytes: { _ in }, onClosed: {})
 
-        await exhaustRetryBudget(clock: clock)
+        await exhaustRetryBudget(sleeper: sleeper)
 
         let exhausted = await waitUntil(timeout: 1) {
             session.attachCount >= 6
@@ -151,16 +151,17 @@ final class RuntimePTYTransportTests: XCTestCase {
         for (actual, expectedInterval) in zip(intervals, expected) {
             XCTAssertEqual(actual, expectedInterval, accuracy: 0.001)
         }
+        XCTAssertEqual(sleeper.requestedSleepSeconds, expected.map { Int($0) })
     }
 
     func test_stopDuringRetrySettlesDisconnectedAndCancelsZombieRetry() async {
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         let session = FakeRuntimeSession(
             results: [.failure(FakeRuntimeError.attachFailed)],
             defaultResult: .success(FakeRuntimePTY()),
-            now: { clock.elapsedSeconds }
+            now: { sleeper.elapsedSeconds }
         )
-        let transport = RuntimePTYTransport(session: session, sessionID: "session-stop-retry", clock: clock)
+        let transport = RuntimePTYTransport(session: session, sessionID: "session-stop-retry", sleeper: sleeper)
         defer { transport.stop() }
 
         transport.start(onBytes: { _ in }, onClosed: {})
@@ -170,7 +171,7 @@ final class RuntimePTYTransportTests: XCTestCase {
         }
         XCTAssertTrue(reconnecting)
         XCTAssertEqual(session.attachCount, 1)
-        await clock.waitForSleepCallCount(1)
+        await sleeper.waitForSleepCallCount(1)
 
         transport.stop()
 
@@ -178,18 +179,18 @@ final class RuntimePTYTransportTests: XCTestCase {
             transport.connectionState == .disconnected
         }
         XCTAssertTrue(disconnected)
-        clock.advance(by: .seconds(2))
+        sleeper.advance(bySeconds: 2)
         await Task.yield()
         XCTAssertEqual(session.attachCount, 1)
     }
 
     func test_unexpectedCloseAfterSuccessfulAttach_entersReconnecting() async {
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         let session = FakeRuntimeSession(
             results: [.success(FakeRuntimePTY())],
-            now: { clock.elapsedSeconds }
+            now: { sleeper.elapsedSeconds }
         )
-        let transport = RuntimePTYTransport(session: session, sessionID: "session-close", clock: clock)
+        let transport = RuntimePTYTransport(session: session, sessionID: "session-close", sleeper: sleeper)
         defer { transport.stop() }
 
         transport.start(onBytes: { _ in }, onClosed: {})
@@ -208,12 +209,12 @@ final class RuntimePTYTransportTests: XCTestCase {
     }
 
     func test_ptyDataForDifferentHandleIsIgnored() async {
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         let session = FakeRuntimeSession(
             results: [.success(FakeRuntimePTY(handle: 11))],
-            now: { clock.elapsedSeconds }
+            now: { sleeper.elapsedSeconds }
         )
-        let transport = RuntimePTYTransport(session: session, sessionID: "session-data-handle", clock: clock)
+        let transport = RuntimePTYTransport(session: session, sessionID: "session-data-handle", sleeper: sleeper)
         var received = Data()
         defer { transport.stop() }
 
@@ -235,12 +236,12 @@ final class RuntimePTYTransportTests: XCTestCase {
     }
 
     func test_ptyClosedForDifferentHandleDoesNotReconnect() async {
-        let clock = ManualClock()
+        let sleeper = ManualSleeper()
         let session = FakeRuntimeSession(
             results: [.success(FakeRuntimePTY(handle: 11))],
-            now: { clock.elapsedSeconds }
+            now: { sleeper.elapsedSeconds }
         )
-        let transport = RuntimePTYTransport(session: session, sessionID: "session-close-handle", clock: clock)
+        let transport = RuntimePTYTransport(session: session, sessionID: "session-close-handle", sleeper: sleeper)
         defer { transport.stop() }
 
         transport.start(onBytes: { _ in }, onClosed: {})
@@ -263,74 +264,57 @@ final class RuntimePTYTransportTests: XCTestCase {
         XCTAssertTrue(reconnecting)
     }
 
-    private func exhaustRetryBudget(clock: ManualClock) async {
+    private func exhaustRetryBudget(sleeper: ManualSleeper) async {
         for (index, seconds) in [1, 2, 4, 8, 16].enumerated() {
-            await clock.waitForSleepCallCount(index + 1)
-            clock.advance(by: .seconds(Int64(seconds)))
+            await sleeper.waitForSleepCallCount(index + 1)
+            sleeper.advance(bySeconds: seconds)
         }
     }
 }
 
-private final class ManualClock: Clock, @unchecked Sendable {
-    struct Instant: InstantProtocol {
-        var offset: Duration
-
-        func advanced(by duration: Duration) -> Instant {
-            Instant(offset: offset + duration)
-        }
-
-        func duration(to other: Instant) -> Duration {
-            other.offset - offset
-        }
-
-        static func < (lhs: Instant, rhs: Instant) -> Bool {
-            lhs.offset < rhs.offset
-        }
-    }
-
+/// Manually-driven `RuntimePTYSleeper` used by `RuntimePTYTransportTests`.
+///
+/// Each `sleep(seconds:)` call parks a continuation until the test calls
+/// `advance(bySeconds:)` to push the virtual clock past the requested
+/// deadline. This keeps backoff/retry assertions wall-clock-free.
+private final class ManualSleeper: RuntimePTYSleeper, @unchecked Sendable {
     private struct Sleeper {
-        let deadline: Instant
+        let deadlineSeconds: Int
         let continuation: CheckedContinuation<Void, Error>
     }
 
     private let lock = NSLock()
-    private var current = Instant(offset: .zero)
+    private var currentSeconds = 0
     private var sleepers: [UUID: Sleeper] = [:]
     private var sleepCallCount = 0
     private var sleepCountWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
-
-    var now: Instant {
-        lock.lock()
-        defer { lock.unlock() }
-        return current
-    }
-
-    var minimumResolution: Duration { .zero }
+    private(set) var requestedSleepSeconds: [Int] = []
 
     var elapsedSeconds: TimeInterval {
         lock.lock()
-        let offset = current.offset
-        lock.unlock()
-        let components = offset.components
-        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
+        defer { lock.unlock() }
+        return TimeInterval(currentSeconds)
     }
 
-    func sleep(until deadline: Instant, tolerance: Duration?) async throws {
+    func sleep(seconds: Int) async throws {
         let id = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 var immediateResult: Result<Void, Error>?
                 let readyWaiters: [CheckedContinuation<Void, Never>]
+                let deadline: Int
 
                 lock.lock()
                 sleepCallCount += 1
+                requestedSleepSeconds.append(seconds)
+                deadline = currentSeconds + max(0, seconds)
                 readyWaiters = removeReadySleepCountWaitersLocked()
                 if Task.isCancelled {
                     immediateResult = .failure(CancellationError())
-                } else if current >= deadline {
+                } else if currentSeconds >= deadline {
                     immediateResult = .success(())
                 } else {
-                    sleepers[id] = Sleeper(deadline: deadline, continuation: continuation)
+                    sleepers[id] = Sleeper(deadlineSeconds: deadline, continuation: continuation)
                 }
                 lock.unlock()
 
@@ -345,12 +329,12 @@ private final class ManualClock: Clock, @unchecked Sendable {
         }
     }
 
-    func advance(by duration: Duration) {
+    func advance(bySeconds seconds: Int) {
         var readySleepers: [CheckedContinuation<Void, Error>] = []
 
         lock.lock()
-        current = current.advanced(by: duration)
-        for (id, sleeper) in sleepers where current >= sleeper.deadline {
+        currentSeconds += max(0, seconds)
+        for (id, sleeper) in sleepers where currentSeconds >= sleeper.deadlineSeconds {
             readySleepers.append(sleeper.continuation)
             sleepers.removeValue(forKey: id)
         }

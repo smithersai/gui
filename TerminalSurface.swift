@@ -264,17 +264,21 @@ extension RuntimeSession: RuntimePTYSessionProviding {
     }
 }
 
-private struct AnyRuntimePTYClock: Sendable {
-    private let sleepForDuration: @Sendable (Duration) async throws -> Void
+/// Internal clock/sleeper seam for `RuntimePTYTransport` reconnect backoff.
+///
+/// Production uses `DefaultRuntimePTYSleeper` which delegates to
+/// `Task.sleep(nanoseconds:)`. Tests inject a manual sleeper so retry-budget
+/// and backoff assertions advance deterministically without wall-clock waits.
+internal protocol RuntimePTYSleeper: Sendable {
+    /// Sleep for the requested number of (whole) seconds. Must throw
+    /// `CancellationError` if the surrounding `Task` is cancelled.
+    func sleep(seconds: Int) async throws
+}
 
-    init<C: Clock>(_ clock: C) where C.Duration == Duration {
-        self.sleepForDuration = { duration in
-            try await clock.sleep(for: duration)
-        }
-    }
-
-    func sleep(for duration: Duration) async throws {
-        try await sleepForDuration(duration)
+internal struct DefaultRuntimePTYSleeper: RuntimePTYSleeper {
+    func sleep(seconds: Int) async throws {
+        let clamped = max(0, seconds)
+        try await Task.sleep(nanoseconds: UInt64(clamped) * 1_000_000_000)
     }
 }
 
@@ -296,7 +300,7 @@ public final class RuntimePTYTransport: TerminalPTYTransport {
 
     private let session: any RuntimePTYSessionProviding
     private let sessionID: String
-    private let clock: AnyRuntimePTYClock
+    private let sleeper: any RuntimePTYSleeper
     private let decoder = JSONDecoder()
     private var onBytes: ((Data) -> Void)?
     private var onClosed: (() -> Void)?
@@ -321,23 +325,17 @@ public final class RuntimePTYTransport: TerminalPTYTransport {
     }
 
     public convenience init(session: RuntimeSession, sessionID: String) {
-        self.init(session: session, sessionID: sessionID, clock: ContinuousClock())
+        self.init(session: session, sessionID: sessionID, sleeper: DefaultRuntimePTYSleeper())
     }
 
-    public init<C: Clock>(session: RuntimeSession, sessionID: String, clock: C) where C.Duration == Duration {
+    internal init(
+        session: any RuntimePTYSessionProviding,
+        sessionID: String,
+        sleeper: any RuntimePTYSleeper = DefaultRuntimePTYSleeper()
+    ) {
         self.session = session
         self.sessionID = sessionID
-        self.clock = AnyRuntimePTYClock(clock)
-    }
-
-    internal convenience init(session: any RuntimePTYSessionProviding, sessionID: String) {
-        self.init(session: session, sessionID: sessionID, clock: ContinuousClock())
-    }
-
-    internal init<C: Clock>(session: any RuntimePTYSessionProviding, sessionID: String, clock: C) where C.Duration == Duration {
-        self.session = session
-        self.sessionID = sessionID
-        self.clock = AnyRuntimePTYClock(clock)
+        self.sleeper = sleeper
     }
 
     public func start(onBytes: @escaping (Data) -> Void, onClosed: @escaping () -> Void) {
@@ -473,10 +471,10 @@ public final class RuntimePTYTransport: TerminalPTYTransport {
         transition(to: .reconnecting, reason: "\(reason), retry \(attempt)")
         Self.logger.info("terminal reconnect scheduled for session \(self.sessionID, privacy: .public) attempt=\(String(attempt), privacy: .public) delay=\(String(delaySeconds), privacy: .public)s")
 
-        let clock = self.clock
-        reconnectTask = Task { [weak self, clock] in
+        let sleeper = self.sleeper
+        reconnectTask = Task { [weak self, sleeper] in
             do {
-                try await clock.sleep(for: .seconds(Int64(delaySeconds)))
+                try await sleeper.sleep(seconds: delaySeconds)
             } catch {
                 return
             }
