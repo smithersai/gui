@@ -2,6 +2,12 @@ import SwiftUI
 
 struct WorkspacesView: View {
     @ObservedObject var smithers: SmithersClient
+    #if os(macOS)
+    // 0126: Remote-mode controller so the workspace picker can surface an
+    // "Open" action that adds a sandbox to the sidebar remote-tab list.
+    // Defaults to .shared so callers don't need to thread it through.
+    @ObservedObject private var remoteMode: RemoteModeController
+    #endif
     @State private var workspaces: [Workspace] = []
     @State private var snapshots: [WorkspaceSnapshot] = []
     @State private var isLoading = true
@@ -21,6 +27,17 @@ struct WorkspacesView: View {
         case snapshots = "Snapshots"
     }
 
+    #if os(macOS)
+    init(smithers: SmithersClient, remoteMode: RemoteModeController? = nil) {
+        self.smithers = smithers
+        self._remoteMode = ObservedObject(wrappedValue: remoteMode ?? .shared)
+    }
+    #else
+    init(smithers: SmithersClient) {
+        self.smithers = smithers
+    }
+    #endif
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -36,7 +53,9 @@ struct WorkspacesView: View {
                         } else {
                             workspaces = []
                         }
-                        Task { await loadData() }
+                        if !isRemoteSurfaceBlocked {
+                            Task { await loadData() }
+                        }
                     }) {
                         Text(mode.rawValue)
                             .font(.system(size: 12, weight: selectedMode == mode ? .semibold : .regular))
@@ -45,6 +64,7 @@ struct WorkspacesView: View {
                             .padding(.vertical, 10)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isRemoteSurfaceBlocked)
                     .accessibilityIdentifier("workspaces.mode.\(mode.rawValue)")
                     .overlay(alignment: .bottom) {
                         if selectedMode == mode {
@@ -56,13 +76,37 @@ struct WorkspacesView: View {
             }
             .border(Theme.border, edges: [.bottom])
 
-            if let error {
+            if isRemoteSurfaceBlocked {
+                remoteBlockedView
+            } else if let error {
                 errorView(error)
             } else {
                 switch selectedMode {
                 case .workspaces: workspacesList
                 case .snapshots: snapshotsList
                 }
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if showReconnectBanner {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11))
+                    Text("Reconnecting to remote sandbox…")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(Theme.warning)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.surface2)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Theme.warning.opacity(0.35), lineWidth: 1)
+                )
+                .cornerRadius(6)
+                .padding(.top, 8)
+                .padding(.leading, 12)
+                .accessibilityIdentifier("workspaces.remote.reconnecting")
             }
         }
         .background(Theme.surface1)
@@ -83,7 +127,20 @@ struct WorkspacesView: View {
         )
         #endif
         .accessibilityIdentifier("workspaces.root")
-        .task { await loadData() }
+        .task {
+            if isRemoteSurfaceBlocked {
+                isLoading = false
+            } else {
+                await loadData()
+            }
+        }
+        #if os(macOS)
+        .onChange(of: remoteMode.phase) { _, phase in
+            if phase.allowsRemoteSurface {
+                Task { await loadData() }
+            }
+        }
+        #endif
         .confirmationDialog(
             "Delete Workspace",
             isPresented: Binding(
@@ -142,6 +199,7 @@ struct WorkspacesView: View {
                 .cornerRadius(6)
             }
             .buttonStyle(.plain)
+            .disabled(isRemoteSurfaceBlocked)
             .accessibilityIdentifier("workspaces.newButton")
 
             if isLoading {
@@ -153,6 +211,7 @@ struct WorkspacesView: View {
                     .foregroundColor(Theme.textSecondary)
             }
             .buttonStyle(.plain)
+            .disabled(isRemoteSurfaceBlocked)
         }
         .padding(.horizontal, 20)
         .frame(height: 48)
@@ -207,6 +266,18 @@ struct WorkspacesView: View {
                                 ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
                             } else {
                                 HStack(spacing: 4) {
+                                    #if os(macOS)
+                                    // 0126: "Open" adds this sandbox to the sidebar's remote
+                                    // tab list. Only shown when signed in (flag on) and the
+                                    // workspace isn't already open as a sidebar tab.
+                                    if remoteMode.isSignedIn &&
+                                        !remoteMode.openWorkspaceTabs.contains(where: { $0.id == ws.id }) {
+                                        wsAction("icloud.and.arrow.down", color: Theme.accent) {
+                                            remoteMode.openWorkspaceById(id: ws.id, name: ws.name)
+                                        }
+                                        .accessibilityIdentifier("workspace.row.open.\(ws.id)")
+                                    }
+                                    #endif
                                     if isRunningWorkspaceStatus(ws.status) {
                                         wsAction("pause.fill", color: Theme.warning) {
                                             Task { await suspendWS(ws.id) }
@@ -383,6 +454,83 @@ struct WorkspacesView: View {
     }
 
     // MARK: - Helpers
+
+    private var isRemoteSurfaceBlocked: Bool {
+        #if os(macOS)
+        remoteMode.isRemoteFeatureEnabled && remoteMode.isSignedIn && !remoteMode.phase.allowsRemoteSurface
+        #else
+        false
+        #endif
+    }
+
+    private var showReconnectBanner: Bool {
+        #if os(macOS)
+        if case .reconnecting = remoteMode.phase {
+            return true
+        }
+        #endif
+        return false
+    }
+
+    @ViewBuilder
+    private var remoteBlockedView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "icloud.and.arrow.down")
+                .font(.system(size: 28))
+                .foregroundColor(Theme.warning)
+            Text(remoteBlockedTitle)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Theme.textPrimary)
+            Text(remoteBlockedMessage)
+                .font(.system(size: 12))
+                .foregroundColor(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+            #if os(macOS)
+            if case .stalledBoot = remoteMode.phase {
+                Button("Cancel and return to sign-in") {
+                    Task { await remoteMode.cancelBoot() }
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(Theme.warning)
+                .font(.system(size: 12, weight: .semibold))
+                .accessibilityIdentifier("workspaces.remote.cancelBoot")
+            }
+            #endif
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("workspaces.remote.blocked")
+    }
+
+    private var remoteBlockedTitle: String {
+        #if os(macOS)
+        switch remoteMode.phase {
+        case .slowBoot:
+            return "Connecting is taking longer than expected"
+        case .stalledBoot:
+            return "Still connecting to remote sandbox"
+        default:
+            return "Connecting to remote sandbox"
+        }
+        #else
+        return "Connecting to remote sandbox"
+        #endif
+    }
+
+    private var remoteBlockedMessage: String {
+        #if os(macOS)
+        switch remoteMode.phase {
+        case .slowBoot:
+            return "You can keep waiting while the first snapshot loads."
+        case .stalledBoot:
+            return "You can cancel and choose a different sandbox."
+        default:
+            return "Workspaces will appear after the first snapshot arrives."
+        }
+        #else
+        return "Workspaces will appear after the first snapshot arrives."
+        #endif
+    }
 
     private func wsAction(_ icon: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {

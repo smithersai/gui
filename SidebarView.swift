@@ -185,6 +185,30 @@ struct SidebarView: View {
 
     private var workspaceList: some View {
         VStack(alignment: .leading, spacing: 0) {
+            #if os(macOS)
+            if remoteMode.isRemoteFeatureEnabled {
+                Button {
+                    WorkspaceManager.shared.presentOpenFolderPanel()
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 10))
+                            .foregroundColor(Theme.accent)
+                            .frame(width: 12)
+                        Text("Open local folder…")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(Theme.textPrimary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sidebar.local.openFolder")
+            }
+            #endif
+
             let groups = ["Pinned", "Today", "Yesterday", "Older"]
             let _ = surfaceNotifications.unreadSurfaceIds
             let _ = surfaceNotifications.focusedIndicatorSurfaceIds
@@ -363,7 +387,14 @@ struct SidebarView: View {
             remoteStatusRow
 
             if remoteMode.isSignedIn {
-                if remoteMode.openWorkspaceTabs.isEmpty {
+                if !remoteMode.phase.allowsRemoteSurface {
+                    Text("Waiting for first remote snapshot…")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        .accessibilityIdentifier("sidebar.remote.blocked")
+                } else if remoteMode.openWorkspaceTabs.isEmpty {
                     Text("No remote sandboxes open")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textTertiary)
@@ -382,6 +413,14 @@ struct SidebarView: View {
                     isSelected: destination == .workspaces
                 ) {
                     destination = .workspaces
+                }
+
+                if !remoteMode.phase.allowsRemoteSurface {
+                    Text("Sandbox picker unlocks after initial sync.")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 4)
                 }
             }
         }
@@ -428,6 +467,14 @@ struct SidebarView: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(Theme.textTertiary)
                 .accessibilityIdentifier("sidebar.remote.signOut")
+            } else {
+                Button("Sign in") {
+                    Task { await remoteMode.beginSignIn() }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("sidebar.remote.signIn")
             }
         }
         .padding(.horizontal, 16)

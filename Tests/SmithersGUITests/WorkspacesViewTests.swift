@@ -399,6 +399,29 @@ final class WorkspacesIconTests: XCTestCase {
     }
 }
 
+// MARK: - 0126 Remote desktop productization checks
+
+final class WorkspacesRemoteModeTests: XCTestCase {
+    func test_source_includes_remote_boot_blocking_identifiers() throws {
+        let source = try workspacesViewSource()
+        XCTAssertTrue(
+            source.contains("workspaces.remote.blocked"),
+            "WorkspacesView should expose a blocked-remote accessibility anchor"
+        )
+        XCTAssertTrue(
+            source.contains("workspaces.remote.reconnecting"),
+            "WorkspacesView should expose reconnect banner accessibility anchor"
+        )
+    }
+
+    private func workspacesViewSource() throws -> String {
+        let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let repoRoot = testsDir.deletingLastPathComponent().deletingLastPathComponent()
+        let sourceURL = repoRoot.appendingPathComponent("WorkspacesView.swift")
+        return try String(contentsOf: sourceURL, encoding: .utf8)
+    }
+}
+
 // MARK: - WORKSPACES_SNAPSHOT_CREATE & WORKSPACES_SNAPSHOT_AUTO_NAME
 
 final class WorkspacesSnapshotCreateTests: XCTestCase {

@@ -100,6 +100,9 @@ continue reconnecting from the last acknowledged sequence.
   short blips (<2s) keep the current tree visible and avoid disruptive banners;
   longer interruptions show a stale-state banner ("stale since …") while
   preserving the last-known tree.
+- Background tab behavior:
+  run tabs keep their devtools/log subscriptions alive while backgrounded, so
+  returning to a tab does not reset the stream cursor.
 - Gap resync behavior:
   `GapResync` events force snapshot-first recovery (deltas are ignored until a
   follow-up snapshot arrives).

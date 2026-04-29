@@ -95,31 +95,31 @@ final class AppPreferenceKeysTests: XCTestCase {
 
 final class ContentViewRoutingSourceTests: XCTestCase {
     func testDetailContentSwitchContainsSingleLiveRunCase() throws {
-        let detailContent = try detailContentSource()
-        let liveRunCaseCount = detailContent.components(separatedBy: "case .liveRun").count - 1
+        let source = try detailRouterSource()
+        let liveRunCaseCount = source.components(separatedBy: "case .liveRun").count - 1
         XCTAssertEqual(liveRunCaseCount, 1, "Expected exactly one `.liveRun` case in detailContent switch")
     }
 
-    func testLiveRunCaseRoutesToLiveRunView() throws {
-        let detailContent = try detailContentSource()
-        let casePattern = #"case \.liveRun\(let runId, let nodeId\):[\s\S]*?LiveRunView\("#
+    func testLiveRunCaseRoutesToRunInspectorView() throws {
+        let source = try detailRouterSource()
+        let casePattern = #"case \.liveRun\(let runId, let nodeId\):[\s\S]*?RunInspectorView\("#
 
         XCTAssertNotNil(
-            detailContent.range(of: casePattern, options: .regularExpression),
-            "Expected `.liveRun` case to route to LiveRunView"
+            source.range(of: casePattern, options: .regularExpression),
+            "Expected `.liveRun` case to route to RunInspectorView"
         )
         XCTAssertTrue(
-            detailContent.contains(".accessibilityIdentifier(\"view.liveRun\")"),
+            source.contains(".accessibilityIdentifier(\"view.liveRun\")"),
             "Expected live run route to expose stable accessibility identifier"
         )
     }
 
     func testTerminalRouteRequestsConfirmationBeforeClose() throws {
-        let detailContent = try detailContentSource()
-        let casePattern = #"case \.terminal\(let id\):[\s\S]*?onClose:\s*\{\s*requestTerminalClose\(id\)\s*\}"#
+        let source = try detailRouterSource()
+        let casePattern = #"case \.terminal\(let id\):[\s\S]*?onClose:\s*\{\s*actions\.requestTerminalClose\(id\)\s*\}"#
 
         XCTAssertNotNil(
-            detailContent.range(of: casePattern, options: .regularExpression),
+            source.range(of: casePattern, options: .regularExpression),
             "Expected terminal route close action to request confirmation."
         )
     }
@@ -141,20 +141,13 @@ final class ContentViewRoutingSourceTests: XCTestCase {
         )
     }
 
-    private func detailContentSource() throws -> String {
-        let source = try contentViewSource()
-
-        guard let start = source.range(of: "private var detailContent: some View {"),
-              let end = source.range(
-                of: "\n\n    var body: some View",
-                range: start.upperBound..<source.endIndex
-              )
-        else {
-            XCTFail("Unable to locate detailContent source block in ContentView.swift")
-            return source
-        }
-
-        return String(source[start.lowerBound..<end.lowerBound])
+    private func detailRouterSource() throws -> String {
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("DetailRouter.swift")
+        return try String(contentsOf: path, encoding: .utf8)
     }
 
     private func contentViewSource() throws -> String {

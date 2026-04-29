@@ -416,18 +416,32 @@ struct ContentView: View {
     @StateObject private var smithers: SmithersClient
     @StateObject private var fileSearchIndex: WorkspaceFileSearchIndex
     @StateObject private var smithersUpgrader: SmithersUpgrader
+    #if os(macOS)
+    @StateObject private var remoteMode: RemoteModeController
+    #endif
 
-    init(workspacePath: String? = nil) {
+    init(
+        workspacePath: String? = nil,
+        initialDestination: NavDestination = .home,
+        remoteMode: RemoteModeController? = nil
+    ) {
         let resolved = Smithers.CWD.resolve(workspacePath)
+        let client = SmithersClient(cwd: resolved)
+        #if os(macOS)
+        let resolvedRemoteMode = remoteMode ?? .shared
+        client.remoteProvider = resolvedRemoteMode.runtimeProvider
+        _remoteMode = StateObject(wrappedValue: resolvedRemoteMode)
+        #endif
         _store = StateObject(wrappedValue: SessionStore(workingDirectory: resolved))
-        _smithers = StateObject(wrappedValue: SmithersClient(cwd: resolved))
+        _smithers = StateObject(wrappedValue: client)
         _fileSearchIndex = StateObject(wrappedValue: WorkspaceFileSearchIndex(rootPath: resolved))
         _smithersUpgrader = StateObject(wrappedValue: SmithersUpgrader(cwd: resolved))
+        _destination = State(initialValue: initialDestination)
     }
 
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
     @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
-    @State private var destination: NavDestination = .home
+    @State private var destination: NavDestination
     @State private var navHistory: [NavDestination] = [.home]
     @State private var navHistoryIndex: Int = 0
     @State private var isNavigatingThroughHistory = false
@@ -514,6 +528,9 @@ struct ContentView: View {
         #if os(macOS)
         BootstrapStageView(smithers: smithers, onReady: handleBootstrapReady) {
             macOSShell
+        }
+        .onReceive(remoteMode.objectWillChange) { _ in
+            syncRemoteProvider()
         }
         #else
         // On iOS, ContentView is not used; the iOS target composes
@@ -638,6 +655,7 @@ struct ContentView: View {
     }
 
     private func handleShellAppear() {
+        syncRemoteProvider()
         installKeyboardShortcutMonitor()
         fileSearchIndex.updateRootPath(store.workspaceRootPath)
         fileSearchIndex.ensureLoaded()
@@ -647,6 +665,13 @@ struct ContentView: View {
         keyboardShortcutController.uninstall()
         paletteDataRefreshTask?.cancel()
         paletteDataRefreshTask = nil
+    }
+
+    private func syncRemoteProvider() {
+        #if os(macOS)
+        smithers.remoteProvider = remoteMode.runtimeProvider
+        Task { await smithers.checkConnection() }
+        #endif
     }
 
     @ViewBuilder

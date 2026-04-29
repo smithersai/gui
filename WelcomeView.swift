@@ -114,30 +114,68 @@ struct WelcomeView: View {
     @ViewBuilder
     private var remoteSignInButton: some View {
         if remoteMode.isSignedIn {
-            // Signed in: offer a direct "Browse Remote" shortcut so the user
-            // can reach the sandbox picker without re-entering the sheet.
-            // The dedicated picker lives in `WorkspacesView` today; 0138 is
-            // replacing it with a full-screen switcher.
-            Button(action: { showSignInSheet = true }) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    Image(systemName: "checkmark.icloud.fill")
-                        .font(.system(size: 15))
-                    Text("Signed in · Manage")
-                        .font(.system(size: 15, weight: .medium))
+                    Button(action: { showSignInSheet = true }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.icloud.fill")
+                                .font(.system(size: 15))
+                            Text("Signed in · Manage")
+                                .font(.system(size: 15, weight: .medium))
+                        }
+                        .frame(minWidth: 200)
+                        .padding(.vertical, 14)
+                        .padding(.horizontal, 24)
+                        .background(Theme.surface1)
+                        .foregroundColor(Theme.textPrimary)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Theme.accent, lineWidth: 1)
+                        )
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("welcome.remote.manage")
+
+                    Button(action: { remoteMode.presentRemoteShell() }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "rectangle.stack")
+                                .font(.system(size: 15))
+                            Text("Browse Sandboxes")
+                                .font(.system(size: 15, weight: .medium))
+                        }
+                        .frame(minWidth: 200)
+                        .padding(.vertical, 14)
+                        .padding(.horizontal, 24)
+                        .background(Theme.surface1)
+                        .foregroundColor(Theme.textPrimary)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Theme.border, lineWidth: 1)
+                        )
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("welcome.remote.browse")
                 }
-                .frame(minWidth: 200)
-                .padding(.vertical, 14)
-                .padding(.horizontal, 24)
-                .background(Theme.surface1)
-                .foregroundColor(Theme.textPrimary)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Theme.accent, lineWidth: 1)
-                )
-                .cornerRadius(8)
+
+                if let status = remoteStatusMessage {
+                    HStack(spacing: 8) {
+                        Text(status)
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.textTertiary)
+                        if case .stalledBoot = remoteMode.phase {
+                            Button("Cancel boot") {
+                                Task { await remoteMode.cancelBoot() }
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Theme.warning)
+                            .accessibilityIdentifier("welcome.remote.cancelBoot")
+                        }
+                    }
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("welcome.remote.manage")
         } else {
             Button(action: { showSignInSheet = true }) {
                 HStack(spacing: 8) {
@@ -159,6 +197,25 @@ struct WelcomeView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("welcome.remote.signIn")
+        }
+    }
+
+    private var remoteStatusMessage: String? {
+        switch remoteMode.phase {
+        case .bootBlocked:
+            return "Connecting to your remote sandboxes…"
+        case .slowBoot:
+            return "This is taking longer than expected."
+        case .stalledBoot:
+            return "Still connecting. You can cancel and try again."
+        case .reconnecting:
+            return "Reconnecting… local tabs stay available."
+        case .whitelistDenied(let message):
+            return "Access denied: \(message)"
+        case .error(let message):
+            return "Remote error: \(message)"
+        default:
+            return nil
         }
     }
     #endif

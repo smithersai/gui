@@ -363,7 +363,7 @@ struct DetailRouterView: View {
             .id("\(binary)-\(workingDirectory)")
             .accessibilityIdentifier("view.terminalCommand.\(name)")
         case .liveRun(let runId, let nodeId):
-            LiveRunView(
+            RunInspectorView(
                 smithers: smithers,
                 runId: runId,
                 nodeId: nodeId,
@@ -374,10 +374,14 @@ struct DetailRouterView: View {
                 },
                 onOpenPrompt: { actions.navigate(.prompts) },
                 onRunSummaryRefreshed: { actions.updateRunTab($0) },
+                onOpenAuditHistory: { auditRowId in
+                    PlatformAdapters.copyToClipboard(auditRowId)
+                    actions.navigate(.approvals)
+                },
                 onClose: { actions.navigate(.runs) }
             )
             .id("live-run-\(runId)-\(nodeId ?? "all")")
-            .logLifecycle("LiveRunView")
+            .logLifecycle("RunInspectorView")
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("view.liveRun")
         case .runInspect(let runId, let workflowName):
