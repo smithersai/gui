@@ -170,7 +170,9 @@ CI upload is failing and you need to bisect signing vs. code issues.
 
 ### Prerequisites on your machine
 
-- Xcode 15.4 or newer.
+- Xcode 16 or newer. Apple now rejects App Store Connect uploads from
+  Xcode 15 toolchains
+  (<https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/>).
 - `xcodegen` (`brew install xcodegen`).
 - The signing certificate (from step 5 above) imported into your
   login keychain. Verify with

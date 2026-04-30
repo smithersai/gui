@@ -22,6 +22,10 @@
 #      export password in IOS_SIGNING_P12_PASSWORD.
 #   6. The App Store distribution provisioning profile, stored
 #      (base64-encoded) in IOS_PROVISIONING_PROFILE_BASE64.
+#   7. A second App Store profile for the share extension
+#      (com.smithers.ios.ShareExtension), stored (base64-encoded) in
+#      IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64, with its profile
+#      name in SMITHERS_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_NAME.
 #
 # Build-number rule (documented again in ios/RELEASE.md): the build number
 # is the GitHub Actions run number, which is strictly monotonic per branch
@@ -46,19 +50,57 @@ concurrency:
 jobs:
   testflight:
     name: Archive + upload to TestFlight
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
     environment: ios-release
     steps:
+      # Apple requires Xcode 16+ for App Store Connect uploads
+      # (https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/),
+      # so we run on macos-15 (which ships Xcode 16 by default) and pin
+      # explicitly via setup-xcode for reproducibility.
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: recursive
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16'
 
       - name: Install XcodeGen
         run: brew install xcodegen
+
+      # ghostty/.gitignore excludes zig-out/, so the xcframework referenced
+      # at project.yml:397 must be BUILT on every fresh runner — submodule
+      # init alone is not enough. Cache keyed on the ghostty submodule SHA
+      # plus the build script hash so the slow zig build is skipped when
+      # nothing changed.
+      - name: Resolve ghostty cache key
+        id: ghostty_cache_key
+        run: |
+          set -euo pipefail
+          GHOSTTY_SHA="$(git -C ghostty rev-parse HEAD)"
+          SCRIPT_HASH="$(shasum -a 256 poc/libghostty-ios/scripts/build-xcframework.sh | cut -d' ' -f1)"
+          ZIG_VERSION="$(cat .zigversion)"
+          echo "key=ghostty-vt-xcframework-${ZIG_VERSION}-${GHOSTTY_SHA}-${SCRIPT_HASH}" >> "$GITHUB_OUTPUT"
+          echo "zig_version=${ZIG_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore ghostty-vt.xcframework cache
+        id: ghostty_cache
+        uses: actions/cache@v4
+        with:
+          path: ghostty/zig-out
+          key: ${{ steps.ghostty_cache_key.outputs.key }}
+
+      - name: Install Zig
+        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@v1
+        with:
+          version: ${{ steps.ghostty_cache_key.outputs.zig_version }}
+
+      - name: Build ghostty-vt.xcframework
+        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        run: ./poc/libghostty-ios/scripts/build-xcframework.sh
 
       # Import the signing certificate into a throwaway keychain. The
       # keychain is deleted in the `Clean up keychain` step below, so
@@ -100,19 +142,26 @@ jobs:
             -S apple-tool:,apple:,codesign: \
             -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" >/dev/null
 
-      - name: Install provisioning profile
+      - name: Install provisioning profiles
         env:
           PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          SHARE_EXT_PROFILE_BASE64: ${{ secrets.IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
           if [ -z "${PROFILE_BASE64}" ]; then
             echo "::error::IOS_PROVISIONING_PROFILE_BASE64 secret is not set — see ios/RELEASE.md"
             exit 1
           fi
+          if [ -z "${SHARE_EXT_PROFILE_BASE64}" ]; then
+            echo "::error::IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64 secret is not set — see ios/RELEASE.md"
+            exit 1
+          fi
           PROFILE_DIR="${HOME}/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "${PROFILE_DIR}"
           printf '%s' "${PROFILE_BASE64}" | base64 --decode \
             > "${PROFILE_DIR}/smithers-ios-appstore.mobileprovision"
+          printf '%s' "${SHARE_EXT_PROFILE_BASE64}" | base64 --decode \
+            > "${PROFILE_DIR}/smithers-ios-shareext-appstore.mobileprovision"
 
       - name: Resolve build metadata
         id: meta
@@ -138,6 +187,10 @@ jobs:
           # Signing inputs consumed by the script.
           DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.SMITHERS_IOS_PROVISIONING_PROFILE_NAME }}
+          # The share-ext profile name on Apple has a literal three-space
+          # gap between "Share" and "Extension"; pass it as a secret so the
+          # exact string survives without the workflow having to embed it.
+          SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.SMITHERS_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_NAME }}
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}

@@ -12,7 +12,13 @@
 #     DEVELOPMENT_TEAM             Apple Team ID (10 chars, e.g. ABCDE12345).
 #     PROVISIONING_PROFILE_SPECIFIER
 #                                  Name of the App Store provisioning profile
+#                                  for com.smithers.ios
 #                                  (e.g. "Smithers iOS App Store").
+#     SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER
+#                                  Name of the App Store provisioning profile
+#                                  for com.smithers.ios.ShareExtension. The
+#                                  value on Apple may contain literal multiple
+#                                  spaces — pass it through verbatim.
 #     APP_STORE_CONNECT_API_KEY_ID Key ID from appstoreconnect.apple.com/access/api.
 #     APP_STORE_CONNECT_ISSUER_ID  Issuer ID from that same page.
 #     APP_STORE_CONNECT_API_KEY_P8 Literal contents of the AuthKey_XXX.p8 file
@@ -62,9 +68,22 @@ require() {
 
 require DEVELOPMENT_TEAM
 require PROVISIONING_PROFILE_SPECIFIER
+require SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER
 require APP_STORE_CONNECT_API_KEY_ID
 require APP_STORE_CONNECT_ISSUER_ID
 require APP_STORE_CONNECT_API_KEY_P8
+
+# project.yml:397 embeds ghostty/zig-out/lib/ghostty-vt.xcframework as a
+# linked framework. ghostty/.gitignore excludes zig-out/, so a fresh
+# checkout (CI or laptop) MUST build it before xcodebuild runs.
+GHOSTTY_VT_XCFRAMEWORK="ghostty/zig-out/lib/ghostty-vt.xcframework"
+if [ ! -d "${GHOSTTY_VT_XCFRAMEWORK}" ]; then
+    echo "error: ${GHOSTTY_VT_XCFRAMEWORK} is missing." >&2
+    echo "       Run 'poc/libghostty-ios/scripts/build-xcframework.sh'" >&2
+    echo "       (requires zig $(cat .zigversion 2>/dev/null || echo '0.15.2'))" >&2
+    echo "       or restore it from the CI cache." >&2
+    exit 1
+fi
 
 MARKETING_VERSION="${MARKETING_VERSION:-$(awk '/MARKETING_VERSION:/ {gsub(/["'\'']/, "", $2); print $2; exit}' project.yml)}"
 CURRENT_PROJECT_VERSION="${CURRENT_PROJECT_VERSION:-${GITHUB_RUN_NUMBER:-1}}"
@@ -75,6 +94,7 @@ echo "  MARKETING_VERSION       = ${MARKETING_VERSION}"
 echo "  CURRENT_PROJECT_VERSION = ${CURRENT_PROJECT_VERSION}"
 echo "  DEVELOPMENT_TEAM        = ${DEVELOPMENT_TEAM}"
 echo "  PROVISIONING_PROFILE    = ${PROVISIONING_PROFILE_SPECIFIER}"
+echo "  SHARE_EXT_PROFILE       = ${SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER}"
 echo "  EXPORT_METHOD           = ${EXPORT_METHOD}"
 
 BUILD_DIR="build/ios-archive"
@@ -145,6 +165,8 @@ cat > "${EXPORT_OPTIONS}" <<EOF
     <dict>
         <key>com.smithers.ios</key>
         <string>${PROVISIONING_PROFILE_SPECIFIER}</string>
+        <key>com.smithers.ios.ShareExtension</key>
+        <string>${SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER}</string>
     </dict>
 </dict>
 </plist>
