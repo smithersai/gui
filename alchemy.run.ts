@@ -69,6 +69,18 @@ async function build() {
   }
 
   if (notarize) {
+    // Helper binaries bundled under Contents/Resources/ are opaque to xcodebuild's
+    // signing, so the hardened-runtime flag never reaches them. Re-sign them
+    // (deepest first), then re-seal the parent .app, before submitting.
+    const identity = process.env.CODE_SIGN_IDENTITY ?? "Developer ID Application";
+    for (const helper of ["smithers-session-daemon", "smithers-session-connect"]) {
+      const path = join(APP, "Contents", "Resources", helper);
+      if (existsSync(path)) {
+        await $`codesign --force --options runtime --timestamp --sign ${identity} ${path}`;
+      }
+    }
+    await $`codesign --force --options runtime --timestamp --sign ${identity} ${APP}`;
+
     console.log("→ notarize (takes a few minutes)");
     const zip = join(BUILD, "notarize.zip");
     await $`ditto -c -k --keepParent ${APP} ${zip}`;
