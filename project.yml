@@ -33,6 +33,9 @@ targets:
       - DevToolsClientError.swift
       - DevToolsCLITransport.swift
       - LiveRunDevToolsStore.swift
+      - LiveRunSessionRegistry.swift
+      - DevTelemetryStore.swift
+      - DevTelemetryRecorder.swift
       - HeartbeatState.swift
       - HeartbeatIndicator.swift
       - ElapsedTimeView.swift
