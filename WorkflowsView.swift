@@ -1482,7 +1482,7 @@ struct WorkflowsView: View {
         }
 
         do {
-            let descriptor = try WorkflowFrontendResolver.loadDescriptor(for: workflow, smithers: smithers)
+            let descriptor = try await WorkflowFrontendResolver.loadDescriptor(for: workflow, smithers: smithers)
             guard selectedWorkflow?.id == workflow.id else { return }
             workflowFrontend = descriptor
             if descriptor == nil, tab == .app {

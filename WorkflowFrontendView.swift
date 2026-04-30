@@ -14,11 +14,12 @@ struct WorkflowFrontendManifest: Codable, Equatable {
     let defaultPath: String?
 }
 
-struct WorkflowFrontendDescriptor: Equatable {
+struct WorkflowFrontendDescriptor: Codable, Equatable {
     let manifest: WorkflowFrontendManifest
     let manifestPath: String
     let frontendDirectoryPath: String
-    let serverScriptPath: String
+    let serverScriptPath: String?
+    let entryPath: String?
 
     var routePath: String {
         let raw = manifest.defaultPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "/"
@@ -32,42 +33,8 @@ enum WorkflowFrontendResolver {
     static func loadDescriptor(
         for workflow: Workflow,
         smithers: SmithersClient
-    ) throws -> WorkflowFrontendDescriptor? {
-        guard let workflowPath = workflow.filePath else { return nil }
-
-        let absoluteWorkflowPath: String
-        if workflowPath.hasPrefix("/") {
-            absoluteWorkflowPath = workflowPath
-        } else {
-            absoluteWorkflowPath = try smithers.localSmithersFilePath(workflowPath)
-        }
-
-        let frontendDirectoryURL = URL(fileURLWithPath: absoluteWorkflowPath)
-            .deletingPathExtension()
-            .appendingPathExtension("frontend")
-        let manifestURL = frontendDirectoryURL.appendingPathComponent("manifest.json", isDirectory: false)
-
-        guard FileManager.default.fileExists(atPath: manifestURL.path) else {
-            return nil
-        }
-
-        let data = try Data(contentsOf: manifestURL)
-        let manifest = try JSONDecoder().decode(WorkflowFrontendManifest.self, from: data)
-        let serverScriptURL = frontendDirectoryURL.appendingPathComponent("server.ts", isDirectory: false)
-        guard FileManager.default.fileExists(atPath: serverScriptURL.path) else {
-            throw NSError(
-                domain: "WorkflowFrontendResolver",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Frontend manifest exists but server.ts is missing."]
-            )
-        }
-
-        return WorkflowFrontendDescriptor(
-            manifest: manifest,
-            manifestPath: manifestURL.path,
-            frontendDirectoryPath: frontendDirectoryURL.path,
-            serverScriptPath: serverScriptURL.path
-        )
+    ) async throws -> WorkflowFrontendDescriptor? {
+        try await smithers.getWorkflowFrontend(workflow)
     }
 }
 
@@ -105,11 +72,18 @@ final class WorkflowFrontendServerController: ObservableObject {
         stderrBuffer = Data()
         collectedErrors = []
 
+        guard let serverScriptPath = descriptor.serverScriptPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !serverScriptPath.isEmpty
+        else {
+            startStaticEntrypoint()
+            return
+        }
+
         let process = Process()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["bun", descriptor.serverScriptPath, "--port", "0"]
+        process.arguments = ["bun", serverScriptPath, "--port", "0"]
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
@@ -146,6 +120,21 @@ final class WorkflowFrontendServerController: ObservableObject {
             phase = .failed(error.localizedDescription)
             cleanupFileHandles()
         }
+    }
+
+    private func startStaticEntrypoint() {
+        guard let entryPath = descriptor.entryPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !entryPath.isEmpty
+        else {
+            phase = .failed("Frontend manifest does not provide a server.ts or static entry path.")
+            return
+        }
+        guard FileManager.default.fileExists(atPath: entryPath) else {
+            phase = .failed("Frontend entry does not exist: \(entryPath)")
+            return
+        }
+        didBecomeReady = true
+        phase = .ready(URL(fileURLWithPath: entryPath, isDirectory: false))
     }
 
     func restart() {
@@ -323,7 +312,7 @@ struct WorkflowFrontendView: View {
                 Text("Launching workflow frontend...")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.textSecondary)
-                Text(descriptor.serverScriptPath)
+                Text(descriptor.serverScriptPath ?? descriptor.entryPath ?? descriptor.frontendDirectoryPath)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(Theme.textTertiary)
                     .lineLimit(2)
@@ -360,6 +349,7 @@ struct WorkflowFrontendView: View {
                 BrowserWebViewRepresentable(
                     surfaceId: "workflow-frontend-\(workflow.id)-\(descriptor.manifest.id)",
                     urlString: url.absoluteString,
+                    fileReadAccessURL: url.isFileURL ? URL(fileURLWithPath: descriptor.frontendDirectoryPath, isDirectory: true) : nil,
                     onTitleChange: { _ in },
                     onURLChange: { _ in },
                     onFocus: {}

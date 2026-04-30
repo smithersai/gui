@@ -103,6 +103,7 @@ final class BrowserSurfaceRegistry {
 struct BrowserWebViewRepresentable: NSViewRepresentable {
     let surfaceId: String
     let urlString: String?
+    var fileReadAccessURL: URL? = nil
     let onTitleChange: (String) -> Void
     let onURLChange: (String) -> Void
     let onFocus: () -> Void
@@ -130,6 +131,10 @@ struct BrowserWebViewRepresentable: NSViewRepresentable {
     private func loadRequestedURL(in webView: WKWebView) {
         guard let urlString, let url = BrowserURLResolver.url(from: urlString) else { return }
         guard webView.url?.absoluteString != url.absoluteString else { return }
+        if url.isFileURL {
+            webView.loadFileURL(url, allowingReadAccessTo: fileReadAccessURL ?? url.deletingLastPathComponent())
+            return
+        }
         webView.load(URLRequest(url: url))
     }
 
