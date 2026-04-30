@@ -92,8 +92,34 @@ jobs:
           path: ghostty/zig-out
           key: ${{ steps.ghostty_cache_key.outputs.key }}
 
+      # ticket 0172 — libsmithers iOS xcframework: required for the iOS
+      # `canImport(CSmithersKit)` gates in SmithersRuntime + ContentShell.iOS
+      # to be true. Without this, terminal/session transport silently
+      # disables and TestFlight ships UI-only.
+      - name: Resolve libsmithers cache key
+        id: libsmithers_cache_key
+        run: |
+          set -euo pipefail
+          # Hash every file libsmithers consumes (Zig sources, build files,
+          # the iOS xcframework script) so the cache invalidates on any
+          # change that could alter the produced .a.
+          SRC_HASH="$(find libsmithers -type f \( -name '*.zig' -o -name '*.zon' -o -name '*.h' -o -path 'libsmithers/scripts/*' \) -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 shasum -a 256 \
+            | shasum -a 256 \
+            | cut -d' ' -f1)"
+          ZIG_VERSION="$(cat .zigversion)"
+          echo "key=libsmithers-ios-xcframework-${ZIG_VERSION}-${SRC_HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore libsmithers-ios.xcframework cache
+        id: libsmithers_cache
+        uses: actions/cache@v4
+        with:
+          path: libsmithers/zig-out/lib/libsmithers-ios.xcframework
+          key: ${{ steps.libsmithers_cache_key.outputs.key }}
+
       - name: Install Zig
-        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        if: steps.ghostty_cache.outputs.cache-hit != 'true' || steps.libsmithers_cache.outputs.cache-hit != 'true'
         uses: mlugg/setup-zig@v1
         with:
           version: ${{ steps.ghostty_cache_key.outputs.zig_version }}
@@ -101,6 +127,10 @@ jobs:
       - name: Build ghostty-vt.xcframework
         if: steps.ghostty_cache.outputs.cache-hit != 'true'
         run: ./poc/libghostty-ios/scripts/build-xcframework.sh
+
+      - name: Build libsmithers-ios.xcframework
+        if: steps.libsmithers_cache.outputs.cache-hit != 'true'
+        run: ./libsmithers/scripts/build-ios-xcframework.sh
 
       # Import the signing certificate into a throwaway keychain. The
       # keychain is deleted in the `Clean up keychain` step below, so

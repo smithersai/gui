@@ -159,6 +159,7 @@
 		5C4D6EE62CCAFC44BAF4CC6F /* LiveRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA94C08B9AE20EECDA056EDF /* LiveRunView.swift */; };
 		5CD270D78FEDA9EE85841C4B /* WorkflowRunsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB594D9BAD977BDAF2F225D /* WorkflowRunsListView.swift */; };
 		5D0600F854DA580AB62CC1DE /* PlueEndpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC29902ACCB06233A946DAF5 /* PlueEndpointTests.swift */; };
+		5DD5FF60F6D6DC37662F18A9 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 8C4D46692DA9D65B30F93FAA /* libsqlite3.tbd */; };
 		5E971C1886442B1B59977909 /* ScrubberDebounceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6271E01551F64DF581EE86ED /* ScrubberDebounceTests.swift */; };
 		602B5C57B9EE0A3EAA78F878 /* ModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CFB8CE7D8B7C4F0CBF809FE /* ModelsTests.swift */; };
 		629E5744D474396596A0CCB2 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5999F7A627E65CF8A0A39E3C /* UIKit.framework */; };
@@ -374,6 +375,7 @@
 		F72DF3F7E7AEEF647ED4F51E /* LogsTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81708C8F351548996C60CA6 /* LogsTabTests.swift */; };
 		F742B759992C5DCE1278E1E2 /* OutputTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C0D1D16B0D589031300F30 /* OutputTabTests.swift */; };
 		F8907CA3F2B945D6C12F4E6D /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 17F017DCB3D690AAEC40A72C /* SystemConfiguration.framework */; };
+		F8F10494BFA414267924205F /* libsmithers-ios.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4CF236E19ABF77DEE6BB2A9 /* libsmithers-ios.xcframework */; };
 		FA610A9C21FD681932DF5550 /* E2EEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7290A5EAC1B0139250AFE77D /* E2EEnvironment.swift */; };
 		FA698F8D4DBE103015E0F2E7 /* RunInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CA77B4A367A9CEE8BFA70F7 /* RunInspectorView.swift */; };
 		FB081DD4106F051E7A3D38B9 /* UnifiedDiffParserEdgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93F44A554E694E8400D6C29A /* UnifiedDiffParserEdgeTests.swift */; };
@@ -742,6 +744,7 @@
 		D3864323A7412083655AEFC5 /* MemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryView.swift; sourceTree = "<group>"; };
 		D3E36FE6EBA3B372FFBEF371 /* LiveRunDevToolsMemoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveRunDevToolsMemoryTests.swift; sourceTree = "<group>"; };
 		D4A437FD454E07E1CC4532FC /* BootstrapStage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BootstrapStage.swift; sourceTree = "<group>"; };
+		D4CF236E19ABF77DEE6BB2A9 /* libsmithers-ios.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = "libsmithers-ios.xcframework"; path = "libsmithers/zig-out/lib/libsmithers-ios.xcframework"; sourceTree = "<group>"; };
 		D62B6E4EFA761053B2226C22 /* AncestorErrorIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AncestorErrorIndex.swift; sourceTree = "<group>"; };
 		D65170ABA7D7BD9F86E3E072 /* AuthenticationServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AuthenticationServices.framework; path = System/Library/Frameworks/AuthenticationServices.framework; sourceTree = SDKROOT; };
 		D71A2BBEC05A7C0C90B54AAC /* PropValueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropValueView.swift; sourceTree = "<group>"; };
@@ -843,12 +846,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				7509F8195D023D1373E66044 /* ghostty-vt.xcframework in Frameworks */,
+				F8F10494BFA414267924205F /* libsmithers-ios.xcframework in Frameworks */,
 				4C02613CAD8E0F69FCCECAA6 /* Foundation.framework in Frameworks */,
 				FBBAF1CD2FF2F9EF6F10AE9C /* UIKit.framework in Frameworks */,
 				9A7AB86A123B433D0FFD05EB /* SwiftUI.framework in Frameworks */,
 				378523BDD56BFF565AA8A784 /* AuthenticationServices.framework in Frameworks */,
 				991C19CD92621808BFBE3C9E /* CryptoKit.framework in Frameworks */,
 				94B1836972D6754DABBDB236 /* Security.framework in Frameworks */,
+				5DD5FF60F6D6DC37662F18A9 /* libsqlite3.tbd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -923,6 +928,7 @@
 				FF6588ADE8F231F587AE106A /* Foundation.framework */,
 				2532FFDCB2BAED122399DBF9 /* ghostty-vt.xcframework */,
 				FE09D1B654EB6E252EB15120 /* IOKit.framework */,
+				D4CF236E19ABF77DEE6BB2A9 /* libsmithers-ios.xcframework */,
 				8C4D46692DA9D65B30F93FAA /* libsqlite3.tbd */,
 				3DD6440C9F6629BE503E05FA /* Metal.framework */,
 				12B6A0B98CFB227DDFE73E29 /* MetalKit.framework */,
@@ -2439,6 +2445,7 @@
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"ghostty/zig-out/lib\"",
+					"\"libsmithers/zig-out/lib\"",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ios/Sources/SmithersiOS/Info.plist;
@@ -2455,6 +2462,7 @@
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/CSmithersKit";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -2612,6 +2620,7 @@
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"ghostty/zig-out/lib\"",
+					"\"libsmithers/zig-out/lib\"",
 				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = ios/Sources/SmithersiOS/Info.plist;
@@ -2628,6 +2637,7 @@
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/CSmithersKit";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;

@@ -373,6 +373,9 @@ targets:
         # Keep clang/ld pinned to the active iOS SDK even when a developer
         # shell exports LIBRARY_PATH/RUSTFLAGS for the CommandLineTools macOS SDK.
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
+        # ticket 0172 — surface the libsmithers C API to Swift via the
+        # existing CSmithersKit/ module map (same shim the macOS target uses).
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CSmithersKit"
         OTHER_LDFLAGS: "$(inherited) -force_load $(BUILT_PRODUCTS_DIR)/libghostty-vt.a -lc++"
       configs:
         Debug:
@@ -396,12 +399,19 @@ targets:
         embed: true
       - framework: ghostty/zig-out/lib/ghostty-vt.xcframework
         embed: false
+      # ticket 0172 — link the libsmithers static archive into iOS so the
+      # SmithersRuntime FFI symbols resolve and `canImport(CSmithersKit)`
+      # is true. Without this, terminal/session transport silently disables
+      # behind the canImport gates and TestFlight ships UI-only.
+      - framework: libsmithers/zig-out/lib/libsmithers-ios.xcframework
+        embed: false
       - sdk: Foundation.framework
       - sdk: UIKit.framework
       - sdk: SwiftUI.framework
       - sdk: AuthenticationServices.framework
       - sdk: CryptoKit.framework
       - sdk: Security.framework
+      - sdk: libsqlite3.tbd
   SmithersShareExtension:
     type: app-extension
     platform: iOS

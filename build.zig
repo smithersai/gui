@@ -86,6 +86,15 @@ pub fn build(b: *std.Build) void {
     const libsmithers_step = b.step("libsmithers", "Build libsmithers static library");
     libsmithers_step.dependOn(&libsmithers_build.step);
 
+    // ---- libsmithers iOS xcframework (ticket 0172) --------------------------
+    // Required so the SmithersiOS target's `canImport(CSmithersKit)` gates
+    // are true on TestFlight builds. Produces device + sim slices.
+    const libsmithers_ios = b.addSystemCommand(&.{
+        "bash", "libsmithers/scripts/build-ios-xcframework.sh",
+    });
+    const libsmithers_ios_step = b.step("libsmithers-ios", "Build libsmithers iOS xcframework (device+sim)");
+    libsmithers_ios_step.dependOn(&libsmithers_ios.step);
+
     // ---- swift build --------------------------------------------------------
     // Swift links -lghostty-fat from the xcframework. It's a ~200 MB build
     // output not shipped in the ghostty submodule, so fail loudly up front if

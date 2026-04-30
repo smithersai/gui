@@ -55,7 +55,9 @@ pub fn build(b: *std.Build) void {
     });
     if (target.result.os.tag == .linux) daemon.linkSystemLibrary("util");
     if (target.result.os.tag == .macos) daemon.linkSystemLibrary("proc");
-    b.installArtifact(daemon);
+    // iOS targets cannot spawn child processes, so the local-PTY helper
+    // binaries are macOS/Linux-only. Skip their install step for iOS.
+    if (target.result.os.tag != .ios) b.installArtifact(daemon);
 
     const fd_passing_mod = b.createModule(.{
         .root_source_file = b.path("src/session/fd_passing.zig"),
@@ -78,7 +80,7 @@ pub fn build(b: *std.Build) void {
         .root_module = connect_mod,
     });
     if (target.result.os.tag == .linux) connect.linkSystemLibrary("util");
-    b.installArtifact(connect);
+    if (target.result.os.tag != .ios) b.installArtifact(connect);
 
     const connect_unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -224,15 +226,18 @@ pub fn build(b: *std.Build) void {
 
 fn configureSQLite(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget) void {
     module.link_libc = true;
-    if (target.result.os.tag == .macos) {
-        if (macosSdkRoot(b)) |sdk_root| {
+    if (target.result.os.tag == .macos or target.result.os.tag == .ios) {
+        if (appleSdkRoot(b)) |sdk_root| {
             module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk_root, "usr/lib" }) });
         }
     }
     module.linkSystemLibrary("sqlite3", .{});
 }
 
-fn macosSdkRoot(b: *std.Build) ?[]const u8 {
+fn appleSdkRoot(b: *std.Build) ?[]const u8 {
+    // SDKROOT is the canonical signal — set by xcrun-style invocations and
+    // by the iOS xcframework build script. Trust it when libsqlite3 is
+    // present, regardless of platform.
     if (b.graph.env_map.get("SDKROOT")) |sdk_root| {
         if (sdkHasSQLite(b, sdk_root)) return sdk_root;
     }

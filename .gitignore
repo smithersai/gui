@@ -4,6 +4,8 @@
 build/
 .zig-cache/
 zig-out/
+zig-out-ios-device/
+zig-out-ios-sim/
 *.o
 /io_check
 node_modules/

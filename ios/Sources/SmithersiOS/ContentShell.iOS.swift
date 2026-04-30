@@ -446,7 +446,12 @@ private final class WorkspaceDetailTerminalTransportOwner: ObservableObject {
     }
 
     deinit {
-        transport?.stop()
+        // `RuntimePTYTransport.stop()` is main-actor isolated; `deinit` is
+        // implicitly nonisolated. Hand the captured transport to a hop on
+        // MainActor so we don't violate the isolation contract.
+        if let transport {
+            Task { @MainActor in transport.stop() }
+        }
     }
 }
 #endif

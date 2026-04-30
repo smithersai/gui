@@ -85,6 +85,18 @@ if [ ! -d "${GHOSTTY_VT_XCFRAMEWORK}" ]; then
     exit 1
 fi
 
+# ticket 0172 — libsmithers iOS xcframework. Without it, the SmithersiOS
+# target compiles but the `canImport(CSmithersKit)` gates collapse the
+# terminal/session transport at type-check time, shipping a UI-only build.
+LIBSMITHERS_IOS_XCFRAMEWORK="libsmithers/zig-out/lib/libsmithers-ios.xcframework"
+if [ ! -d "${LIBSMITHERS_IOS_XCFRAMEWORK}" ]; then
+    echo "error: ${LIBSMITHERS_IOS_XCFRAMEWORK} is missing." >&2
+    echo "       Run 'libsmithers/scripts/build-ios-xcframework.sh'" >&2
+    echo "       (requires zig $(cat .zigversion 2>/dev/null || echo '0.15.2'))" >&2
+    echo "       or restore it from the CI cache." >&2
+    exit 1
+fi
+
 MARKETING_VERSION="${MARKETING_VERSION:-$(awk '/MARKETING_VERSION:/ {gsub(/["'\'']/, "", $2); print $2; exit}' project.yml)}"
 CURRENT_PROJECT_VERSION="${CURRENT_PROJECT_VERSION:-${GITHUB_RUN_NUMBER:-1}}"
 EXPORT_METHOD="${EXPORT_METHOD:-app-store}"
