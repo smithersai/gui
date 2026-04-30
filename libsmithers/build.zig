@@ -96,32 +96,6 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .linux) connect_unit_tests.linkSystemLibrary("util");
     const run_connect_unit_tests = b.addRunArtifact(connect_unit_tests);
 
-    const tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/e2e.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "libsmithers", .module = root_mod },
-            },
-        }),
-    });
-    configureSQLite(b, tests.root_module, target);
-
-    const run_tests = b.addRunArtifact(tests);
-
-    const devtools_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/devtools_stream.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "libsmithers", .module = root_mod },
-            },
-        }),
-    });
-    configureSQLite(b, devtools_tests.root_module, target);
-    const run_devtools_tests = b.addRunArtifact(devtools_tests);
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
@@ -173,25 +147,12 @@ pub fn build(b: *std.Build) void {
     configureSQLite(b, core_integration_tests.root_module, target);
     const run_core_integration_tests = b.addRunArtifact(core_integration_tests);
 
-    const test_step = b.step("test", "Run libsmithers e2e tests");
-    test_step.dependOn(&run_tests.step);
+    const test_step = b.step("test", "Run libsmithers modern core tests");
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_daemon_unit_tests.step);
     test_step.dependOn(&run_connect_unit_tests.step);
-    test_step.dependOn(&run_devtools_tests.step);
     test_step.dependOn(&run_core_ffi_tests.step);
     test_step.dependOn(&run_core_integration_tests.step);
-    test_step.dependOn(&(blk: {
-        const integration_tests = b.addTest(.{ .root_module = b.createModule(.{
-            .root_source_file = b.path("test/integration/all.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "libsmithers", .module = root_mod }},
-        }) });
-        configureSQLite(b, integration_tests.root_module, target);
-        const run_integration_tests = b.addRunArtifact(integration_tests);
-        break :blk run_integration_tests;
-    }).step);
 
     // Dedicated integration test for the native session daemon. This test
     // drives src/session/server.zig directly (spawning the server on a

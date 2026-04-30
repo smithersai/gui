@@ -1,6 +1,5 @@
 pub const structs = @import("structs.zig");
 pub const action = @import("action.zig");
-pub const embedded = @import("embedded.zig");
 
 pub const Action = action.Action;
 pub const Target = action.Target;

@@ -5,10 +5,9 @@
 //! thin adapter; anything richer should be added here explicitly, not
 //! generated.
 //!
-//! NOTE: the old `smithers_app_*` / `smithers_client_*` / `smithers_session_*`
-//! FFI in apprt/embedded.zig stays intact as a compatibility shim
-//! (REMOVE-AFTER-0126) so desktop-local keeps compiling while the
-//! production remote path migrates.
+//! The old `smithers_app_*` / `smithers_client_*` / `smithers_session_*`
+//! compatibility ABI has been removed; this file is now the only runtime
+//! entrypoint surface.
 
 const std = @import("std");
 const core_mod = @import("core.zig");

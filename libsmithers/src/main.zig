@@ -1,23 +1,13 @@
-pub const App = @import("App.zig");
-pub const apprt = @import("apprt/apprt.zig");
-pub const client = @import("client/client.zig");
-pub const commands = @import("commands/mod.zig");
 pub const core = @import("core/core.zig");
-pub const devtools = @import("devtools/DevToolsClient.zig");
 pub const ffi = @import("ffi.zig");
-pub const models = @import("models/mod.zig");
-pub const persistence = @import("persistence/sqlite.zig");
-pub const session = @import("session/session.zig");
-pub const terminal = @import("terminal/tmux.zig");
-pub const workspace = @import("workspace/mod.zig");
-
 pub const obs = @import("obs.zig");
 
 comptime {
-    _ = apprt.embedded;
-    // Ensure the new core FFI exports are pulled into the static archive.
+    // Shared string/error/bytes frees.
+    _ = @import("ffi_exports.zig");
+    // Core runtime exports.
     _ = @import("core/ffi.zig");
-    // Observability runtime exports (smithers_obs_*).
+    // Observability runtime exports.
     _ = @import("obs_ffi.zig");
 }
 
