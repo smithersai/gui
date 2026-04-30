@@ -43,7 +43,6 @@ targets:
       - LiveRunLayout.swift
       - SmithersGUI/Views/RunInspector/RunInspectorView.swift
       - SmithersGUI/Views/RunInspector/RunTreeView.swift
-      - SmithersGUI/Views/RunInspector/NodeInspectorView.swift
       - LiveRunView.swift
       - LiveRunTreeExpansionStore.swift
       - LiveRunTreeView.swift
