@@ -41,21 +41,8 @@ struct ChatBlockMerger {
 
         if let lastIndex = blocks.indices.last {
             let existing = blocks[lastIndex]
-            let existingLifecycleId = existing.lifecycleId?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let incomingLifecycleId = block.lifecycleId?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let hasDistinctLifecycleIds: Bool = {
-                guard let existingLifecycleId,
-                      !existingLifecycleId.isEmpty,
-                      let incomingLifecycleId,
-                      !incomingLifecycleId.isEmpty else {
-                    return false
-                }
-                return existingLifecycleId != incomingLifecycleId
-            }()
-
-            if !hasDistinctLifecycleIds,
-               existing.canMergeAssistantStream(with: block),
-               existing.hasStreamingContentOverlap(with: block) {
+            if existing.canMergeAssistantStream(with: block),
+               canMergeAdjacentAssistantStream(existing, with: block) {
                 blocks[lastIndex] = existing.mergingAssistantStream(with: block)
                 indexLifecycleIds(for: existing, at: lastIndex)
                 indexLifecycleIds(for: block, at: lastIndex)
@@ -103,5 +90,38 @@ struct ChatBlockMerger {
         if let lifecycleId = block.lifecycleId, !lifecycleId.isEmpty {
             indexByLifecycleId[lifecycleId] = index
         }
+    }
+
+    private func canMergeAdjacentAssistantStream(_ existing: ChatBlock, with incoming: ChatBlock) -> Bool {
+        guard hasDistinctLifecycleIds(existing, incoming) else {
+            return existing.hasStreamingContentOverlap(with: incoming)
+        }
+        return hasForwardStreamingContinuation(existing.content, incoming.content)
+    }
+
+    private func hasDistinctLifecycleIds(_ lhs: ChatBlock, _ rhs: ChatBlock) -> Bool {
+        guard let lhsId = lhs.lifecycleId, !lhsId.isEmpty,
+              let rhsId = rhs.lifecycleId, !rhsId.isEmpty else { return false }
+        return lhsId != rhsId
+    }
+
+    private func hasForwardStreamingContinuation(_ existing: String, _ incoming: String) -> Bool {
+        if existing.isEmpty || incoming.isEmpty { return false }
+        if existing == incoming { return true }
+        if existing.hasPrefix(incoming) || incoming.hasPrefix(existing) { return true }
+        return suffixPrefixOverlap(existing, incoming) >= 2
+    }
+
+    private func suffixPrefixOverlap(_ lhs: String, _ rhs: String) -> Int {
+        let lhsChars = Array(lhs)
+        let rhsChars = Array(rhs)
+        var length = min(lhsChars.count, rhsChars.count)
+        while length > 0 {
+            if Array(lhsChars[(lhsChars.count - length)..<lhsChars.count]) == Array(rhsChars[0..<length]) {
+                return length
+            }
+            length -= 1
+        }
+        return 0
     }
 }

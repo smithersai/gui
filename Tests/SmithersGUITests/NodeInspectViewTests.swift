@@ -2,7 +2,6 @@ import XCTest
 import ViewInspector
 @testable import SmithersGUI
 
-extension NodeInspectView: @retroactive Inspectable {}
 
 @MainActor
 final class NodeInspectViewTests: XCTestCase {

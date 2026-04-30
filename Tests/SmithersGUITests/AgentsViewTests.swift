@@ -318,7 +318,7 @@ final class AgentsViewCardDisplayTests: XCTestCase {
         let agent = makeAgent(usable: true)
         // In agentCard, faded is false for available agents
         // background uses: Theme.surface2.opacity(faded ? 0.7 : 1)
-        let faded = false
+        let faded = !agent.usable
         let opacity = faded ? 0.7 : 1.0
         XCTAssertEqual(opacity, 1.0)
     }
@@ -327,7 +327,7 @@ final class AgentsViewCardDisplayTests: XCTestCase {
     /// The card background uses opacity 0.7 when faded.
     func testUnusableAgentFaded() {
         let agent = makeAgent(usable: false)
-        let faded = true
+        let faded = !agent.usable
         let opacity = faded ? 0.7 : 1.0
         XCTAssertEqual(opacity, 0.7)
     }

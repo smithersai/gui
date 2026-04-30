@@ -93,12 +93,10 @@ let package = Package(
                 "alchemy.run.ts",
                 "package.json",
                 "bun.lock",
-                "node_modules",
                 "build",
+                "run-1777173223656.log",
                 "SmithersGUI.xcodeproj",
                 "Shared",
-                "SmithersGUI/Views/RunInspector/NodeInspectorView.swift",
-                "SmithersGUI/Views/RunInspector/FrameScrubberView.swift",
             ],
             resources: [
                 .process("Resources"),

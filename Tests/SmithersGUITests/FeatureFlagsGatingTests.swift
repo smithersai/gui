@@ -8,7 +8,6 @@ import SmithersAuth
 import SmithersStore
 #endif
 
-extension SidebarView: @retroactive Inspectable {}
 
 @MainActor
 final class FeatureFlagsGatingTests: XCTestCase {

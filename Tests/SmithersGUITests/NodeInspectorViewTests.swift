@@ -3,17 +3,12 @@ import SwiftUI
 import ViewInspector
 @testable import SmithersGUI
 
-extension NodeInspectorView: @retroactive Inspectable {}
-extension NodeInspectorHeader: @retroactive Inspectable {}
-extension GhostBanner: @retroactive Inspectable {}
-extension NodeErrorBanner: @retroactive Inspectable {}
-extension InspectorTabSwitcher: @retroactive Inspectable {}
 
 @MainActor
 final class NodeInspectorViewTests: XCTestCase {
 
-    private func makeStore() -> LiveRunDevToolsStore {
-        LiveRunDevToolsStore()
+    private func makeStore() -> DevToolsStore {
+        DevToolsStore()
     }
 
     private func makeTaskNode(
@@ -210,7 +205,7 @@ final class NodeInspectorViewTests: XCTestCase {
         let node = makeTaskNode(state: "failed")
         let banner = NodeErrorBanner(node: node, runSupportsRetry: false, onRetry: { _ in })
         let button = try banner.inspect().find(button: "Retry")
-        XCTAssertTrue(try button.isDisabled())
+        XCTAssertTrue(button.isDisabled())
     }
 
     // MARK: - Tab switcher

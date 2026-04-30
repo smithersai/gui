@@ -580,6 +580,9 @@ final class SmithersStoreRuntimeEventTests: XCTestCase {
             request: workflowRunRequest(kind: .workflowRunCancel, runID: "run-a"),
             echoTable: StoreTable.workflowRuns
         )
+        await waitUntil("first dispatch was not issued") {
+            session.writeCallCount() == 1
+        }
         let secondProbe = spawnDispatch(
             store: store,
             request: workflowRunRequest(kind: .workflowRunRerun, runID: "run-b"),

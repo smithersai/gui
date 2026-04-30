@@ -32,14 +32,14 @@ final class OutputRendererEscapeTests: XCTestCase {
     // MARK: - Helpers
 
     /// All inspectable `Text` strings collected from the rendered view.
-    private func collectedTexts<V: View & Inspectable>(_ view: V) throws -> [String] {
+    private func collectedTexts<V: View>(_ view: V) throws -> [String] {
         let inspected = try view.inspect()
         let texts = inspected.findAll(ViewType.Text.self)
         return texts.compactMap { try? $0.string() }
     }
 
     /// Concatenated rendered text — the closest analogue to "what the user sees".
-    private func renderedConcat<V: View & Inspectable>(_ view: V) throws -> String {
+    private func renderedConcat<V: View>(_ view: V) throws -> String {
         try collectedTexts(view).joined(separator: "\n")
     }
 
@@ -75,7 +75,7 @@ final class OutputRendererEscapeTests: XCTestCase {
     ///
     /// The literal characters `<`, `>`, `&`, `"`, `'`, `=` may all appear
     /// in rendered text — that's the safe form. We don't disallow them.
-    private func assertRenderedAsInertText<V: View & Inspectable>(
+    private func assertRenderedAsInertText<V: View>(
         _ view: V,
         input: String,
         file: StaticString = #filePath,
@@ -142,7 +142,7 @@ final class OutputRendererEscapeTests: XCTestCase {
 
     /// Inspect every accessibility identifier that includes a key-derived
     /// suffix and assert it has been sanitized to `[A-Za-z0-9_-]+`.
-    private func assertAccessibilityIdentifiersSanitized<V: View & Inspectable>(
+    private func assertAccessibilityIdentifiersSanitized<V: View>(
         _ view: V,
         file: StaticString = #filePath,
         line: UInt = #line

@@ -2,7 +2,6 @@ import XCTest
 import ViewInspector
 @testable import SmithersGUI
 
-extension LiveRunView: @retroactive Inspectable {}
 
 @MainActor
 final class HighCoverageViewRenderTests: XCTestCase {

@@ -2,7 +2,6 @@ import XCTest
 import ViewInspector
 @testable import SmithersGUI
 
-extension UnifiedDiffView: @retroactive Inspectable {}
 
 @MainActor
 final class UnifiedDiffViewTests: XCTestCase {

@@ -425,7 +425,9 @@ final class KeyboardShortcutSettingsFileStoreTests: XCTestCase {
 
         let renamed = settingsFileURL.deletingLastPathComponent().appendingPathComponent("renamed.json")
         try FileManager.default.moveItem(at: settingsFileURL, to: renamed)
-        wait(for: [expectation], timeout: 5.0)
+        withExtendedLifetime(store) {
+            wait(for: [expectation], timeout: 5.0)
+        }
     }
 
     func testFileWatcherRecoversWhenFileIsRecreatedAfterDelete() throws {

@@ -10,31 +10,21 @@ Requires **macOS 14 (Sonoma)** or later, **Apple Silicon (arm64)**.
 
 [**Download SmithersGUI.dmg**](https://download.smithers.sh/SmithersGUI.dmg)
 &nbsp; · &nbsp; [`.sha256`](https://download.smithers.sh/SmithersGUI.dmg.sha256)
-&nbsp; · &nbsp; [`.sig`](https://download.smithers.sh/SmithersGUI.dmg.sig)
 
-> **Unsigned by Apple.** On first launch macOS will refuse to open it ("can't be opened because Apple cannot check it for malicious software"). To allow it: open **System Settings → Privacy & Security**, scroll to the message about SmithersGUI being blocked, and click **Open Anyway** (you'll be prompted for your password). macOS will remember this for future launches. Verifying the eth signature below is the way to confirm the binary is the one we built.
+> Releases are notarized through Apple's standard distribution flow. If macOS still blocks a local or development build, open **System Settings -> Privacy & Security**, scroll to the message about SmithersGUI being blocked, and click **Open Anyway**.
 
 ### Verify the binary
 
-Releases are signed with a secp256k1 key (an Ethereum wallet) so you can prove the DMG you downloaded is the same bits we built — no Apple Developer ID required.
-
-**Signer address:** `0xA1aaEC6B60547BE8677247f9Eb2d9fCc975496fb`
-
-The signature is over the SHA-256 of the DMG. Verify with [foundry's `cast`](https://book.getfoundry.sh/getting-started/installation):
+Verify the downloaded artifact against the published SHA-256 checksum:
 
 ```bash
 # 1. download the artifacts
 curl -LO https://download.smithers.sh/SmithersGUI.dmg
-curl -LO https://download.smithers.sh/SmithersGUI.dmg.sig
+curl -LO https://download.smithers.sh/SmithersGUI.dmg.sha256
 
-# 2. hash the DMG and verify the signature recovers the signer address
-HASH=0x$(shasum -a 256 SmithersGUI.dmg | awk '{print $1}')
-SIG=$(cat SmithersGUI.dmg.sig)
-cast wallet verify --address 0xA1aaEC6B60547BE8677247f9Eb2d9fCc975496fb "$HASH" "$SIG"
-# → prints "Validation succeeded." on a good signature
+# 2. verify the checksum
+shasum -a 256 -c SmithersGUI.dmg.sha256
 ```
-
-If `cast wallet verify` succeeds, the DMG matches what was signed by the holder of the private key (stored in the maintainer's macOS Keychain — see `scripts/init-signing-key.ts` and `scripts/sign-dmg.ts`).
 
 ## Reporting bugs
 

@@ -127,7 +127,8 @@ final class SearchIssueStateFilterTests: XCTestCase {
         var foundMenu = false
         // Count children: 3 buttons + spacer + text = 5 children (no menu)
         // If the issues tab were selected we'd have 6 children (with the menu).
-        let childCount = try tabsHStack.count
+        let childCount = tabsHStack.count
+        XCTAssertGreaterThan(childCount, 0)
         // With Code tab: ForEach(3 buttons) + if-block(hidden) + Spacer + Text = varies
         // The key test: no Menu element should be accessible
         do {
@@ -174,6 +175,7 @@ final class SearchSnippetTests: XCTestCase {
         // This is a bug if SEARCH_SNIPPET_WITH_LINE_NUMBERS requires inline line numbering.
         let snippet = "func parseConfig() {\n  let x = 1\n  return x\n}"
         let result = codeResult(snippet: snippet)
+        XCTAssertEqual(result.snippet, snippet)
 
         // The expected behavior: each line should be prefixed with its line number.
         // e.g., "42: func parseConfig() {\n43:   let x = 1\n44:   return x\n45: }"

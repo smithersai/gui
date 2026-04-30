@@ -6,14 +6,27 @@ final class SmithersModelsTests: XCTestCase {
     // MARK: - RunStatus
 
     func testRunStatusHasExpectedVariants() {
-        XCTAssertEqual(RunStatus.allCases.count, 8)
-        let expected: Set<RunStatus> = [.running, .waitingApproval, .finished, .failed, .cancelled, .stale, .orphaned, .unknown]
+        XCTAssertEqual(RunStatus.allCases.count, 10)
+        let expected: Set<RunStatus> = [
+            .running,
+            .waitingApproval,
+            .waitingEvent,
+            .waitingTimer,
+            .finished,
+            .failed,
+            .cancelled,
+            .stale,
+            .orphaned,
+            .unknown,
+        ]
         XCTAssertEqual(Set(RunStatus.allCases), expected)
     }
 
     func testRunStatusRawValues() {
         XCTAssertEqual(RunStatus.running.rawValue, "running")
         XCTAssertEqual(RunStatus.waitingApproval.rawValue, "waiting-approval")
+        XCTAssertEqual(RunStatus.waitingEvent.rawValue, "waiting-event")
+        XCTAssertEqual(RunStatus.waitingTimer.rawValue, "waiting-timer")
         XCTAssertEqual(RunStatus.finished.rawValue, "finished")
         XCTAssertEqual(RunStatus.failed.rawValue, "failed")
         XCTAssertEqual(RunStatus.cancelled.rawValue, "cancelled")
@@ -23,6 +36,8 @@ final class SmithersModelsTests: XCTestCase {
     func testRunStatusLabels() {
         XCTAssertEqual(RunStatus.running.label, "RUNNING")
         XCTAssertEqual(RunStatus.waitingApproval.label, "APPROVAL")
+        XCTAssertEqual(RunStatus.waitingEvent.label, "WAITING")
+        XCTAssertEqual(RunStatus.waitingTimer.label, "WAITING")
         XCTAssertEqual(RunStatus.finished.label, "FINISHED")
         XCTAssertEqual(RunStatus.failed.label, "FAILED")
         XCTAssertEqual(RunStatus.cancelled.label, "CANCELLED")

@@ -116,7 +116,7 @@ struct NodeInspectorView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("view.node.inspector")
         .onAppear { buildStart = CFAbsoluteTimeGetCurrent() }
-        .onChange(of: store.selectedNodeId) { _ in
+        .onChange(of: store.selectedNodeId) { _, _ in
             buildStart = CFAbsoluteTimeGetCurrent()
             updateDefaultTab()
             logSelectionChange()

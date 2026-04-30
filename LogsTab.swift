@@ -17,10 +17,10 @@ protocol ChatHistoryProviding: Sendable {
     func getChatOutput(runId: String) async throws -> [ChatBlock]
 }
 
-@MainActor
 final class EmptyChatStreamProvider: ChatStreamProviding {
     static let shared = EmptyChatStreamProvider()
 
+    @MainActor
     func streamChat(runId: String) -> AsyncThrowingStream<SSEEvent, Error> {
         AsyncThrowingStream { continuation in
             continuation.finish()
@@ -387,9 +387,19 @@ struct LogsTab: View {
     private let bottomAnchor = "logs.tab.bottom"
 
     @MainActor
+    init(store: DevToolsStore) {
+        self.init(
+            store: store,
+            streamProvider: EmptyChatStreamProvider.shared,
+            historyProvider: EmptyChatHistoryProvider.shared,
+            pasteboard: SystemTranscriptPasteboard()
+        )
+    }
+
+    @MainActor
     init(
         store: DevToolsStore,
-        streamProvider: ChatStreamProviding = EmptyChatStreamProvider.shared,
+        streamProvider: ChatStreamProviding,
         historyProvider: ChatHistoryProviding = EmptyChatHistoryProvider.shared,
         pasteboard: TranscriptPasteboarding = SystemTranscriptPasteboard()
     ) {

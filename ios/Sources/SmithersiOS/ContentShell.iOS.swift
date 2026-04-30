@@ -218,8 +218,9 @@ struct IOSContentShell: View {
             )
         }
         .onAppear {
-            IOSPushNotificationRegistrar.shared.configure(baseURL: baseURL, bearerProvider: bearerProvider)
-            ApprovalNotificationHandler.shared.configure(baseURL: baseURL, bearerProvider: bearerProvider)
+            let provider: @Sendable () -> String? = { bearerProvider() }
+            IOSPushNotificationRegistrar.shared.configure(baseURL: baseURL, bearerProvider: provider)
+            ApprovalNotificationHandler.shared.configure(baseURL: baseURL, bearerProvider: provider)
             if let route = deepLinkRouter.route {
                 handleDeepLinkRoute(route)
             }

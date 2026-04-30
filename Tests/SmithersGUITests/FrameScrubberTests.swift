@@ -2,7 +2,6 @@ import XCTest
 import ViewInspector
 @testable import SmithersGUI
 
-extension FrameScrubberView: @retroactive Inspectable {}
 
 @MainActor
 final class FrameScrubberTests: XCTestCase {
@@ -22,7 +21,7 @@ final class FrameScrubberTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.snapshotToReturn = makeSnapshot(frameNo: 1, seq: 101, name: "historical")
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.runId = "run-test"
         store.applyEvent(.snapshot(makeSnapshot(frameNo: 3, seq: 3, name: "live")))
 
@@ -36,7 +35,7 @@ final class FrameScrubberTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.snapshotToReturn = makeSnapshot(frameNo: 1, seq: 101, name: "historical")
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.runId = "run-test"
         store.applyEvent(.snapshot(makeSnapshot(frameNo: 3, seq: 3, name: "live")))
         await store.scrubTo(frameNo: 1)

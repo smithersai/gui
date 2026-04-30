@@ -172,7 +172,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     // MARK: - Snapshot handling
 
     func testSnapshotReplacesTree() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         let root = makeNode(id: 1, type: .workflow, name: "wf")
         let snapshot = makeSnapshot(seq: 1, root: root)
         store.runId = "run_test"
@@ -184,14 +184,14 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testSnapshotUpdatesSeq() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         store.applyEvent(.snapshot(makeSnapshot(seq: 5)))
         XCTAssertEqual(store.seq, 5)
     }
 
     func testDuplicateSnapshotSeqIgnored() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let root1 = makeNode(id: 1, type: .workflow, name: "first")
         store.applyEvent(.snapshot(makeSnapshot(seq: 5, root: root1)))
@@ -203,7 +203,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testSnapshotMismatchedRunIdDisconnects() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_a"
         let snapshot = DevToolsSnapshot(
             runId: "run_b", frameNo: 1, seq: 1,
@@ -216,7 +216,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     // MARK: - Delta handling
 
     func testDeltaAppliesOps() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let root = makeNode(id: 1, type: .workflow, name: "wf")
         store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
@@ -232,7 +232,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testBackwardsSeqDeltaIgnored() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         store.applyEvent(.snapshot(makeSnapshot(seq: 10)))
 
@@ -247,7 +247,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
 
     func testLargeSeqGapTriggersResync() {
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.connect(runId: "run_test")
 
         let root = makeNode(id: 1, type: .workflow, name: "wf")
@@ -263,7 +263,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testGapResyncDiscardsDeltaPatchingUntilSnapshotArrives() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let originalRoot = makeNode(
             id: 1,
@@ -293,7 +293,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     // MARK: - Ghost state
 
     func testSelectNodeSetsSelectedNodeId() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let root = makeNode(id: 1, children: [makeNode(id: 2)])
         store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
@@ -304,7 +304,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testGhostWhenSelectedNodeRemoved() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let root = makeNode(id: 1, children: [makeNode(id: 2)])
         store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
@@ -320,7 +320,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testGhostClearsOnReselectLiveNode() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let root = makeNode(id: 1, children: [makeNode(id: 2), makeNode(id: 3)])
         store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
@@ -335,7 +335,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testGhostAutoClears() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let root = makeNode(id: 1, children: [makeNode(id: 2)])
         store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
@@ -354,7 +354,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testGhostEvictionHonorsConfiguredCap() {
-        let store = LiveRunDevToolsStore(ghostNodeCap: 1)
+        let store = DevToolsStore(ghostNodeCap: 1)
         store.runId = "run_test"
 
         let initialRoot = makeNode(
@@ -374,7 +374,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testDeselectClearsGhost() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let root = makeNode(id: 1, children: [makeNode(id: 2)])
         store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
@@ -389,7 +389,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testNodeStillExistsNotGhost() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let root = makeNode(id: 1, children: [makeNode(id: 2)])
         store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
@@ -404,7 +404,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     // MARK: - Events applied counter
 
     func testEventsAppliedCounter() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         XCTAssertEqual(store.eventsApplied, 0)
 
@@ -419,7 +419,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     // MARK: - lastEventAt
 
     func testLastEventAtUpdated() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         XCTAssertNil(store.lastEventAt)
 
@@ -430,12 +430,12 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     // MARK: - heartbeatAgeMs
 
     func testHeartbeatAgeMsMaxWhenNoEvents() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         XCTAssertEqual(store.heartbeatAgeMs, Int.max)
     }
 
     func testHeartbeatAgeMsAfterEvent() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         store.applyEvent(.snapshot(makeSnapshot(seq: 1)))
         XCTAssertLessThan(store.heartbeatAgeMs, 1000)
@@ -444,13 +444,13 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     // MARK: - Connection state
 
     func testInitialConnectionStateDisconnected() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         XCTAssertEqual(store.connectionState, .disconnected)
     }
 
     func testConnectSetsConnecting() {
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.connect(runId: "run_test")
         XCTAssertEqual(store.connectionState, .connecting)
     }
@@ -469,7 +469,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
             ),
         ]
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.connect(runId: "run_test")
         try? await Task.sleep(nanoseconds: 40_000_000)
 
@@ -480,7 +480,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
 
     func testDisconnectSetsDisconnected() {
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.connect(runId: "run_test")
         store.disconnect()
         XCTAssertEqual(store.connectionState, .disconnected)
@@ -489,7 +489,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
 
     func testDoubleConnectCancelsFirst() {
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.connect(runId: "run_a")
         store.connect(runId: "run_b")
         XCTAssertEqual(store.runId, "run_b")
@@ -498,7 +498,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     func testReconnectUsesStoredCursorPerRun() async {
         let provider = MockDevToolsStreamProvider()
         provider.events = [.snapshot(makeSnapshot(runId: "run_test", frameNo: 1, seq: 9))]
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
 
         store.connect(runId: "run_test")
         try? await Task.sleep(nanoseconds: 20_000_000)
@@ -506,13 +506,16 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
 
         provider.events = []
         store.connect(runId: "run_test")
+        await waitForMainActorCondition("reconnect stream was not started") {
+            provider.streamCallCount >= 2
+        }
 
         XCTAssertEqual(provider.lastAfterSeq, 9)
     }
 
     func testReconnectAfterMidStreamDropReplaysMissingDeltas() async {
         let provider = ReconnectFixtureStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         defer { store.disconnect() }
 
         store.connect(runId: "run_test")
@@ -527,7 +530,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
 
     func testSwitchingBackToRunRequestsFreshSnapshotAfterTreeReset() async {
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
 
         provider.events = [.snapshot(makeSnapshot(runId: "run_a", frameNo: 1, seq: 9))]
         store.connect(runId: "run_a")
@@ -549,7 +552,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
 
     func testRewindPastGhostMountClearsGhostEntry() async {
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.runId = "run_test"
 
         let mountedRoot = makeNode(
@@ -576,14 +579,14 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     // MARK: - Concurrency annotations
 
     func testStoreIsMainActor() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         XCTAssertNotNil(store, "Store should be constructible on @MainActor")
     }
 
     // MARK: - selectedNode property
 
     func testSelectedNodeReturnsNodeFromTree() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let child = makeNode(id: 2, name: "target")
         let root = makeNode(id: 1, children: [child])
@@ -594,7 +597,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testSelectedNodeReturnsGhostWhenRemoved() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
         let root = makeNode(id: 1, children: [makeNode(id: 2, name: "will-vanish")])
         store.applyEvent(.snapshot(makeSnapshot(seq: 1, root: root)))
@@ -609,14 +612,14 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     }
 
     func testSelectedNodeNilWhenNothingSelected() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         XCTAssertNil(store.selectedNode)
     }
 
     // MARK: - Running-node tracking (historical scrubber cursor)
 
     func testRunningNodeCountReflectsRunningLeafTasks() {
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
 
         let runningTask = makeNode(
@@ -657,7 +660,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     func testRunningNodeCountIgnoresStructuralParents() {
         // A sequence node with state="running" (from rollup) but no task payload
         // should NOT contribute to the count — only leaf tasks do.
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "run_test"
 
         let task = makeNode(
@@ -715,7 +718,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         )
 
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.runId = "run_test"
 
         // Live state = frame 2 (finished). Simulate a live snapshot arriving so the
@@ -735,4 +738,20 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         XCTAssertEqual(store.runningNodeCount, 1, "historical frame 1: task running")
         XCTAssertEqual(store.runningNodeIds, ["alpha"])
     }
+}
+
+@MainActor
+private func waitForMainActorCondition(
+    _ message: String,
+    timeout: TimeInterval = 1.0,
+    file: StaticString = #filePath,
+    line: UInt = #line,
+    condition: @escaping @MainActor () -> Bool
+) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTFail(message, file: file, line: line)
 }

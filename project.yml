@@ -11,6 +11,7 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "-"
+    ENABLE_APPINTENTS_METADATA_GENERATION: NO
 packages:
   ViewInspector:
     url: https://github.com/nalexn/ViewInspector.git
@@ -167,12 +168,13 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.SmithersGUI
         GENERATE_INFOPLIST_FILE: YES
+        ENABLE_APPINTENTS_METADATA_GENERATION: NO
         INFOPLIST_KEY_CFBundleDisplayName: SmithersGUI
         INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
         SUPPORTED_PLATFORMS: macosx
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CGhosttyKit $(SRCROOT)/CSmithersKit"
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64 $(SRCROOT)/libsmithers/zig-out/lib $(SRCROOT)/libsmithers"
-        OTHER_LDFLAGS: "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2 -lsqlite3"
+        OTHER_LDFLAGS: "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2"
     dependencies:
       - sdk: Security.framework
       - sdk: SystemConfiguration.framework
@@ -183,6 +185,7 @@ targets:
       - sdk: CoreText.framework
       - sdk: IOKit.framework
       - sdk: AppKit.framework
+      - sdk: AppIntents.framework
       - sdk: WebKit.framework
       - sdk: Carbon.framework
       - sdk: Foundation.framework
@@ -311,6 +314,7 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         # Register `smithers://` once for OAuth2 callbacks and app deep links.
@@ -335,6 +339,7 @@ targets:
         # the knob the user plugs into https://appstoreconnect.apple.com/.
         PRODUCT_BUNDLE_IDENTIFIER: com.smithers.ios
         GENERATE_INFOPLIST_FILE: NO
+        ENABLE_APPINTENTS_METADATA_GENERATION: NO
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
@@ -398,6 +403,7 @@ targets:
     dependencies:
       - target: SmithersShareExtension
         embed: true
+      - sdk: AppIntents.framework
       - framework: ghostty/zig-out/lib/ghostty-vt.xcframework
         embed: false
       # ticket 0172 — link the libsmithers static archive into iOS so the
@@ -484,6 +490,7 @@ targets:
           CODE_SIGNING_ALLOWED: YES
           CODE_SIGN_IDENTITY: "Apple Distribution"
     dependencies:
+      - sdk: AppIntents.framework
       - sdk: Foundation.framework
       - sdk: UIKit.framework
       - sdk: SwiftUI.framework

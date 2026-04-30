@@ -251,7 +251,7 @@ struct DiffTab: View {
                 model.load(request)
             }
         }
-        .onChange(of: request?.cacheKey) { _ in
+        .onChange(of: request?.cacheKey) { _, _ in
             guard let request else { return }
             model.load(request)
         }

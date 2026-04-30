@@ -20,7 +20,7 @@ final class StoreSoakTests: XCTestCase {
             throw XCTSkip("Soak test requires SMITHERS_SOAK=1")
         }
 
-        let store = LiveRunDevToolsStore()
+        let store = DevToolsStore()
         store.runId = "soak_run"
 
         let root = makeNode(id: 0, type: .workflow, name: "soak-root")
@@ -64,7 +64,7 @@ final class StoreSoakTests: XCTestCase {
         }
 
         let provider = MockSoakStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
 
         for _ in 0..<100 {
             store.connect(runId: "leak_test")

@@ -129,8 +129,7 @@ final class SessionStoreHijackTests: XCTestCase {
             hijack: hijack
         )
 
-        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        firstStore.flushSessionPersistence()
 
         let reloadedStore = context.makeStore()
         let restoredTab = try XCTUnwrap(reloadedStore.terminalTab(forRunId: "run-persisted"))

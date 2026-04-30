@@ -198,10 +198,10 @@ struct OutputTab: View {
         .onAppear {
             controller.activate(context: context, runtimeState: runtimeState)
         }
-        .onChange(of: store.selectedNodeId) { _ in
+        .onChange(of: store.selectedNodeId) { _, _ in
             controller.activate(context: context, runtimeState: runtimeState)
         }
-        .onChange(of: store.seq) { _ in
+        .onChange(of: store.seq) { _, _ in
             controller.activate(context: context, runtimeState: runtimeState)
             controller.observeRuntimeState(runtimeState)
         }

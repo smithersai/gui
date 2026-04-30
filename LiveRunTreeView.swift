@@ -46,10 +46,10 @@ struct LiveRunTreeView: View {
         }
         .background(Theme.surface1)
         .accessibilityElement(children: .contain)
-        .onChange(of: store.seq) { newSeq in
+        .onChange(of: store.seq) { _, newSeq in
             rebuildIndices(seq: newSeq)
         }
-        .onChange(of: store.displayedFrameNo) { _ in
+        .onChange(of: store.displayedFrameNo) { _, _ in
             // Historical scrubbing can land on a frame whose seq matches the previous
             // displayed seq (e.g. when `seq == frameNo`). Rebuild indices so the
             // running-row auto-expand fires for the new per-frame state regardless.
@@ -59,7 +59,7 @@ struct LiveRunTreeView: View {
             guard let newSelectedNodeId else { return }
             expandPathToSelectedNode(newSelectedNodeId)
         }
-        .onChange(of: searchQuery) { _ in
+        .onChange(of: searchQuery) { _, _ in
             searchIndex = TreeSearchIndex(root: store.tree, query: searchQuery)
         }
         .onAppear {
@@ -821,18 +821,13 @@ private final class LiveRunFixtureDevToolsProvider: DevToolsStreamProvider, @unc
             throw DevToolsClientError.confirmationRequired
         }
 
-        lock.lock()
         if jumpInFlight {
-            lock.unlock()
             throw DevToolsClientError.busy
         }
         jumpInFlight = true
-        lock.unlock()
 
         defer {
-            lock.lock()
             jumpInFlight = false
-            lock.unlock()
         }
 
         switch rewindErrorMode {
@@ -841,12 +836,10 @@ private final class LiveRunFixtureDevToolsProvider: DevToolsStreamProvider, @unc
         case "unsupported":
             throw DevToolsClientError.unsupportedSandbox("This sandbox type does not support rewind.")
         case "network":
-            lock.lock()
             let shouldThrow = !emittedNetworkError
             if shouldThrow {
                 emittedNetworkError = true
             }
-            lock.unlock()
             if shouldThrow {
                 throw URLError(.notConnectedToInternet)
             }

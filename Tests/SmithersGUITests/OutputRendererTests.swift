@@ -3,7 +3,6 @@ import SwiftUI
 import ViewInspector
 @testable import SmithersGUI
 
-extension OutputRenderer: @retroactive Inspectable {}
 
 @MainActor
 final class OutputRendererTests: XCTestCase {

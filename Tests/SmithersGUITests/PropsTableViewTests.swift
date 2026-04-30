@@ -3,7 +3,6 @@ import SwiftUI
 import ViewInspector
 @testable import SmithersGUI
 
-extension PropsTableView: @retroactive Inspectable {}
 
 @MainActor
 final class PropsTableViewTests: XCTestCase {

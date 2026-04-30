@@ -125,10 +125,10 @@ final class ContentViewRoutingSourceTests: XCTestCase {
     }
 
     func testTerminalCloseConfirmationDialogExists() throws {
-        let source = try contentViewSource()
+        let source = try contentViewSource() + "\n" + contentShellSource()
 
-        XCTAssertTrue(
-            source.contains("confirmationDialog(\n                \"Terminate Terminal?\""),
+        XCTAssertNotNil(
+            source.range(of: #"confirmationDialog\(\s*"Terminate Terminal\?""#, options: .regularExpression),
             "Expected ContentView to present a terminal termination confirmation dialog."
         )
         XCTAssertTrue(
@@ -160,5 +160,21 @@ final class ContentViewRoutingSourceTests: XCTestCase {
             "Missing expected source file at \(contentViewURL.path)"
         )
         return try String(contentsOf: contentViewURL, encoding: .utf8)
+    }
+
+    private func contentShellSource() throws -> String {
+        let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let repoRoot = testsDir.deletingLastPathComponent().deletingLastPathComponent()
+        let shellURL = repoRoot
+            .appendingPathComponent("macos")
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("Smithers")
+            .appendingPathComponent("Smithers.ContentShell.macOS.swift")
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: shellURL.path),
+            "Missing expected source file at \(shellURL.path)"
+        )
+        return try String(contentsOf: shellURL, encoding: .utf8)
     }
 }

@@ -209,6 +209,7 @@
 		837BB432CBD8DF8D14A93BB0 /* RunInspectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8CDE6436EE63BE626BD050B /* RunInspectView.swift */; };
 		84AF2F0C2346E32C4DA5036F /* TerminalSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94849A46B2E823725CF39113 /* TerminalSurface.swift */; };
 		856D986364FA527F979E7F89 /* SessionStoreHijackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E0D23E643ED2DC3DAA9AEE4 /* SessionStoreHijackTests.swift */; };
+		85A26F95C82E0AE18C3539BF /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 425F30808B911A51C2916A3D /* AppIntents.framework */; };
 		86229B43D9E92124A5F02C41 /* TreeKeyboardHandlerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2190D8E6981860FADE965D3 /* TreeKeyboardHandlerTests.swift */; };
 		865EE52473F437AC71F3998D /* DevToolsClientErrorMappingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75AD836F5611B64C8283851D /* DevToolsClientErrorMappingTests.swift */; };
 		86AB0670A570E9D4D7FF4D29 /* NativeTerminalRestoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 857DEEADD7F5F2E623EE863E /* NativeTerminalRestoreTests.swift */; };
@@ -260,6 +261,7 @@
 		AA1F166F762B27E8C20EEB1D /* SharedNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68B24B420637E67970017F79 /* SharedNavigation.swift */; };
 		AA59E50BF1CFC6B5DFC6D3D6 /* DiagnosticsBundleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B27C0D5350844CDC77AEFA3D /* DiagnosticsBundleTests.swift */; };
 		AB2A2BE85C1744B214C7D0FE /* VCSDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 084DCDF8CB360AEC7497D0DC /* VCSDashboardView.swift */; };
+		ABEF069F9EEDFD3EC3A7AFB1 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 425F30808B911A51C2916A3D /* AppIntents.framework */; };
 		AC081A7F3BC3E152A3779311 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1CEA9D8755141E850C0A0D21 /* WebKit.framework */; };
 		ACC1C2C83B481EA83D41FDA8 /* ViewInspector in Frameworks */ = {isa = PBXBuildFile; productRef = 3451D65EC19134A0C57863FB /* ViewInspector */; };
 		ACCCBE899719DA549DB37143 /* CoreText.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9660FBD8BEF9DAE91F3E3481 /* CoreText.framework */; };
@@ -321,6 +323,7 @@
 		D32FDF1A349E851D8739D91B /* DevtoolsPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF0785EE8221C3A1C7E104A /* DevtoolsPanelView.swift */; };
 		D44DB0F65E843FE08A080D51 /* SmithersiOSE2EFeatureFlagsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE0A6D66417713AAA50585C6 /* SmithersiOSE2EFeatureFlagsTests.swift */; };
 		D558E267156E2332DFBB1181 /* LiveRunLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 354E0E3297B6BD5ED8EB3280 /* LiveRunLayout.swift */; };
+		D58FD2C3B7CA5B6A92BA7CC8 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 425F30808B911A51C2916A3D /* AppIntents.framework */; };
 		D5A33D5DC6FE40B2C4BD385A /* DiffParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F5084BE3905D9C430F47B37 /* DiffParserTests.swift */; };
 		D5C3533FD45C2BFD22E7E0DB /* WorkspacesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BBE027F30551DD855DD47BB /* WorkspacesStore.swift */; };
 		D5F5FE76EA79268894D8DF5D /* SmithersMacOSE2ETerminalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58EB4AE3428EB44A0DEA487A /* SmithersMacOSE2ETerminalTests.swift */; };
@@ -546,6 +549,7 @@
 		41580D9382959381435DEECA /* TerminalIOSCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIOSCellView.swift; sourceTree = "<group>"; };
 		41A868A2AF0809ADB2185019 /* TriggersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriggersView.swift; sourceTree = "<group>"; };
 		41F9874E753853F117649D32 /* ScoresView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScoresView.swift; sourceTree = "<group>"; };
+		425F30808B911A51C2916A3D /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		44338B1B1002218C169AFD31 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		44A7C3FA9E8838034A9AC4BF /* ElapsedTimeFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElapsedTimeFormatTests.swift; sourceTree = "<group>"; };
 		44BA1D666A3911E4BB6FF59A /* DiffFileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffFileView.swift; sourceTree = "<group>"; };
@@ -835,6 +839,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ABEF069F9EEDFD3EC3A7AFB1 /* AppIntents.framework in Frameworks */,
 				66A9D90BCF9A7018EECE5E36 /* Foundation.framework in Frameworks */,
 				629E5744D474396596A0CCB2 /* UIKit.framework in Frameworks */,
 				4F9927535CEB5A7DC93FA5AD /* SwiftUI.framework in Frameworks */,
@@ -847,6 +852,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D58FD2C3B7CA5B6A92BA7CC8 /* AppIntents.framework in Frameworks */,
 				7509F8195D023D1373E66044 /* ghostty-vt.xcframework in Frameworks */,
 				F8F10494BFA414267924205F /* libsmithers-ios.xcframework in Frameworks */,
 				4C02613CAD8E0F69FCCECAA6 /* Foundation.framework in Frameworks */,
@@ -872,6 +878,7 @@
 				ACCCBE899719DA549DB37143 /* CoreText.framework in Frameworks */,
 				C097CE832D33DB8E92B6558F /* IOKit.framework in Frameworks */,
 				7A30F60C6DEE340DEE813C2D /* AppKit.framework in Frameworks */,
+				85A26F95C82E0AE18C3539BF /* AppIntents.framework in Frameworks */,
 				AC081A7F3BC3E152A3779311 /* WebKit.framework in Frameworks */,
 				6320CA76D6ADDBC0C3AB8F08 /* Carbon.framework in Frameworks */,
 				D9D20FCBD57C7D5D7D111E30 /* Foundation.framework in Frameworks */,
@@ -921,6 +928,7 @@
 		11075296A4DE0BD4A59039E0 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				425F30808B911A51C2916A3D /* AppIntents.framework */,
 				AC58F84BE388668CCF2B3FB4 /* AppKit.framework */,
 				D65170ABA7D7BD9F86E3E072 /* AuthenticationServices.framework */,
 				683FE94FBBC6EBCCFF44ED73 /* Carbon.framework */,
@@ -2387,6 +2395,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_APPINTENTS_METADATA_GENERATION = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -2445,6 +2454,7 @@
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
+				ENABLE_APPINTENTS_METADATA_GENERATION = NO;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2508,6 +2518,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_APPINTENTS_METADATA_GENERATION = NO;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -2561,6 +2572,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APPINTENTS_METADATA_GENERATION = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = SmithersGUI;
 				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
@@ -2569,7 +2581,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64 $(SRCROOT)/libsmithers/zig-out/lib $(SRCROOT)/libsmithers";
-				OTHER_LDFLAGS = "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2 -lsqlite3";
+				OTHER_LDFLAGS = "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2";
 				PRODUCT_BUNDLE_IDENTIFIER = com.smithers.SmithersGUI;
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
@@ -2620,6 +2632,7 @@
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
+				ENABLE_APPINTENTS_METADATA_GENERATION = NO;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -2788,6 +2801,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APPINTENTS_METADATA_GENERATION = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = SmithersGUI;
 				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
@@ -2796,7 +2810,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64 $(SRCROOT)/libsmithers/zig-out/lib $(SRCROOT)/libsmithers";
-				OTHER_LDFLAGS = "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2 -lsqlite3";
+				OTHER_LDFLAGS = "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2";
 				PRODUCT_BUNDLE_IDENTIFIER = com.smithers.SmithersGUI;
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;

@@ -587,14 +587,14 @@ final class RemoteModeController: ObservableObject {
             object: lifecycle.store,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            // Show a reconnect banner but do NOT wipe cache or blank UI.
-            if case .active = self.phase {
-                self.phase = .reconnecting
-                Task { @MainActor [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Show a reconnect banner but do NOT wipe cache or blank UI.
+                if case .active = self.phase {
+                    self.phase = .reconnecting
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
-                    if case .reconnecting = self?.phase {
-                        self?.phase = .active
+                    if case .reconnecting = self.phase {
+                        self.phase = .active
                     }
                 }
             }

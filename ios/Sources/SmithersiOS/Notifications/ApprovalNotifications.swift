@@ -260,7 +260,7 @@ final class ApprovalNotificationHandler {
             return
         }
         await MainActor.run {
-            DeepLinkRouter.shared.handle(url)
+            _ = DeepLinkRouter.shared.handle(url)
         }
     }
 

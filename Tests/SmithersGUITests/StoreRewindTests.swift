@@ -15,7 +15,7 @@ final class StoreRewindTests: XCTestCase {
         return DevToolsSnapshot(runId: runId, frameNo: frameNo, seq: seq, root: root)
     }
 
-    private func prepareHistorical(store: LiveRunDevToolsStore, provider: MockDevToolsStreamProvider) async {
+    private func prepareHistorical(store: DevToolsStore, provider: MockDevToolsStreamProvider) async {
         store.runId = "run-test"
         store.applyEvent(.snapshot(makeSnapshot(frameNo: 3, seq: 3, name: "live")))
         provider.snapshotToReturn = makeSnapshot(frameNo: 1, seq: 101, name: "historical")
@@ -25,7 +25,7 @@ final class StoreRewindTests: XCTestCase {
 
     func testRewindWithoutConfirmationDoesNothing() async {
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         await prepareHistorical(store: store, provider: provider)
 
         await store.rewind(to: 1, confirm: false)
@@ -38,7 +38,7 @@ final class StoreRewindTests: XCTestCase {
     func testRewindWithConfirmationSuccessReturnsToLiveAndFiresToast() async {
         let provider = MockDevToolsStreamProvider()
         var toasts: [String] = []
-        let store = LiveRunDevToolsStore(streamProvider: provider, toastSink: { toasts.append($0) })
+        let store = DevToolsStore(streamProvider: provider, toastSink: { toasts.append($0) })
         await prepareHistorical(store: store, provider: provider)
 
         provider.snapshotToReturn = makeSnapshot(frameNo: 4, seq: 200, name: "live-after-rewind")
@@ -57,7 +57,7 @@ final class StoreRewindTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.jumpError = DevToolsClientError.busy
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         await prepareHistorical(store: store, provider: provider)
 
         await store.rewind(to: 1, confirm: true)
@@ -71,7 +71,7 @@ final class StoreRewindTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.jumpError = DevToolsClientError.unsupportedSandbox("Sandbox unsupported")
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         await prepareHistorical(store: store, provider: provider)
 
         await store.rewind(to: 1, confirm: true)
@@ -85,7 +85,7 @@ final class StoreRewindTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.jumpError = URLError(.notConnectedToInternet)
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         await prepareHistorical(store: store, provider: provider)
 
         await store.rewind(to: 1, confirm: true)
@@ -100,7 +100,7 @@ final class StoreRewindTests: XCTestCase {
 
     func testRewindDisabledWhenRunFinished() async {
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         await prepareHistorical(store: store, provider: provider)
         store.setRunStatus(.finished)
 
@@ -115,7 +115,7 @@ final class StoreRewindTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.jumpDelayNs = 200_000_000
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         await prepareHistorical(store: store, provider: provider)
         provider.snapshotToReturn = makeSnapshot(frameNo: 4, seq: 222, name: "live-after-rewind")
 

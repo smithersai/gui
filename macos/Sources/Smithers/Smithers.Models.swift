@@ -194,8 +194,10 @@ extension Smithers {
 
         private static func collapsedRetransmittedContinuation(existing: String, continuation: String) -> String? {
             if continuation.isEmpty { return existing }
+            let minLength = minimumReliableOverlapLength(existing, continuation)
+            guard minLength > 0 else { return nil }
             let overlap = suffixPrefixOverlap(existing, continuation)
-            guard overlap >= minimumReliableOverlapLength(existing, continuation) else { return nil }
+            guard overlap >= minLength else { return nil }
             return existing + String(continuation.dropFirst(overlap))
         }
 

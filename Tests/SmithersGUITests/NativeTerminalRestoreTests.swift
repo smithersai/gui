@@ -128,19 +128,49 @@ final class NativeTerminalRestoreTests: XCTestCase {
         defer { context.cleanup() }
 
         let store = context.makeStore()
-        let terminalId = store.addTerminalTab(
+        let terminalId = WorkspaceID().rawValue
+        let rootId = SurfaceID()
+        let splitId = SurfaceID()
+        let snapshot = TerminalWorkspaceSnapshot(
             title: "Codex",
-            workingDirectory: context.workspacePath,
-            command: "codex"
+            surfaces: [
+                .terminal(
+                    id: rootId,
+                    workingDirectory: context.workspacePath,
+                    command: "codex",
+                    backend: .native,
+                    sessionId: "sess-root"
+                ),
+                .terminal(
+                    id: splitId,
+                    workingDirectory: context.workspacePath,
+                    command: "claude",
+                    backend: .native,
+                    sessionId: "sess-split"
+                ),
+            ],
+            layout: .makeSplit(axis: .horizontal, first: .leaf(rootId), second: .leaf(splitId)),
+            focusedSurfaceId: splitId,
+            hasCustomTitle: true
         )
-        let workspace = store.ensureTerminalWorkspace(terminalId)
-        let rootId = try XCTUnwrap(workspace.layout.firstSurfaceId)
-        workspace.markNativeTerminalReady(surfaceId: rootId, sessionId: "sess-root")
-        let splitId = workspace.splitFocused(axis: .horizontal, kind: .terminal)
-        workspace.markNativeTerminalReady(surfaceId: splitId, sessionId: "sess-split")
+        store.terminalTabs = [
+            TerminalWorkspaceRecord(
+                terminalId: terminalId,
+                title: "Codex",
+                preview: "2 terminals",
+                timestamp: Date(),
+                createdAt: Date(),
+                workingDirectory: context.workspacePath,
+                command: "codex",
+                backend: .native,
+                rootSurfaceId: rootId.rawValue,
+                sessionId: "sess-root",
+                rootKind: .terminal,
+                snapshot: snapshot
+            )
+        ]
 
-        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        store.flushSessionPersistence()
 
         let reloaded = context.makeStore()
         let restoredTab = try XCTUnwrap(reloaded.terminalTabs.first { $0.terminalId == terminalId })
@@ -209,8 +239,7 @@ final class NativeTerminalRestoreTests: XCTestCase {
         ]
         _ = store.ensureTerminalWorkspace(terminalId)
 
-        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        store.flushSessionPersistence()
 
         let reloaded = context.makeStore()
         let restoredWorkspace = reloaded.ensureTerminalWorkspace(terminalId)
@@ -308,8 +337,7 @@ final class NativeTerminalRestoreTests: XCTestCase {
 
         try await controller.terminate(sessionId: PTYSessionID(created.id))
 
-        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        store.flushSessionPersistence()
 
         let reloaded = context.makeStore()
         let restoredWorkspace = reloaded.ensureTerminalWorkspace(terminalId)
@@ -323,9 +351,7 @@ final class NativeTerminalRestoreTests: XCTestCase {
 
         XCTAssertNil(restoredWorkspace.surfaces[rootId]?.sessionId)
         XCTAssertNil(reloaded.terminalTabs.first(where: { $0.terminalId == terminalId })?.sessionId)
-        if let sessions = try? await controller.list() {
-            XCTAssertTrue(sessions.isEmpty)
-        }
+        try await waitForNoSessions(controller: controller)
     }
     #endif
 
@@ -415,6 +441,26 @@ final class NativeTerminalRestoreTests: XCTestCase {
             code: 3,
             userInfo: [NSLocalizedDescriptionKey: "timed out waiting for capture containing \(needle)"]
         )
+    }
+
+    private func waitForNoSessions(
+        controller: SessionController,
+        timeout: TimeInterval = 1
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastSessions: [SessionInfo] = []
+        while Date() < deadline {
+            do {
+                let sessions = try await controller.list()
+                if sessions.isEmpty { return }
+                lastSessions = sessions
+            } catch SessionControllerError.daemonUnavailable {
+                return
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        XCTFail("expected daemon to have no sessions, still saw \(lastSessions.map(\.id))")
     }
 }
 

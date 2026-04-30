@@ -241,8 +241,7 @@ final class WorkspaceSurfaceIdentityTests: XCTestCase {
             command: "claude"
         )
 
-        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        firstStore.flushSessionPersistence()
 
         let reloadedStore = SessionStore(
             workingDirectory: workspacePath,

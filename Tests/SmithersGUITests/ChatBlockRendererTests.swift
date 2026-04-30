@@ -3,7 +3,6 @@ import SwiftUI
 import ViewInspector
 @testable import SmithersGUI
 
-extension ChatBlockRenderer: @retroactive Inspectable {}
 
 private func makeRendererBlock(role: String, content: String) -> ChatBlock {
     ChatBlock(

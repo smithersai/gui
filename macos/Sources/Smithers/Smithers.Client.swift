@@ -1331,7 +1331,7 @@ extension Smithers {
     typealias Client = SmithersClient
 }
 
-extension SmithersClient: @preconcurrency DevToolsStreamProvider, NodeOutputProvider {}
+extension SmithersClient: DevToolsStreamProvider, NodeOutputProvider {}
 
 private struct DataEnvelope<Value: Decodable>: Decodable {
     let data: Value

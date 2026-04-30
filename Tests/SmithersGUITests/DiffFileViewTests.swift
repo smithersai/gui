@@ -3,8 +3,6 @@ import SwiftUI
 import ViewInspector
 @testable import SmithersGUI
 
-extension DiffFileView: @retroactive Inspectable {}
-extension DiffHunkView: @retroactive Inspectable {}
 
 @MainActor
 final class DiffFileViewTests: XCTestCase {

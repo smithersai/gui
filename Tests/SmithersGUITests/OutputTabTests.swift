@@ -3,9 +3,6 @@ import SwiftUI
 import ViewInspector
 @testable import SmithersGUI
 
-extension OutputTab: @retroactive Inspectable {}
-extension OutputPendingView: @retroactive Inspectable {}
-extension OutputFailedView: @retroactive Inspectable {}
 
 @MainActor
 final class OutputTabTests: XCTestCase {

@@ -80,13 +80,13 @@ struct SmithersiOSApp: App {
         let parsedE2E = E2EEnvironment.parse()
         self.e2e = parsedE2E
         let model = Self.makeAuthModel(e2e: parsedE2E)
+        let tokenManager = model.tokens
         let flags = FeatureFlagsClient(
             baseURL: model.client.config.baseURL,
             bearerProvider: {
-                try? model.tokens.currentAccessToken()
+                try? tokenManager.currentAccessToken()
             }
         )
-        let tokenManager = model.tokens
         ApprovalNotificationHandler.shared.configure(
             baseURL: model.client.config.baseURL,
             bearerProvider: {
@@ -198,18 +198,19 @@ private struct RootSurface: View {
         Group {
             switch model.phase {
             case .signedIn:
+                let tokenManager = model.tokens
                 SignedInRemoteAccessSurface(
                     access: access,
                     featureFlags: featureFlags,
                     baseURL: model.client.config.baseURL,
                     e2e: e2e,
-                    bearerProvider: { [weak model] in
+                    bearerProvider: {
                         // Safe to read on any thread — TokenManager internals
                         // serialize on an NSLock. On failure (signed-out)
                         // URLSessionRemoteWorkspaceFetcher throws authExpired
                         // which the view-model turns into the `.signedOut`
                         // state.
-                        try? model?.tokens.currentAccessToken()
+                        try? tokenManager.currentAccessToken()
                     },
                     onSignOut: {
                         Task { await model.signOut() }

@@ -112,7 +112,7 @@ final class WorkflowsListTests: XCTestCase {
     @MainActor
     func test_emptyState_showsNoWorkflowsFound() throws {
         let client = makeClient()
-        var view = WorkflowsView(smithers: client)
+        let view = WorkflowsView(smithers: client)
 
         // After loading completes with empty list, the empty state should appear.
         // We cannot easily drive async loading in ViewInspector, so we test the structural expectation:

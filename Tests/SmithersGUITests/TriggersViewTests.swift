@@ -3,7 +3,6 @@ import SwiftUI
 import ViewInspector
 @testable import SmithersGUI
 
-extension TriggersView: @retroactive Inspectable {}
 
 @MainActor
 final class TriggersViewTests: XCTestCase {

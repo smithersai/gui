@@ -23,7 +23,7 @@ extension SessionWatcherFileSystem where Self == LiveSessionWatcherFileSystem {
 }
 
 /// Live `FileManager`-backed implementation of `SessionWatcherFileSystem`.
-struct LiveSessionWatcherFileSystem: SessionWatcherFileSystem {
+struct LiveSessionWatcherFileSystem: SessionWatcherFileSystem, @unchecked Sendable {
     private let fileManager: FileManager
 
     init(fileManager: FileManager = .default) {
@@ -120,6 +120,23 @@ enum ExternalAgentSessionSnapshot {
 /// - `excludedSessionIds`: caller-provided snapshot taken before spawning the
 ///   CLI, so simultaneous tabs in the same cwd do not collide.
 final class ExternalAgentSessionWatcher: @unchecked Sendable {
+    private final class CancellationFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+        }
+
+        var isCancelled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return cancelled
+        }
+    }
+
     struct Configuration {
         let kind: ExternalAgentKind
         let workingDirectory: String
@@ -160,9 +177,9 @@ final class ExternalAgentSessionWatcher: @unchecked Sendable {
     private let clock: SessionWatcherClock
     private let onDiscover: @MainActor (String) -> Void
     private let onTimeout: (@MainActor () -> Void)?
+    private let cancellationFlag = CancellationFlag()
 
     private let lock = NSLock()
-    private var cancelled: Bool = false
     private var task: Task<Void, Never>?
 
     init(
@@ -184,14 +201,14 @@ final class ExternalAgentSessionWatcher: @unchecked Sendable {
     var isRunning: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return task != nil && !cancelled
+        return task != nil && !cancellationFlag.isCancelled
     }
 
     /// Starts the watch loop. Idempotent: a second call while already running
     /// or after cancellation is a no-op.
     func start() {
         lock.lock()
-        if cancelled || task != nil {
+        if cancellationFlag.isCancelled || task != nil {
             lock.unlock()
             return
         }
@@ -200,15 +217,16 @@ final class ExternalAgentSessionWatcher: @unchecked Sendable {
         let clock = self.clock
         let onDiscover = self.onDiscover
         let onTimeout = self.onTimeout
+        let cancellationFlag = self.cancellationFlag
 
-        let newTask = Task { [weak self] in
+        let newTask = Task {
             await Self.runLoop(
                 configuration: configuration,
                 fileSystem: fileSystem,
                 clock: clock,
                 onDiscover: onDiscover,
                 onTimeout: onTimeout,
-                isCancelled: { self?.isCancelledFlag() ?? true }
+                isCancelled: { cancellationFlag.isCancelled }
             )
         }
         self.task = newTask
@@ -220,17 +238,11 @@ final class ExternalAgentSessionWatcher: @unchecked Sendable {
     /// suppressed.
     func cancel() {
         lock.lock()
-        cancelled = true
+        cancellationFlag.cancel()
         let existing = task
         task = nil
         lock.unlock()
         existing?.cancel()
-    }
-
-    private func isCancelledFlag() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return cancelled
     }
 
     private static func runLoop(

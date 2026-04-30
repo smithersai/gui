@@ -219,13 +219,13 @@ protocol UserReposClient {
 
 struct URLSessionUserReposClient: UserReposClient {
     private let baseURL: URL
-    private let bearerProvider: () -> String?
+    private let bearerProvider: @Sendable () -> String?
     private let session: URLSession
     private let workspaceFetcher: URLSessionRemoteWorkspaceFetcher
 
     init(
         baseURL: URL,
-        bearerProvider: @escaping () -> String?,
+        bearerProvider: @escaping @Sendable () -> String?,
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL

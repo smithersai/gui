@@ -179,9 +179,11 @@ final class RunStatusTests: XCTestCase {
 
     func testAllCases() {
         let cases = RunStatus.allCases
-        XCTAssertEqual(cases.count, 8)
+        XCTAssertEqual(cases.count, 10)
         XCTAssertTrue(cases.contains(.running))
         XCTAssertTrue(cases.contains(.waitingApproval))
+        XCTAssertTrue(cases.contains(.waitingEvent))
+        XCTAssertTrue(cases.contains(.waitingTimer))
         XCTAssertTrue(cases.contains(.finished))
         XCTAssertTrue(cases.contains(.failed))
         XCTAssertTrue(cases.contains(.cancelled))
@@ -788,16 +790,16 @@ final class LazyInspectionLoadingTests: XCTestCase {
     }
 
     func testInspectionNotReloadedOnReExpand() {
-        var inspections: [String: Bool] = ["r1": true]
-        var expandedRunId: String? = nil
+        let inspections: [String: Bool] = ["r1": true]
+        let expandedRunId: String? = "r1"
         var loadCount = 0
 
         // Expand r1
-        expandedRunId = "r1"
         if inspections["r1"] == nil {
             loadCount += 1
         }
 
+        XCTAssertEqual(expandedRunId, "r1")
         XCTAssertEqual(loadCount, 0, "Should not reload inspection if already cached")
     }
 
@@ -1175,6 +1177,7 @@ final class RunsEdgeCaseTests: XCTestCase {
         let error: String? = "Connection failed"
         // The view checks `if let error` first, then `else if filteredRuns.isEmpty && !isLoading`
         let showError = error != nil
+        XCTAssertTrue(runs.isEmpty)
         XCTAssertTrue(showError, "Error state should display even when runs are empty")
     }
 

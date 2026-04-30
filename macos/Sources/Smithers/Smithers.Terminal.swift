@@ -46,15 +46,36 @@ extension Smithers {
         }
 
         static func tmuxRootSurfaceId(for terminalId: String) -> String {
-            "tmux:\(terminalId)"
+            "\(terminalId)-root"
         }
 
         static func tmuxSessionName(for surfaceId: String) -> String {
-            let allowed = surfaceId.map { char -> Character in
-                char.isLetter || char.isNumber || char == "-" || char == "_" ? char : "-"
+            var output = ""
+            var previousDash = false
+            for scalar in surfaceId.unicodeScalars {
+                let character = Character(scalar)
+                let lower = String(character).lowercased()
+                let isAllowed = lower.unicodeScalars.allSatisfy { scalar in
+                    CharacterSet.alphanumerics.contains(scalar) || scalar == "-" || scalar == "_"
+                }
+                let next = isAllowed ? lower : "-"
+                if next == "-" {
+                    if previousDash { continue }
+                    previousDash = true
+                } else {
+                    previousDash = false
+                }
+                output += next
             }
-            let name = String(allowed).trimmingCharacters(in: CharacterSet(charactersIn: "-_"))
-            return name.isEmpty ? "smithers" : String(name.prefix(80))
+            let name = output.trimmingCharacters(in: CharacterSet(charactersIn: "-_"))
+            if name.isEmpty {
+                let digest = SHA256.hash(data: Data(surfaceId.utf8))
+                    .prefix(8)
+                    .map { String(format: "%02x", $0) }
+                    .joined()
+                return "smt-\(digest)"
+            }
+            return "smt-\(name.prefix(80))"
         }
 
         static func tmuxAttachCommand(
@@ -63,9 +84,9 @@ extension Smithers {
             environment: [String: String] = ProcessInfo.processInfo.environment
         ) -> String? {
             guard let tmux = tmuxExecutablePath(environment: environment),
-                  let socketName,
-                  let sessionName else { return nil }
-            return "\(tmux) -L \(shellQuote(socketName)) attach -t \(shellQuote(sessionName))"
+                  let socketName = normalized(socketName),
+                  let sessionName = normalized(sessionName) else { return nil }
+            return "\(shellQuote(tmux)) -L \(shellQuote(socketName)) attach-session -t \(shellQuote(sessionName))"
         }
 
         static func tmuxEnsureSession(
@@ -147,6 +168,13 @@ extension Smithers {
 
         private static func shellQuote(_ value: String) -> String {
             "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+        }
+
+        private static func normalized(_ value: String?) -> String? {
+            guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+                return nil
+            }
+            return trimmed
         }
     }
 }

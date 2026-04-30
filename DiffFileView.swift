@@ -75,7 +75,7 @@ struct DiffFileView: View {
                 .stroke(Theme.border, lineWidth: 1)
         )
         .accessibilityIdentifier("diffFile.section.\(safeAccessibilityID(file.id))")
-        .onChange(of: file.id) { _ in
+        .onChange(of: file.id) { _, _ in
             showRemainingLines = false
         }
     }

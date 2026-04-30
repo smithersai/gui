@@ -1,112 +1,79 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!--
-  Custom URL scheme registration for OAuth2 callbacks and deep links.
-
-  This plist is referenced by project.yml through INFOPLIST_FILE. It
-  registers the `smithers` scheme so the system delivers
-  `smithers://oauth2/callback?code=...&state=...` back to
-  ASWebAuthenticationSession, and so app-level deep links such as
-  `smithers://approvals/<id>` and `smithers://workspace/<uuid>` can be
-  routed by DeepLinkRouter.
-
-  The scheme name is documented to be globally unique in the Smithers
-  namespace. If another app registers the same scheme, iOS routes by
-  install order (no collision guarantees) — we rely on bundle-id
-  uniqueness instead and defense-in-depth via the `state` check in
-  `parseCallback`.
--->
 <plist version="1.0">
 <dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>$(PRODUCT_NAME)</string>
-    <key>CFBundleDisplayName</key>
-    <string>Smithers</string>
-    <key>CFBundlePackageType</key>
-    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
-    <!--
-      Ticket 0125: versioning is injected from project.yml settings
-      (MARKETING_VERSION + CURRENT_PROJECT_VERSION). Do NOT hard-code a
-      version here — the CI release workflow overrides them per archive
-      and a hard-coded value would silently shadow the injected one.
-    -->
-    <key>CFBundleShortVersionString</key>
-    <string>$(MARKETING_VERSION)</string>
-    <key>CFBundleVersion</key>
-    <string>$(CURRENT_PROJECT_VERSION)</string>
-    <!--
-      Device preview builds inject a reachable Plue URL here via
-      PLUE_BASE_URL. The app ignores unresolved build-setting literals, so
-      normal simulator/TestFlight builds keep their existing defaults.
-    -->
-    <key>SmithersPlueBaseURL</key>
-    <string>$(PLUE_BASE_URL)</string>
-    <key>SmithersPreviewURL</key>
-    <string>$(PLUE_PREVIEW_URL)</string>
-    <key>LSRequiresIPhoneOS</key>
-    <true/>
-    <key>UILaunchStoryboardName</key>
-    <string>LaunchScreen</string>
-    <key>UIApplicationSceneManifest</key>
-    <dict>
-        <key>UIApplicationSupportsMultipleScenes</key>
-        <false/>
-    </dict>
-    <key>UISupportedInterfaceOrientations</key>
-    <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-    </array>
-    <key>CFBundleURLTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleTypeRole</key>
-            <string>Editor</string>
-            <key>CFBundleURLName</key>
-            <string>com.smithers.ios.deep-links</string>
-            <key>CFBundleURLSchemes</key>
-            <array>
-                <string>smithers</string>
-            </array>
-        </dict>
-    </array>
-    <!-- Explicit app transport security: only talk to plue over https
-         in production. The NSExceptionDomains entries below narrowly
-         whitelist `localhost` + `127.0.0.1` for the iOS E2E harness
-         (ticket ios-e2e-harness) so XCUITest can exercise the runtime
-         against a plue docker-compose stack on the developer's machine
-         without globally disabling ATS. No production host is listed
-         here — the production API stays https-only. -->
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <false/>
-        <key>NSExceptionDomains</key>
-        <dict>
-            <key>localhost</key>
-            <dict>
-                <key>NSExceptionAllowsInsecureHTTPLoads</key>
-                <true/>
-                <key>NSIncludesSubdomains</key>
-                <false/>
-            </dict>
-            <key>127.0.0.1</key>
-            <dict>
-                <key>NSExceptionAllowsInsecureHTTPLoads</key>
-                <true/>
-                <key>NSIncludesSubdomains</key>
-                <false/>
-            </dict>
-        </dict>
-    </dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Smithers</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.smithers.ios.deep-links</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>smithers</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>127.0.0.1</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<false/>
+			</dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<false/>
+			</dict>
+		</dict>
+	</dict>
+	<key>SmithersPlueBaseURL</key>
+	<string>$(PLUE_BASE_URL)</string>
+	<key>SmithersPreviewURL</key>
+	<string>$(PLUE_PREVIEW_URL)</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 </dict>
 </plist>

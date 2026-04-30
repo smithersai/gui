@@ -28,7 +28,7 @@ public struct WorkspaceSwitcherPresenter: View {
     public let onSignIn: () -> Void
     public let onDismiss: () -> Void
     public let baseURL: URL
-    public let bearerProvider: () -> String?
+    public let bearerProvider: @Sendable () -> String?
     public let focusedWorkspaceID: String?
     public let autoOpenFocusedWorkspace: Bool
 
@@ -41,7 +41,7 @@ public struct WorkspaceSwitcherPresenter: View {
     public init(
         viewModel: WorkspaceSwitcherViewModel,
         baseURL: URL,
-        bearerProvider: @escaping () -> String?,
+        bearerProvider: @escaping @Sendable () -> String?,
         focusedWorkspaceID: String? = nil,
         autoOpenFocusedWorkspace: Bool = false,
         onOpen: @escaping (SwitcherWorkspace) -> Void,
@@ -109,11 +109,12 @@ public struct WorkspaceSwitcherPresenter: View {
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .repoSelector(let purpose):
+                let provider: @Sendable () -> String? = { bearerProvider() }
                 RepoSelectorSheet(
                     title: purpose.title,
                     client: URLSessionUserReposClient(
                         baseURL: baseURL,
-                        bearerProvider: bearerProvider
+                        bearerProvider: provider
                     ),
                     allowsAllRepos: purpose == .filter,
                     selectedRepo: purpose == .filter ? viewModel.selectedRepoFilter : nil,
@@ -172,9 +173,10 @@ public struct WorkspaceSwitcherPresenter: View {
         defer { isCreatingWorkspace = false }
 
         do {
+            let provider: @Sendable () -> String? = { bearerProvider() }
             _ = try await URLSessionWorkspaceCreateClient(
                 baseURL: baseURL,
-                bearerProvider: bearerProvider
+                bearerProvider: provider
             )
             .createWorkspace(repo: repo, title: title)
             activeSheet = nil
@@ -210,7 +212,7 @@ public extension View {
         isPresented: Binding<Bool>,
         viewModel: WorkspaceSwitcherViewModel,
         baseURL: URL,
-        bearerProvider: @escaping () -> String?,
+        bearerProvider: @escaping @Sendable () -> String?,
         focusedWorkspaceID: String? = nil,
         autoOpenFocusedWorkspace: Bool = false,
         onOpen: @escaping (SwitcherWorkspace) -> Void,
@@ -321,12 +323,12 @@ private struct CreateWorkspaceTitleSheet: View {
 
 private struct URLSessionWorkspaceCreateClient {
     private let baseURL: URL
-    private let bearerProvider: () -> String?
+    private let bearerProvider: @Sendable () -> String?
     private let session: URLSession
 
     init(
         baseURL: URL,
-        bearerProvider: @escaping () -> String?,
+        bearerProvider: @escaping @Sendable () -> String?,
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL

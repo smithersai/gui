@@ -19,7 +19,7 @@ final class StoreScrubTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.snapshotToReturn = makeSnapshot(frameNo: 1, seq: 20, name: "historical")
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.runId = "run-test"
         store.applyEvent(.snapshot(makeSnapshot(frameNo: 3, seq: 3, name: "live")))
 
@@ -32,9 +32,12 @@ final class StoreScrubTests: XCTestCase {
 
     func testReturnToLiveReappliesBufferedLatestTreeAndResubscribes() async {
         let provider = MockDevToolsStreamProvider()
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
 
         store.connect(runId: "run-test")
+        await waitForStoreScrubCondition("initial stream was not started") {
+            provider.streamCallCount >= 1
+        }
         let baselineStreamCalls = provider.streamCallCount
 
         store.applyEvent(.snapshot(makeSnapshot(frameNo: 3, seq: 3, name: "live-v1")))
@@ -50,7 +53,9 @@ final class StoreScrubTests: XCTestCase {
 
         XCTAssertEqual(store.mode, .live)
         XCTAssertEqual(store.tree?.name, "live-v2")
-        XCTAssertGreaterThanOrEqual(provider.streamCallCount, baselineStreamCalls + 1)
+        await waitForStoreScrubCondition("return to live did not resubscribe") {
+            provider.streamCallCount >= baselineStreamCalls + 1
+        }
 
         store.disconnect()
     }
@@ -59,7 +64,7 @@ final class StoreScrubTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.snapshotToReturn = makeSnapshot(frameNo: 1, seq: 101, name: "historical")
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.runId = "run-test"
         store.applyEvent(.snapshot(makeSnapshot(frameNo: 3, seq: 3, name: "live-v1")))
 
@@ -78,7 +83,7 @@ final class StoreScrubTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.snapshotToReturn = makeSnapshot(frameNo: 1, seq: 101, name: "historical-good")
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.runId = "run-test"
         store.applyEvent(.snapshot(makeSnapshot(frameNo: 3, seq: 3, name: "live")))
         await store.scrubTo(frameNo: 1)
@@ -95,7 +100,7 @@ final class StoreScrubTests: XCTestCase {
         let provider = MockDevToolsStreamProvider()
         provider.snapshotError = DevToolsClientError.frameOutOfRange(0)
 
-        let store = LiveRunDevToolsStore(streamProvider: provider)
+        let store = DevToolsStore(streamProvider: provider)
         store.runId = "run-test"
 
         await store.scrubTo(frameNo: 0)
@@ -103,4 +108,20 @@ final class StoreScrubTests: XCTestCase {
         XCTAssertEqual(store.mode, .historical(frameNo: 0))
         XCTAssertEqual(store.scrubError, .frameOutOfRange(0))
     }
+}
+
+@MainActor
+private func waitForStoreScrubCondition(
+    _ message: String,
+    timeout: TimeInterval = 1.0,
+    file: StaticString = #filePath,
+    line: UInt = #line,
+    condition: @escaping @MainActor () -> Bool
+) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTFail(message, file: file, line: line)
 }

@@ -2,7 +2,6 @@ import XCTest
 import ViewInspector
 @testable import SmithersGUI
 
-extension LogViewerView: @retroactive Inspectable {}
 
 final class LogViewerFormattingTests: XCTestCase {
     func testFileSizeStringFormatsBytesKilobytesAndMegabytes() {

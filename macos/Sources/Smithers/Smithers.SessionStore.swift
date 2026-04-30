@@ -26,8 +26,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private var nativeSurfaceOperationsInFlight: Set<NativeSurfaceKey> = []
 
     private static let persistenceSaveDebounceNanoseconds: UInt64 = 500_000_000
-    private static let nativeTerminalTERM = "xterm-256color"
-    private static let nativeTerminalColorTerm = "truecolor"
+    private nonisolated static let nativeTerminalTERM = "xterm-256color"
+    private nonisolated static let nativeTerminalColorTerm = "truecolor"
     private static let persistenceEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
@@ -92,7 +92,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.flushPendingSave() }
+            Task { @MainActor in self?.flushSessionPersistence() }
         }
         #endif
     }
@@ -1036,7 +1036,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         }
     }
 
-    private func flushPendingSave() {
+    func flushSessionPersistence() {
         guard !sessionPersistenceDisabled else { return }
         pendingSaveTask?.cancel()
         pendingSaveTask = nil

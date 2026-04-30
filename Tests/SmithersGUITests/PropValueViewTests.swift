@@ -3,7 +3,6 @@ import SwiftUI
 import ViewInspector
 @testable import SmithersGUI
 
-extension PropValueView: @retroactive Inspectable {}
 
 @MainActor
 final class PropValueViewTests: XCTestCase {

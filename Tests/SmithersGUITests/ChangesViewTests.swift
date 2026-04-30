@@ -119,7 +119,7 @@ final class ChangesViewShortChangeIDTests: XCTestCase {
     func test_shortChangeID_normal40Char() throws {
         let client = makeClient()
         let view = ChangesView(smithers: client)
-        let tree = try view.inspect()
+        _ = try view.inspect()
         // The function is private, so we test it indirectly via the rendered list.
         // A 40-char changeID should render its first 8 chars.
         // Verified by source: String(value.prefix(8))
@@ -275,7 +275,7 @@ final class ChangesViewRelativeTimestampTests: XCTestCase {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         // A non-fractional string should NOT parse with fractional formatter
-        let date = formatter.date(from: "2026-04-10T10:00:00Z")
+        _ = formatter.date(from: "2026-04-10T10:00:00Z")
         // On Apple platforms this may or may not parse; the fallback handles it
         // The important thing is the code tries fractional first, then basic
         XCTAssertTrue(true, "Fractional formatter is tried first, verified by source")

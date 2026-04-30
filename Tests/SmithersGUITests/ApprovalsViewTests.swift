@@ -439,13 +439,14 @@ final class ApprovalsViewTests: XCTestCase {
         // The button should show the OPPOSITE label (what you'll switch TO), not the
         // current state. E.g., when viewing pending, button should say "History" to
         // indicate clicking it will show history.
-        let showHistoryFalse = false
-        let labelWhenPending = showHistoryFalse ? "History" : "Pending"
+        let labelsByMode = [false, true].map { showHistory in
+            showHistory ? "History" : "Pending"
+        }
+        let labelWhenPending = labelsByMode[0]
         XCTAssertEqual(labelWhenPending, "Pending",
                        "BUG: Button says 'Pending' when already showing pending. Should say 'History'.")
 
-        let showHistoryTrue = true
-        let labelWhenHistory = showHistoryTrue ? "History" : "Pending"
+        let labelWhenHistory = labelsByMode[1]
         XCTAssertEqual(labelWhenHistory, "History",
                        "BUG: Button says 'History' when already showing history. Should say 'Pending'.")
     }

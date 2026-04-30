@@ -51,6 +51,24 @@ function discoverTickets(): Array<{ id: string; slug: string; content: string }>
   }
 }
 
+function filterTickets(
+  tickets: Array<{ id: string; slug: string; content: string }>,
+  ticketIds: string[],
+  ticketIdPrefixes: string[],
+): Array<{ id: string; slug: string; content: string }> {
+  const requestedIds = new Set(ticketIds);
+  const hasFilters = requestedIds.size > 0 || ticketIdPrefixes.length > 0;
+
+  if (!hasFilters) return tickets;
+
+  return tickets.filter((ticket) => {
+    if (requestedIds.has(ticket.id) || requestedIds.has(ticket.slug)) return true;
+    return ticketIdPrefixes.some(
+      (prefix) => ticket.id.startsWith(prefix) || ticket.slug.startsWith(prefix),
+    );
+  });
+}
+
 /** Build feedback string from validation + review outputs for a ticket. */
 function buildFeedback(
   ctx: any,
@@ -98,9 +116,25 @@ function buildFeedback(
 }
 
 export default smithers((ctx) => {
-  const tickets = discoverTickets();
-  const maxConcurrency = Number(ctx.input.maxConcurrency) || 3;
+  const inputTicketIds = Array.isArray(ctx.input.ticketIds) ? ctx.input.ticketIds : [];
+  const inputTicketIdPrefixes = Array.isArray(ctx.input.ticketIdPrefixes) ? ctx.input.ticketIdPrefixes : [];
+  const tickets = filterTickets(
+    discoverTickets(),
+    inputTicketIds,
+    inputTicketIdPrefixes,
+  );
+  const parsedMaxConcurrency = Number(ctx.input.maxConcurrency);
+  const maxConcurrency = Number.isFinite(parsedMaxConcurrency) && parsedMaxConcurrency > 0
+    ? Math.min(Math.floor(parsedMaxConcurrency), 12)
+    : 3;
+  const inputBaseBranch = typeof ctx.input.baseBranch === "string" && ctx.input.baseBranch.trim().length > 0
+    ? ctx.input.baseBranch.trim()
+    : undefined;
   const ticketResults = ctx.outputs.ticketResult ?? [];
+
+  if (tickets.length === 0) {
+    throw new Error("ticket-kanban did not find any matching tickets.");
+  }
 
   return (
     <Workflow name="ticket-kanban">
@@ -114,6 +148,7 @@ export default smithers((ctx) => {
                 key={ticket.slug}
                 path={`.worktrees/${ticket.slug}`}
                 branch={`ticket/${ticket.slug}`}
+                baseBranch={inputBaseBranch}
               >
                 <Sequence>
                   <Task
@@ -153,9 +188,9 @@ export default smithers((ctx) => {
           })}
         </Parallel>
 
-        {/* Agent merges completed branches back into main */}
+        {/* Agent merges completed branches back into the current branch/change */}
         <Task id="merge" output={outputs.merge} agent={providers.claudeSonnet}>
-          {`Merge the completed ticket branches back into the main branch.
+          {`Merge the completed ticket branches back into the current branch/change.
 
 The following tickets were implemented in worktree branches:
 
@@ -164,9 +199,11 @@ ${ticketResults
   .join("\n")}
 
 For each branch with status "success":
-1. git merge the branch into the current branch (main)
-2. If there are merge conflicts, resolve them sensibly
-3. If a branch cannot be cleanly merged, skip it and note it as conflicted
+1. Detect whether this checkout is jj-backed by running jj status, or plain git.
+2. If jj-backed, integrate the ticket bookmarks/changes using jj operations appropriate for this repository, preserving the current working-copy change and avoiding destructive commands.
+3. If plain git, git merge the branch into the current branch.
+4. If there are merge conflicts, resolve them sensibly.
+5. If a branch cannot be cleanly merged, skip it and note it as conflicted.
 
 Report which branches were merged and which had conflicts.`}
         </Task>

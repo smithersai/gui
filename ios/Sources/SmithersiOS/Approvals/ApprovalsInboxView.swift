@@ -10,7 +10,7 @@ struct ApprovalsInboxView: View {
 
     init(
         baseURL: URL,
-        bearerProvider: @escaping () -> String?,
+        bearerProvider: @escaping @Sendable () -> String?,
         focusedApprovalID: String? = nil
     ) {
         self.focusedApprovalID = focusedApprovalID
@@ -327,13 +327,13 @@ protocol ApprovalsInboxClient {
 
 struct URLSessionApprovalsInboxClient: ApprovalsInboxClient {
     private let baseURL: URL
-    private let bearerProvider: () -> String?
+    private let bearerProvider: @Sendable () -> String?
     private let workspaceFetcher: URLSessionRemoteWorkspaceFetcher
     private let session: URLSession
 
     init(
         baseURL: URL,
-        bearerProvider: @escaping () -> String?,
+        bearerProvider: @escaping @Sendable () -> String?,
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
