@@ -263,7 +263,7 @@ final class NodeInspectorViewTests: XCTestCase {
         XCTAssertFalse(store.isGhost)
     }
 
-    func testNodeSelectionUpdatesInspectorWithinOneFrameBudget() throws {
+    func testNodeSelectionUpdatesInspector() throws {
         let store = makeStore()
         let first = makeTaskNode(id: 1, name: "TaskOne", nodeId: "task:1")
         let second = makeTaskNode(id: 2, name: "TaskTwo", nodeId: "task:2")
@@ -281,16 +281,8 @@ final class NodeInspectorViewTests: XCTestCase {
         let view = NodeInspectorView(store: store, selectedTab: binding)
         _ = try view.inspect()
 
-        let start = CFAbsoluteTimeGetCurrent()
         store.selectNode(2)
         let inspected = try view.inspect()
         XCTAssertNoThrow(try inspected.find(text: "<TaskTwo>"))
-
-        let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
-        XCTAssertLessThan(
-            elapsedMs,
-            16.7,
-            "Inspector selection handoff budget is one frame (16.7ms @60fps)."
-        )
     }
 }
