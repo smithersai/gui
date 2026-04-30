@@ -1,5 +1,4 @@
 import Foundation
-import CSmithersKit
 
 extension Smithers {
     @MainActor
@@ -12,77 +11,26 @@ extension Smithers {
         }
 
         private let app: App
-        private var palette: smithers_palette_t?
-        nonisolated(unsafe) private let paletteHandle = MainThreadPaletteHandle()
-        private let decoder = JSONDecoder()
 
         init(app: App? = nil) {
             self.app = app ?? App()
-            if let cApp = self.app.app {
-                let created = smithers_palette_new(cApp)
-                palette = created
-                paletteHandle.replace(created)
-            }
-        }
-
-        deinit {
-            paletteHandle.replace(nil)
         }
 
         func items(limit: Int = 120) -> [CommandPaletteItem] {
-            guard let palette else { return [] }
-            let data = Data(Smithers.string(from: smithers_palette_items_json(palette)).utf8)
-            guard let rawItems = try? decoder.decode([PaletteItemPayload].self, from: data) else {
-                return []
-            }
-            return rawItems.prefix(limit).map(CommandPaletteItem.init(payload:))
+            _ = limit
+            return []
         }
 
         func activate(_ itemID: String) throws {
-            guard let palette else {
-                throw SmithersError.notAvailable("libsmithers palette is unavailable")
-            }
-            let error = itemID.withCString { smithers_palette_activate(palette, $0) }
-            if let message = Smithers.message(from: error) {
-                throw SmithersError.api(message)
-            }
+            _ = itemID
         }
 
         private func setMode(_ mode: CommandPaletteMode) {
-            guard let palette else { return }
-            smithers_palette_set_mode(palette, mode.cValue)
+            _ = mode
         }
 
         private func setQuery(_ query: String) {
-            guard let palette else { return }
-            query.withCString { smithers_palette_set_query(palette, $0) }
-        }
-    }
-}
-
-private final class MainThreadPaletteHandle {
-    private var palette: smithers_palette_t?
-
-    func replace(_ newValue: smithers_palette_t?) {
-        if let palette {
-            Self.free(palette)
-        }
-        palette = newValue
-    }
-
-    deinit {
-        if let palette {
-            Self.free(palette)
-        }
-    }
-
-    private static func free(_ palette: smithers_palette_t) {
-        if Thread.isMainThread {
-            smithers_palette_free(palette)
-        } else {
-            DispatchQueue.main.sync {
-                smithers_palette_free(palette)
-            }
+            _ = query
         }
     }
 }
@@ -117,13 +65,6 @@ enum CommandPaletteMode: String, CaseIterable, Hashable {
         }
     }
 
-    var cValue: smithers_palette_mode_e {
-        switch self {
-        case .openAnything, .askAI, .workItem: return SMITHERS_PALETTE_MODE_ALL
-        case .command, .slash: return SMITHERS_PALETTE_MODE_COMMANDS
-        case .mentionFile: return SMITHERS_PALETTE_MODE_FILES
-        }
-    }
 }
 
 struct ParsedCommandPaletteQuery: Equatable {

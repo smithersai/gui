@@ -1,5 +1,4 @@
 import Foundation
-import CSmithersKit
 #if canImport(SmithersStore)
 import SmithersStore
 #endif
@@ -45,10 +44,10 @@ class SmithersClient: ObservableObject {
 
     private let app: Smithers.App
     private let cwd: String
+    private let smithersBin: String
+    private let jjhubBin: String
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
-    private var client: smithers_client_t?
-    nonisolated(unsafe) private let clientHandle = MainThreadClientHandle()
 
     init(
         cwd: String? = nil,
@@ -58,18 +57,9 @@ class SmithersClient: ObservableObject {
         app: Smithers.App? = nil
     ) {
         self.cwd = Smithers.CWD.resolve(cwd)
+        self.smithersBin = smithersBin
+        self.jjhubBin = jjhubBin
         self.app = app ?? Smithers.App()
-
-        if let cApp = self.app.app {
-            let created = smithers_client_new(cApp)
-            client = created
-            clientHandle.replace(created)
-            _ = smithers_app_open_workspace(cApp, self.cwd)
-        }
-    }
-
-    deinit {
-        clientHandle.replace(nil)
     }
 
     // MARK: Generic ABI calls
@@ -87,16 +77,19 @@ class SmithersClient: ObservableObject {
     }
 
     private func callDataAsync(_ method: String, args: [String: AnyEncodable] = [:]) async throws -> Data {
-        guard let client else {
-            throw SmithersError.notAvailable("libsmithers client is unavailable")
-        }
         let argsData = try encoder.encode(args)
         let argsJSON = String(data: argsData, encoding: .utf8) ?? "{}"
-        let context = ClientCallContext(client: client, method: method, argsJSON: argsJSON)
+        let context = LocalClientCallContext(
+            method: method,
+            argsJSON: argsJSON,
+            cwd: cwd,
+            smithersBin: smithersBin,
+            jjhubBin: jjhubBin
+        )
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    continuation.resume(returning: try Self.performClientCall(context))
+                    continuation.resume(returning: try Self.performLocalCall(context))
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -105,51 +98,21 @@ class SmithersClient: ObservableObject {
     }
 
     private func callData(_ method: String, args: [String: AnyEncodable] = [:]) throws -> Data {
-        guard let client else {
-            throw SmithersError.notAvailable("libsmithers client is unavailable")
-        }
         let argsData = try encoder.encode(args)
         let argsJSON = String(data: argsData, encoding: .utf8) ?? "{}"
-        return try Self.performClientCall(ClientCallContext(client: client, method: method, argsJSON: argsJSON))
-    }
-
-    private nonisolated static func performClientCall(_ context: ClientCallContext) throws -> Data {
-        var outError = smithers_error_s(code: 0, msg: nil)
-        let result = context.method.withCString { methodPtr in
-            context.argsJSON.withCString { argsPtr in
-                smithers_client_call(context.client, methodPtr, argsPtr, &outError)
-            }
-        }
-        if let message = Smithers.message(from: outError) {
-            smithers_string_free(result)
-            throw SmithersError.api(message)
-        }
-        defer { smithers_string_free(result) }
-        return Data(Smithers.string(from: result, free: false).utf8)
+        return try Self.performLocalCall(LocalClientCallContext(
+            method: method,
+            argsJSON: argsJSON,
+            cwd: cwd,
+            smithersBin: smithersBin,
+            jjhubBin: jjhubBin
+        ))
     }
 
     private func stream(_ method: String, args: [String: AnyEncodable] = [:]) throws -> Smithers.EventStream {
-        guard let client else {
-            throw SmithersError.notAvailable("libsmithers client is unavailable")
-        }
         let argsData = try encoder.encode(args)
         let argsJSON = String(data: argsData, encoding: .utf8) ?? "{}"
-        var outError = smithers_error_s(code: 0, msg: nil)
-        let cStream = method.withCString { methodPtr in
-            argsJSON.withCString { argsPtr in
-                smithers_client_stream(client, methodPtr, argsPtr, &outError)
-            }
-        }
-        if let message = Smithers.message(from: outError) {
-            if let cStream {
-                smithers_event_stream_free(cStream)
-            }
-            throw SmithersError.api(message)
-        }
-        guard let cStream else {
-            throw SmithersError.notAvailable("libsmithers stream \(method) is unavailable")
-        }
-        return Smithers.EventStream(cStream)
+        return try Self.performLocalStream(method: method, argsJSON: argsJSON)
     }
 
     private func decode<Value: Decodable>(_ type: Value.Type, from data: Data) throws -> Value {
@@ -273,6 +236,12 @@ class SmithersClient: ObservableObject {
 
     func runWorkflowDoctor(_ workflow: Workflow) async -> [WorkflowDoctorIssue] {
         (try? await callList("runWorkflowDoctor", args: ["workflowPath": AnyEncodable(workflow.filePath ?? workflow.id)], keys: ["issues"])) ?? []
+    }
+
+    func getWorkflowFrontend(_ workflow: Workflow) async throws -> WorkflowFrontendDescriptor? {
+        guard let workflowPath = workflow.filePath else { return nil }
+        let data = try Self.workflowFrontendDescriptorData(workspaceRoot: cwd, workflowPath: workflowPath)
+        return try decoder.decode(WorkflowFrontendDescriptor?.self, from: data)
     }
 
     func listRuns() async throws -> [RunSummary] {
@@ -1368,10 +1337,808 @@ private struct DataEnvelope<Value: Decodable>: Decodable {
     let data: Value
 }
 
-private struct ClientCallContext: @unchecked Sendable {
-    let client: smithers_client_t
+private struct LocalClientCallContext: @unchecked Sendable {
     let method: String
     let argsJSON: String
+    let cwd: String
+    let smithersBin: String
+    let jjhubBin: String
+}
+
+private extension SmithersClient {
+    nonisolated static func performLocalCall(_ context: LocalClientCallContext) throws -> Data {
+        let args = try parseArgsObject(context.argsJSON)
+        if let data = try maybeMockResult(args) {
+            return data
+        }
+        if args["error"] is String {
+            throw SmithersError.api("client requested error")
+        }
+        if context.method == "echo" {
+            return Data(context.argsJSON.utf8)
+        }
+        if context.method == "resolveCwd" {
+            return try jsonData(["path": Smithers.CWD.resolve(stringArg(args, "requested"))])
+        }
+        if context.method == "listAgents" {
+            return try listAgentsData()
+        }
+        if let data = try localFallback(context, args: args) {
+            return data
+        }
+        if let argv = cliArgs(for: context.method, args: args, smithersBin: context.smithersBin, jjhubBin: context.jjhubBin) {
+            let stdout = try runProcess(argv, cwd: context.cwd)
+            return try normalizeCliOutput(method: context.method, stdout: stdout)
+        }
+        throw SmithersError.notAvailable("Local method \(context.method) is unavailable without the Smithers runtime")
+    }
+
+    nonisolated static func performLocalStream(method: String, argsJSON: String) throws -> Smithers.EventStream {
+        let args = try parseArgsObject(argsJSON)
+        if let events = args["events"] as? [Any] {
+            let data = try jsonData(events)
+            let decoded = try JSONDecoder().decode([JSONValue].self, from: data)
+            return Smithers.EventStream(events: decoded.map { value in
+                Smithers.Event(tag: .json, payload: value.compactJSONString ?? "null")
+            })
+        }
+        if let sse = stringArg(args, "sse") {
+            return Smithers.EventStream(events: parseSSE(sse))
+        }
+        throw SmithersError.notAvailable("Local stream \(method) is unavailable without the Smithers runtime")
+    }
+
+    nonisolated static func workflowFrontendDescriptorData(workspaceRoot: String, workflowPath: String) throws -> Data {
+        let workflowURL = URL(fileURLWithPath: resolvedWorkspacePath(workflowPath, root: workspaceRoot))
+        let workflowBase = workflowURL.deletingPathExtension().lastPathComponent
+        let frontendDirectoryURL = workflowURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("\(workflowBase).frontend", isDirectory: true)
+        let manifestURL = frontendDirectoryURL.appendingPathComponent("manifest.json", isDirectory: false)
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else {
+            return Data("null".utf8)
+        }
+
+        let manifestData = try Data(contentsOf: manifestURL)
+        guard let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any] else {
+            throw SmithersError.api("Workflow frontend manifest must be a JSON object")
+        }
+        let serverURL = frontendDirectoryURL.appendingPathComponent("server.ts", isDirectory: false)
+        let entry = stringArg(manifest, "entry")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let entryPath: Any
+        if let entry, !entry.isEmpty {
+            entryPath = frontendDirectoryURL.appendingPathComponent(entry, isDirectory: false).path
+        } else {
+            entryPath = NSNull()
+        }
+
+        let descriptor: [String: Any] = [
+            "manifest": manifest,
+            "manifestPath": manifestURL.path,
+            "frontendDirectoryPath": frontendDirectoryURL.path,
+            "serverScriptPath": FileManager.default.fileExists(atPath: serverURL.path) ? serverURL.path : NSNull(),
+            "entryPath": entryPath,
+        ]
+        return try jsonData(descriptor)
+    }
+
+    nonisolated static func localFallback(_ context: LocalClientCallContext, args: [String: Any]) throws -> Data? {
+        switch context.method {
+        case "hasSmithersProject":
+            let root = stringArg(args, "cwd") ?? context.cwd
+            let path = URL(fileURLWithPath: root).appendingPathComponent(".smithers", isDirectory: true).path
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+            return Data((exists ? "true" : "false").utf8)
+        case "initializeSmithers":
+            let root = stringArg(args, "cwd") ?? context.cwd
+            try FileManager.default.createDirectory(
+                atPath: URL(fileURLWithPath: root).appendingPathComponent(".smithers", isDirectory: true).path,
+                withIntermediateDirectories: true
+            )
+            return try jsonData(["ok": true])
+        case "localSmithersFilePath":
+            guard let relative = stringArg(args, "relativePath") else { return nil }
+            return try jsonStringData(localSmithersPath(relative, root: context.cwd))
+        case "localTicketFilePath":
+            guard let ticketId = stringArg(args, "ticketId") else { return nil }
+            return try jsonStringData(localSmithersPath("tickets/\(ticketId)", root: context.cwd))
+        case "readWorkflowSource":
+            guard let relative = stringArg(args, "relativePath") else { return nil }
+            return try jsonStringData(String(contentsOfFile: resolvedWorkspacePath(relative, root: context.cwd), encoding: .utf8))
+        case "saveWorkflowSource":
+            guard let relative = stringArg(args, "relativePath"),
+                  let source = stringArg(args, "source")
+            else { return nil }
+            try source.write(toFile: resolvedWorkspacePath(relative, root: context.cwd), atomically: true, encoding: .utf8)
+            return try jsonData(["ok": true])
+        case "parseWorkflowImports":
+            guard let source = stringArg(args, "source") else { return nil }
+            return try parseWorkflowImportsData(source)
+        case "getWorkflowFrontend":
+            guard let workflowPath = stringArg(args, "workflowPath") else { return nil }
+            return try workflowFrontendDescriptorData(workspaceRoot: context.cwd, workflowPath: workflowPath)
+        case "runQuickLaunchParser":
+            let prompt = stringArg(args, "prompt")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let inputs: [String: Any] = prompt.isEmpty ? [:] : ["prompt": prompt]
+            return try jsonData(["inputs": inputs, "notes": "", "parseRunId": ""])
+        case "listWorkflows":
+            if let data = try? localWorkflowListData(root: context.cwd) {
+                return data
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    nonisolated static func cliArgs(
+        for method: String,
+        args: [String: Any],
+        smithersBin: String,
+        jjhubBin: String
+    ) -> [String]? {
+        switch method {
+        case "listWorkflows":
+            return [smithersBin, "workflow", "--format", "json"]
+        case "listRuns":
+            return [smithersBin, "ps", "--format", "json"]
+        case "getOrchestratorVersion":
+            return [smithersBin, "--version"]
+        case "inspectRun":
+            guard let runId = stringArg(args, "runId") else { return nil }
+            return [smithersBin, "inspect", runId, "--format", "json"]
+        case "runWorkflowDoctor":
+            guard let workflowPath = stringArg(args, "workflowPath") else { return nil }
+            return [smithersBin, "workflow", "doctor", workflowPath, "--format", "json"]
+        case "getWorkflowDAG":
+            guard let workflowPath = stringArg(args, "workflowPath") else { return nil }
+            var argv = [smithersBin, "graph", workflowPath, "--format", "json"]
+            appendJSONOption(&argv, "--input", args["input"])
+            return argv
+        case "runWorkflow":
+            guard let workflowPath = stringArg(args, "workflowPath") else { return nil }
+            var argv = [smithersBin, "up", workflowPath, "--detach", "true", "--format", "json"]
+            appendJSONOption(&argv, "--input", args["inputs"])
+            return argv
+        case "approveNode":
+            return approvalArgs(command: "approve", args: args, noteKey: "note", smithersBin: smithersBin)
+        case "denyNode":
+            return approvalArgs(command: "deny", args: args, noteKey: "reason", smithersBin: smithersBin)
+        case "cancelRun":
+            guard let runId = stringArg(args, "runId") else { return nil }
+            return [smithersBin, "cancel", runId, "--format", "json"]
+        case "getNodeOutput":
+            guard let runId = stringArg(args, "runId"),
+                  let nodeId = stringArg(args, "nodeId")
+            else { return nil }
+            var argv = [smithersBin, "output", runId, nodeId, "--json"]
+            appendIntegerOption(&argv, "--iteration", args["iteration"])
+            return argv
+        case "getNodeDiff":
+            guard let runId = stringArg(args, "runId"),
+                  let nodeId = stringArg(args, "nodeId")
+            else { return nil }
+            var argv = [smithersBin, "diff", runId, nodeId, "--json"]
+            appendIntegerOption(&argv, "--iteration", args["iteration"])
+            return argv
+        case "getChatOutput":
+            guard let runId = stringArg(args, "runId") else { return nil }
+            return [smithersBin, "chat", runId, "--format", "json"]
+        case "hijackRun":
+            guard let runId = stringArg(args, "runId") else { return nil }
+            return [smithersBin, "hijack", runId, "--launch=false", "--format", "json"]
+        case "listRecentScores":
+            guard let runId = stringArg(args, "runId") else { return nil }
+            var argv = [smithersBin, "scores", runId, "--format", "json"]
+            if let nodeId = stringArg(args, "nodeId") {
+                argv += ["--node", nodeId]
+            }
+            return argv
+        case "listJJHubWorkflows":
+            return [jjhubBin, "workflow", "list", "--json"]
+        case "triggerJJHubWorkflow":
+            guard let workflowID = intStringArg(args, "workflowID"),
+                  let ref = stringArg(args, "ref")
+            else { return nil }
+            return [jjhubBin, "workflow", "run", workflowID, "--ref", ref, "--json"]
+        case "listChanges":
+            return [jjhubBin, "change", "list", "--json"]
+        case "viewChange":
+            guard let changeID = stringArg(args, "changeID") else { return nil }
+            return [jjhubBin, "change", "show", changeID, "--json"]
+        case "changeDiff":
+            if let changeID = stringArg(args, "changeID") {
+                return [jjhubBin, "change", "diff", changeID]
+            }
+            return [jjhubBin, "change", "diff"]
+        case "workingCopyDiff":
+            return [jjhubBin, "change", "diff"]
+        case "status":
+            return [jjhubBin, "status"]
+        case "listIssues":
+            var argv = [jjhubBin, "issue", "list", "--json"]
+            if let state = stringArg(args, "state") {
+                argv += ["--state", state]
+            }
+            return argv
+        case "getIssue":
+            guard let number = intStringArg(args, "number") else { return nil }
+            return [jjhubBin, "issue", "view", number, "--json"]
+        case "createIssue":
+            guard let title = stringArg(args, "title") else { return nil }
+            var argv = [jjhubBin, "issue", "create", "--json", "--title", title]
+            if let body = stringArg(args, "body") {
+                argv += ["--body", body]
+            }
+            return argv
+        case "closeIssue":
+            guard let number = intStringArg(args, "number") else { return nil }
+            var argv = [jjhubBin, "issue", "close", number, "--json"]
+            if let comment = stringArg(args, "comment") {
+                argv += ["--comment", comment]
+            }
+            return argv
+        case "reopenIssue":
+            guard let number = intStringArg(args, "number") else { return nil }
+            return [jjhubBin, "issue", "reopen", number, "--json"]
+        case "getCurrentRepo":
+            return [jjhubBin, "repo", "view", "--json"]
+        case "createBookmark":
+            guard let name = stringArg(args, "name"),
+                  let changeID = stringArg(args, "changeID")
+            else { return nil }
+            var argv = [jjhubBin, "bookmark", "create", name, "--change", changeID, "--json"]
+            if boolArg(args, "remote") == true {
+                argv.append("--remote")
+            }
+            return argv
+        case "deleteBookmark":
+            guard let name = stringArg(args, "name") else { return nil }
+            var argv = [jjhubBin, "bookmark", "delete", name, "--json"]
+            if boolArg(args, "remote") == true {
+                argv.append("--remote")
+            }
+            return argv
+        case "listWorkspaces":
+            return [jjhubBin, "workspace", "list", "--json"]
+        case "viewWorkspace":
+            guard let workspaceId = stringArg(args, "workspaceId") else { return nil }
+            return [jjhubBin, "workspace", "view", workspaceId, "--json"]
+        case "createWorkspace":
+            var argv = [jjhubBin, "workspace", "create", "--json"]
+            if let name = stringArg(args, "name") {
+                argv += ["--name", name]
+            }
+            if let snapshotId = stringArg(args, "snapshotId") {
+                argv += ["--snapshot", snapshotId]
+            }
+            return argv
+        case "deleteWorkspace", "suspendWorkspace", "resumeWorkspace":
+            guard let workspaceId = stringArg(args, "workspaceId") else { return nil }
+            let command: String
+            switch method {
+            case "deleteWorkspace": command = "delete"
+            case "suspendWorkspace": command = "suspend"
+            default: command = "resume"
+            }
+            return [jjhubBin, "workspace", command, workspaceId, "--json"]
+        case "forkWorkspace":
+            guard let workspaceId = stringArg(args, "workspaceId") else { return nil }
+            var argv = [jjhubBin, "workspace", "fork", workspaceId, "--json"]
+            if let name = stringArg(args, "name") {
+                argv += ["--name", name]
+            }
+            return argv
+        case "listWorkspaceSnapshots":
+            return [jjhubBin, "workspace", "snapshot", "list", "--json"]
+        case "viewWorkspaceSnapshot":
+            guard let snapshotId = stringArg(args, "snapshotId") else { return nil }
+            return [jjhubBin, "workspace", "snapshot", "view", snapshotId, "--json"]
+        case "createWorkspaceSnapshot":
+            guard let workspaceId = stringArg(args, "workspaceId") else { return nil }
+            var argv = [jjhubBin, "workspace", "snapshot", "create", workspaceId, "--json"]
+            if let name = stringArg(args, "name") {
+                argv += ["--name", name]
+            }
+            return argv
+        case "deleteWorkspaceSnapshot":
+            guard let snapshotId = stringArg(args, "snapshotId") else { return nil }
+            return [jjhubBin, "workspace", "snapshot", "delete", snapshotId, "--json"]
+        case "search":
+            guard let scope = stringArg(args, "scope"),
+                  let query = stringArg(args, "query")
+            else { return nil }
+            var argv: [String]
+            switch scope {
+            case "code":
+                argv = [jjhubBin, "search", "code", query, "--json"]
+            case "issues":
+                argv = [jjhubBin, "search", "issues", query, "--json"]
+                if let state = stringArg(args, "issueState") {
+                    argv += ["--state", state]
+                }
+            case "repos":
+                argv = [jjhubBin, "search", "repos", query, "--json"]
+            default:
+                return nil
+            }
+            appendIntegerOption(&argv, "--limit", args["limit"])
+            return argv
+        case "listLandings":
+            var argv = [jjhubBin, "land", "list", "--json"]
+            if let state = stringArg(args, "state") {
+                argv += ["--state", state]
+            }
+            return argv
+        case "getLanding":
+            guard let number = intStringArg(args, "number") else { return nil }
+            return [jjhubBin, "land", "view", number, "--json"]
+        case "createLanding":
+            guard let title = stringArg(args, "title") else { return nil }
+            var argv = [jjhubBin, "land", "create", "--json", "--title", title]
+            if let body = stringArg(args, "body") { argv += ["--body", body] }
+            if let target = stringArg(args, "target") { argv += ["--target", target] }
+            if boolArg(args, "stack") == true { argv.append("--stack") }
+            return argv
+        case "landingDiff":
+            guard let number = intStringArg(args, "number") else { return nil }
+            return [jjhubBin, "land", "diff", number]
+        case "landLanding":
+            guard let number = intStringArg(args, "number") else { return nil }
+            return [jjhubBin, "land", "land", number, "--json"]
+        case "reviewLanding":
+            guard let number = intStringArg(args, "number"),
+                  let action = stringArg(args, "action")
+            else { return nil }
+            var argv = [jjhubBin, "land", "review", number, action, "--json"]
+            if let body = stringArg(args, "body") { argv += ["--body", body] }
+            return argv
+        case "landingChecks":
+            guard let number = intStringArg(args, "number") else { return nil }
+            return [jjhubBin, "land", "checks", number]
+        default:
+            return nil
+        }
+    }
+
+    nonisolated static func parseArgsObject(_ argsJSON: String) throws -> [String: Any] {
+        let trimmed = argsJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        let input = trimmed.isEmpty ? "{}" : trimmed
+        let value = try JSONSerialization.jsonObject(with: Data(input.utf8), options: [.fragmentsAllowed])
+        return value as? [String: Any] ?? [:]
+    }
+
+    nonisolated static func maybeMockResult(_ args: [String: Any]) throws -> Data? {
+        if let result = args["mockResult"] {
+            return try jsonData(result)
+        }
+        if boolArg(args, "mock") == true, let result = args["result"] {
+            return try jsonData(result)
+        }
+        if let raw = stringArg(args, "result_json") {
+            let value = try JSONSerialization.jsonObject(with: Data(raw.utf8), options: [.fragmentsAllowed])
+            return try jsonData(value)
+        }
+        return nil
+    }
+
+    nonisolated static func normalizeCliOutput(method: String, stdout: Data) throws -> Data {
+        let trimmed = String(decoding: stdout, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if method == "getOrchestratorVersion" || stringResultMethods.contains(method) {
+            return try jsonStringData(trimmed)
+        }
+        if method == "runWorkflow" {
+            return try normalizeRunWorkflowOutput(trimmed)
+        }
+        if trimmed.isEmpty {
+            return Data("{}".utf8)
+        }
+        if let value = try? JSONSerialization.jsonObject(with: Data(trimmed.utf8), options: [.fragmentsAllowed]) {
+            return try jsonData(value)
+        }
+        return try jsonStringData(trimmed)
+    }
+
+    nonisolated static func normalizeRunWorkflowOutput(_ trimmed: String) throws -> Data {
+        guard !trimmed.isEmpty else {
+            throw SmithersError.cli("smithers up produced no run id")
+        }
+        if let value = try? JSONSerialization.jsonObject(with: Data(trimmed.utf8), options: [.fragmentsAllowed]) {
+            if let runId = value as? String {
+                return try runIdJSON(runId)
+            }
+            if let object = value as? [String: Any] {
+                if object["runId"] != nil || object["run_id"] != nil || object["id"] != nil {
+                    return try jsonData(object)
+                }
+                if let data = object["data"] as? [String: Any],
+                   data["runId"] != nil || data["run_id"] != nil || data["id"] != nil {
+                    return try jsonData(object)
+                }
+            }
+            throw SmithersError.cli("smithers up output did not contain a run id")
+        }
+        return try runIdJSON(trimmed)
+    }
+
+    nonisolated static func runIdJSON(_ runId: String) throws -> Data {
+        let clean = runId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else {
+            throw SmithersError.cli("smithers up produced an empty run id")
+        }
+        return try jsonData(["runId": clean, "status": "queued"])
+    }
+
+    nonisolated static func runProcess(_ argv: [String], cwd: String?) throws -> Data {
+        guard !argv.isEmpty else {
+            throw SmithersError.cli("empty command")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = argv
+        if let cwd, !cwd.isEmpty {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd, isDirectory: true)
+        }
+        process.environment = enrichedProcessEnvironment()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        do {
+            try process.run()
+        } catch {
+            throw SmithersError.cli("\(argv[0]) failed to launch: \(error.localizedDescription)")
+        }
+        process.waitUntilExit()
+        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let stderrText = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard process.terminationStatus == 0 else {
+            throw SmithersError.cli(stderrText.isEmpty ? "\(argv[0]) exited with status \(process.terminationStatus)" : stderrText)
+        }
+        return stdoutData
+    }
+
+    nonisolated static func listAgentsData() throws -> Data {
+        let environment = ProcessInfo.processInfo.environment
+        let pathEntries = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 }
+        let manifests: [(id: String, name: String, command: String, roles: [String], authDir: String?, apiKeyEnv: String?)] = [
+            ("claude-code", "Claude Code", "claude", ["coding", "review", "spec"], ".claude", "ANTHROPIC_API_KEY"),
+            ("codex", "Codex", "codex", ["coding", "implement"], ".codex", "OPENAI_API_KEY"),
+            ("opencode", "OpenCode", "opencode", ["coding", "chat"], nil, nil),
+            ("gemini", "Gemini", "gemini", ["coding", "research"], ".gemini", "GEMINI_API_KEY"),
+            ("kimi", "Kimi", "kimi", ["research", "plan"], nil, "KIMI_API_KEY"),
+            ("amp", "Amp", "amp", ["coding", "validate"], ".amp", nil),
+            ("forge", "Forge", "forge", ["coding"], nil, "FORGE_API_KEY"),
+        ]
+        let agents: [[String: Any]] = manifests.map { manifest in
+            let binaryPath = resolveExecutable(manifest.command, pathEntries: pathEntries) ?? ""
+            let hasAuth = manifest.authDir.flatMap { authDir in
+                home.map { FileManager.default.fileExists(atPath: URL(fileURLWithPath: $0).appendingPathComponent(authDir).path) }
+            } ?? false
+            let hasAPIKey = manifest.apiKeyEnv.flatMap { environment[$0]?.isEmpty == false } ?? false
+            let usable = !binaryPath.isEmpty
+            let status: String
+            if !usable {
+                status = "unavailable"
+            } else if hasAuth {
+                status = "likely-subscription"
+            } else if hasAPIKey {
+                status = "api-key"
+            } else {
+                status = "binary-only"
+            }
+            return [
+                "id": manifest.id,
+                "name": manifest.name,
+                "command": manifest.command,
+                "binaryPath": binaryPath,
+                "status": status,
+                "hasAuth": hasAuth,
+                "hasAPIKey": hasAPIKey,
+                "usable": usable,
+                "roles": manifest.roles,
+                "version": NSNull(),
+                "authExpired": NSNull(),
+            ]
+        }
+        return try jsonData(["agents": agents])
+    }
+
+    nonisolated static func localWorkflowListData(root: String) throws -> Data {
+        let workflowsURL = URL(fileURLWithPath: root)
+            .appendingPathComponent(".smithers", isDirectory: true)
+            .appendingPathComponent("workflows", isDirectory: true)
+        guard let enumerator = FileManager.default.enumerator(
+            at: workflowsURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return try jsonData(["workflows": []])
+        }
+        var workflows: [[String: Any]] = []
+        for case let url as URL in enumerator {
+            let ext = url.pathExtension.lowercased()
+            guard ["ts", "tsx", "js", "jsx"].contains(ext) else { continue }
+            let smithersRoot = workflowsURL.deletingLastPathComponent().path + "/"
+            let relative = url.path.hasPrefix(smithersRoot)
+                ? ".smithers/" + String(url.path.dropFirst(smithersRoot.count))
+                : url.path
+            workflows.append([
+                "id": url.deletingPathExtension().lastPathComponent,
+                "name": url.deletingPathExtension().lastPathComponent,
+                "relativePath": relative,
+                "status": "active",
+            ])
+        }
+        return try jsonData(["workflows": workflows])
+    }
+
+    nonisolated static func parseWorkflowImportsData(_ source: String) throws -> Data {
+        var components: [[String: String]] = []
+        var prompts: [[String: String]] = []
+        for rawLine in source.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("//"), let path = extractImportPath(from: line) else { continue }
+            let cleanPath = cleanImportPath(path)
+            guard let kind = classifyImportPath(cleanPath) else { continue }
+            switch kind {
+            case "component":
+                let names = namedImportNames(from: line)
+                if names.isEmpty {
+                    components.append(["name": defaultImportName(from: line) ?? importName(from: cleanPath), "path": cleanPath])
+                } else {
+                    for name in names {
+                        appendUniqueImport(["name": name, "path": cleanPath], to: &components)
+                    }
+                }
+            case "prompt":
+                appendUniqueImport(["name": defaultImportName(from: line) ?? importName(from: cleanPath), "path": cleanPath], to: &prompts)
+            default:
+                continue
+            }
+        }
+        return try jsonData(["components": components, "prompts": prompts])
+    }
+
+    nonisolated static func parseSSE(_ raw: String) -> [Smithers.Event] {
+        var events: [Smithers.Event] = []
+        var eventType: String?
+        var dataLines: [String] = []
+
+        func flush() {
+            guard eventType != nil || !dataLines.isEmpty else { return }
+            let object: [String: Any] = [
+                "event": eventType ?? NSNull(),
+                "data": dataLines.joined(separator: "\n"),
+            ]
+            if let data = try? jsonData(object),
+               let payload = String(data: data, encoding: .utf8) {
+                events.append(Smithers.Event(tag: .json, payload: payload))
+            }
+            eventType = nil
+            dataLines.removeAll()
+        }
+
+        for rawLine in raw.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+            if line.isEmpty {
+                flush()
+            } else if line.hasPrefix("event:") {
+                eventType = String(line.dropFirst("event:".count)).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("data:") {
+                dataLines.append(String(line.dropFirst("data:".count)).trimmingCharacters(in: .whitespaces))
+            }
+        }
+        flush()
+        events.append(Smithers.Event(tag: .end, payload: ""))
+        return events
+    }
+
+    nonisolated static var stringResultMethods: Set<String> {
+        ["status", "changeDiff", "workingCopyDiff", "landingDiff", "landingChecks", "previewPrompt", "readWorkflowSource", "rerunRun"]
+    }
+
+    nonisolated static func approvalArgs(
+        command: String,
+        args: [String: Any],
+        noteKey: String,
+        smithersBin: String
+    ) -> [String]? {
+        guard let runId = stringArg(args, "runId"),
+              let nodeId = stringArg(args, "nodeId")
+        else { return nil }
+        var argv = [smithersBin, command, runId, "--node", nodeId, "--format", "json"]
+        appendIntegerOption(&argv, "--iteration", args["iteration"])
+        if let note = stringArg(args, noteKey) {
+            argv += ["--note", note]
+        }
+        return argv
+    }
+
+    nonisolated static func appendJSONOption(_ argv: inout [String], _ flag: String, _ value: Any?) {
+        guard let value,
+              !(value is NSNull),
+              let data = try? jsonData(value),
+              let text = String(data: data, encoding: .utf8)
+        else { return }
+        argv += [flag, text]
+    }
+
+    nonisolated static func appendIntegerOption(_ argv: inout [String], _ flag: String, _ value: Any?) {
+        guard let value = intStringValue(value) else { return }
+        argv += [flag, value]
+    }
+
+    nonisolated static func jsonData(_ value: Any) throws -> Data {
+        try JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
+    }
+
+    nonisolated static func jsonStringData(_ value: String) throws -> Data {
+        try JSONEncoder().encode(value)
+    }
+
+    nonisolated static func stringArg(_ args: [String: Any], _ key: String) -> String? {
+        guard let value = args[key], !(value is NSNull) else { return nil }
+        if let text = value as? String {
+            return text
+        }
+        if let number = value as? NSNumber {
+            return number.stringValue
+        }
+        return nil
+    }
+
+    nonisolated static func boolArg(_ args: [String: Any], _ key: String) -> Bool? {
+        guard let value = args[key], !(value is NSNull) else { return nil }
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+        if let text = value as? String {
+            return ["true", "1", "yes"].contains(text.lowercased())
+        }
+        return nil
+    }
+
+    nonisolated static func intStringArg(_ args: [String: Any], _ key: String) -> String? {
+        intStringValue(args[key])
+    }
+
+    nonisolated static func intStringValue(_ value: Any?) -> String? {
+        guard let value, !(value is NSNull) else { return nil }
+        if let int = value as? Int { return String(int) }
+        if let int = value as? Int64 { return String(int) }
+        if let number = value as? NSNumber { return number.stringValue }
+        if let string = value as? String, Int(string) != nil { return string }
+        return nil
+    }
+
+    nonisolated static func resolvedWorkspacePath(_ path: String, root: String) -> String {
+        guard !path.hasPrefix("/") else { return path }
+        return URL(fileURLWithPath: root, isDirectory: true).appendingPathComponent(path).path
+    }
+
+    nonisolated static func localSmithersPath(_ relative: String, root: String) -> String {
+        guard !relative.hasPrefix("/") else { return relative }
+        if relative == ".smithers" || relative.hasPrefix(".smithers/") {
+            return resolvedWorkspacePath(relative, root: root)
+        }
+        return URL(fileURLWithPath: root, isDirectory: true)
+            .appendingPathComponent(".smithers", isDirectory: true)
+            .appendingPathComponent(relative)
+            .path
+    }
+
+    nonisolated static func resolveExecutable(_ command: String, pathEntries: [String]) -> String? {
+        if command.contains("/") {
+            return FileManager.default.isExecutableFile(atPath: command) ? command : nil
+        }
+        for entry in pathEntries where !entry.isEmpty {
+            let candidate = URL(fileURLWithPath: entry, isDirectory: true).appendingPathComponent(command).path
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    nonisolated static func extractImportPath(from line: String) -> String? {
+        if let range = line.range(of: "import(") {
+            return extractQuotedPath(String(line[range.upperBound...]))
+        }
+        if let range = line.range(of: " from ") {
+            return extractQuotedPath(String(line[range.upperBound...]))
+        }
+        if line.hasPrefix("from ") {
+            return extractQuotedPath(String(line.dropFirst("from ".count)))
+        }
+        return nil
+    }
+
+    nonisolated static func extractQuotedPath(_ raw: String) -> String? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let quote = text.first, quote == "\"" || quote == "'" || quote == "`" else { return nil }
+        let rest = text.dropFirst()
+        guard let end = rest.firstIndex(of: quote) else { return nil }
+        return String(rest[..<end])
+    }
+
+    nonisolated static func cleanImportPath(_ path: String) -> String {
+        var end = path.endIndex
+        if let query = path.firstIndex(of: "?") { end = min(end, query) }
+        if let fragment = path.firstIndex(of: "#") { end = min(end, fragment) }
+        return String(path[..<end])
+    }
+
+    nonisolated static func classifyImportPath(_ path: String) -> String? {
+        let lower = path.lowercased()
+        if lower.contains("prompt") || lower.hasSuffix(".md") || lower.hasSuffix(".mdx") {
+            return "prompt"
+        }
+        if lower.contains("component") || lower.hasSuffix(".tsx") || lower.hasSuffix(".jsx") {
+            return "component"
+        }
+        return nil
+    }
+
+    nonisolated static func namedImportNames(from line: String) -> [String] {
+        let prefix = line.components(separatedBy: " from ").first ?? line
+        guard let open = prefix.firstIndex(of: "{"),
+              let close = prefix[open...].firstIndex(of: "}")
+        else { return [] }
+        return prefix[prefix.index(after: open)..<close]
+            .split(separator: ",")
+            .compactMap { part in
+                let raw = part.components(separatedBy: " as ").last ?? String(part)
+                return firstIdentifier(raw)
+            }
+    }
+
+    nonisolated static func defaultImportName(from line: String) -> String? {
+        guard line.hasPrefix("import "),
+              let fromRange = line.range(of: " from ")
+        else { return nil }
+        var rest = line[line.index(line.startIndex, offsetBy: "import ".count)..<fromRange.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if rest.hasPrefix("type ") {
+            rest = String(rest.dropFirst("type ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !rest.isEmpty, rest.first != "{", rest.first != "*" else { return nil }
+        return firstIdentifier(rest.components(separatedBy: ",").first ?? rest)
+    }
+
+    nonisolated static func importName(from path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        let base = url.deletingPathExtension().lastPathComponent
+        return base.isEmpty ? "import" : base
+    }
+
+    nonisolated static func firstIdentifier(_ raw: String) -> String? {
+        var result = ""
+        var didStart = false
+        for scalar in raw.unicodeScalars {
+            let char = Character(scalar)
+            let isValid = CharacterSet.alphanumerics.contains(scalar) || char == "_" || char == "$"
+            if !didStart {
+                guard isValid else { continue }
+                didStart = true
+            }
+            guard isValid else { break }
+            result.append(char)
+        }
+        return result.isEmpty ? nil : result
+    }
+
+    nonisolated static func appendUniqueImport(_ value: [String: String], to values: inout [[String: String]]) {
+        guard !values.contains(value) else { return }
+        values.append(value)
+    }
 }
 
 struct AnyEncodable: Encodable {
@@ -1422,32 +2189,5 @@ private extension SmithersClient {
 private extension String {
     var emptyToNil: String? {
         isEmpty ? nil : self
-    }
-}
-
-private final class MainThreadClientHandle {
-    private var client: smithers_client_t?
-
-    func replace(_ newValue: smithers_client_t?) {
-        if let client {
-            Self.free(client)
-        }
-        client = newValue
-    }
-
-    deinit {
-        if let client {
-            Self.free(client)
-        }
-    }
-
-    private static func free(_ client: smithers_client_t) {
-        if Thread.isMainThread {
-            smithers_client_free(client)
-        } else {
-            DispatchQueue.main.sync {
-                smithers_client_free(client)
-            }
-        }
     }
 }

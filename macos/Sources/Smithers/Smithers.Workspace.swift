@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import CSmithersKit
 
 #if os(macOS)
 import AppKit
@@ -9,8 +8,16 @@ import AppKit
 extension Smithers {
     enum CWD {
         static func resolve(_ requested: String?) -> String {
-            let resolved = requested.withOptionalCString { ptr in smithers_cwd_resolve(ptr) }
-            return Smithers.string(from: resolved)
+            let raw = requested?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let candidate = raw?.isEmpty == false ? raw! : FileManager.default.currentDirectoryPath
+            let expanded = (candidate as NSString).expandingTildeInPath
+            if expanded.hasPrefix("/") {
+                return URL(fileURLWithPath: expanded).standardizedFileURL.path
+            }
+            return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(expanded)
+                .standardizedFileURL
+                .path
         }
     }
 }
@@ -28,19 +35,8 @@ struct RecentWorkspace: Codable, Equatable, Identifiable {
     }
 }
 
-// MARK: - 0126 Remote workspace identity
-
-/// Identity of a workspace the user has active in the current app session.
-/// The macOS app can hold an arbitrary mix of `.local` and `.remote`
-/// workspaces at once — see hybrid-session requirement in ticket 0126.
-///
-/// This type intentionally lives in the macOS support layer: the Shared
-/// Store already has `WorkspaceRow` (Electric shape projection) and we
-/// don't want to widen that to carry UI / local-FS concerns.
 enum WorkspaceIdentity: Equatable, Hashable {
-    /// A local filesystem workspace opened via "Open Folder…".
     case local(path: String)
-    /// A remote JJHub sandbox opened via the remote-mode picker.
     case remote(workspaceId: String, engineId: String?)
 
     var isRemote: Bool {
@@ -48,7 +44,6 @@ enum WorkspaceIdentity: Equatable, Hashable {
         return false
     }
 
-    /// A stable cross-run identifier suitable for tab keys.
     var stableId: String {
         switch self {
         case .local(let path): return "local:\(path)"
@@ -63,6 +58,12 @@ private let recentWorkspaceDecoder: JSONDecoder = {
     return decoder
 }()
 
+private let recentWorkspaceEncoder: JSONEncoder = {
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .secondsSince1970
+    return encoder
+}()
+
 @MainActor
 final class WorkspaceManager: ObservableObject {
     static let shared = WorkspaceManager()
@@ -70,9 +71,9 @@ final class WorkspaceManager: ObservableObject {
     @Published private(set) var activeWorkspacePath: String?
     @Published private(set) var recents: [RecentWorkspace] = []
 
+    private static let recentsKey = "smithers.recentWorkspaces"
+    private let userDefaults: UserDefaults
     private let app: Smithers.App
-    private var activeWorkspace: smithers_workspace_t?
-    nonisolated(unsafe) private let activeWorkspaceHandle = MainThreadWorkspaceHandle()
 
     init(
         userDefaults: UserDefaults = .standard,
@@ -80,6 +81,7 @@ final class WorkspaceManager: ObservableObject {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         app: Smithers.App? = nil
     ) {
+        self.userDefaults = userDefaults
         self.app = app ?? Smithers.App()
         refreshRecents()
         if let path = Self.workspaceFromLaunch(arguments: launchArguments, environment: environment) {
@@ -87,30 +89,15 @@ final class WorkspaceManager: ObservableObject {
         }
     }
 
-    deinit {
-        activeWorkspaceHandle.close()
-    }
-
     func openWorkspace(at url: URL) {
         let path = Smithers.CWD.resolve(url.standardizedFileURL.path)
-        guard let cApp = app.app else { return }
-        if activeWorkspace != nil {
-            activeWorkspaceHandle.close()
-            self.activeWorkspace = nil
-        }
-        let opened = path.withCString { smithers_app_open_workspace(cApp, $0) }
-        activeWorkspace = opened
-        activeWorkspaceHandle.replace(app: cApp, workspace: opened)
         activeWorkspacePath = path
-        refreshRecents()
+        upsertRecent(path: path)
         AppLogger.ui.info("WorkspaceManager opened workspace", metadata: ["path": path])
     }
 
     func closeWorkspace() {
-        activeWorkspaceHandle.close()
-        activeWorkspace = nil
         activeWorkspacePath = nil
-        refreshRecents()
     }
 
     static func workspaceFromLaunch(arguments: [String], environment: [String: String]) -> String? {
@@ -130,26 +117,35 @@ final class WorkspaceManager: ObservableObject {
     }
 
     func removeRecent(path: String) {
-        guard let cApp = app.app else {
-            recents.removeAll { $0.path == path }
-            return
-        }
-        path.withCString { smithers_app_remove_recent_workspace(cApp, $0) }
-        refreshRecents()
+        recents.removeAll { $0.path == path }
+        saveRecents()
     }
 
     func refreshRecents() {
-        guard let cApp = app.app else {
-            recents = []
-            return
-        }
-        let json = Smithers.string(from: smithers_app_recent_workspaces_json(cApp))
-        guard let data = json.data(using: .utf8),
+        guard let data = userDefaults.data(forKey: Self.recentsKey),
               let decoded = try? recentWorkspaceDecoder.decode([RecentWorkspace].self, from: data) else {
             recents = []
             return
         }
         recents = decoded
+    }
+
+    private func upsertRecent(path: String) {
+        let displayName = URL(fileURLWithPath: path, isDirectory: true).lastPathComponent
+        recents.removeAll { $0.path == path }
+        recents.insert(
+            RecentWorkspace(path: path, displayName: displayName.isEmpty ? path : displayName, lastOpened: Date()),
+            at: 0
+        )
+        recents = Array(recents.prefix(20))
+        saveRecents()
+    }
+
+    private func saveRecents() {
+        if let data = try? recentWorkspaceEncoder.encode(recents) {
+            userDefaults.set(data, forKey: Self.recentsKey)
+        }
+        NotificationCenter.default.post(name: .smithersStateChanged, object: nil)
     }
 
     #if os(macOS)
@@ -163,37 +159,5 @@ final class WorkspaceManager: ObservableObject {
             openWorkspace(at: url)
         }
     }
-#endif
-}
-
-private final class MainThreadWorkspaceHandle {
-    private var app: smithers_app_t?
-    private var workspace: smithers_workspace_t?
-
-    func replace(app newApp: smithers_app_t?, workspace newWorkspace: smithers_workspace_t?) {
-        close()
-        app = newApp
-        workspace = newWorkspace
-    }
-
-    func close() {
-        guard let app, let workspace else { return }
-        Self.close(app: app, workspace: workspace)
-        self.app = nil
-        self.workspace = nil
-    }
-
-    deinit {
-        close()
-    }
-
-    private static func close(app: smithers_app_t, workspace: smithers_workspace_t) {
-        if Thread.isMainThread {
-            smithers_app_close_workspace(app, workspace)
-        } else {
-            DispatchQueue.main.sync {
-                smithers_app_close_workspace(app, workspace)
-            }
-        }
-    }
+    #endif
 }

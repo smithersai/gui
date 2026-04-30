@@ -1,5 +1,4 @@
 import Foundation
-import CSmithersKit
 
 enum SlashCommandCategory: String, Codable {
     case smithers = "Smithers"
@@ -155,13 +154,6 @@ enum SlashCommandRegistry {
     }
 
     static func parse(_ input: String) -> ParsedSlashCommand? {
-        let parsed = input.withCString { smithers_slashcmd_parse($0) }
-        let json = Smithers.string(from: parsed)
-        if let data = json.data(using: .utf8),
-           let payload = try? JSONDecoder().decode(SlashParsePayload.self, from: data) {
-            return ParsedSlashCommand(name: payload.command ?? "", args: payload.args.joined(separator: " "))
-        }
-
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("/") else { return nil }
         let body = trimmed.dropFirst()
@@ -240,28 +232,6 @@ enum SlashCommandRegistry {
         let last = (value as NSString).lastPathComponent
         let stem = (last as NSString).deletingPathExtension
         return stem.normalizedSlashCommandQuery.replacingOccurrences(of: " ", with: "-")
-    }
-}
-
-private struct SlashParsePayload: Decodable {
-    let command: String?
-    let args: [String]
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        command = try container.decodeIfPresent(String.self, forKey: .command)
-        if let values = try? container.decodeIfPresent([String].self, forKey: .args) {
-            args = values
-        } else if let value = try? container.decodeIfPresent(String.self, forKey: .args) {
-            args = [value]
-        } else {
-            args = []
-        }
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case command
-        case args
     }
 }
 

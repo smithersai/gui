@@ -376,6 +376,11 @@ struct RunStateView: Codable, Equatable, Sendable {
             return Date(timeIntervalSince1970: Double(ms) / 1000)
         }
         guard let iso8601, !iso8601.isEmpty else { return nil }
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: iso8601) {
+            return date
+        }
         return ISO8601DateFormatter().date(from: iso8601)
     }
 }

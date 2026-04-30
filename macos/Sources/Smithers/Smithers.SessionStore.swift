@@ -1,7 +1,6 @@
 import Foundation
 import SwiftUI
 import Combine
-import CSmithersKit
 
 #if os(macOS)
 import AppKit
@@ -124,6 +123,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         )
         runTabs.removeAll { $0.runId == runId }
         runTabs.insert(tab, at: 0)
+        LiveRunSessionRegistry.shared.pinRunTab(runId: runId)
         scheduleSave()
         return runId
     }
@@ -132,6 +132,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         runTabs.removeAll { $0.runId == runId }
         sessions[runId] = nil
         workspaceWindowIds[WorkspaceID(runId)] = nil
+        LiveRunSessionRegistry.shared.unpinRunTab(runId: runId)
         scheduleSave()
     }
 
@@ -976,8 +977,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         guard !sessionPersistenceDisabled else { return }
         guard let persistence = app.persistence() else { return }
 
-        let loaded = workingDirectory.withCString { smithers_persistence_load_sessions(persistence, $0) }
-        let json = Smithers.string(from: loaded)
+        let json = persistence.loadSessions(workspacePath: workingDirectory)
         guard let data = json.data(using: .utf8) else { return }
 
         let entries: [PersistedSessionEntry]
@@ -1059,15 +1059,12 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 ])
                 return
             }
-            let saveError = workingDirectory.withCString { workspacePtr in
-                json.withCString { jsonPtr in
-                    smithers_persistence_save_sessions(persistence, workspacePtr, jsonPtr)
-                }
-            }
-            if let message = Smithers.message(from: saveError) {
+            do {
+                try persistence.saveSessions(workspacePath: workingDirectory, json: json)
+            } catch {
                 AppLogger.ui.warning("Failed to persist sessions", metadata: [
                     "workspace": workingDirectory,
-                    "error": message,
+                    "error": "\(error)",
                 ])
             }
         } catch {
