@@ -76,9 +76,106 @@ async function build() {
   await $`xcrun notarytool submit ${zip} --apple-id ${APPLE_ID} --team-id ${TEAM} --password ${PW} --wait`;
   await $`xcrun stapler staple ${APP}`;
 
+  console.log("→ dmg background");
+  const bgPng = join(BUILD, "dmg-background.png");
+  await makeDmgBackground(bgPng);
+
   console.log("→ dmg");
-  await $`hdiutil create -volname ${SCHEME} -srcfolder ${APP} -ov -format UDZO ${DMG}`;
+  const staging = join(BUILD, "dmg-staging");
+  const tmpDmg  = join(BUILD, "tmp-rw.dmg");
+  rmSync(staging, { recursive: true, force: true });
+  mkdirSync(join(staging, ".background"), { recursive: true });
+  await $`cp -R ${APP} ${staging}/`;
+  await $`ln -s /Applications ${staging}/Applications`;
+  await $`cp ${bgPng} ${join(staging, ".background", "background.png")}`;
+
+  await $`hdiutil create -volname ${SCHEME} -srcfolder ${staging} -ov -format UDRW -size 120m ${tmpDmg}`;
+  rmSync(staging, { recursive: true, force: true });
+
+  const attachOut = await $`hdiutil attach -readwrite -noverify -noautoopen ${tmpDmg}`.text();
+  const mountPoint = attachOut.trim().split("\n").at(-1)?.split("\t").at(-1)?.trim() ?? `/Volumes/${SCHEME}`;
+
+  const appleScript = `
+tell application "Finder"
+  tell disk "${SCHEME}"
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set bounds of container window to {160, 100, 800, 500}
+    set theViewOptions to icon view options of container window
+    set arrangement of theViewOptions to not arranged
+    set icon size of theViewOptions to 100
+    set background picture of theViewOptions to (POSIX file "${mountPoint}/.background/background.png" as alias)
+    set position of item "${SCHEME}.app" of container window to {180, 195}
+    set position of item "Applications" of container window to {460, 195}
+    update without registering applications
+    delay 2
+    close
+  end tell
+end tell
+`;
+  const scriptPath = join(BUILD, "configure-dmg.applescript");
+  writeFileSync(scriptPath, appleScript);
+  await $`osascript ${scriptPath}`.nothrow();
+  rmSync(scriptPath, { force: true });
+
+  await $`sync`;
+  await $`hdiutil detach ${mountPoint}`;
+  await $`hdiutil convert ${tmpDmg} -format UDZO -imagekey zlib-level=9 -o ${DMG}`;
+  rmSync(tmpDmg, { force: true });
   console.log(`✓ ${DMG}`);
+}
+
+async function makeDmgBackground(outPath: string) {
+  // 640 × 400 pt window, @2x PNG (1280 × 800 px).
+  // App icon centre: (180, 195) — Applications centre: (460, 195) in window coords.
+  // Arrow midpoint: x=320, y=195 from top → CG y = 400-195 = 205.
+  const swift = `
+import CoreGraphics
+import ImageIO
+import Foundation
+
+let W = 640, H = 400, scale = 2
+let cs = CGColorSpaceCreateDeviceRGB()
+guard let ctx = CGContext(
+  data: nil, width: W * scale, height: H * scale,
+  bitsPerComponent: 8, bytesPerRow: 0, space: cs,
+  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+) else { exit(1) }
+ctx.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+
+// Dark charcoal gradient top → bottom
+let gradColors = [CGColor(red:0.18,green:0.18,blue:0.20,alpha:1),
+                  CGColor(red:0.11,green:0.11,blue:0.13,alpha:1)] as CFArray
+let grad = CGGradient(colorsSpace: cs, colors: gradColors, locations: [0.0, 1.0])!
+ctx.drawLinearGradient(grad,
+  start: CGPoint(x: W/2, y: H), end: CGPoint(x: W/2, y: 0), options: [])
+
+// Right-pointing arrow at (320, 205) in CG coords
+let cx: CGFloat = 320, cy: CGFloat = 205
+let shaftW: CGFloat = 52, shaftH: CGFloat = 8, headW: CGFloat = 26, headH: CGFloat = 28
+let path = CGMutablePath()
+path.addRect(CGRect(x: cx-shaftW/2, y: cy-shaftH/2, width: shaftW, height: shaftH))
+path.move(to:    CGPoint(x: cx+shaftW/2,       y: cy+headH/2))
+path.addLine(to: CGPoint(x: cx+shaftW/2+headW, y: cy))
+path.addLine(to: CGPoint(x: cx+shaftW/2,       y: cy-headH/2))
+path.closeSubpath()
+ctx.setFillColor(CGColor(red:1,green:1,blue:1,alpha:0.5))
+ctx.addPath(path); ctx.fillPath()
+
+guard let img  = ctx.makeImage() else { exit(1) }
+let url  = URL(fileURLWithPath: "${outPath}")
+guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)
+else { exit(1) }
+CGImageDestinationAddImage(dest, img,
+  [kCGImagePropertyDPIWidth: 144, kCGImagePropertyDPIHeight: 144] as CFDictionary)
+guard CGImageDestinationFinalize(dest) else { exit(1) }
+`;
+  const swiftPath = join(BUILD, "make-dmg-background.swift");
+  writeFileSync(swiftPath, swift);
+  await $`xcrun swift ${swiftPath}`;
+  rmSync(swiftPath, { force: true });
 }
 
 async function upload() {
