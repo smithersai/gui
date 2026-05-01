@@ -113,6 +113,21 @@ final class RepoSelectorSheetTests: XCTestCase {
         XCTAssertEqual(model.filteredRepos(matching: "zed").map(\.label), ["zed/api"])
         XCTAssertEqual(model.filteredRepos(matching: " ").map(\.label), ["acme/widgets", "zed/api"])
     }
+
+    func testMissingBearerMapsToAuthExpired() async {
+        let client = URLSessionUserReposClient(
+            baseURL: URL(string: "https://plue.test")!,
+            bearerProvider: { nil },
+            session: makeStubbedSession()
+        )
+        do {
+            _ = try await client.fetchRepos()
+            XCTFail("Expected authExpired")
+        } catch UserReposError.authExpired {
+        } catch {
+            XCTFail("Expected authExpired, got \(error)")
+        }
+    }
 }
 
 private struct StaticUserReposClient: UserReposClient {

@@ -2,6 +2,9 @@
 import Foundation
 import SwiftUI
 import UIKit
+#if canImport(SmithersAuth)
+import SmithersAuth
+#endif
 
 struct ApprovalsInboxView: View {
     @Environment(\.dismiss) private var dismiss
@@ -327,9 +330,8 @@ protocol ApprovalsInboxClient {
 
 struct URLSessionApprovalsInboxClient: ApprovalsInboxClient {
     private let baseURL: URL
-    private let bearerProvider: @Sendable () -> String?
     private let workspaceFetcher: URLSessionRemoteWorkspaceFetcher
-    private let session: URLSession
+    private let authClient: AuthenticatedHTTPClient
 
     init(
         baseURL: URL,
@@ -337,8 +339,10 @@ struct URLSessionApprovalsInboxClient: ApprovalsInboxClient {
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
-        self.bearerProvider = bearerProvider
-        self.session = session
+        self.authClient = AuthenticatedHTTPClient(
+            tokenManager: ClosureBackedAuthenticatedTokenManager(bearerProvider: bearerProvider),
+            transport: URLSessionHTTPTransport(session: session)
+        )
         self.workspaceFetcher = URLSessionRemoteWorkspaceFetcher(
             baseURL: baseURL,
             bearer: bearerProvider,
@@ -375,25 +379,21 @@ struct URLSessionApprovalsInboxClient: ApprovalsInboxClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(try requireBearer())", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(DecisionRequest(decision: decision.rawValue))
 
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw ApprovalsInboxError.backendUnavailable("Missing HTTP response")
-            }
+            let response = try await authClient.send(request)
 
-            switch http.statusCode {
+            switch response.statusCode {
             case 200:
                 return
-            case 401, 403:
-                throw ApprovalsInboxError.authExpired
             default:
                 throw ApprovalsInboxError.backendUnavailable(
-                    Self.decodeErrorMessage(from: data, status: http.statusCode)
+                    Self.decodeErrorMessage(from: response.body, status: response.statusCode)
                 )
             }
+        } catch AuthenticatedHTTPClientError.authExpired {
+            throw ApprovalsInboxError.authExpired
         } catch let error as ApprovalsInboxError {
             throw error
         } catch {
@@ -454,36 +454,24 @@ struct URLSessionApprovalsInboxClient: ApprovalsInboxClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(try requireBearer())", forHTTPHeaderField: "Authorization")
-
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw ApprovalsInboxError.backendUnavailable("Missing HTTP response")
-            }
+            let response = try await authClient.send(request)
 
-            switch http.statusCode {
+            switch response.statusCode {
             case 200:
-                return try Self.decodeApprovals(from: data)
-            case 401, 403:
-                throw ApprovalsInboxError.authExpired
+                return try Self.decodeApprovals(from: response.body)
             default:
                 throw ApprovalsInboxError.backendUnavailable(
-                    Self.decodeErrorMessage(from: data, status: http.statusCode)
+                    Self.decodeErrorMessage(from: response.body, status: response.statusCode)
                 )
             }
+        } catch AuthenticatedHTTPClientError.authExpired {
+            throw ApprovalsInboxError.authExpired
         } catch let error as ApprovalsInboxError {
             throw error
         } catch {
             throw ApprovalsInboxError.backendUnavailable(error.localizedDescription)
         }
-    }
-
-    private func requireBearer() throws -> String {
-        guard let token = bearerProvider()?.trimmedNonEmpty else {
-            throw ApprovalsInboxError.authExpired
-        }
-        return token
     }
 
     private static func decodeApprovals(from data: Data) throws -> [ApprovalInboxDTO] {

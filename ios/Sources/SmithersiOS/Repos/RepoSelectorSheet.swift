@@ -219,8 +219,7 @@ protocol UserReposClient {
 
 struct URLSessionUserReposClient: UserReposClient {
     private let baseURL: URL
-    private let bearerProvider: @Sendable () -> String?
-    private let session: URLSession
+    private let authClient: AuthenticatedHTTPClient
     private let workspaceFetcher: URLSessionRemoteWorkspaceFetcher
 
     init(
@@ -229,8 +228,10 @@ struct URLSessionUserReposClient: UserReposClient {
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
-        self.bearerProvider = bearerProvider
-        self.session = session
+        self.authClient = AuthenticatedHTTPClient(
+            tokenManager: ClosureBackedAuthenticatedTokenManager(bearerProvider: bearerProvider),
+            transport: URLSessionHTTPTransport(session: session)
+        )
         self.workspaceFetcher = URLSessionRemoteWorkspaceFetcher(
             baseURL: baseURL,
             bearer: bearerProvider,
@@ -239,40 +240,37 @@ struct URLSessionUserReposClient: UserReposClient {
     }
 
     func fetchRepos() async throws -> [SwitcherRepoRef] {
-        let token = try requireBearer()
         do {
-            return try await fetchUserReposRoute(token: token)
+            return try await fetchUserReposRoute()
         } catch UserReposError.routeUnavailable {
             return try await fetchReposFromWorkspaces()
         }
     }
 
-    private func fetchUserReposRoute(token: String) async throws -> [SwitcherRepoRef] {
+    private func fetchUserReposRoute() async throws -> [SwitcherRepoRef] {
         var request = URLRequest(url: baseURL.appendingPathComponent("api/user/repos"))
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw UserReposError.backendUnavailable("Missing HTTP response")
-            }
+            let response = try await authClient.send(request)
+            let data = response.body
+            let statusCode = response.statusCode
 
-            switch http.statusCode {
+            switch statusCode {
             case 200:
                 return Self.uniqueSorted(try Self.decodeRepos(from: data))
             case 204:
                 return []
-            case 401, 403:
-                throw UserReposError.authExpired
             case 404, 405, 501:
                 throw UserReposError.routeUnavailable
             default:
                 throw UserReposError.backendUnavailable(
-                    Self.decodeErrorMessage(from: data, status: http.statusCode)
+                    Self.decodeErrorMessage(from: data, status: statusCode)
                 )
             }
+        } catch AuthenticatedHTTPClientError.authExpired {
+            throw UserReposError.authExpired
         } catch let error as UserReposError {
             throw error
         } catch {
@@ -292,13 +290,6 @@ struct URLSessionUserReposClient: UserReposClient {
         } catch {
             throw UserReposError.backendUnavailable(error.localizedDescription)
         }
-    }
-
-    private func requireBearer() throws -> String {
-        guard let token = bearerProvider()?.repoSelectorTrimmedNonEmpty else {
-            throw UserReposError.authExpired
-        }
-        return token
     }
 
     private static func decodeRepos(from data: Data) throws -> [SwitcherRepoRef] {

@@ -199,6 +199,40 @@ final class WorkflowRunsListViewTests: XCTestCase {
         XCTAssertEqual(listRequestCount.withValue { $0 }, 2)
     }
 
+    func testListRetriesOnceAfterSynthetic401() async throws {
+        let session = makeStubbedSession()
+        let requests = LockedBox(0)
+        let tokens = LockedBox<[String]>([])
+        let tokenCalls = LockedBox(0)
+
+        URLProtocolStub.handler = { request in
+            tokens.withValue { $0.append(request.value(forHTTPHeaderField: "Authorization") ?? "") }
+            let call = requests.withValue { $0 += 1; return $0 }
+            if call == 1 { return try textResponse(for: request, statusCode: 401, body: "") }
+            return try jsonResponse(for: request, statusCode: 200, jsonObject: ["runs": []])
+        }
+
+        let client = URLSessionWorkflowRunsClient(baseURL: URL(string: "https://plue.test")!, bearerProvider: {
+            let call = tokenCalls.withValue { $0 += 1; return $0 }
+            return call == 1 ? "expired-token" : "fresh-token"
+        }, session: session)
+        _ = try await client.listRuns(in: Self.repo)
+        XCTAssertEqual(requests.withValue { $0 }, 2)
+        XCTAssertTrue(tokens.withValue { $0 }.contains("Bearer expired-token"))
+        XCTAssertTrue(tokens.withValue { $0 }.contains("Bearer fresh-token"))
+    }
+
+    func testMissingBearerMapsToAuthExpired() async {
+        let client = URLSessionWorkflowRunsClient(baseURL: URL(string: "https://plue.test")!, bearerProvider: { nil }, session: makeStubbedSession())
+        do {
+            _ = try await client.listRuns(in: Self.repo)
+            XCTFail("Expected authExpired")
+        } catch WorkflowRunsError.authExpired {
+        } catch {
+            XCTFail("Expected authExpired, got \(error)")
+        }
+    }
+
     private func makeListModel(session: URLSession) -> WorkflowRunsListViewModel {
         WorkflowRunsListViewModel(
             client: makeClient(session: session),

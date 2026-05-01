@@ -70,20 +70,19 @@ protocol WorkspaceDetailMutationClient {
 }
 
 struct URLSessionWorkspaceDetailMutationClient: WorkspaceDetailMutationClient {
-    typealias BearerProvider = () -> String?
-
     private let baseURL: URL
-    private let bearerProvider: BearerProvider
-    private let session: URLSession
+    private let authClient: AuthenticatedHTTPClient
 
     init(
         baseURL: URL,
-        bearerProvider: @escaping BearerProvider,
+        bearerProvider: @escaping @Sendable () -> String?,
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
-        self.bearerProvider = bearerProvider
-        self.session = session
+        self.authClient = AuthenticatedHTTPClient(
+            tokenManager: ClosureBackedAuthenticatedTokenManager(bearerProvider: bearerProvider),
+            transport: URLSessionHTTPTransport(session: session)
+        )
     }
 
     func perform(
@@ -96,10 +95,6 @@ struct URLSessionWorkspaceDetailMutationClient: WorkspaceDetailMutationClient {
         else {
             throw WorkspaceDetailMutationError.missingRepoContext
         }
-        guard let bearer = bearerProvider()?.trimmedNonEmpty else {
-            throw WorkspaceDetailMutationError.authExpired
-        }
-
         var request = URLRequest(url: endpointURL(
             action: action,
             repoOwner: repoOwner,
@@ -108,7 +103,6 @@ struct URLSessionWorkspaceDetailMutationClient: WorkspaceDetailMutationClient {
         ))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
 
         if action == .fork {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -119,10 +113,13 @@ struct URLSessionWorkspaceDetailMutationClient: WorkspaceDetailMutationClient {
         }
 
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw WorkspaceDetailMutationError.backendUnavailable("Missing HTTP response")
-            }
+            let response = try await authClient.send(request)
+            let data = response.body
+            let http = try Self.httpResponse(
+                for: request,
+                statusCode: response.statusCode,
+                headers: response.headers
+            )
 
             switch http.statusCode {
             case 200...299:
@@ -142,8 +139,6 @@ struct URLSessionWorkspaceDetailMutationClient: WorkspaceDetailMutationClient {
                         createdWorkspaceID: nil
                     )
                 }
-            case 401, 403:
-                throw WorkspaceDetailMutationError.authExpired
             case 429:
                 throw WorkspaceDetailMutationError.rateLimited(
                     retryAfter: Self.retryAfterSeconds(from: http),
@@ -154,6 +149,8 @@ struct URLSessionWorkspaceDetailMutationClient: WorkspaceDetailMutationClient {
                     Self.decodeErrorMessage(from: data, status: http.statusCode)
                 )
             }
+        } catch AuthenticatedHTTPClientError.authExpired {
+            throw WorkspaceDetailMutationError.authExpired
         } catch let error as WorkspaceDetailMutationError {
             throw error
         } catch {
@@ -252,6 +249,20 @@ struct URLSessionWorkspaceDetailMutationClient: WorkspaceDetailMutationClient {
             return body
         }
         return "HTTP \(status)"
+    }
+    
+    private static func httpResponse(
+        for request: URLRequest,
+        statusCode: Int,
+        headers: [String: String]
+    ) throws -> HTTPURLResponse {
+        guard let url = request.url else {
+            throw WorkspaceDetailMutationError.backendUnavailable("Missing request URL")
+        }
+        guard let response = HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: nil, headerFields: headers) else {
+            throw WorkspaceDetailMutationError.backendUnavailable("Missing HTTP response")
+        }
+        return response
     }
 
     private static let retryAfterDateFormatter: DateFormatter = {

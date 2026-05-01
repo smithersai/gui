@@ -323,8 +323,7 @@ private struct CreateWorkspaceTitleSheet: View {
 
 private struct URLSessionWorkspaceCreateClient {
     private let baseURL: URL
-    private let bearerProvider: @Sendable () -> String?
-    private let session: URLSession
+    private let authClient: AuthenticatedHTTPClient
 
     init(
         baseURL: URL,
@@ -332,8 +331,10 @@ private struct URLSessionWorkspaceCreateClient {
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
-        self.bearerProvider = bearerProvider
-        self.session = session
+        self.authClient = AuthenticatedHTTPClient(
+            tokenManager: ClosureBackedAuthenticatedTokenManager(bearerProvider: bearerProvider),
+            transport: URLSessionHTTPTransport(session: session)
+        )
     }
 
     func createWorkspace(repo: SwitcherRepoRef, title: String) async throws -> SwitcherWorkspace {
@@ -341,25 +342,23 @@ private struct URLSessionWorkspaceCreateClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(try requireBearer())", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(CreateWorkspaceRequest(name: title))
 
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw WorkspaceCreateError.backendUnavailable("Missing HTTP response")
-            }
+            let response = try await authClient.send(request)
+            let data = response.body
+            let statusCode = response.statusCode
 
-            switch http.statusCode {
+            switch statusCode {
             case 200, 201:
                 return try Self.decodeWorkspace(from: data, repo: repo, fallbackTitle: title)
-            case 401, 403:
-                throw WorkspaceCreateError.authExpired
             default:
                 throw WorkspaceCreateError.backendUnavailable(
-                    Self.decodeErrorMessage(from: data, status: http.statusCode)
+                    Self.decodeErrorMessage(from: data, status: statusCode)
                 )
             }
+        } catch AuthenticatedHTTPClientError.authExpired {
+            throw WorkspaceCreateError.authExpired
         } catch let error as WorkspaceCreateError {
             throw error
         } catch {
@@ -374,13 +373,6 @@ private struct URLSessionWorkspaceCreateClient {
             .appendingPathComponent(repo.owner)
             .appendingPathComponent(repo.name)
             .appendingPathComponent("workspaces")
-    }
-
-    private func requireBearer() throws -> String {
-        guard let token = bearerProvider()?.workspaceSwitcherTrimmedNonEmpty else {
-            throw WorkspaceCreateError.authExpired
-        }
-        return token
     }
 
     private static func decodeWorkspace(

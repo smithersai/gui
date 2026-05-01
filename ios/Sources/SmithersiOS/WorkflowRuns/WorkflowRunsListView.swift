@@ -424,8 +424,7 @@ final class WorkflowRunDetailViewModel: ObservableObject {
 
 struct URLSessionWorkflowRunsClient {
     private let baseURL: URL
-    private let bearerProvider: WorkflowRunsBearerProvider
-    private let session: URLSession
+    private let authClient: AuthenticatedHTTPClient
 
     init(
         baseURL: URL,
@@ -433,8 +432,10 @@ struct URLSessionWorkflowRunsClient {
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
-        self.bearerProvider = bearerProvider
-        self.session = session
+        self.authClient = AuthenticatedHTTPClient(
+            tokenManager: ClosureBackedAuthenticatedTokenManager(bearerProvider: bearerProvider),
+            transport: URLSessionHTTPTransport(session: session)
+        )
     }
 
     func listRuns(in repo: WorkflowRunsRepoRef) async throws -> [WorkflowRunListItem] {
@@ -504,7 +505,6 @@ struct URLSessionWorkflowRunsClient {
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(try requireBearer())", forHTTPHeaderField: "Authorization")
         request.httpBody = body
         return request
     }
@@ -514,18 +514,15 @@ struct URLSessionWorkflowRunsClient {
         acceptedStatus: Set<Int> = [200]
     ) async throws -> (Data, HTTPURLResponse) {
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw WorkflowRunsError.backendUnavailable("Missing HTTP response")
-            }
+            let response = try await authClient.send(request)
+            let data = response.body
+            let http = try Self.httpResponse(for: request, statusCode: response.statusCode, headers: response.headers)
 
             if acceptedStatus.contains(http.statusCode) {
                 return (data, http)
             }
 
             switch http.statusCode {
-            case 401, 403:
-                throw WorkflowRunsError.authExpired
             case 404:
                 throw WorkflowRunsError.notFound
             default:
@@ -533,18 +530,27 @@ struct URLSessionWorkflowRunsClient {
                     Self.decodeErrorMessage(from: data, status: http.statusCode)
                 )
             }
+        } catch AuthenticatedHTTPClientError.authExpired {
+            throw WorkflowRunsError.authExpired
         } catch let error as WorkflowRunsError {
             throw error
         } catch {
             throw WorkflowRunsError.backendUnavailable(error.localizedDescription)
         }
     }
-
-    private func requireBearer() throws -> String {
-        guard let token = bearerProvider()?.trimmedNonEmpty else {
-            throw WorkflowRunsError.authExpired
+    
+    private static func httpResponse(
+        for request: URLRequest,
+        statusCode: Int,
+        headers: [String: String]
+    ) throws -> HTTPURLResponse {
+        guard let url = request.url else {
+            throw WorkflowRunsError.backendUnavailable("Missing request URL")
         }
-        return token
+        guard let response = HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: nil, headerFields: headers) else {
+            throw WorkflowRunsError.backendUnavailable("Missing HTTP response")
+        }
+        return response
     }
 
     private static func decodeRuns(from data: Data) throws -> [WorkflowRunListItem] {
