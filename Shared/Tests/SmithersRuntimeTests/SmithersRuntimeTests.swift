@@ -90,5 +90,34 @@ final class SmithersRuntimeTests: XCTestCase {
         wait(for: [exp], timeout: 0.05)
         XCTAssertEqual(count, 0)
     }
+
+    func testPTYRetainsSessionUntilDetach() throws {
+        let rt = try SmithersRuntime { SmithersCredentials(bearer: "tb") }
+        var session: RuntimeSession? = try rt.connect(.init(engineID: "e1", baseURL: "http://localhost"))
+        weak var weakSession = session
+
+        let pty = try session!.attachPTY(sessionID: "session_abc")
+        session = nil
+        XCTAssertNotNil(weakSession)
+
+        pty.detach()
+        XCTAssertNil(weakSession)
+        weakSession = nil
+    }
+
+    func testPTYCallsAfterSessionDropAreSafe() throws {
+        let rt = try SmithersRuntime { SmithersCredentials(bearer: "tb") }
+        var session: RuntimeSession? = try rt.connect(.init(engineID: "e1", baseURL: "http://localhost"))
+        let pty = try session!.attachPTY(sessionID: "session_abc")
+        session = nil
+
+        XCTAssertNoThrow(try pty.write(Data("ls\n".utf8)))
+        XCTAssertNoThrow(try pty.resize(cols: 120, rows: 40))
+
+        pty.detach()
+        // Post-detach calls are safe no-ops in the Swift wrapper.
+        XCTAssertNoThrow(try pty.write(Data("pwd\n".utf8)))
+        XCTAssertNoThrow(try pty.resize(cols: 80, rows: 24))
+    }
 }
 #endif
