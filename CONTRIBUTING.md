@@ -1,276 +1,59 @@
-# Contributing to Claude Agent
+# Contributing
 
-Thank you for your interest in contributing to Claude Agent! This document provides guidelines and instructions for contributing.
+This repository contains the SwiftUI macOS app for Smithers GUI. The `codex/`
+and `ghostty/` directories are vendored trees; avoid changing them unless the
+task is explicitly about those integrations.
 
-## Code of Conduct
+## Build And Test
 
-Please be respectful and constructive in all interactions. We welcome contributors of all experience levels.
+- Build the app with `swift build`.
+- Run the debug build with `.build/debug/SmithersGUI`.
+- Run focused tests with `swift test --filter <TestName>`.
+- If you add an app source file, make sure it is included in both SwiftPM and
+  `SmithersGUI.xcodeproj` when the Xcode project is part of the workflow.
 
-## Getting Started
+## Developer Debug Mode
 
-### Development Setup
+Developer debug mode is a sidecar panel for inspecting the running app without
+leaving the current screen. It is enabled automatically in debug builds. It can
+also be controlled explicitly at launch:
 
-1. **Fork and clone the repository**
-   ```bash
-   git clone https://github.com/your-username/agent.git
-   cd agent
-   ```
-
-2. **Set up Python environment**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   pip install -e ".[dev]"
-   ```
-
-3. **Set up Go environment** (for TUI/SDK work)
-   ```bash
-   cd claude-tui && go mod download
-   cd ../sdk/agent && go mod download
-   ```
-
-4. **Set environment variables**
-   ```bash
-   export ANTHROPIC_API_KEY="your-api-key"
-   ```
-
-### Logging Configuration
-
-The Python backend logs to stdout by default. When running the server embedded with the TUI, logging must be disabled to prevent terminal corruption.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DISABLE_LOGGING` | `false` | Set to `true` to disable all logging output |
-| `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-
-**Running modes:**
-
-- **Standalone** (default): Logging enabled, useful for development and debugging
-  ```bash
-  python main.py  # Logs to stdout
-  ```
-
-- **Embedded with TUI**: Disable logging to prevent interference with terminal UI
-  ```bash
-  DISABLE_LOGGING=true python main.py
-  ```
-
-- **Debug mode**: Enable verbose logging for troubleshooting
-  ```bash
-  LOG_LEVEL=DEBUG python main.py
-  ```
-
-## Development Workflow
-
-### Branching Strategy
-
-- `main` - Stable release branch
-- Feature branches - `feature/description`
-- Bug fixes - `fix/description`
-- Documentation - `docs/description`
-
-### Making Changes
-
-1. Create a new branch from `main`
-   ```bash
-   git checkout -b feature/my-feature
-   ```
-
-2. Make your changes following the code style guidelines
-
-3. Write or update tests as needed
-
-4. Run the test suite
-   ```bash
-   # Python tests
-   pytest
-
-   # Go tests
-   cd sdk/agent && go test ./...
-   cd claude-tui && go test ./...
-   ```
-
-5. Commit your changes with a descriptive message
-   ```bash
-   git commit -m "feat: add new feature description"
-   ```
-
-### Commit Message Format
-
-We follow conventional commits:
-
-- `feat:` - New features
-- `fix:` - Bug fixes
-- `docs:` - Documentation changes
-- `test:` - Test additions/changes
-- `refactor:` - Code refactoring
-- `chore:` - Maintenance tasks
-
-Examples:
-```
-feat: add web search tool integration
-fix: resolve path traversal vulnerability in file operations
-docs: update README with new environment variables
-test: add unit tests for snapshot system
+```sh
+SMITHERS_GUI_DEBUG=1 .build/debug/SmithersGUI
+.build/debug/SmithersGUI --developer-debug
+.build/debug/SmithersGUI --no-developer-debug
 ```
 
-## Code Style Guidelines
+Truthy environment values are `1`, `true`, `yes`, `on`, and `enabled`.
+Falsey values are `0`, `false`, `no`, `off`, and `disabled`.
+`--no-developer-debug` wins over the environment variable and debug-build
+default.
 
-### Python
+When enabled, the panel can be opened from the sidebar under `Developer`, with
+`Cmd+Shift+D`, or from chat with `/debug`.
 
-- Follow PEP 8 style guide
-- Use type hints for function signatures
-- Maximum line length: 100 characters
-- Use `async/await` for async code
-- Docstrings for public functions and classes
+The panel currently has two tabs:
 
-```python
-async def read_file(path: str, encoding: str = "utf-8") -> str:
-    """
-    Read contents of a file.
+- `State`: current route, Smithers connection status, active session, session
+  count, run tabs, active model, active messages, and recent message previews.
+- `Logs`: file logger stats and recent JSONL app logs with level filtering,
+  search, and auto-refresh.
 
-    Args:
-        path: Absolute or relative path to file
-        encoding: File encoding (default utf-8)
+The full log viewer remains available from the normal `Logs` route. The debug
+panel reuses the same `AppLogger.fileWriter` data and should not introduce a
+second logging pipeline.
 
-    Returns:
-        File contents with line numbers or error message
-    """
-    ...
-```
+## Extending Debug State
 
-### Go
+Add new debug fields through `DeveloperDebugSnapshot` in
+`DeveloperDebugView.swift`. Prefer snapshot rows over direct view reads so the
+state remains easy to test. Keep values sanitized before they are displayed:
+do not expose raw tokens, API keys, cookies, authorization headers, private
+keys, or long unbounded payloads.
 
-- Follow standard Go conventions
-- Use `gofmt` for formatting
-- Write godoc comments for exported functions
-- Handle errors explicitly
+When adding a new debug surface:
 
-```go
-// CreateSession creates a new session with the given options.
-// It returns the created session or an error if the request fails.
-func (c *Client) CreateSession(ctx context.Context, req *CreateSessionRequest) (*Session, error) {
-    ...
-}
-```
-
-## Testing
-
-### Writing Tests
-
-- Write unit tests for new functionality
-- Include both success and error cases
-- Use descriptive test names
-
-**Python tests:**
-```python
-import pytest
-from agent.tools.file_operations import read_file
-
-@pytest.mark.asyncio
-async def test_read_file_success():
-    """Test reading an existing file."""
-    result = await read_file("test_file.txt")
-    assert "content" in result
-
-@pytest.mark.asyncio
-async def test_read_file_not_found():
-    """Test reading a non-existent file."""
-    result = await read_file("nonexistent.txt")
-    assert "Error" in result
-```
-
-**Go tests:**
-```go
-func TestClient_CreateSession(t *testing.T) {
-    client := NewClient("http://localhost:8000")
-    session, err := client.CreateSession(context.Background(), nil)
-    if err != nil {
-        t.Fatalf("CreateSession failed: %v", err)
-    }
-    if session.ID == "" {
-        t.Error("Expected session ID to be set")
-    }
-}
-```
-
-### Running Tests
-
-```bash
-# All Python tests
-pytest
-
-# With coverage
-pytest --cov=agent --cov-report=html
-
-# Specific test file
-pytest tests/test_agent/test_tools/test_file_operations.py
-
-# Go tests
-go test ./...
-
-# With verbose output
-go test -v ./...
-```
-
-## Pull Request Process
-
-1. **Ensure all tests pass** before submitting
-
-2. **Update documentation** if needed (README, docstrings, etc.)
-
-3. **Create a pull request** with:
-   - Clear title describing the change
-   - Description of what and why
-   - Link to any related issues
-
-4. **Address review feedback** promptly
-
-5. **Squash commits** if requested before merge
-
-### PR Checklist
-
-- [ ] Tests pass locally
-- [ ] New code has tests
-- [ ] Documentation updated
-- [ ] No security vulnerabilities introduced
-- [ ] Code follows style guidelines
-
-## Security
-
-If you discover a security vulnerability, please:
-
-1. **Do NOT** open a public issue
-2. Email the maintainers privately
-3. Include details to reproduce the issue
-4. Allow time for a fix before disclosure
-
-## Areas for Contribution
-
-### High Priority
-
-- Implement web search tool (integrate with Tavily, SerpAPI, etc.)
-- Add more comprehensive test coverage
-- Improve error messages and handling
-- Performance optimizations
-
-### Good First Issues
-
-- Documentation improvements
-- Adding type hints to Python code
-- Writing additional tests
-- Fixing typos and small bugs
-
-### Feature Ideas
-
-- Session persistence (database storage)
-- Multiple model provider support
-- Plugin system for custom tools
-- Web UI alternative to TUI
-
-## Questions?
-
-- Open a GitHub issue for bugs or feature requests
-- Start a discussion for questions or ideas
-
-Thank you for contributing!
+- Keep it read-only unless the task explicitly needs a mutation.
+- Prefer compact summaries over dumping entire model objects.
+- Add focused tests in `Tests/SmithersGUITests/DeveloperDebugTests.swift`.
+- Keep the normal app usable while the panel is open.

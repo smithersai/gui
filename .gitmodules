@@ -1,3 +1,6 @@
+[submodule "ghostty"]
+	path = ghostty
+	url = https://github.com/ghostty-org/ghostty.git
 [submodule "context/pydantic-ai"]
 	path = context/pydantic-ai
 	url = git@github.com:pydantic/pydantic-ai.git

@@ -1,0 +1,13 @@
+.{
+    .name = .sqlite_poc,
+    .version = "0.0.0",
+    .fingerprint = 0xb066ba7d2d73dfba,
+    .minimum_zig_version = "0.15.2",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "include",
+    },
+    .dependencies = .{},
+}

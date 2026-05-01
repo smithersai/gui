@@ -1,0 +1,116 @@
+# ios-e2e.yml — full-stack XCUITest harness for the SmithersiOS app.
+#
+# Ticket: ios-e2e-harness. Runs on macos-14 hosted runners which, since
+# 2026, ship with a working Colima/Lima stack so `docker compose up` works
+# out of the box. See:
+#   https://github.com/docker/setup-docker-action  (installs the docker
+#                                                   CLI + daemon on macos
+#                                                   hosted runners)
+#
+# Gating: this workflow is expensive (~10-15 min) because it spins the
+# full plue stack, so it runs only on push-to-main and on PRs that
+# explicitly target main. PRs to non-main branches SHOULD NOT run it.
+# Commits on branches are not tested via this workflow — contributors
+# can run it locally via `ios/scripts/run-e2e.sh`.
+#
+# Failure triage: on failure we upload the .xcresult bundle so engineers
+# can download it and re-open in Xcode to inspect the failed assertion +
+# the simulator screen recording XCUITest captures automatically.
+
+name: iOS E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ios-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-e2e:
+    name: iOS E2E (iPhone 16 / iOS 18.6)
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout gui
+        uses: actions/checkout@v4
+        with:
+          path: gui
+
+      # The E2E harness needs the plue checkout side-by-side with gui/.
+      # CI clones the public mirror of smithers-orchestrator into ../plue.
+      # Production keeps the two repos siblings on developer laptops
+      # (see .smithers/specs/ios-and-remote-sandboxes.md).
+      - name: Checkout plue
+        uses: actions/checkout@v4
+        with:
+          repository: smithers-sh/plue
+          path: plue
+          token: ${{ secrets.PLUE_CHECKOUT_TOKEN }}
+          # Fall back to the public mirror when the secret is not set
+          # (community PRs). The plue repo goes public with ticket 0119.
+          persist-credentials: false
+
+      - name: Install Xcode toolchain
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Docker on macOS hosted runners in 2026: the `docker/setup-docker-action`
+      # installs the docker CLI + configures a Colima VM. This is the current
+      # blessed path — the GitHub docs for macos-14 runners confirm Docker
+      # support via this action since late 2025.
+      #
+      # If this action breaks in the future, the fallback is to install
+      # Colima manually:
+      #   brew install colima docker docker-compose
+      #   colima start --cpu 4 --memory 8 --disk 20
+      # which gives the same result but is slower to start.
+      - name: Set up Docker (macOS)
+        uses: docker/setup-docker-action@v4
+
+      - name: Install Bun (for plue workflow-runtime build)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.12"
+
+      - name: Pre-warm plue bun.lock
+        working-directory: plue
+        run: bun install || true
+
+      - name: Run iOS E2E harness
+        working-directory: gui
+        env:
+          PLUE_CHECKOUT: ${{ github.workspace }}/plue
+          PLUE_BASE_URL: http://localhost:4000
+          E2E_SIMULATOR_NAME: iPhone 16
+          E2E_SIMULATOR_OS: "18.6"
+          # The hosted runner environment is clean; no Rust-tooling env
+          # vars to unset. The harness script unsets them defensively
+          # anyway.
+        run: ./ios/scripts/run-e2e.sh
+
+      - name: Collect xcresult on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-e2e-xcresult
+          path: gui/build/e2e-results-*.xcresult
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Collect xcodebuild log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-e2e-xcodebuild-log
+          path: gui/build/e2e-xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,265 @@
+# iOS TestFlight release (ticket 0125).
+#
+# Produces a signed iOS archive and uploads it to TestFlight. Separate from
+# ci.yml because:
+#   - It requires secrets that CI jobs must not expose on PRs from forks.
+#   - It runs on push-to-main (+ manual dispatch), not on every PR.
+#   - It is allowed to fail loudly without blocking the default-branch CI.
+#
+# Prereqs (see ios/RELEASE.md for the full checklist):
+#   1. The bundle id `com.smithers.ios` is registered in App Store Connect.
+#   2. An App Store distribution provisioning profile exists and its name
+#      is stored in the repo secret SMITHERS_IOS_PROVISIONING_PROFILE_NAME.
+#   3. The Apple Team ID is stored in the repo secret APPLE_TEAM_ID.
+#   4. An App Store Connect API key (Admin or App Manager role) exists and
+#      the three parts are stored in repo secrets:
+#        - APP_STORE_CONNECT_KEY_ID     (10-char key id)
+#        - APP_STORE_CONNECT_ISSUER_ID  (UUID-shaped issuer id)
+#        - APP_STORE_CONNECT_API_KEY_P8 (the literal file contents of
+#                                       AuthKey_XXXXXXXXXX.p8)
+#   5. A code-signing certificate + private key, exported as a .p12 and
+#      stored (base64-encoded) in IOS_SIGNING_P12_BASE64, with the
+#      export password in IOS_SIGNING_P12_PASSWORD.
+#   6. The App Store distribution provisioning profile, stored
+#      (base64-encoded) in IOS_PROVISIONING_PROFILE_BASE64.
+#   7. A second App Store profile for the share extension
+#      (com.smithers.ios.ShareExtension), stored (base64-encoded) in
+#      IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64, with its profile
+#      name in SMITHERS_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_NAME.
+#
+# Build-number rule (documented again in ios/RELEASE.md): the build number
+# is the GitHub Actions run number, which is strictly monotonic per branch
+# and never collides within a repo. Marketing version lives in project.yml.
+
+name: iOS TestFlight
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        description: "Marketing version (CFBundleShortVersionString), e.g. 0.1.0"
+        required: false
+        default: ""
+
+concurrency:
+  group: ios-testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: Archive + upload to TestFlight
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: ios-release
+    steps:
+      # Apple requires Xcode 16+ for App Store Connect uploads
+      # (https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/),
+      # so we run on macos-15 (which ships Xcode 16 by default) and pin
+      # explicitly via setup-xcode for reproducibility.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # ghostty/.gitignore excludes zig-out/, so the xcframework referenced
+      # at project.yml:397 must be BUILT on every fresh runner — submodule
+      # init alone is not enough. Cache keyed on the ghostty submodule SHA
+      # plus the build script hash so the slow zig build is skipped when
+      # nothing changed.
+      - name: Resolve ghostty cache key
+        id: ghostty_cache_key
+        run: |
+          set -euo pipefail
+          GHOSTTY_SHA="$(git -C ghostty rev-parse HEAD)"
+          SCRIPT_HASH="$(shasum -a 256 poc/libghostty-ios/scripts/build-xcframework.sh | cut -d' ' -f1)"
+          ZIG_VERSION="$(cat .zigversion)"
+          echo "key=ghostty-vt-xcframework-${ZIG_VERSION}-${GHOSTTY_SHA}-${SCRIPT_HASH}" >> "$GITHUB_OUTPUT"
+          echo "zig_version=${ZIG_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore ghostty-vt.xcframework cache
+        id: ghostty_cache
+        uses: actions/cache@v4
+        with:
+          path: ghostty/zig-out
+          key: ${{ steps.ghostty_cache_key.outputs.key }}
+
+      # ticket 0172 — libsmithers iOS xcframework: required for the iOS
+      # `canImport(CSmithersKit)` gates in SmithersRuntime + ContentShell.iOS
+      # to be true. Without this, terminal/session transport silently
+      # disables and TestFlight ships UI-only.
+      - name: Resolve libsmithers cache key
+        id: libsmithers_cache_key
+        run: |
+          set -euo pipefail
+          # Hash every file libsmithers consumes (Zig sources, build files,
+          # the iOS xcframework script) so the cache invalidates on any
+          # change that could alter the produced .a.
+          SRC_HASH="$(find libsmithers -type f \( -name '*.zig' -o -name '*.zon' -o -name '*.h' -o -path 'libsmithers/scripts/*' \) -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 shasum -a 256 \
+            | shasum -a 256 \
+            | cut -d' ' -f1)"
+          ZIG_VERSION="$(cat .zigversion)"
+          echo "key=libsmithers-ios-xcframework-${ZIG_VERSION}-${SRC_HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore libsmithers-ios.xcframework cache
+        id: libsmithers_cache
+        uses: actions/cache@v4
+        with:
+          path: libsmithers/zig-out/lib/libsmithers-ios.xcframework
+          key: ${{ steps.libsmithers_cache_key.outputs.key }}
+
+      - name: Install Zig
+        if: steps.ghostty_cache.outputs.cache-hit != 'true' || steps.libsmithers_cache.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@v1
+        with:
+          version: ${{ steps.ghostty_cache_key.outputs.zig_version }}
+
+      - name: Build ghostty-vt.xcframework
+        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        run: ./poc/libghostty-ios/scripts/build-xcframework.sh
+
+      - name: Build libsmithers-ios.xcframework
+        if: steps.libsmithers_cache.outputs.cache-hit != 'true'
+        run: ./libsmithers/scripts/build-ios-xcframework.sh
+
+      # Import the signing certificate into a throwaway keychain. The
+      # keychain is deleted in the `Clean up keychain` step below, so
+      # credentials never outlive this job.
+      - name: Import signing certificate
+        env:
+          P12_BASE64: ${{ secrets.IOS_SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_SIGNING_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${P12_BASE64}" ]; then
+            echo "::error::IOS_SIGNING_P12_BASE64 secret is not set — see ios/RELEASE.md"
+            exit 1
+          fi
+          KEYCHAIN=build.keychain
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "KEYCHAIN_NAME=${KEYCHAIN}" >> "$GITHUB_ENV"
+
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          security set-keychain-settings -lut 3600 "${KEYCHAIN}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+
+          # Put the new keychain first in the search list so codesign
+          # finds the identity without prompting.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "${KEYCHAIN}" $(security list-keychains -d user | tr -d '"')
+
+          P12_PATH="${RUNNER_TEMP}/cert.p12"
+          printf '%s' "${P12_BASE64}" | base64 --decode > "${P12_PATH}"
+          security import "${P12_PATH}" \
+            -k "${KEYCHAIN}" \
+            -P "${P12_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          rm -f "${P12_PATH}"
+
+          # Required so codesign can use the key non-interactively.
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" >/dev/null
+
+      - name: Install provisioning profiles
+        env:
+          PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          SHARE_EXT_PROFILE_BASE64: ${{ secrets.IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PROFILE_BASE64}" ]; then
+            echo "::error::IOS_PROVISIONING_PROFILE_BASE64 secret is not set — see ios/RELEASE.md"
+            exit 1
+          fi
+          if [ -z "${SHARE_EXT_PROFILE_BASE64}" ]; then
+            echo "::error::IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64 secret is not set — see ios/RELEASE.md"
+            exit 1
+          fi
+          PROFILE_DIR="${HOME}/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "${PROFILE_DIR}"
+          printf '%s' "${PROFILE_BASE64}" | base64 --decode \
+            > "${PROFILE_DIR}/smithers-ios-appstore.mobileprovision"
+          printf '%s' "${SHARE_EXT_PROFILE_BASE64}" | base64 --decode \
+            > "${PROFILE_DIR}/smithers-ios-shareext-appstore.mobileprovision"
+
+      - name: Resolve build metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          INPUT_VERSION="${{ github.event.inputs.marketing_version }}"
+          if [ -n "${INPUT_VERSION}" ]; then
+            MV="${INPUT_VERSION}"
+          else
+            MV="$(awk '/MARKETING_VERSION:/ {gsub(/["'\'']/, "", $2); print $2; exit}' project.yml)"
+          fi
+          if [ -z "${MV}" ]; then
+            echo "::error::could not resolve MARKETING_VERSION from project.yml"
+            exit 1
+          fi
+          echo "marketing_version=${MV}" >> "$GITHUB_OUTPUT"
+          # GITHUB_RUN_NUMBER is strictly monotonic per-repo and does not
+          # collide across branches.
+          echo "build_number=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Archive + upload to TestFlight
+        env:
+          # Signing inputs consumed by the script.
+          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.SMITHERS_IOS_PROVISIONING_PROFILE_NAME }}
+          # The share-ext profile name on Apple has a literal three-space
+          # gap between "Share" and "Extension"; pass it as a secret so the
+          # exact string survives without the workflow having to embed it.
+          SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.SMITHERS_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_NAME }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          MARKETING_VERSION: ${{ steps.meta.outputs.marketing_version }}
+          CURRENT_PROJECT_VERSION: ${{ steps.meta.outputs.build_number }}
+          PLUE_BASE_URL: ${{ vars.PLUE_BASE_URL || 'https://jjhub.tech' }}
+        run: |
+          set -euo pipefail
+          # The SDKROOT / LIBRARY_PATH / RUSTFLAGS scrub is handled by the
+          # script itself — see its re-exec preamble.
+          ./ios/scripts/build-and-upload-testflight.sh
+
+      - name: Upload .ipa as workflow artifact (diagnostic)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmithersiOS-${{ steps.meta.outputs.marketing_version }}-${{ steps.meta.outputs.build_number }}
+          path: |
+            build/ios-archive/*.ipa
+            build/ios-archive/ExportOptions.plist
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload dSYM and archive diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmithersiOS-dsym-${{ steps.meta.outputs.marketing_version }}-${{ steps.meta.outputs.build_number }}
+          path: |
+            build/ios-archive/*.xcarchive/dSYMs/**/*.dSYM
+            build/ios-archive/*.xcarchive/BCSymbolMaps/*
+            build/ios-archive/*.xcarchive/Info.plist
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Clean up keychain
+        if: always()
+        run: |
+          set -eu
+          if [ -n "${KEYCHAIN_NAME:-}" ]; then
+            security delete-keychain "${KEYCHAIN_NAME}" || true
+          fi

@@ -1,0 +1,763 @@
+import SwiftUI
+
+struct WorkspacesView: View {
+    @ObservedObject var smithers: SmithersClient
+    #if os(macOS)
+    // 0126: Remote-mode controller so the workspace picker can surface an
+    // "Open" action that adds a sandbox to the sidebar remote-tab list.
+    // Defaults to .shared so callers don't need to thread it through.
+    @ObservedObject private var remoteMode: RemoteModeController
+    #endif
+    @State private var workspaces: [Workspace] = []
+    @State private var snapshots: [WorkspaceSnapshot] = []
+    @State private var isLoading = true
+    @State private var error: String?
+    @State private var selectedMode: WorkspaceListMode = .workspaces
+    @State private var loadGeneration = 0
+    @State private var showCreate = false
+    @State private var newName = ""
+    @State private var isCreating = false
+    @State private var actionInFlight: Set<String> = []
+    @State private var deleteTarget: String?
+    @State private var deleteSnapshotTarget: String?
+    @State private var selectedWorkspaceID: String?
+
+    enum WorkspaceListMode: String, CaseIterable {
+        case workspaces = "Workspaces"
+        case snapshots = "Snapshots"
+    }
+
+    #if os(macOS)
+    init(smithers: SmithersClient, remoteMode: RemoteModeController? = nil) {
+        self.smithers = smithers
+        self._remoteMode = ObservedObject(wrappedValue: remoteMode ?? .shared)
+    }
+    #else
+    init(smithers: SmithersClient) {
+        self.smithers = smithers
+    }
+    #endif
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            // Modes
+            HStack(spacing: 0) {
+                ForEach(WorkspaceListMode.allCases, id: \.self) { mode in
+                    Button(action: {
+                        selectedMode = mode
+                        // Bug 1: Clear stale data from the other mode
+                        if mode == .workspaces {
+                            snapshots = []
+                        } else {
+                            workspaces = []
+                        }
+                        if !isRemoteSurfaceBlocked {
+                            Task { await loadData() }
+                        }
+                    }) {
+                        Text(mode.rawValue)
+                            .font(.system(size: 12, weight: selectedMode == mode ? .semibold : .regular))
+                            .foregroundColor(selectedMode == mode ? Theme.accent : Theme.textSecondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isRemoteSurfaceBlocked)
+                    .accessibilityIdentifier("workspaces.mode.\(mode.rawValue)")
+                    .overlay(alignment: .bottom) {
+                        if selectedMode == mode {
+                            Rectangle().fill(Theme.accent).frame(height: 2)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .border(Theme.border, edges: [.bottom])
+
+            if isRemoteSurfaceBlocked {
+                remoteBlockedView
+            } else if let error {
+                errorView(error)
+            } else {
+                switch selectedMode {
+                case .workspaces: workspacesList
+                case .snapshots: snapshotsList
+                }
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if showReconnectBanner {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11))
+                    Text("Reconnecting to remote sandbox…")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(Theme.warning)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.surface2)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Theme.warning.opacity(0.35), lineWidth: 1)
+                )
+                .cornerRadius(6)
+                .padding(.top, 8)
+                .padding(.leading, 12)
+                .accessibilityIdentifier("workspaces.remote.reconnecting")
+            }
+        }
+        .background(Theme.surface1)
+        // E2E harness entry point for the macOS remote-workspace detail
+        // surface. The XCUITest bundle taps a `sidebar.remote.row.*`
+        // button which routes to `.workspaces` → `WorkspacesView`; the
+        // tests assert this identifier renders. We stamp it on an
+        // invisible descendant so both `workspaces.root` and
+        // `content.macos.workspace-detail` are queryable without a
+        // double-modifier override.
+        #if os(macOS)
+        .overlay(
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("content.macos.workspace-detail")
+        )
+        #endif
+        .accessibilityIdentifier("workspaces.root")
+        .task {
+            if isRemoteSurfaceBlocked {
+                isLoading = false
+            } else {
+                await loadData()
+            }
+        }
+        #if os(macOS)
+        .onChange(of: remoteMode.phase) { _, phase in
+            if phase.allowsRemoteSurface {
+                Task { await loadData() }
+            }
+        }
+        #endif
+        .confirmationDialog(
+            "Delete Workspace",
+            isPresented: Binding(
+                get: { deleteTarget != nil },
+                set: { if !$0 { deleteTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let id = deleteTarget {
+                    Task { await performDeleteWS(id) }
+                }
+            }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+        } message: {
+            Text("Are you sure you want to delete this workspace? This action cannot be undone.")
+        }
+        .confirmationDialog(
+            "Delete Snapshot",
+            isPresented: Binding(
+                get: { deleteSnapshotTarget != nil },
+                set: { if !$0 { deleteSnapshotTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let snapshotId = deleteSnapshotTarget {
+                    Task { await deleteSnapshot(snapshotId) }
+                }
+            }
+            Button("Cancel", role: .cancel) { deleteSnapshotTarget = nil }
+        } message: {
+            Text("Are you sure you want to delete this snapshot? This action cannot be undone.")
+        }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack {
+            Text("Workspaces")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundColor(Theme.textPrimary)
+            Spacer()
+
+            Button(action: { showCreate.toggle() }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                    Text("New")
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Theme.accent)
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(Theme.accent.opacity(0.12))
+                .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+            .disabled(isRemoteSurfaceBlocked)
+            .accessibilityIdentifier("workspaces.newButton")
+
+            if isLoading {
+                ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
+            }
+            Button(action: { Task { await loadData() } }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(isRemoteSurfaceBlocked)
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 48)
+        .border(Theme.border, edges: [.bottom])
+    }
+
+    // MARK: - Workspaces List
+
+    private var workspacesList: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                if showCreate {
+                    createForm
+                }
+
+                if workspaces.isEmpty && !isLoading {
+                    VStack(spacing: 8) {
+                        Image(systemName: "desktopcomputer")
+                            .font(.system(size: 24))
+                            .foregroundColor(Theme.textTertiary)
+                        Text("No workspaces")
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 200)
+                } else {
+                    ForEach(workspaces) { ws in
+                        HStack(spacing: 12) {
+                            wsStatusIcon(ws.status)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(ws.name)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Theme.textPrimary)
+                                HStack(spacing: 8) {
+                                    if let status = ws.status {
+                                        Text(status)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(wsStatusColor(status))
+                                    }
+                                    if let created = ws.createdAt {
+                                        Text(created)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(Theme.textTertiary)
+                                    }
+                                }
+                            }
+
+                            Spacer()
+
+                            if actionInFlight.contains(ws.id) {
+                                ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
+                            } else {
+                                HStack(spacing: 4) {
+                                    #if os(macOS)
+                                    // 0126: "Open" adds this sandbox to the sidebar's remote
+                                    // tab list. Only shown when signed in (flag on) and the
+                                    // workspace isn't already open as a sidebar tab.
+                                    if remoteMode.isSignedIn &&
+                                        !remoteMode.openWorkspaceTabs.contains(where: { $0.id == ws.id }) {
+                                        wsAction("icloud.and.arrow.down", color: Theme.accent) {
+                                            remoteMode.openWorkspaceById(id: ws.id, name: ws.name)
+                                        }
+                                        .accessibilityIdentifier("workspace.row.open.\(ws.id)")
+                                    }
+                                    #endif
+                                    if isRunningWorkspaceStatus(ws.status) {
+                                        wsAction("pause.fill", color: Theme.warning) {
+                                            Task { await suspendWS(ws.id) }
+                                        }
+                                    } else if isSuspendedWorkspaceStatus(ws.status) {
+                                        wsAction("play.fill", color: Theme.success) {
+                                            Task { await resumeWS(ws.id) }
+                                        }
+                                    } else if ws.status?.lowercased() == "stopped" {
+                                        // Bug 2: Stopped workspaces now have Resume and Delete actions
+                                        wsAction("play.fill", color: Theme.success) {
+                                            Task { await resumeWS(ws.id) }
+                                        }
+                                    }
+                                    wsAction("arrow.triangle.branch", color: Theme.accent) {
+                                        Task { await forkWS(ws) }
+                                    }
+                                    wsAction("doc.on.doc", color: Theme.accent) {
+                                        Task { await snapshotWS(ws) }
+                                    }
+                                    // Bug 3: Delete now goes through confirmation dialog
+                                    wsAction("trash", color: Theme.danger) {
+                                        deleteTarget = ws.id
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(selectedWorkspaceID == ws.id ? Theme.sidebarSelected : Color.clear)
+                        .accessibilityIdentifier("workspace.row.\(ws.id)")
+                        Divider().background(Theme.border)
+                    }
+                }
+            }
+            .padding(20)
+        }
+        .refreshable { await loadData() }
+    }
+
+    // MARK: - Snapshots List
+
+    private var snapshotsList: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                if snapshots.isEmpty && !isLoading {
+                    VStack(spacing: 8) {
+                        Image(systemName: "camera")
+                            .font(.system(size: 24))
+                            .foregroundColor(Theme.textTertiary)
+                        Text("No snapshots")
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 200)
+                } else {
+                    ForEach(snapshots) { snap in
+                        HStack(spacing: 12) {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 12))
+                                .foregroundColor(Theme.accent)
+                                .frame(width: 18)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(snap.name ?? snap.id)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Theme.textPrimary)
+                                HStack(spacing: 8) {
+                                    Text("Workspace: \(String(snap.workspaceId.prefix(8)))")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(Theme.textTertiary)
+                                    if let created = snap.createdAt {
+                                        Text(created)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(Theme.textTertiary)
+                                    }
+                                }
+                            }
+
+                            Spacer()
+
+                            if actionInFlight.contains(snap.id) {
+                                ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
+                            } else {
+                                HStack(spacing: 4) {
+                                    Button(action: { Task { await createWSFromSnapshot(snap) } }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "plus.square.on.square")
+                                            Text("Restore")
+                                        }
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(Theme.accent)
+                                        .padding(.horizontal, 8)
+                                        .frame(height: 24)
+                                        .background(Theme.accent.opacity(0.12))
+                                        .cornerRadius(4)
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    if !snap.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                        Button(action: { Task { await openSnapshotWorkspace(snap) } }) {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "arrow.turn.down.right")
+                                                Text("Workspace")
+                                            }
+                                            .font(.system(size: 10, weight: .medium))
+                                            .foregroundColor(Theme.textSecondary)
+                                            .padding(.horizontal, 8)
+                                            .frame(height: 24)
+                                            .background(Theme.base.opacity(0.5))
+                                            .cornerRadius(4)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+
+                                    wsAction("trash", color: Theme.danger) {
+                                        deleteSnapshotTarget = snap.id
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .accessibilityIdentifier("workspace.snapshot.\(snap.id)")
+                        Divider().background(Theme.border)
+                    }
+                }
+            }
+            .padding(20)
+        }
+        .refreshable { await loadData() }
+    }
+
+    // MARK: - Create Form
+
+    private var createForm: some View {
+        HStack(spacing: 8) {
+            TextField("Workspace name", text: $newName)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(Theme.inputBg)
+                .cornerRadius(6)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                .accessibilityIdentifier("workspaces.create.name")
+
+            Button(action: { Task { await createWS() } }) {
+                HStack {
+                    if isCreating { ProgressView().scaleEffect(0.4).frame(width: 10, height: 10) }
+                    Text("Create")
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Theme.textPrimary)
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(Theme.accent)
+                .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+            .disabled(newName.isEmpty || isCreating)
+            .accessibilityIdentifier("workspaces.create.submit")
+
+            Button("Cancel") { showCreate = false; newName = "" }
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textSecondary)
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("workspaces.create.cancel")
+        }
+        .padding(16)
+        .background(Theme.base.opacity(0.5))
+        .border(Theme.border, edges: [.bottom])
+        .accessibilityIdentifier("workspaces.create.form")
+    }
+
+    // MARK: - Helpers
+
+    private var isRemoteSurfaceBlocked: Bool {
+        #if os(macOS)
+        remoteMode.isRemoteFeatureEnabled && remoteMode.isSignedIn && !remoteMode.phase.allowsRemoteSurface
+        #else
+        false
+        #endif
+    }
+
+    private var showReconnectBanner: Bool {
+        #if os(macOS)
+        if case .reconnecting = remoteMode.phase {
+            return true
+        }
+        #endif
+        return false
+    }
+
+    @ViewBuilder
+    private var remoteBlockedView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "icloud.and.arrow.down")
+                .font(.system(size: 28))
+                .foregroundColor(Theme.warning)
+            Text(remoteBlockedTitle)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Theme.textPrimary)
+            Text(remoteBlockedMessage)
+                .font(.system(size: 12))
+                .foregroundColor(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+            #if os(macOS)
+            if case .stalledBoot = remoteMode.phase {
+                Button("Cancel and return to sign-in") {
+                    Task { await remoteMode.cancelBoot() }
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(Theme.warning)
+                .font(.system(size: 12, weight: .semibold))
+                .accessibilityIdentifier("workspaces.remote.cancelBoot")
+            }
+            #endif
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("workspaces.remote.blocked")
+    }
+
+    private var remoteBlockedTitle: String {
+        #if os(macOS)
+        switch remoteMode.phase {
+        case .slowBoot:
+            return "Connecting is taking longer than expected"
+        case .stalledBoot:
+            return "Still connecting to remote sandbox"
+        default:
+            return "Connecting to remote sandbox"
+        }
+        #else
+        return "Connecting to remote sandbox"
+        #endif
+    }
+
+    private var remoteBlockedMessage: String {
+        #if os(macOS)
+        switch remoteMode.phase {
+        case .slowBoot:
+            return "You can keep waiting while the first snapshot loads."
+        case .stalledBoot:
+            return "You can cancel and choose a different sandbox."
+        default:
+            return "Workspaces will appear after the first snapshot arrives."
+        }
+        #else
+        return "Workspaces will appear after the first snapshot arrives."
+        #endif
+    }
+
+    private func wsAction(_ icon: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(color)
+                .frame(width: 24, height: 24)
+                .background(color.opacity(0.12))
+                .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func wsStatusIcon(_ status: String?) -> some View {
+        let (icon, color): (String, Color) = {
+            switch status?.lowercased() {
+            case "active", "running": return ("circle.fill", Theme.success)
+            case "suspended": return ("pause.circle.fill", Theme.warning)
+            default: return ("stop.circle.fill", Theme.textTertiary)
+            }
+        }()
+        return Image(systemName: icon)
+            .font(.system(size: 12))
+            .foregroundColor(color)
+            .frame(width: 18)
+    }
+
+    private func wsStatusColor(_ status: String) -> Color {
+        switch status.lowercased() {
+        case "active", "running": return Theme.success
+        case "suspended": return Theme.warning
+        default: return Theme.textTertiary
+        }
+    }
+
+    private func isRunningWorkspaceStatus(_ status: String?) -> Bool {
+        switch status?.lowercased() {
+        case "active", "running": return true
+        default: return false
+        }
+    }
+
+    private func isSuspendedWorkspaceStatus(_ status: String?) -> Bool {
+        status?.lowercased() == "suspended"
+    }
+
+    private static func snapshotTimestamp() -> String {
+        DateFormatters.compactYearMonthDayHourMinute.string(from: Date())
+    }
+
+    private static func restoredWorkspaceName(for snapshot: WorkspaceSnapshot) -> String {
+        let base = normalizedText(snapshot.name) ?? normalizedText(snapshot.id) ?? "snapshot"
+        if base.hasSuffix("-from-snapshot") {
+            return base
+        }
+        return "\(base)-from-snapshot"
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    // MARK: - Actions
+
+    private func loadData() async {
+        loadGeneration += 1
+        let generation = loadGeneration
+        let capturedMode = selectedMode
+        isLoading = true
+        error = nil
+        do {
+            if capturedMode == .workspaces {
+                let fetched = try await smithers.listWorkspaces()
+                guard generation == loadGeneration, selectedMode == capturedMode else { return }
+                workspaces = fetched
+                if let selectedWorkspaceID,
+                   !fetched.contains(where: { $0.id == selectedWorkspaceID }) {
+                    self.selectedWorkspaceID = nil
+                }
+            } else {
+                let fetched = try await smithers.listWorkspaceSnapshots()
+                guard generation == loadGeneration, selectedMode == capturedMode else { return }
+                snapshots = fetched
+            }
+        } catch {
+            guard generation == loadGeneration else { return }
+            self.error = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func createWS() async {
+        isCreating = true
+        do {
+            _ = try await smithers.createWorkspace(name: newName)
+            newName = ""
+            showCreate = false
+            await loadData()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isCreating = false
+    }
+
+    private func performDeleteWS(_ id: String) async {
+        actionInFlight.insert(id)
+        do {
+            try await smithers.deleteWorkspace(id)
+            await loadData()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        actionInFlight.remove(id)
+    }
+
+    private func suspendWS(_ id: String) async {
+        actionInFlight.insert(id)
+        do {
+            try await smithers.suspendWorkspace(id)
+            await loadData()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        actionInFlight.remove(id)
+    }
+
+    private func resumeWS(_ id: String) async {
+        actionInFlight.insert(id)
+        do {
+            try await smithers.resumeWorkspace(id)
+            await loadData()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        actionInFlight.remove(id)
+    }
+
+    private func forkWS(_ ws: Workspace) async {
+        actionInFlight.insert(ws.id)
+        do {
+            _ = try await smithers.forkWorkspace(ws.id)
+            await loadData()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        actionInFlight.remove(ws.id)
+    }
+
+    private func snapshotWS(_ ws: Workspace) async {
+        actionInFlight.insert(ws.id)
+        do {
+            let timestamp = Self.snapshotTimestamp()
+            _ = try await smithers.createWorkspaceSnapshot(workspaceId: ws.id, name: "\(ws.name)-snapshot-\(timestamp)")
+            await loadData()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        actionInFlight.remove(ws.id)
+    }
+
+    private func createWSFromSnapshot(_ snap: WorkspaceSnapshot) async {
+        actionInFlight.insert(snap.id)
+        defer { actionInFlight.remove(snap.id) }
+        do {
+            let workspace = try await smithers.createWorkspace(
+                name: Self.restoredWorkspaceName(for: snap),
+                snapshotId: snap.id
+            )
+            selectedMode = .workspaces
+            selectWorkspace(workspace, insertAtTop: true)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func openSnapshotWorkspace(_ snap: WorkspaceSnapshot) async {
+        let workspaceId = snap.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !workspaceId.isEmpty else {
+            self.error = "Cannot open snapshot workspace: missing workspace id"
+            return
+        }
+
+        actionInFlight.insert(snap.id)
+        defer { actionInFlight.remove(snap.id) }
+        do {
+            let workspace = try await smithers.viewWorkspace(workspaceId)
+            selectedMode = .workspaces
+            selectWorkspace(workspace, insertAtTop: true)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func selectWorkspace(_ workspace: Workspace, insertAtTop: Bool) {
+        selectedWorkspaceID = workspace.id
+        if let index = workspaces.firstIndex(where: { $0.id == workspace.id }) {
+            workspaces[index] = workspace
+        } else if insertAtTop {
+            workspaces.insert(workspace, at: 0)
+        } else {
+            workspaces.append(workspace)
+        }
+    }
+
+    private func deleteSnapshot(_ snapshotId: String) async {
+        actionInFlight.insert(snapshotId)
+        do {
+            try await smithers.deleteWorkspaceSnapshot(snapshotId)
+            await loadData()
+        } catch {
+            self.error = error.localizedDescription
+        }
+        actionInFlight.remove(snapshotId)
+    }
+
+    private func errorView(_ message: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 28))
+                .foregroundColor(Theme.warning)
+            Text(message).font(.system(size: 13)).foregroundColor(Theme.textSecondary)
+            Button("Retry") { Task { await loadData() } }
+                .buttonStyle(.plain).foregroundColor(Theme.accent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}

@@ -1,0 +1,53 @@
+smithers-bench zbench=0.11.2 zig=0.15.2
+group=all
+allocations are zbench allocator counts; libsmithers C-allocator return values are freed but not visible to the tracker.
+zbench calibration runs act as warm-up before measured readings.
+
+benchmark                         runs      ns/op       stddev     allocs/op     bytes/op        throughput  notes
+-------------------------------------------------------------------------------------------------------------------
+
+[cwd] smithers_cwd_resolve resolves null, home aliases, absolute paths, and invalid paths; this should stay below UI-frame budget because workspace opening calls it synchronously.
+cwd.null_default                   512        26585         6661            0            0       37615.20 ops/s  noisy; retry with more iterations
+cwd.home_alias_slash               512        13894         6077            0            0       71973.51 ops/s  noisy; retry with more iterations
+cwd.absolute_existing              512        24920         1542            0            0       40128.41 ops/s  -
+cwd.invalid_fallback               512        15699         1394            0            0       63698.32 ops/s  -
+
+[slash] smithers_slashcmd_parse tokenizes common slash command inputs, key-value flags, and malformed text without touching app state.
+slash.simple                       512         1676           29            0            0      596658.71 ops/s  -
+slash.args                         512         2855           98            0            0      350262.70 ops/s  -
+slash.flag_value                   512         3686          187            0            0      271296.80 ops/s  -
+slash.malformed_text               512         1547           33            0            0      646412.41 ops/s  -
+
+[palette] Palette query plus items_json scores and serializes synthetic workspace candidates for 10, 1k, and 100k-item backing stores; the public ABI currently has no safe bulk-load hook.
+palette.query_json_10              512        11519         1893            3         1045      868130.91 items/s  -
+palette.query_json_1k              128       162202         4558            3         1045     6165152.09 items/s  -
+palette.query_json_100k             16     15336580       124256            3         1045     6520358.52 items/s  cliff >10ms
+
+[client] smithers_client_call crosses the C ABI and exercises local JSON dispatch only: echo returns small and empty payloads without network or CLI fallback.
+client.call_echo                  2048         4240          367            0            0      235849.06 ops/s  -
+client.call_echo_empty            2048         1497          440            0            0      668002.67 ops/s  noisy; retry with more iterations
+
+[stream] smithers_event_stream_next drains fixture JSON streams of 10, 1k, and 10k events and reports events-per-second.
+stream.drain_10                    512        39650         1498            0            0      252206.81 events/s  -
+stream.drain_1k                     52      3767867        17627            0            0      265402.15 events/s  -
+stream.drain_10k                     3     62447833       194578            0            0      160133.66 events/s  -
+
+[persistence] smithers_persistence_save_sessions plus smithers_persistence_load_sessions round-trip JSON arrays with 1, 10, 100, and 1000 sessions through SQLite.
+persistence.roundtrip_1            128        30311         1672            0            0       32991.32 sessions/s  -
+persistence.roundtrip_10           128        86679         1884            0            0      115368.20 sessions/s  -
+persistence.roundtrip_100           64       638311        16346            0            0      156663.44 sessions/s  -
+persistence.roundtrip_1000          32      6139325       171257            0            0      162884.36 sessions/s  -
+
+[json] JSON serde round-trips representative RunSummary, Workflow, ChatBlock, Ticket, and SearchResult payloads through libsmithers model descriptors.
+json.RunSummary                    512        19367         3834            5         7664    14096142.92 bytes/s  -
+json.Workflow                      512        22083         4320            5         8063    24906036.32 bytes/s  -
+json.ChatBlock                     512        20921         3244            5         7655    27484345.87 bytes/s  -
+json.Ticket                        512        22337         3236            5         9121    21757621.88 bytes/s  -
+json.SearchResult                  512        24473         6551            5         8317    19981203.78 bytes/s  noisy; retry with more iterations
+
+[action] Action tag union conversion calls cvalAlloc for every variant and decodes the C payload back into the corresponding Zig union variant.
+action.cval_all_variants           512         6747         1878            2          214     2667852.38 variants/s  noisy; retry with more iterations
+
+[lifecycle] App lifecycle creates app_new, opens one workspace, creates one chat session, frees it, and frees the app; cold includes smithers_init.
+lifecycle.cold                     128        27156          641            0            0       36824.27 ops/s  -
+lifecycle.warm                     128        27906         1980            0            0       35834.59 ops/s  -

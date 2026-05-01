@@ -1,0 +1,4 @@
+module SQLitePoC {
+    header "sqlite_poc.h"
+    export *
+}

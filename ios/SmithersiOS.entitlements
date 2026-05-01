@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ticket 0125: entitlements for the releasable iOS target.
+
+  Keep this file minimal. Entitlements here are REQUIRED by the auth +
+  runtime path, not speculative. Adding an entitlement the App Store
+  Connect provisioning profile does not grant will break signing.
+
+  Keychain Access Group
+  ---------------------
+  `keychain-access-groups` is declared so the `SmithersAuth` token
+  store (`Shared/Sources/SmithersAuth/TokenStore.swift`) can opt into a
+  shared group later without a profile change. The group is prefixed
+  with `$(AppIdentifierPrefix)` (the user's Team ID) so Apple's signing
+  machinery substitutes it at build time. Today `TokenStore` passes an
+  empty access group and strips it, so nothing requires this entry at
+  runtime — it is present so a future opt-in does not need a new
+  provisioning profile round-trip with Apple.
+
+  Push Notifications
+  ------------------
+  `aps-environment` is required for iOS to return an APNS device token from
+  `registerForRemoteNotifications()`. The build setting is `development` for
+  debug builds and `production` for release archives.
+
+  App Group
+  ---------
+  `group.com.smithers.ios` is shared with SmithersShareExtension so the
+  app and extension are provisioned for the same iOS group container.
+
+  Associated Domains (universal links)
+  -------------------------------------
+  Placeholder for the production universal-link domain. This entitlement
+  alone does not make links work: the production domain must serve a valid
+  apple-app-site-association file and the provisioning profile must grant
+  Associated Domains. Until then, custom scheme links remain the reliable
+  path.
+
+  App Sandbox / Hardened Runtime
+  ------------------------------
+  These are macOS-only entitlements and are not included here. iOS apps
+  are sandboxed by the OS; no opt-in entitlement is required.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.smithers.ios</string>
+    </array>
+    <key>aps-environment</key>
+    <string>$(APS_ENVIRONMENT)</string>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.smithers.ios</string>
+    </array>
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>applinks:smithers.ai</string>
+    </array>
+</dict>
+</plist>

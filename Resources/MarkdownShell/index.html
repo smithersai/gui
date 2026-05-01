@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Smithers Markdown</title>
+    <link rel="stylesheet" href="vendor/github.min.css" media="(prefers-color-scheme: light)">
+    <link rel="stylesheet" href="vendor/github-dark.min.css" media="(prefers-color-scheme: dark)">
+    <script src="vendor/marked.min.js"></script>
+    <script src="vendor/highlight.min.js"></script>
+    <script src="vendor/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg: #ffffff;
+            --fg: #202124;
+            --muted: #5f6368;
+            --border: #d7dce2;
+            --code-bg: #f6f8fa;
+            --quote-border: #9aa4b2;
+            --link: #0969da;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0f1115;
+                --fg: #e7eaf0;
+                --muted: #a1a8b3;
+                --border: #303846;
+                --code-bg: #171b22;
+                --quote-border: #64748b;
+                --link: #6fb6ff;
+            }
+        }
+
+        html,
+        body {
+            margin: 0;
+            min-height: 100%;
+            background: var(--bg);
+            color: var(--fg);
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+            font-size: 15px;
+            line-height: 1.55;
+        }
+
+        body {
+            overflow-wrap: anywhere;
+        }
+
+        .markdown-body {
+            box-sizing: border-box;
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 28px 34px 48px;
+        }
+
+        @media (max-width: 640px) {
+            .markdown-body {
+                padding: 20px 18px 36px;
+            }
+        }
+
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6 {
+            color: var(--fg);
+            line-height: 1.2;
+            margin: 1.3em 0 0.55em;
+        }
+
+        h1 {
+            font-size: 2em;
+            padding-bottom: 0.25em;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h2 {
+            font-size: 1.5em;
+            padding-bottom: 0.2em;
+            border-bottom: 1px solid var(--border);
+        }
+
+        p,
+        ul,
+        ol,
+        blockquote,
+        pre,
+        table {
+            margin: 0 0 1em;
+        }
+
+        a {
+            color: var(--link);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        blockquote {
+            color: var(--muted);
+            border-left: 4px solid var(--quote-border);
+            padding: 0.2em 1em;
+        }
+
+        code {
+            font-family: "SF Mono", Menlo, Consolas, monospace;
+            font-size: 0.92em;
+            background: var(--code-bg);
+            border-radius: 6px;
+            padding: 0.15em 0.35em;
+        }
+
+        pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: auto;
+            padding: 13px 15px;
+        }
+
+        pre code {
+            display: block;
+            background: transparent;
+            border-radius: 0;
+            padding: 0;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        th,
+        td {
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+        }
+
+        th {
+            background: var(--code-bg);
+            font-weight: 700;
+        }
+
+        img,
+        svg {
+            max-width: 100%;
+        }
+
+        .mermaid {
+            margin: 1.2em 0;
+            text-align: center;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            overflow: auto;
+        }
+
+        .render-error {
+            color: #b42318;
+            background: rgba(180, 35, 24, 0.12);
+            border: 1px solid rgba(180, 35, 24, 0.28);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-family: "SF Mono", Menlo, Consolas, monospace;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <main id="content" class="markdown-body" aria-live="polite"></main>
+
+    <script>
+        (function () {
+            var contentElement = document.getElementById("content");
+            var darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+            var lastContent = "";
+
+            function currentMermaidTheme() {
+                return darkQuery.matches ? "dark" : "default";
+            }
+
+            function configureMermaid() {
+                if (!window.mermaid) {
+                    return;
+                }
+                window.mermaid.initialize({
+                    startOnLoad: false,
+                    theme: currentMermaidTheme(),
+                    securityLevel: "strict"
+                });
+            }
+
+            function renderMermaidBlocks(root) {
+                var blocks = root.querySelectorAll("pre code.language-mermaid, pre code.lang-mermaid");
+                blocks.forEach(function (block, index) {
+                    var container = document.createElement("div");
+                    container.className = "mermaid";
+                    container.textContent = block.textContent || "";
+                    container.id = "smithers-mermaid-" + Date.now() + "-" + index;
+                    var pre = block.closest("pre");
+                    pre.parentNode.replaceChild(container, pre);
+                });
+            }
+
+            function highlightCodeBlocks(root) {
+                if (!window.hljs) {
+                    return;
+                }
+                root.querySelectorAll("pre code").forEach(function (block) {
+                    window.hljs.highlightElement(block);
+                });
+            }
+
+            async function runMermaid(root) {
+                if (!window.mermaid) {
+                    return;
+                }
+                var nodes = root.querySelectorAll(".mermaid");
+                if (nodes.length === 0) {
+                    return;
+                }
+                configureMermaid();
+                await window.mermaid.run({ nodes: nodes });
+            }
+
+            async function renderMarkdown(markdown) {
+                lastContent = markdown || "";
+                try {
+                    if (!window.marked) {
+                        throw new Error("marked is unavailable");
+                    }
+                    window.marked.setOptions({
+                        gfm: true,
+                        breaks: false
+                    });
+                    contentElement.innerHTML = window.marked.parse(lastContent);
+                    renderMermaidBlocks(contentElement);
+                    highlightCodeBlocks(contentElement);
+                    await runMermaid(contentElement);
+                } catch (error) {
+                    contentElement.innerHTML = "";
+                    var errorElement = document.createElement("div");
+                    errorElement.className = "render-error";
+                    errorElement.textContent = error && error.message ? error.message : String(error);
+                    contentElement.appendChild(errorElement);
+                }
+            }
+
+            window.smithersMarkdown = {
+                setContent: function (content) {
+                    return renderMarkdown(content);
+                }
+            };
+
+            if (darkQuery.addEventListener) {
+                darkQuery.addEventListener("change", function () {
+                    renderMarkdown(lastContent);
+                });
+            } else if (darkQuery.addListener) {
+                darkQuery.addListener(function () {
+                    renderMarkdown(lastContent);
+                });
+            }
+
+            configureMermaid();
+            renderMarkdown("");
+        }());
+    </script>
+</body>
+</html>

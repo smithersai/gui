@@ -1,0 +1,4 @@
+module CSmithersKit {
+    umbrella header "CSmithersKit.h"
+    export *
+}

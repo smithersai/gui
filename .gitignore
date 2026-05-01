@@ -1,61 +1,49 @@
-# reference code
+.build/
+.build-review/
+.build-review2/
+build/
+.zig-cache/
+zig-out/
+zig-out-ios-device/
+zig-out-ios-sim/
+*.o
+/io_check
+node_modules/
+.alchemy/
+.env
+.env.local
+*.db
+*.db-shm
+*.db-wal
+run-*.log
+vendor/
+.claude/scheduled_tasks.lock
+tmux/
+.worktrees/
+.swiftpm/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+
+# Legacy agent/TUI branch artifacts
 dependencies/
-
-# output
 out
-dist
 *.tgz
-
-# code coverage
 coverage
 *.lcov
-
-# logs
 logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
-
-# dotenv environment variable files
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-
-# caches
 .cache
-
-# IntelliJ based IDEs
 .idea
-
-# Finder (MacOS) folder config
-.DS_Store
-
-# Python
 __pycache__/
 *.pyc
 .venv/
-
-# Agent snapshot storage
 .agent/
-
-# Go binaries
 agent-tui
-
-# IDE
 .cursor/
-
-# Python build artifacts
 *.egg-info/
-build/
-dist/
 *.spec
-
-# Zig build cache
-.zig-cache/
-zig-out/
 *.a
 AgentApp/Libraries/libghostty.a
-
-# Code analysis and documentation
 codex/

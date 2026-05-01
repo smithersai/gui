@@ -1,0 +1,92 @@
+# macos-e2e.yml — full-stack XCUITest harness for the SmithersGUI macOS app.
+#
+# Ticket: macos-e2e-harness. Mirrors `ios-e2e.yml` but runs against the
+# native macOS destination instead of the iOS Simulator. Runs on macos-14
+# hosted runners — no iOS-simulator boot is required.
+#
+# Gating: expensive (~10-15 min) because it spins the full plue stack,
+# so it runs only on push-to-main and on PRs that explicitly target
+# main. Contributors can run it locally via `macos/scripts/run-e2e.sh`.
+
+name: macOS E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: macos-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-e2e:
+    name: macOS E2E (platform=macOS)
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout gui
+        uses: actions/checkout@v4
+        with:
+          path: gui
+
+      - name: Checkout plue
+        uses: actions/checkout@v4
+        with:
+          repository: smithers-sh/plue
+          path: plue
+          token: ${{ secrets.PLUE_CHECKOUT_TOKEN }}
+          persist-credentials: false
+
+      - name: Install Xcode toolchain
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Install libpq (psql for seed script)
+        run: brew install libpq
+
+      - name: Set up Docker (macOS)
+        uses: docker/setup-docker-action@v4
+
+      - name: Install Bun (for plue workflow-runtime build)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.12"
+
+      - name: Pre-warm plue bun.lock
+        working-directory: plue
+        run: bun install || true
+
+      - name: Run macOS E2E harness
+        working-directory: gui
+        env:
+          PLUE_CHECKOUT: ${{ github.workspace }}/plue
+          PLUE_BASE_URL: http://localhost:4000
+          # macOS builds DO NOT need the iOS-specific env scrub
+          # (SDKROOT / LIBRARY_PATH / RUSTFLAGS). Hosted runner env is
+          # clean; the harness script runs with full shell env intact.
+        run: ./macos/scripts/run-e2e.sh
+
+      - name: Collect xcresult on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-e2e-xcresult
+          path: gui/build/macos-e2e-results-*.xcresult
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Collect xcodebuild log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-e2e-xcodebuild-log
+          path: gui/build/macos-e2e-xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 14

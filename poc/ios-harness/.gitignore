@@ -1,0 +1,7 @@
+# Xcode / xcodegen / Zig build outputs for the PoC harness.
+.libs/
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/

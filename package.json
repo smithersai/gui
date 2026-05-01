@@ -1,0 +1,13 @@
+{
+  "name": "smithers-gui-infra",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "release": "bun ./alchemy.run.ts",
+    "release:upload-only": "bun ./alchemy.run.ts --skip-build",
+    "destroy": "bun ./alchemy.run.ts --destroy"
+  },
+  "dependencies": {
+    "alchemy": "latest"
+  }
+}

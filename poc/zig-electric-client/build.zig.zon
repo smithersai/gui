@@ -1,0 +1,14 @@
+.{
+    .name = .zig_electric_client,
+    .version = "0.0.1",
+    .fingerprint = 0xffa6cd89df4bd12e,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "test",
+        "README.md",
+    },
+}

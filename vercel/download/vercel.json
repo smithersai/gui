@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/SmithersGUI.dmg",
+      "permanent": false
+    },
+    {
+      "source": "/:path*",
+      "destination": "https://pub-969210e77f5749a6999183cefd8ac46b.r2.dev/:path*",
+      "permanent": false
+    }
+  ]
+}

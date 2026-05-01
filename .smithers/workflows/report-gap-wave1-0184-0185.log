@@ -1,0 +1,19 @@
+timestamp=2026-05-01T04:19:51.620Z level=WARN fiber=#30 message="ClaudeCodeAgent: unsetting ANTHROPIC_API_KEY so Claude Code uses your subscription. To use API billing instead, use ToolLoopAgent from 'ai' with anthropic() provider." agent.init=1ms
+timestamp=2026-05-01T04:19:51.621Z level=WARN fiber=#31 message="ClaudeCodeAgent: unsetting ANTHROPIC_API_KEY so Claude Code uses your subscription. To use API billing instead, use ToolLoopAgent from 'ai' with anthropic() provider." agent.init=0ms
+⚠ Found 2 run(s) still marked as 'running':
+  run-1777234218317 (started 2026-04-26T20:10:19.603Z)
+  run-1776392878170 (started 2026-04-17T02:27:58.234Z)
+  Use 'smithers cancel' to mark them as cancelled, or 'smithers up --resume' to continue.
+timestamp=2026-05-01T04:19:51.894Z level=ERROR fiber=#78 message="workflow run failed with unhandled error" engine:run=0ms runId=report-gap-wave1-0184-0185 workflowName=workflow error="table input has no column named ticket_ids"
+runId: report-gap-wave1-0184-0185
+status: failed
+error:
+  name: SQLiteError
+  message: table input has no column named ticket_ids
+  stack: "SQLiteError: table input has no column named ticket_ids\n    at prepare (unknown)\n    at prepare (bun:sqlite:345:37)\n    at prepareQuery (/Users/williamcory/gui/.smithers/node_modules/drizzle-orm/bun-sqlite/session.js:20:30)\n    at run (/Users/williamcory/gui/.smithers/node_modules/drizzle-orm/sqlite-core/query-builders/insert.js:162:17)\n    at execute (/Users/williamcory/gui/.smithers/node_modules/drizzle-orm/sqlite-core/query-builders/insert.js:174:54)\n    at then (/Users/williamcory/gui/.smithers/node_modules/drizzle-orm/query-promise.js:21:17)\n    at processTicksAndRejections (native:7:39)"
+cta:
+  description: "Next steps:"
+  commands[3]{command,description}:
+    smithers inspect report-gap-wave1-0184-0185,Inspect run state
+    smithers logs report-gap-wave1-0184-0185,View run logs
+    smithers chat report-gap-wave1-0184-0185,View agent chat

@@ -1,0 +1,18 @@
+# Zig build outputs
+zig-out/
+.zig-cache/
+
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+
+# Gradle wrapper binary (users run `gradle wrapper` to populate).
+# The .properties file IS tracked; the .jar is not, since we prefer to
+# rely on a system-installed `gradle` in CI and let developers populate
+# the wrapper locally.
+gradle/wrapper/gradle-wrapper.jar
+gradlew
+gradlew.bat

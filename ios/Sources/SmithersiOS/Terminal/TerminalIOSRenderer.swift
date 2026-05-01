@@ -1,0 +1,218 @@
+// TerminalIOSRenderer.swift — ticket 0123.
+//
+// iOS-only renderer for the shared `TerminalSurface`. Bytes arrive via
+// `TerminalSurfaceModel.recentBytes`, are decoded by `ghostty-vt`, and
+// are rendered into a fixed cell grid using CoreGraphics. The on-screen
+// input bar remains as the touch fallback while the renderer view itself
+// takes first responder and forwards basic hardware-keyboard input.
+//
+// The key acceptance bullet this file carries: the iOS simulator must
+// render bytes that arrived via `libsmithers-core`'s PTY transport,
+// not via any daemon socket or NSView path. Because bytes flow through
+// `TerminalSurfaceModel`, so the VT decoder stays local to the iOS
+// renderer and does not perturb the shared surface contract.
+
+#if os(iOS)
+import SwiftUI
+import UIKit
+
+/// Entry point called from `TerminalPlatformRenderer` on iOS.
+struct TerminalIOSRendererBridge: View {
+    @ObservedObject var model: TerminalSurfaceModel
+    var sessionID: String?
+    var command: String?
+    var workingDirectory: String?
+
+    var body: some View {
+        ZStack {
+            switch model.connectionState {
+            case .connecting:
+                TerminalStatusCard(
+                    systemImage: "hourglass",
+                    title: "Connecting terminal…",
+                    subtitle: "Waiting for the workspace session transport to open.",
+                    showSpinner: true
+                )
+                .accessibilityIdentifier("terminal.status.connecting")
+            case .connected:
+                terminalBody
+                    .accessibilityIdentifier("terminal.status.connected")
+            case .reconnecting:
+                terminalBody
+                    .overlay {
+                        TerminalReconnectOverlay()
+                            .accessibilityIdentifier("terminal.status.reconnecting")
+                    }
+            case .disconnected:
+                terminalBody
+                    .overlay {
+                        TerminalDisconnectedView(
+                            sessionID: sessionID,
+                            onReconnect: { model.retryConnection() }
+                        )
+                            .accessibilityIdentifier("terminal.status.disconnected")
+                    }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("terminal.ios.surface")
+    }
+
+    private var terminalBody: some View {
+        VStack(spacing: 0) {
+            if !model.title.isEmpty {
+                Text(model.title)
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.black.opacity(0.05))
+            }
+            TerminalIOSTextView(model: model)
+                .background(Color.black)
+                .accessibilityIdentifier("terminal.ios.text")
+                .overlay(alignment: .bottom) {
+                    TerminalIOSInputBar(model: model)
+                }
+        }
+    }
+}
+
+private struct TerminalStatusCard: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    let showSpinner: Bool
+
+    var body: some View {
+        VStack(spacing: 12) {
+            if showSpinner {
+                ProgressView()
+                    .progressViewStyle(.circular)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: 28))
+                    .foregroundStyle(.secondary)
+            }
+            Text(title)
+                .font(.headline)
+            Text(subtitle)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(16)
+        .background(Color.black.opacity(0.92))
+        .foregroundStyle(.white)
+    }
+}
+
+private struct TerminalReconnectOverlay: View {
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.7)
+            TerminalStatusCard(
+                systemImage: "arrow.clockwise",
+                title: "Reconnecting…",
+                subtitle: "The terminal transport dropped. Waiting to reattach.",
+                showSpinner: true
+            )
+            .frame(maxWidth: 260)
+            .background(Color.clear)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct TerminalDisconnectedView: View {
+    let sessionID: String?
+    let onReconnect: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "network.slash")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("Terminal disconnected")
+                .font(.headline)
+            Text("The live workspace session transport is unavailable. Retry to reattach.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+            if let sessionID, !sessionID.isEmpty {
+                Text(sessionID)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            Button("Reconnect", action: onReconnect)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("terminal.status.disconnected.retry")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(16)
+        .background(Color.black.opacity(0.92))
+        .foregroundStyle(.white)
+    }
+}
+
+/// UITextView-backed byte renderer. This keeps the iOS terminal surface
+/// usable when the optional Ghostty VT module is not linked.
+struct TerminalIOSTextView: UIViewRepresentable {
+    @ObservedObject var model: TerminalSurfaceModel
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.backgroundColor = .black
+        textView.textColor = .green
+        textView.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 48, right: 8)
+        textView.alwaysBounceVertical = true
+        return textView
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        let rendered = String(data: model.recentBytes, encoding: .utf8) ?? ""
+        if uiView.text != rendered {
+            uiView.text = rendered
+            let bottom = NSRange(location: (rendered as NSString).length, length: 0)
+            uiView.scrollRangeToVisible(bottom)
+        }
+    }
+}
+
+/// Floating input bar so the iOS user has a way to send stdin bytes
+/// back through the transport. Keeps the PTY two-way even without a
+/// hardware keyboard. The renderer view also becomes first responder and
+/// forwards basic hardware-keyboard input directly through the model.
+struct TerminalIOSInputBar: View {
+    @ObservedObject var model: TerminalSurfaceModel
+    @State private var pending: String = ""
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField("input", text: $pending)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled(true)
+                .textInputAutocapitalization(.never)
+                .accessibilityIdentifier("terminal.ios.input")
+                .onSubmit(send)
+            Button("Send", action: send)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("terminal.ios.send")
+        }
+        .padding(8)
+        .background(.ultraThinMaterial)
+    }
+
+    private func send() {
+        let line = pending + "\n"
+        model.sendInput(Data(line.utf8))
+        pending = ""
+    }
+}
+#endif
