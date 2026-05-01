@@ -33,6 +33,7 @@ struct IOSContentShell: View {
     @State private var focusedWorkspaceID: String?
     @State private var openedWorkspace: SwitcherWorkspace? = nil
     @StateObject private var runtimeSessionHost: IOSRuntimeSessionHost
+    @State private var sessionResetRegistrationID: UUID?
 
     let baseURL: URL
     let e2e: E2EConfig?
@@ -221,8 +222,27 @@ struct IOSContentShell: View {
             let provider: @Sendable () -> String? = { bearerProvider() }
             IOSPushNotificationRegistrar.shared.configure(baseURL: baseURL, bearerProvider: provider)
             ApprovalNotificationHandler.shared.configure(baseURL: baseURL, bearerProvider: provider)
+            IOSSessionWipeCoordinator.shared.registerRuntimeResetter {
+                runtimeSessionHost.stopActiveSession()
+            }
+            if sessionResetRegistrationID == nil {
+                sessionResetRegistrationID = IOSSessionWipeCoordinator.shared.registerResetParticipant {
+                    showSwitcher = false
+                    showApprovalsInbox = false
+                    focusedApprovalID = nil
+                    focusedWorkspaceID = nil
+                    openedWorkspace = nil
+                    deepLinkRouter.clearPendingRoute()
+                }
+            }
             if let route = deepLinkRouter.route {
                 handleDeepLinkRoute(route)
+            }
+        }
+        .onDisappear {
+            if let sessionResetRegistrationID {
+                IOSSessionWipeCoordinator.shared.unregisterResetParticipant(sessionResetRegistrationID)
+                self.sessionResetRegistrationID = nil
             }
         }
         .onReceive(deepLinkRouter.$route) { route in
@@ -360,6 +380,11 @@ private final class IOSRuntimeSessionHost: ObservableObject {
 
     func resetCachedData() throws {
         try SettingsLocalCache.resetWithActiveRuntime(session)
+    }
+
+    func stopActiveSession() {
+        session = nil
+        runtime = nil
     }
 
     private static func engineConfig(baseURL: URL) -> EngineConfig {
@@ -537,6 +562,7 @@ private struct WorkspaceDetailPlaceholder: View {
     @State private var agentChatMountState: AgentChatMountState
     @State private var terminalMountState: TerminalMountState = .hidden
     @State private var presentedDevtoolsContext: DevtoolsPanelContext?
+    @State private var detailSessionResetRegistrationID: UUID?
     @StateObject private var actionModel: WorkspaceDetailActionModel
     #if canImport(CSmithersKit)
     @StateObject private var terminalTransportOwner = WorkspaceDetailTerminalTransportOwner()
@@ -747,6 +773,23 @@ private struct WorkspaceDetailPlaceholder: View {
                 sessionID: context.sessionID,
                 bearerProvider: bearerProvider
             )
+        }
+        .onAppear {
+            if detailSessionResetRegistrationID == nil {
+                detailSessionResetRegistrationID = IOSSessionWipeCoordinator.shared.registerResetParticipant {
+                    terminalMountState = .hidden
+                    presentedDevtoolsContext = nil
+                    #if canImport(CSmithersKit)
+                    terminalTransportOwner.reset()
+                    #endif
+                }
+            }
+        }
+        .onDisappear {
+            if let detailSessionResetRegistrationID {
+                IOSSessionWipeCoordinator.shared.unregisterResetParticipant(detailSessionResetRegistrationID)
+                self.detailSessionResetRegistrationID = nil
+            }
         }
     }
 
@@ -1119,6 +1162,13 @@ private struct TerminalKillSwitchDisabledView: View {
         .padding(16)
         .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
         .accessibilityIdentifier("terminal.disabled.kill-switch")
+    }
+}
+
+@MainActor
+private extension DeepLinkRouter {
+    func clearPendingRoute() {
+        route = nil
     }
 }
 #endif
