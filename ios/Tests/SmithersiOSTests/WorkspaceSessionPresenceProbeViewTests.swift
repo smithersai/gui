@@ -30,6 +30,9 @@ final class WorkspaceSessionPresenceProbeViewTests: XCTestCase {
         XCTAssertTrue(source.contains("case .present:"))
         XCTAssertTrue(source.contains("terminalMountState = .mounted(sessionID: sessionID)"))
         XCTAssertTrue(source.contains(#".accessibilityIdentifier("content.ios.workspace-detail.terminal")"#))
+        XCTAssertTrue(source.contains("private var selectedRepoOwner: String?"))
+        XCTAssertTrue(source.contains("private var selectedRepoName: String?"))
+        XCTAssertTrue(source.contains("ProcessInfo.processInfo.environment[\"PLUE_E2E_TERMINAL_SHORTCUT\"] == \"1\""))
     }
 
     func testMissingSessionProbeMapsToTerminalEmptyState() async throws {
@@ -49,6 +52,7 @@ final class WorkspaceSessionPresenceProbeViewTests: XCTestCase {
         XCTAssertTrue(source.contains("terminalMountState = .missing(sessionID: sessionID)"))
         XCTAssertTrue(source.contains(#".accessibilityIdentifier("content.ios.workspace-detail.terminal-empty")"#))
         XCTAssertTrue(source.contains("Terminal session not found"))
+        XCTAssertTrue(source.contains(#".accessibilityIdentifier("content.ios.workspace-detail.terminal.no-session")"#))
     }
 
     func testUnauthorizedSessionProbeMapsToAuthRetryError() async throws {
@@ -71,8 +75,42 @@ final class WorkspaceSessionPresenceProbeViewTests: XCTestCase {
         let source = try contentShellSource()
         XCTAssertTrue(source.contains("catch RemoteWorkspaceSessionPresenceError.authExpired"))
         XCTAssertTrue(source.contains("Workspace session lookup requires an active signed-in session."))
+        XCTAssertTrue(source.contains("terminalMountState = .attachFailed("))
         XCTAssertTrue(source.contains(#"retryIdentifier: "content.ios.workspace-detail.terminal.error.retry""#))
         XCTAssertTrue(source.contains(#".accessibilityIdentifier("content.ios.workspace-detail.terminal.error")"#))
+    }
+
+    func testRouteContractCentralizedForSessionAndFallbackWebSocketURL() {
+        let base = URL(string: "https://plue.test")!
+        let sessionURL = WorkspaceSessionRoutes.sessionURL(
+            baseURL: base,
+            repoOwner: "acme",
+            repoName: "widgets",
+            sessionID: "sess-123"
+        )
+        XCTAssertEqual(
+            sessionURL.absoluteString,
+            "https://plue.test/api/repos/acme/widgets/workspace/sessions/sess-123"
+        )
+
+        let wsURL = WorkspaceSessionRoutes.fallbackTerminalWebSocketURL(
+            baseURL: base,
+            repoOwner: "acme",
+            repoName: "widgets",
+            sessionID: "sess-123"
+        )
+        XCTAssertEqual(
+            wsURL.absoluteString,
+            "wss://plue.test/api/repos/acme/widgets/workspace/sessions/sess-123/terminal"
+        )
+    }
+
+    func testProductionPathDoesNotUseSeededSessionFallbackByDefault() async throws {
+        let source = try contentShellSource()
+        XCTAssertTrue(source.contains("private var isSeededE2EShortcutEnabled: Bool"))
+        XCTAssertTrue(source.contains("ProcessInfo.processInfo.environment[\"PLUE_E2E_TERMINAL_SHORTCUT\"] == \"1\""))
+        XCTAssertTrue(source.contains("if let repoOwner = workspaceSessionContext?.repoOwner, !repoOwner.isEmpty"))
+        XCTAssertTrue(source.contains("if let repoName = workspaceSessionContext?.repoName, !repoName.isEmpty"))
     }
 
     private func makeProbe() -> URLSessionRemoteWorkspaceSessionPresenceProbe {

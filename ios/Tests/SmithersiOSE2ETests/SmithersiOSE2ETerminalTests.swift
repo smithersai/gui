@@ -14,7 +14,8 @@
 //   2. The terminal surface a11y identifier is present — proving the
 //      renderer wiring (pipes-backed UITextView from ticket 0123) works.
 //
-// Preconditions (set by `ios/scripts/run-e2e.sh`):
+// Preconditions (set by `ios/scripts/run-e2e.sh`) for the explicit
+// seeded-shortcut scenario only:
 //   - `PLUE_E2E_WORKSPACE_SESSION_ID` — non-empty UUID from the seed.
 //   - Standard signed-in E2E env (`PLUE_E2E_MODE=1`, bearer, etc.).
 

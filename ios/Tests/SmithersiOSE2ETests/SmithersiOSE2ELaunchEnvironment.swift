@@ -47,6 +47,9 @@ enum E2ELaunchKey {
     /// route. Seeded by the script for idempotency.
     static let seededRepoOwner = "PLUE_E2E_REPO_OWNER"
     static let seededRepoName = "PLUE_E2E_REPO_NAME"
+    /// Explicit opt-in for seeded terminal attach shortcut. Production
+    /// workspace attach defaults to backend/workspace context only.
+    static let terminalShortcut = "PLUE_E2E_TERMINAL_SHORTCUT"
     /// Name of the docker container backing plue's api. The reconnect
     /// scenario uses `docker pause` / `docker unpause` on it.
     static let dockerAPIContainer = "PLUE_E2E_DOCKER_API_CONTAINER"
@@ -129,6 +132,7 @@ struct E2ELaunchEnvironment {
                     app.launchEnvironment[k] = v
                 }
             }
+            app.launchEnvironment[E2ELaunchKey.terminalShortcut] = "1"
         }
     }
 }

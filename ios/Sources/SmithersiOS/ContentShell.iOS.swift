@@ -461,12 +461,9 @@ private final class WorkspaceDetailTerminalTransportOwner: ObservableObject {
 /// `agent_session` is present; terminal mounts after the session probe
 /// confirms the workspace session still exists.
 ///
-/// E2E harness extension: the seeded workspace-session id still arrives
-/// via `PLUE_E2E_WORKSPACE_SESSION_ID`, but the terminal now mounts only
-/// after the app confirms the row still exists via
-/// `GET /api/repos/{owner}/{repo}/workspace/sessions/{id}`. This keeps
-/// the iOS terminal surface aligned with backend session lifecycle
-/// changes such as deleting the seeded row between launches.
+/// Production terminal attach resolves session and repo context from the
+/// selected workspace/backend probe context. A seeded env-var terminal
+/// path is supported only as an explicit E2E test shortcut.
 struct IOSWorkspaceDetailSurfaceGate: Equatable {
     enum TerminalSurfaceState: Equatable {
         case hidden
@@ -478,14 +475,14 @@ struct IOSWorkspaceDetailSurfaceGate: Equatable {
     let showsAgentChatSurface: Bool
 
     init(
-        seededSessionID: String?,
+        selectedSessionID: String?,
         isRemoteSandboxEnabled: Bool,
         isElectricClientEnabled: Bool,
         isApprovalsFlowEnabled: Bool
     ) {
-        if let seededSessionID {
+        if let selectedSessionID {
             terminalSurfaceState = isRemoteSandboxEnabled
-                ? .lookupRequired(sessionID: seededSessionID)
+                ? .lookupRequired(sessionID: selectedSessionID)
                 : .killSwitchDisabled
         } else {
             terminalSurfaceState = .hidden
@@ -520,11 +517,11 @@ private struct WorkspaceDetailPlaceholder: View {
     }
 
     private enum TerminalMountState: Equatable {
-        case hidden
+        case noSessionYet
         case probing
         case mounted(sessionID: String)
         case missing(sessionID: String)
-        case unavailable(message: String)
+        case attachFailed(message: String)
     }
 
     @ObservedObject var featureFlags: FeatureFlagsClient
@@ -535,38 +532,44 @@ private struct WorkspaceDetailPlaceholder: View {
     let workspaceSessionContext: IOSWorkspaceSessionProbeContext?
     let onBack: () -> Void
     @State private var agentChatMountState: AgentChatMountState
-    @State private var terminalMountState: TerminalMountState = .hidden
+    @State private var terminalMountState: TerminalMountState = .noSessionYet
     @State private var presentedDevtoolsContext: DevtoolsPanelContext?
     @StateObject private var actionModel: WorkspaceDetailActionModel
     #if canImport(CSmithersKit)
     @StateObject private var terminalTransportOwner = WorkspaceDetailTerminalTransportOwner()
     #endif
 
-    /// Session id threaded through from `run-e2e.sh` after the seed
-    /// script writes a `workspace_sessions` row. Non-empty only when the
-    /// harness is exercising the terminal scenario group.
-    private var seededSessionID: String? {
+    private var isSeededE2EShortcutEnabled: Bool {
+        ProcessInfo.processInfo.environment["PLUE_E2E_TERMINAL_SHORTCUT"] == "1"
+    }
+
+    private var selectedSessionID: String? {
         if let sessionID = workspaceSessionContext?.sessionID, !sessionID.isEmpty {
             return sessionID
         }
+        guard isSeededE2EShortcutEnabled else { return nil }
         return ProcessInfo.processInfo.environment["PLUE_E2E_WORKSPACE_SESSION_ID"]
             .flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    private var seededRepoOwner: String? {
+    private var selectedRepoOwner: String? {
+        if let repoOwner = actionModel.workspace.repoOwner, !repoOwner.isEmpty {
+            return repoOwner
+        }
         if let repoOwner = workspaceSessionContext?.repoOwner, !repoOwner.isEmpty {
             return repoOwner
         }
-        return ProcessInfo.processInfo.environment["PLUE_E2E_REPO_OWNER"]
-            .flatMap { $0.isEmpty ? nil : $0 }
+        return nil
     }
 
-    private var seededRepoName: String? {
+    private var selectedRepoName: String? {
+        if let repoName = actionModel.workspace.repoName, !repoName.isEmpty {
+            return repoName
+        }
         if let repoName = workspaceSessionContext?.repoName, !repoName.isEmpty {
             return repoName
         }
-        return ProcessInfo.processInfo.environment["PLUE_E2E_REPO_NAME"]
-            .flatMap { $0.isEmpty ? nil : $0 }
+        return nil
     }
 
     private static var seededAgentSessionID: String? {
@@ -610,7 +613,7 @@ private struct WorkspaceDetailPlaceholder: View {
 
     private var surfaceGate: IOSWorkspaceDetailSurfaceGate {
         IOSWorkspaceDetailSurfaceGate(
-            seededSessionID: seededSessionID,
+            selectedSessionID: selectedSessionID,
             isRemoteSandboxEnabled: featureFlags.effectiveRemoteSandboxEnabled(),
             isElectricClientEnabled: featureFlags.isElectricClientEnabled,
             isApprovalsFlowEnabled: featureFlags.isApprovalsFlowEnabled
@@ -619,9 +622,9 @@ private struct WorkspaceDetailPlaceholder: View {
 
     private var probeTaskKey: String {
         [
-            seededSessionID ?? "no-session",
-            seededRepoOwner ?? "no-owner",
-            seededRepoName ?? "no-repo",
+            selectedSessionID ?? "no-session",
+            selectedRepoOwner ?? "no-owner",
+            selectedRepoName ?? "no-repo",
             featureFlags.effectiveRemoteSandboxEnabled() ? "remote-on" : "remote-off",
             featureFlags.isElectricClientEnabled ? "electric-on" : "electric-off",
             featureFlags.isApprovalsFlowEnabled ? "approvals-on" : "approvals-off",
@@ -677,7 +680,7 @@ private struct WorkspaceDetailPlaceholder: View {
             // bitten this test once already (the `if let` below was
             // evaluated in a context where ProcessInfo didn't yet have
             // the launchEnvironment merged in).
-            Text(seededSessionID ?? "no-session")
+            Text(selectedSessionID ?? "no-session")
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("content.ios.workspace-detail.terminal-gate")
@@ -799,12 +802,13 @@ private struct WorkspaceDetailPlaceholder: View {
     @ViewBuilder
     private var terminalMountView: some View {
         switch terminalMountState {
-        case .hidden:
-            WorkspaceDetailLoadingState(
-                title: "Checking terminal session…",
-                systemImage: "terminal"
+        case .noSessionYet:
+            WorkspaceDetailEmptyState(
+                title: "No terminal session yet",
+                systemImage: "terminal",
+                message: "Create or resume a workspace session to attach a terminal."
             )
-            .accessibilityIdentifier("content.ios.workspace-detail.terminal.loading")
+            .accessibilityIdentifier("content.ios.workspace-detail.terminal.no-session")
         case .probing:
             WorkspaceDetailLoadingState(
                 title: "Checking terminal session…",
@@ -828,7 +832,7 @@ private struct WorkspaceDetailPlaceholder: View {
             WorkspaceDetailTerminalEmptyState(sessionID: sessionID)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("content.ios.workspace-detail.terminal-empty")
-        case let .unavailable(message):
+        case let .attachFailed(message):
             WorkspaceDetailErrorBanner(
                 message: message,
                 retryIdentifier: "content.ios.workspace-detail.terminal.error.retry"
@@ -843,12 +847,12 @@ private struct WorkspaceDetailPlaceholder: View {
     private func refreshTerminalMountState() async {
         guard case let .lookupRequired(sessionID) = surfaceGate.terminalSurfaceState else {
             resetTerminalTransport()
-            terminalMountState = .hidden
+            terminalMountState = .noSessionYet
             return
         }
-        guard let repoOwner = seededRepoOwner, let repoName = seededRepoName else {
+        guard let repoOwner = selectedRepoOwner, let repoName = selectedRepoName else {
             resetTerminalTransport()
-            terminalMountState = .unavailable(
+            terminalMountState = .attachFailed(
                 message: "Workspace session lookup is not configured for this workspace."
             )
             return
@@ -873,17 +877,17 @@ private struct WorkspaceDetailPlaceholder: View {
             }
         } catch RemoteWorkspaceSessionPresenceError.authExpired {
             resetTerminalTransport()
-            terminalMountState = .unavailable(
+            terminalMountState = .attachFailed(
                 message: "Workspace session lookup requires an active signed-in session."
             )
         } catch let RemoteWorkspaceSessionPresenceError.backendUnavailable(message) {
             resetTerminalTransport()
-            terminalMountState = .unavailable(
+            terminalMountState = .attachFailed(
                 message: "Could not load the workspace session (\(message))."
             )
         } catch {
             resetTerminalTransport()
-            terminalMountState = .unavailable(
+            terminalMountState = .attachFailed(
                 message: "Could not load the workspace session (\(error.localizedDescription))."
             )
         }
