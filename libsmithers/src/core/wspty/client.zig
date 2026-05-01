@@ -57,6 +57,7 @@ pub const Client = struct {
     max_message_size: usize,
     /// Random source for mask keys.
     prng: std.Random.DefaultPrng,
+    closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub fn connect(allocator: std.mem.Allocator, opts: ConnectOptions) Err!Client {
         const addr_list = net.getAddressList(allocator, opts.host, opts.port) catch return Err.IoError;
@@ -94,7 +95,15 @@ pub const Client = struct {
     pub fn deinit(self: *Client) void {
         self.rx.deinit(self.allocator);
         self.reassembly.deinit(self.allocator);
-        self.stream.close();
+        self.interrupt();
+    }
+
+    /// Force the underlying socket closed so a concurrent blocking read
+    /// returns promptly during detach/destroy.
+    pub fn interrupt(self: *Client) void {
+        if (!self.closed.swap(true, .acq_rel)) {
+            self.stream.close();
+        }
     }
 
     fn seedFromTime() u64 {
@@ -157,12 +166,14 @@ pub const Client = struct {
 
     /// Close the connection gracefully with code 1000.
     pub fn close(self: *Client, code: u16, reason: []const u8) Err!void {
+        if (self.closed.load(.acquire)) return Err.AlreadyClosed;
         var payload: [128]u8 = undefined;
         const n = frame.buildClosePayload(code, reason, &payload);
         try self.writeFrame(.close, payload[0..n], true);
     }
 
     fn writeFrame(self: *Client, opcode: frame.Opcode, payload: []const u8, fin: bool) Err!void {
+        if (self.closed.load(.acquire)) return Err.AlreadyClosed;
         var mask_key: [4]u8 = undefined;
         self.prng.random().bytes(&mask_key);
 
@@ -179,6 +190,7 @@ pub const Client = struct {
     /// surfaces a ping Event (so callers can log / ignore). For pong frames:
     /// surfaced as pong Events.
     pub fn readEvent(self: *Client) Err!Event {
+        if (self.closed.load(.acquire)) return Err.AlreadyClosed;
         while (true) {
             // Try to parse a header from what we have.
             const h = frame.decodeHeader(self.rx.items) catch |e| switch (e) {

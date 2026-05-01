@@ -270,21 +270,27 @@ pub export fn smithers_core_unsubscribe(s_opt: ?*SessionBox, handle: u64) void {
     const session_box = s_opt orelse return;
     const session = session_box.acquireSession(true) orelse return;
     defer session_box.release();
-    session.unsubscribe(handle) catch {};
+    session.unsubscribe(handle) catch |err| {
+        std.log.warn("smithers_core_unsubscribe failed for handle {d}: {}", .{ handle, err });
+    };
 }
 
 pub export fn smithers_core_pin(s_opt: ?*SessionBox, handle: u64) void {
     const session_box = s_opt orelse return;
     const session = session_box.acquireSession(true) orelse return;
     defer session_box.release();
-    session.setPinned(handle, true) catch {};
+    session.setPinned(handle, true) catch |err| {
+        std.log.warn("smithers_core_pin failed for handle {d}: {}", .{ handle, err });
+    };
 }
 
 pub export fn smithers_core_unpin(s_opt: ?*SessionBox, handle: u64) void {
     const session_box = s_opt orelse return;
     const session = session_box.acquireSession(true) orelse return;
     defer session_box.release();
-    session.setPinned(handle, false) catch {};
+    session.setPinned(handle, false) catch |err| {
+        std.log.warn("smithers_core_unpin failed for handle {d}: {}", .{ handle, err });
+    };
 }
 
 pub export fn smithers_core_cache_query(
@@ -444,7 +450,9 @@ pub export fn smithers_core_tick_for_test(s_opt: ?*SessionBox) void {
     const session_box = s_opt orelse return;
     const session = session_box.acquireSession(true) orelse return;
     defer session_box.release();
-    session.tick() catch {};
+    session.tick() catch |err| {
+        std.log.warn("smithers_core_tick_for_test failed: {}", .{err});
+    };
 }
 
 const testing = std.testing;

@@ -145,6 +145,31 @@ pub const Cache = struct {
         if (sqlite3_step(stmt) != SQLITE_DONE) return Error.Sqlite;
     }
 
+    pub fn clearRowsForSubscription(self: *Cache, sub_id: i64) Error!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const tables = [_][]const u8{
+            "agent_sessions",         "agent_messages",      "agent_parts",
+            "workspaces",             "workspace_sessions",  "approvals",
+            "workflow_runs",          "devtools_snapshots",
+        };
+        for (tables) |t| {
+            const sql = try std.fmt.allocPrintSentinel(
+                self.allocator,
+                "DELETE FROM {s} WHERE subscription_id=?1;",
+                .{t},
+                0,
+            );
+            defer self.allocator.free(sql);
+            var stmt: ?*sqlite3_stmt = null;
+            if (sqlite3_prepare_v2(self.db, sql.ptr, -1, &stmt, null) != SQLITE_OK) return Error.Sqlite;
+            defer _ = sqlite3_finalize(stmt);
+            _ = sqlite3_bind_int64(stmt, 1, sub_id);
+            if (sqlite3_step(stmt) != SQLITE_DONE) return Error.Sqlite;
+        }
+    }
+
     pub fn setPinned(self: *Cache, sub_id: i64, pinned: bool) Error!void {
         self.mutex.lock();
         defer self.mutex.unlock();

@@ -95,20 +95,28 @@ pub const Transport = struct {
 
 pub fn dupDelta(a: Allocator, d: Delta) !Delta {
     return switch (d) {
-        .row_upsert => |v| Delta{ .row_upsert = .{
-            .shape = try a.dupe(u8, v.shape),
-            .pk = try a.dupe(u8, v.pk),
-            .row_json = try a.dupe(u8, v.row_json),
-        } },
-        .row_delete => |v| Delta{ .row_delete = .{
-            .shape = try a.dupe(u8, v.shape),
-            .pk = try a.dupe(u8, v.pk),
-        } },
-        .up_to_date => |v| Delta{ .up_to_date = .{
-            .shape = try a.dupe(u8, v.shape),
-            .handle = try a.dupe(u8, v.handle),
-            .offset = try a.dupe(u8, v.offset),
-        } },
+        .row_upsert => |v| blk: {
+            const shape = try a.dupe(u8, v.shape);
+            errdefer a.free(shape);
+            const pk = try a.dupe(u8, v.pk);
+            errdefer a.free(pk);
+            const row_json = try a.dupe(u8, v.row_json);
+            break :blk Delta{ .row_upsert = .{ .shape = shape, .pk = pk, .row_json = row_json } };
+        },
+        .row_delete => |v| blk: {
+            const shape = try a.dupe(u8, v.shape);
+            errdefer a.free(shape);
+            const pk = try a.dupe(u8, v.pk);
+            break :blk Delta{ .row_delete = .{ .shape = shape, .pk = pk } };
+        },
+        .up_to_date => |v| blk: {
+            const shape = try a.dupe(u8, v.shape);
+            errdefer a.free(shape);
+            const handle = try a.dupe(u8, v.handle);
+            errdefer a.free(handle);
+            const offset = try a.dupe(u8, v.offset);
+            break :blk Delta{ .up_to_date = .{ .shape = shape, .handle = handle, .offset = offset } };
+        },
         .must_refetch => |v| Delta{ .must_refetch = .{
             .shape = try a.dupe(u8, v.shape),
         } },
@@ -226,10 +234,14 @@ pub const FakeTransport = struct {
         defer self.mutex.unlock();
         const f = self.next_future;
         self.next_future += 1;
+        const action_owned = try self.allocator.dupe(u8, action);
+        errdefer self.allocator.free(action_owned);
+        const payload_owned = try self.allocator.dupe(u8, payload_json);
+        errdefer self.allocator.free(payload_owned);
         try self.writes.append(self.allocator, .{
             .future = f,
-            .action = try self.allocator.dupe(u8, action),
-            .payload = try self.allocator.dupe(u8, payload_json),
+            .action = action_owned,
+            .payload = payload_owned,
         });
         return f;
     }
@@ -267,7 +279,9 @@ pub const FakeTransport = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         for (self.pending.items) |d| {
-            try out.append(allocator, try dupDelta(allocator, d));
+            const duped = try dupDelta(allocator, d);
+            errdefer freeDelta(allocator, duped);
+            try out.append(allocator, duped);
             freeDelta(self.allocator, d);
         }
         self.pending.clearRetainingCapacity();
@@ -528,13 +542,21 @@ pub const RealTransport = struct {
         const self = try allocator.create(RealTransport);
         errdefer allocator.destroy(self);
 
-        const storage: CfgStorage = .{
-            .shape_host = try allocator.dupe(u8, cfg_in.shape_host),
-            .api_host = try allocator.dupe(u8, cfg_in.api_host),
-            .ws_host = try allocator.dupe(u8, cfg_in.ws_host),
-            .origin = try allocator.dupe(u8, cfg_in.origin),
-        };
+        const shape_host = try allocator.dupe(u8, cfg_in.shape_host);
+        errdefer allocator.free(shape_host);
+        const api_host = try allocator.dupe(u8, cfg_in.api_host);
+        errdefer allocator.free(api_host);
+        const ws_host = try allocator.dupe(u8, cfg_in.ws_host);
+        errdefer allocator.free(ws_host);
+        const origin = try allocator.dupe(u8, cfg_in.origin);
+        errdefer allocator.free(origin);
 
+        const storage: CfgStorage = .{
+            .shape_host = shape_host,
+            .api_host = api_host,
+            .ws_host = ws_host,
+            .origin = origin,
+        };
         self.* = .{
             .allocator = allocator,
             .cfg = .{
@@ -676,14 +698,16 @@ pub const RealTransport = struct {
 
         const job = try self.allocator.create(WriteJob);
         errdefer self.allocator.destroy(job);
+        const action_owned = try self.allocator.dupe(u8, action);
+        errdefer self.allocator.free(action_owned);
+        const payload_owned = try self.allocator.dupe(u8, payload_json);
+        errdefer self.allocator.free(payload_owned);
         job.* = .{
             .parent = self,
             .future = fut,
-            .action = try self.allocator.dupe(u8, action),
-            .payload = try self.allocator.dupe(u8, payload_json),
+            .action = action_owned,
+            .payload = payload_owned,
         };
-        errdefer self.allocator.free(job.action);
-        errdefer self.allocator.free(job.payload);
 
         // One-shot worker. We keep the join handle so destroy() can
         // block on in-flight writes; acks arrive via the pending queue.
@@ -741,6 +765,7 @@ pub const RealTransport = struct {
             return error.TransportError;
         };
         worker.client = client;
+        errdefer if (worker.client) |*c| c.deinit();
 
         worker.thread = try std.Thread.spawn(.{}, ptyReaderThread, .{worker});
 
@@ -749,11 +774,12 @@ pub const RealTransport = struct {
             self.mutex.unlock();
             worker.cancel.store(true, .release);
             worker.write_mutex.lock();
-            if (worker.client) |*c| c.close(1000, "attach-failed") catch {};
+            if (worker.client) |*c| {
+                c.close(1000, "attach-failed") catch {};
+                c.interrupt();
+            }
             worker.write_mutex.unlock();
             if (worker.thread) |t| t.join();
-            if (worker.client) |*c| c.deinit();
-            self.allocator.destroy(worker);
             return err;
         };
         self.mutex.unlock();
@@ -837,7 +863,10 @@ pub const RealTransport = struct {
         self.mutex.unlock();
 
         // Send a close frame so the reader thread exits cleanly.
-        if (worker.client) |*c| c.close(1000, "detach") catch {};
+        if (worker.client) |*c| {
+            c.close(1000, "detach") catch {};
+            c.interrupt();
+        }
         worker.write_mutex.unlock();
         if (worker.thread) |t| t.join();
         if (worker.client) |*c| c.deinit();
@@ -851,7 +880,9 @@ pub const RealTransport = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         for (self.pending.items) |d| {
-            try out.append(allocator, try dupDelta(allocator, d));
+            const duped = try dupDelta(allocator, d);
+            errdefer freeDelta(allocator, duped);
+            try out.append(allocator, duped);
             freeDelta(self.allocator, d);
         }
         self.pending.clearRetainingCapacity();
@@ -880,7 +911,10 @@ pub const RealTransport = struct {
         for (ptys) |w| {
             w.cancel.store(true, .release);
             w.write_mutex.lock();
-            if (w.client) |*c| c.close(1000, "shutdown") catch {};
+            if (w.client) |*c| {
+                c.close(1000, "shutdown") catch {};
+                c.interrupt();
+            }
             w.write_mutex.unlock();
         }
         for (subs) |w| {
@@ -1165,27 +1199,40 @@ fn electricSink() struct {
 
 fn sinkUpsert(ctx: ?*anyopaque, shape: []const u8, pk: []const u8, row_json: []const u8) anyerror!void {
     const self: *RealTransport = @ptrCast(@alignCast(ctx.?));
+    const shape_owned = try self.allocator.dupe(u8, shape);
+    errdefer self.allocator.free(shape_owned);
+    const pk_owned = try self.allocator.dupe(u8, pk);
+    errdefer self.allocator.free(pk_owned);
+    const row_json_owned = try self.allocator.dupe(u8, row_json);
     self.enqueueDelta(.{ .row_upsert = .{
-        .shape = try self.allocator.dupe(u8, shape),
-        .pk = try self.allocator.dupe(u8, pk),
-        .row_json = try self.allocator.dupe(u8, row_json),
+        .shape = shape_owned,
+        .pk = pk_owned,
+        .row_json = row_json_owned,
     } });
 }
 
 fn sinkDelete(ctx: ?*anyopaque, shape: []const u8, pk: []const u8) anyerror!void {
     const self: *RealTransport = @ptrCast(@alignCast(ctx.?));
+    const shape_owned = try self.allocator.dupe(u8, shape);
+    errdefer self.allocator.free(shape_owned);
+    const pk_owned = try self.allocator.dupe(u8, pk);
     self.enqueueDelta(.{ .row_delete = .{
-        .shape = try self.allocator.dupe(u8, shape),
-        .pk = try self.allocator.dupe(u8, pk),
+        .shape = shape_owned,
+        .pk = pk_owned,
     } });
 }
 
 fn sinkUpToDate(ctx: ?*anyopaque, shape: []const u8, handle: []const u8, offset: []const u8) anyerror!void {
     const self: *RealTransport = @ptrCast(@alignCast(ctx.?));
+    const shape_owned = try self.allocator.dupe(u8, shape);
+    errdefer self.allocator.free(shape_owned);
+    const handle_owned = try self.allocator.dupe(u8, handle);
+    errdefer self.allocator.free(handle_owned);
+    const offset_owned = try self.allocator.dupe(u8, offset);
     self.enqueueDelta(.{ .up_to_date = .{
-        .shape = try self.allocator.dupe(u8, shape),
-        .handle = try self.allocator.dupe(u8, handle),
-        .offset = try self.allocator.dupe(u8, offset),
+        .shape = shape_owned,
+        .handle = handle_owned,
+        .offset = offset_owned,
     } });
 }
 
