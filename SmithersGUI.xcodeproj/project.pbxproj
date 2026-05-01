@@ -78,7 +78,6 @@
 		2FBE5415E440AA113DBD2FB9 /* PropValueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D71A2BBEC05A7C0C90B54AAC /* PropValueView.swift */; };
 		2FD9807F5B03BBAC92D777E5 /* RunsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE85F5E8BD1A8BDBC986ADDF /* RunsStore.swift */; };
 		314D57798452AF9D5B3DD6C2 /* SmithersiOSE2EWorkflowRunsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CEC21FB9F82EF9093C49381 /* SmithersiOSE2EWorkflowRunsTests.swift */; };
-		3152F974ACA8F9BA0EB0C9FD /* smithers-session-connect in Resources */ = {isa = PBXBuildFile; fileRef = 533F4AB26E537663EF3A2651 /* smithers-session-connect */; };
 		317B0AA5863A99D5238A929A /* WorkspaceContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F66E5ACCD5C8094B0D436FC /* WorkspaceContentView.swift */; };
 		31EA169BB4265571391A1C44 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D53762A177396CE80146A3 /* AppLogger.swift */; };
 		3220DB1571F560778DA8DF52 /* RunsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86860F7DE886872C26CD5EC7 /* RunsView.swift */; };
@@ -306,7 +305,6 @@
 		C59E7419FE6B68E9868414BD /* SmithersiOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5A834B0570CB7DA9F79CC1 /* SmithersiOSTests.swift */; };
 		C647BE4919B51A79201963CA /* ShareExtensionContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E9E026913BA6A88CD269CD2 /* ShareExtensionContent.swift */; };
 		C6C6691917671B73639797EF /* SmithersiOSE2ELaunchEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D173AD5348D079CA164BDF2B /* SmithersiOSE2ELaunchEnvironment.swift */; };
-		C70E6795C96C77B4D89284BB /* smithers-session-daemon in Resources */ = {isa = PBXBuildFile; fileRef = 9CC400ED426CD58685D6829D /* smithers-session-daemon */; };
 		C77DCB92FE285167987BF2E3 /* DevToolsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 341B24993AA5E739974E772E /* DevToolsModels.swift */; };
 		C7E61976FA615B94C40C72F5 /* IOSSessionWipeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80CF0A9005D6FBD30E30DE2B /* IOSSessionWipeCoordinator.swift */; };
 		C82D0E7CEDEF9176450F381E /* ElapsedTimeFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44A7C3FA9E8838034A9AC4BF /* ElapsedTimeFormatTests.swift */; };
@@ -578,7 +576,6 @@
 		500357187567D3E3CB776BA8 /* SessionStoreForkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStoreForkTests.swift; sourceTree = "<group>"; };
 		5164C3322610BAC5B8BB2D6E /* AuthPKCETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthPKCETests.swift; sourceTree = "<group>"; };
 		5251EE3D835C95BD4997C3AB /* StoreSoakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreSoakTests.swift; sourceTree = "<group>"; };
-		533F4AB26E537663EF3A2651 /* smithers-session-connect */ = {isa = PBXFileReference; path = "smithers-session-connect"; sourceTree = "<group>"; };
 		53EAE77A0F67D491F9077CF7 /* SmithersShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SmithersShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		54C681EB315AC8386B88EC07 /* SmithersiOSE2EAuthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersiOSE2EAuthTests.swift; sourceTree = "<group>"; };
 		54DB3A31C9ADCFACC354591E /* TerminalIOSGhostty.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIOSGhostty.swift; sourceTree = "<group>"; };
@@ -684,7 +681,6 @@
 		9945DA4870C235211A03DE44 /* SmithersMacOSE2EApprovalsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersMacOSE2EApprovalsTests.swift; sourceTree = "<group>"; };
 		994FA011858E6B274E9C2B16 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		9BA8CEEE1665A6C252AFDA54 /* SmithersiOSE2EDevtoolsSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersiOSE2EDevtoolsSnapshotTests.swift; sourceTree = "<group>"; };
-		9CC400ED426CD58685D6829D /* smithers-session-daemon */ = {isa = PBXFileReference; path = "smithers-session-daemon"; sourceTree = "<group>"; };
 		9D77B9B353FE42EF04A6B523 /* DiffTabTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffTabTests.swift; sourceTree = "<group>"; };
 		9E03CD76EB5C97A41BFB26A4 /* KeyboardShortcutSettingsFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutSettingsFileStore.swift; sourceTree = "<group>"; };
 		9E1D6ACA47A3D0DFB1EAD8EA /* Smithers.ExternalAgentSessionWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.ExternalAgentSessionWatcher.swift; sourceTree = "<group>"; };
@@ -978,16 +974,6 @@
 			path = Devtools;
 			sourceTree = "<group>";
 		};
-		2033D1200CB02153BC69C5A0 /* bin */ = {
-			isa = PBXGroup;
-			children = (
-				533F4AB26E537663EF3A2651 /* smithers-session-connect */,
-				9CC400ED426CD58685D6829D /* smithers-session-daemon */,
-			);
-			name = bin;
-			path = "libsmithers/zig-out/bin";
-			sourceTree = "<group>";
-		};
 		2BF04BB923FD90F762090558 /* Repos */ = {
 			isa = PBXGroup;
 			children = (
@@ -1038,6 +1024,14 @@
 				EBB594D9BAD977BDAF2F225D /* WorkflowRunsListView.swift */,
 			);
 			path = WorkflowRuns;
+			sourceTree = "<group>";
+		};
+		32FFD909F07BD90ADCDF61B2 /* smithers-session-daemon */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = "smithers-session-daemon";
+			path = "libsmithers/zig-out/bin/smithers-session-daemon";
 			sourceTree = "<group>";
 		};
 		37B65386171399EC85AE41B8 /* SmithersE2ESupport */ = {
@@ -1117,6 +1111,14 @@
 			);
 			name = SmithersAuth;
 			path = Shared/Sources/SmithersAuth;
+			sourceTree = "<group>";
+		};
+		5D5EDA11A5E096B5BBD877FF /* smithers-session-connect */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = "smithers-session-connect";
+			path = "libsmithers/zig-out/bin/smithers-session-connect";
 			sourceTree = "<group>";
 		};
 		7259F18023E7ECE2BAB8402E /* Runtime */ = {
@@ -1247,10 +1249,11 @@
 				01BCA6B4521AB9972F0876DC /* WorkspaceSurfaceModels.swift */,
 				BC1B5A62ACE4611C314CF4F1 /* WorkspacesView.swift */,
 				B311900C9E835BEA4E03432B /* WorkspaceSwitcherView.swift */,
-				2033D1200CB02153BC69C5A0 /* bin */,
 				EABE5EA80FD4F092DEF0DEC3 /* RunInspector */,
 				7259F18023E7ECE2BAB8402E /* Runtime */,
 				A6BD47AB2B98486F5A709A3A /* Smithers */,
+				5D5EDA11A5E096B5BBD877FF /* smithers-session-connect */,
+				32FFD909F07BD90ADCDF61B2 /* smithers-session-daemon */,
 				445B471E4991A03824B12753 /* SmithersAuth */,
 				37B65386171399EC85AE41B8 /* SmithersE2ESupport */,
 				A3F4F05D1EB3ABEEC4AD4607 /* SmithersGUITests */,
@@ -1800,8 +1803,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				DE92E738DC18D9318E3821DC /* MarkdownShell in Resources */,
-				3152F974ACA8F9BA0EB0C9FD /* smithers-session-connect in Resources */,
-				C70E6795C96C77B4D89284BB /* smithers-session-daemon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

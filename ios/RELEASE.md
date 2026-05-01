@@ -303,6 +303,46 @@ Things go wrong. Order of escalation:
 
 ---
 
+
+## Dry-run and environment matrix (ticket 0193)
+
+`ios/scripts/build-and-upload-testflight.sh` has two modes:
+
+- Upload mode (default): archive + export + App Store Connect upload.
+- Dry-run mode (`SKIP_UPLOAD=1`): archive + export only.
+
+Required variables for both modes:
+
+- `DEVELOPMENT_TEAM`
+- `PROVISIONING_PROFILE_SPECIFIER`
+- `SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER`
+
+Required only when upload is enabled:
+
+- `APP_STORE_CONNECT_API_KEY_ID`
+- `APP_STORE_CONNECT_ISSUER_ID`
+- `APP_STORE_CONNECT_API_KEY_P8`
+
+Profile preflight before archive/export:
+
+- App profile must exist at `~/Library/MobileDevice/Provisioning Profiles/smithers-ios-appstore.mobileprovision` and match `com.smithers.ios`.
+- Share-extension profile must exist at `~/Library/MobileDevice/Provisioning Profiles/smithers-ios-shareext-appstore.mobileprovision` and match `com.smithers.ios.ShareExtension`.
+
+Local dry-run command:
+
+```sh
+export DEVELOPMENT_TEAM="ABCDE12345"
+export PROVISIONING_PROFILE_SPECIFIER="Smithers iOS App Store"
+export SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER="Smithers iOS Share   Extension App Store"
+SKIP_UPLOAD=1 ./ios/scripts/build-and-upload-testflight.sh
+```
+
+Expected dry-run behavior:
+
+- `APP_STORE_CONNECT_*` secrets are not required.
+- The script still performs signing/profile preflight and archive/export.
+- Artifacts are produced under `build/ios-archive/` (`.xcarchive`, `.ipa`, `ExportOptions.plist`).
+
 ## Out of scope for this ticket
 
 - Universal links are not production-ready yet. The entitlement contains

@@ -244,6 +244,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Upload dSYM and archive diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmithersiOS-dsym-${{ steps.meta.outputs.marketing_version }}-${{ steps.meta.outputs.build_number }}
+          path: |
+            build/ios-archive/*.xcarchive/dSYMs/**/*.dSYM
+            build/ios-archive/*.xcarchive/BCSymbolMaps/*
+            build/ios-archive/*.xcarchive/Info.plist
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Clean up keychain
         if: always()
         run: |
