@@ -2,6 +2,7 @@
 import Foundation
 #if canImport(SmithersAuth)
 import SmithersAuth
+#endif
 
 final class ClosureBackedAuthenticatedTokenManager: AuthenticatedHTTPTokenManaging {
     private let bearerProvider: @Sendable () -> String?
@@ -27,5 +28,4 @@ final class ClosureBackedAuthenticatedTokenManager: AuthenticatedHTTPTokenManagi
         throw AuthenticatedHTTPClientError.authExpired
     }
 }
-#endif
 #endif

@@ -518,6 +518,7 @@ targets:
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CSmithersKit"
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
   SmithersiOSUITests:
     type: bundle.ui-testing

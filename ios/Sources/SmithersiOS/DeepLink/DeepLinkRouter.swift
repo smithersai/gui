@@ -36,6 +36,10 @@ final class DeepLinkRouter: ObservableObject {
         route = nil
     }
 
+    func clearPendingRoute() {
+        route = nil
+    }
+
     static func parse(_ url: URL) -> Route {
         guard
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false),

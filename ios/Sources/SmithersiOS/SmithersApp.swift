@@ -149,7 +149,7 @@ struct SmithersiOSApp: App {
             store = KeychainTokenStore(service: "com.smithers.oauth2.ios", account: "default")
         }
 
-        let manager = TokenManager(client: client, store: store)
+        let manager = TokenManager(client: client, store: store, wipeHandler: IOSSessionWipeCoordinator.shared)
         let startupSessionValidator: (() async -> AccessTokenValidationResult)?
         if e2e != nil {
             startupSessionValidator = {

@@ -113,7 +113,7 @@ public final class SmithersRuntime {
     // Test-only hook: keep Swift runtime tests on the deterministic fake
     // transport while production runtime sessions use the real transport.
     internal func _useFakeTransportForTest() {
-        #if canImport(CSmithersKit)
+        #if canImport(CSmithersKit) && !os(iOS)
         if let h = handle {
             smithers_core_use_fake_transport_for_test(UnsafeMutableRawPointer(h))
         }

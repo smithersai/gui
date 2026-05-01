@@ -872,7 +872,7 @@ struct WorkflowRunsRepoRef: Hashable {
     }
 }
 
-private enum WorkflowRunsError: LocalizedError {
+enum WorkflowRunsError: LocalizedError {
     case authExpired
     case backendUnavailable(String)
     case invalidResponse

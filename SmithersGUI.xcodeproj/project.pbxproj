@@ -145,6 +145,7 @@
 		55A99525A296CED24FB31A83 /* SmithersStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FBA54F09EE30104F24D2300 /* SmithersStore.swift */; };
 		55E1E8B36E4BAD6801B95648 /* UniformTypeIdentifiers.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 81CEF23824548CF2C0EE60C2 /* UniformTypeIdentifiers.framework */; };
 		5680905B32956671597F08BD /* Smithers.App.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF4E8F605DBC419D2A624428 /* Smithers.App.swift */; };
+		56DC8EA90AE0D0256857531F /* IOSSessionWipeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC601F6D21B3934B50D709F5 /* IOSSessionWipeCoordinatorTests.swift */; };
 		5750590ADDF24188638BD7A1 /* TriggersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A868A2AF0809ADB2185019 /* TriggersView.swift */; };
 		5765FF499504654B2D6A6881 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2DB5308B9A8B5B9B8441D086 /* CoreGraphics.framework */; };
 		578B9D40F416EB1F47C04308 /* SessionControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94C58D93AD5778981A7FEF5A /* SessionControllerTests.swift */; };
@@ -307,6 +308,7 @@
 		C6C6691917671B73639797EF /* SmithersiOSE2ELaunchEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D173AD5348D079CA164BDF2B /* SmithersiOSE2ELaunchEnvironment.swift */; };
 		C70E6795C96C77B4D89284BB /* smithers-session-daemon in Resources */ = {isa = PBXBuildFile; fileRef = 9CC400ED426CD58685D6829D /* smithers-session-daemon */; };
 		C77DCB92FE285167987BF2E3 /* DevToolsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 341B24993AA5E739974E772E /* DevToolsModels.swift */; };
+		C7E61976FA615B94C40C72F5 /* IOSSessionWipeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80CF0A9005D6FBD30E30DE2B /* IOSSessionWipeCoordinator.swift */; };
 		C82D0E7CEDEF9176450F381E /* ElapsedTimeFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44A7C3FA9E8838034A9AC4BF /* ElapsedTimeFormatTests.swift */; };
 		C88809DDBC8E02B23566F1A6 /* CommandPaletteKeyboardE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C8CA1A4C5DB368B70B3673 /* CommandPaletteKeyboardE2ETests.swift */; };
 		C8B9A0C70EF66B73BB63F394 /* DevTelemetryRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAE122E534B1A678B58F8170 /* DevTelemetryRecorder.swift */; };
@@ -388,6 +390,7 @@
 		FB2AA3B6AA630AFC24868EF2 /* ChatBlockRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C57F4D5216AAC8AE0F989981 /* ChatBlockRendererTests.swift */; };
 		FBADE2DA9F35C6414FD7BC2F /* DevToolsCLITransportReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E2DC792FB1FDDAA10B2FC1C /* DevToolsCLITransportReconnectTests.swift */; };
 		FBBAF1CD2FF2F9EF6F10AE9C /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5999F7A627E65CF8A0A39E3C /* UIKit.framework */; };
+		FC0A3C1701215C4E0B77F907 /* ClosureBackedAuthenticatedTokenManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D8767CE79A89D46C9349303 /* ClosureBackedAuthenticatedTokenManager.swift */; };
 		FD6CF3EEBBC617553FA30DBA /* CommandPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44DCC2CE3160AC54559D9346 /* CommandPaletteView.swift */; };
 		FDCDEEB4AB0A568717DA7821 /* WorkspacesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1B5A62ACE4611C314CF4F1 /* WorkspacesView.swift */; };
 		FE48C49D525EED28A7DFD929 /* Smithers.SessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA1F8B36C5DA7B89C3E44678 /* Smithers.SessionController.swift */; };
@@ -479,6 +482,7 @@
 		08B28AB1F14E53BCC4D3374F /* TmuxControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TmuxControllerTests.swift; sourceTree = "<group>"; };
 		0BBE027F30551DD855DD47BB /* WorkspacesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacesStore.swift; sourceTree = "<group>"; };
 		0BC5ECBFE299F3693195E525 /* Smithers.ContentShell.macOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.ContentShell.macOS.swift; sourceTree = "<group>"; };
+		0D8767CE79A89D46C9349303 /* ClosureBackedAuthenticatedTokenManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClosureBackedAuthenticatedTokenManager.swift; sourceTree = "<group>"; };
 		0FFC144A0F70978565CA51EC /* NotificationPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPayloadTests.swift; sourceTree = "<group>"; };
 		10F823F3026A4A2F724105D8 /* OutputPendingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputPendingView.swift; sourceTree = "<group>"; };
 		12B6A0B98CFB227DDFE73E29 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
@@ -641,6 +645,7 @@
 		7D837C1D456F8A694724F5E1 /* NodeErrorBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeErrorBanner.swift; sourceTree = "<group>"; };
 		7F882EA0BF755DA40ACF0A4E /* DeveloperDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperDebugView.swift; sourceTree = "<group>"; };
 		7FA03F1D202CA23ABBF4363D /* AgentChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatView.swift; sourceTree = "<group>"; };
+		80CF0A9005D6FBD30E30DE2B /* IOSSessionWipeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSSessionWipeCoordinator.swift; sourceTree = "<group>"; };
 		8117F493078891E2442ED574 /* Smithers.Runtime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Smithers.Runtime.swift; sourceTree = "<group>"; };
 		818B0EC8B7F808D1C69E001B /* DevToolsSnapshotsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevToolsSnapshotsStore.swift; sourceTree = "<group>"; };
 		81B9D73F64443CB3B630CCFF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -724,6 +729,7 @@
 		BBF16A70921BB722E8920421 /* ElapsedTimeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElapsedTimeView.swift; sourceTree = "<group>"; };
 		BC1B5A62ACE4611C314CF4F1 /* WorkspacesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacesView.swift; sourceTree = "<group>"; };
 		BC3D379B8BFBB2BFAFB1E6E4 /* ChatBlockFilterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatBlockFilterTests.swift; sourceTree = "<group>"; };
+		BC601F6D21B3934B50D709F5 /* IOSSessionWipeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSSessionWipeCoordinatorTests.swift; sourceTree = "<group>"; };
 		BCC7E241B37104CAD6295A37 /* UnifiedDiffParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDiffParserTests.swift; sourceTree = "<group>"; };
 		BD91D5626780ABF64B661114 /* PKCE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PKCE.swift; sourceTree = "<group>"; };
 		BE0A6D66417713AAA50585C6 /* SmithersiOSE2EFeatureFlagsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmithersiOSE2EFeatureFlagsTests.swift; sourceTree = "<group>"; };
@@ -1265,6 +1271,7 @@
 		A1D898262B8FEA123234560B /* Auth */ = {
 			isa = PBXGroup;
 			children = (
+				0D8767CE79A89D46C9349303 /* ClosureBackedAuthenticatedTokenManager.swift */,
 				2D89B976D4AAC991AFB20CF1 /* iOSPresenter.swift */,
 			);
 			path = Auth;
@@ -1421,6 +1428,7 @@
 				8AB3D364252FCCA734B7903C /* DevtoolsPanelViewTests.swift */,
 				B27C0D5350844CDC77AEFA3D /* DiagnosticsBundleTests.swift */,
 				733CF01B08DEDF4978358D24 /* FeatureFlagGateTests.swift */,
+				BC601F6D21B3934B50D709F5 /* IOSSessionWipeCoordinatorTests.swift */,
 				0FFC144A0F70978565CA51EC /* NotificationPayloadTests.swift */,
 				EC29902ACCB06233A946DAF5 /* PlueEndpointTests.swift */,
 				3107575333990B3F3A4B2C15 /* RepoSelectorSheetTests.swift */,
@@ -1450,6 +1458,7 @@
 				DCE48BE764F05A28835E3F82 /* Assets.xcassets */,
 				76291B2B95D8096CA0F1EACF /* ContentShell.iOS.swift */,
 				D94EBDF739F3D0DEE76E44F3 /* FeatureFlagGate.iOS.swift */,
+				80CF0A9005D6FBD30E30DE2B /* IOSSessionWipeCoordinator.swift */,
 				B42BE3C8854A0496851F93A2 /* PrivacyInfo.xcprivacy */,
 				88FDA11487C0DC3C72E580E4 /* SmithersApp.swift */,
 				B4584D00DE5ED9031F7FF62D /* Approvals */,
@@ -1841,6 +1850,7 @@
 				8299BFF07D0828133966D7FC /* AuthViewModel.swift in Sources */,
 				86BC10D63AFB3592400431F9 /* AuthenticatedHTTPClient.swift in Sources */,
 				2F0028DC33327925E407D737 /* AuthorizeSessionDriver.swift in Sources */,
+				FC0A3C1701215C4E0B77F907 /* ClosureBackedAuthenticatedTokenManager.swift in Sources */,
 				4E105862CB93CA8F68C6C89D /* ContentShell.iOS.swift in Sources */,
 				F1B30250CD462C54EC104897 /* DeepLinkRouter.swift in Sources */,
 				FFD9BB9F2C478F4F8349E037 /* DevToolsSnapshotsStore.swift in Sources */,
@@ -1849,6 +1859,7 @@
 				E05A88FCD7AEBAFB65C3A359 /* E2EEnvironment.swift in Sources */,
 				2F7568CEAA2C5C6E9A1B9CE6 /* FeatureFlagGate.iOS.swift in Sources */,
 				74848C6707F8A169CE630DD4 /* FeatureFlagsClient.swift in Sources */,
+				C7E61976FA615B94C40C72F5 /* IOSSessionWipeCoordinator.swift in Sources */,
 				197CEEE075CD64E2F5A6589B /* OAuth2Client.swift in Sources */,
 				0C31B3896E81F7DB022FA11D /* OnboardingCoordinator.swift in Sources */,
 				3D0836D34216C9FB6AF91EBF /* PKCE.swift in Sources */,
@@ -2213,6 +2224,7 @@
 				B87BDBD9F4C630DD4595755C /* DevtoolsPanelViewTests.swift in Sources */,
 				AA59E50BF1CFC6B5DFC6D3D6 /* DiagnosticsBundleTests.swift in Sources */,
 				C372F7AB74F4733532B0B528 /* FeatureFlagGateTests.swift in Sources */,
+				56DC8EA90AE0D0256857531F /* IOSSessionWipeCoordinatorTests.swift in Sources */,
 				4774CE4C7AFB5C0FD3A09147 /* NotificationPayloadTests.swift in Sources */,
 				5D0600F854DA580AB62CC1DE /* PlueEndpointTests.swift in Sources */,
 				A2C6B55BD43964869498A0BD /* RepoSelectorSheetTests.swift in Sources */,
@@ -2567,6 +2579,7 @@
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/CSmithersKit";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SmithersiOS.app/SmithersiOS";
 				TEST_TARGET_NAME = SmithersiOS;
@@ -2686,6 +2699,7 @@
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/CSmithersKit";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SmithersiOS.app/SmithersiOS";
 				TEST_TARGET_NAME = SmithersiOS;

@@ -1,17 +1,64 @@
 // WorkspaceSessionPresenceProbe.swift — lightweight HTTP probe for a
 // single workspace_sessions row.
 //
-// The iOS terminal placeholder uses this to decide whether the terminal
-// surface should mount for a seeded workspace session in E2E mode. The
-// input session id still comes from the harness environment, but the
-// source of truth for mount vs empty state is the backend response from
-// `GET /api/repos/{owner}/{repo}/workspace/sessions/{id}`.
+// Production iOS workspace detail uses this probe to determine whether a
+// terminal can attach for the selected workspace/session context sourced
+// from backend workspace data. E2E can still opt into seeded env vars as
+// an explicit shortcut, but probe behavior and route contract are the
+// same for production and tests.
 
 import Foundation
 
 public enum RemoteWorkspaceSessionPresence: Equatable {
     case present
     case missing
+}
+
+public enum WorkspaceSessionRoutes {
+    /// Canonical workspace-session REST path used by iOS probe and tests.
+    public static func sessionURL(
+        baseURL: URL,
+        repoOwner: String,
+        repoName: String,
+        sessionID: String
+    ) -> URL {
+        baseURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("repos")
+            .appendingPathComponent(repoOwner)
+            .appendingPathComponent(repoName)
+            .appendingPathComponent("workspace")
+            .appendingPathComponent("sessions")
+            .appendingPathComponent(sessionID)
+    }
+
+    /// Canonical terminal websocket fallback route when backend does not
+    /// return a concrete attach URL.
+    public static func fallbackTerminalWebSocketURL(
+        baseURL: URL,
+        repoOwner: String,
+        repoName: String,
+        sessionID: String
+    ) -> URL {
+        var components = URLComponents(
+            url: sessionURL(
+                baseURL: baseURL,
+                repoOwner: repoOwner,
+                repoName: repoName,
+                sessionID: sessionID
+            ).appendingPathComponent("terminal"),
+            resolvingAgainstBaseURL: false
+        )
+        switch components?.scheme?.lowercased() {
+        case "http":
+            components?.scheme = "ws"
+        case "https":
+            components?.scheme = "wss"
+        default:
+            break
+        }
+        return components?.url ?? baseURL
+    }
 }
 
 public protocol RemoteWorkspaceSessionPresenceProbe: Sendable {
@@ -53,7 +100,8 @@ public final class URLSessionRemoteWorkspaceSessionPresenceProbe: RemoteWorkspac
             throw RemoteWorkspaceSessionPresenceError.authExpired
         }
 
-        var request = URLRequest(url: workspaceSessionURL(
+        var request = URLRequest(url: WorkspaceSessionRoutes.sessionURL(
+            baseURL: baseURL,
             repoOwner: repoOwner,
             repoName: repoName,
             sessionID: sessionID
@@ -80,20 +128,5 @@ public final class URLSessionRemoteWorkspaceSessionPresenceProbe: RemoteWorkspac
         } catch {
             throw RemoteWorkspaceSessionPresenceError.backendUnavailable("\(error)")
         }
-    }
-
-    private func workspaceSessionURL(
-        repoOwner: String,
-        repoName: String,
-        sessionID: String
-    ) -> URL {
-        baseURL
-            .appendingPathComponent("api")
-            .appendingPathComponent("repos")
-            .appendingPathComponent(repoOwner)
-            .appendingPathComponent(repoName)
-            .appendingPathComponent("workspace")
-            .appendingPathComponent("sessions")
-            .appendingPathComponent(sessionID)
     }
 }

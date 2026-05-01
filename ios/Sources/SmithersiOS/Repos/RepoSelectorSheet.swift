@@ -403,7 +403,7 @@ private struct RepoSelectorAPIErrorPayload: Decodable {
     let message: String?
 }
 
-private enum UserReposError: LocalizedError {
+enum UserReposError: LocalizedError {
     case authExpired
     case routeUnavailable
     case backendUnavailable(String)

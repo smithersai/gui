@@ -88,7 +88,7 @@ final class IOSFeatureFlagGateTests: XCTestCase {
 
     func test_workspace_detail_gate_shows_kill_switch_empty_state_when_seeded_terminal_disabled() {
         let gate = IOSWorkspaceDetailSurfaceGate(
-            seededSessionID: "seeded-session",
+            selectedSessionID: "seeded-session",
             isRemoteSandboxEnabled: false,
             isElectricClientEnabled: true,
             isApprovalsFlowEnabled: true
@@ -100,7 +100,7 @@ final class IOSFeatureFlagGateTests: XCTestCase {
 
     func test_workspace_detail_gate_hides_agent_chat_when_electric_client_disabled() {
         let gate = IOSWorkspaceDetailSurfaceGate(
-            seededSessionID: nil,
+            selectedSessionID: nil,
             isRemoteSandboxEnabled: true,
             isElectricClientEnabled: false,
             isApprovalsFlowEnabled: true
@@ -112,7 +112,7 @@ final class IOSFeatureFlagGateTests: XCTestCase {
 
     func test_workspace_detail_gate_hides_agent_chat_when_approvals_flow_disabled() {
         let gate = IOSWorkspaceDetailSurfaceGate(
-            seededSessionID: nil,
+            selectedSessionID: nil,
             isRemoteSandboxEnabled: true,
             isElectricClientEnabled: true,
             isApprovalsFlowEnabled: false
