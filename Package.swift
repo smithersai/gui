@@ -105,8 +105,11 @@ let package = Package(
                 .unsafeFlags(
                     [
                         "-Lghostty/macos/GhosttyKit.xcframework/macos-arm64",
+                        "-L../../ghostty/macos/GhosttyKit.xcframework/macos-arm64",
                         "-Llibsmithers/zig-out/lib",
+                        "-L../../libsmithers/zig-out/lib",
                         "-Llibsmithers",
+                        "-L../../libsmithers",
                     ],
                     .when(platforms: [.macOS])
                 ),
@@ -155,6 +158,7 @@ let package = Package(
                 .unsafeFlags(
                     [
                         "-Llibsmithers/zig-out/lib",
+                        "-L../../libsmithers/zig-out/lib",
                         "-lsmithers",
                     ],
                     .when(platforms: [.macOS])
