@@ -1,6 +1,39 @@
 [submodule "ghostty"]
 	path = ghostty
 	url = https://github.com/ghostty-org/ghostty.git
+[submodule "context/GitPython"]
+	path = context/GitPython
+	url = https://github.com/gitpython-developers/GitPython.git
+[submodule "context/anthropic-sdk-python"]
+	path = context/anthropic-sdk-python
+	url = https://github.com/anthropics/anthropic-sdk-python.git
+[submodule "context/beautifulsoup"]
+	path = context/beautifulsoup
+	url = https://github.com/tec-cloud/beautifulsoup.git
+[submodule "context/fastapi"]
+	path = context/fastapi
+	url = https://github.com/fastapi/fastapi.git
+[submodule "context/httpx"]
+	path = context/httpx
+	url = https://github.com/encode/httpx.git
 [submodule "context/pydantic-ai"]
 	path = context/pydantic-ai
-	url = git@github.com:pydantic/pydantic-ai.git
+	url = https://github.com/pydantic/pydantic-ai.git
+[submodule "context/pytest"]
+	path = context/pytest
+	url = https://github.com/pytest-dev/pytest.git
+[submodule "context/pytest-asyncio"]
+	path = context/pytest-asyncio
+	url = https://github.com/pytest-dev/pytest-asyncio.git
+[submodule "context/sse-starlette"]
+	path = context/sse-starlette
+	url = https://github.com/sysid/sse-starlette.git
+[submodule "context/strands-agents"]
+	path = context/strands-agents
+	url = https://github.com/strands-agents/sdk-python.git
+[submodule "context/strands-agents-tools"]
+	path = context/strands-agents-tools
+	url = https://github.com/strands-agents/tools.git
+[submodule "context/uvicorn"]
+	path = context/uvicorn
+	url = https://github.com/encode/uvicorn.git

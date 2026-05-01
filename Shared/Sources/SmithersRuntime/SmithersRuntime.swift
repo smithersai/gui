@@ -462,29 +462,26 @@ fileprivate final class ProviderBox {
     }
 
     func updateCredentials(_ creds: SmithersCredentials) -> smithers_credentials_s {
-        replaceCString(&bearerCStr, with: creds.bearer)
-        if let refreshToken = creds.refreshToken {
-            replaceCString(&refreshCStr, with: refreshToken)
-        } else {
-            refreshCStr?.deallocate()
-            refreshCStr = nil
-        }
+        bearerCStr?.deallocate()
+        bearerCStr = makeCString(creds.bearer)
+
+        refreshCStr?.deallocate()
+        refreshCStr = creds.refreshToken.map { makeCString($0) }
 
         return smithers_credentials_s(
             bearer: UnsafePointer(bearerCStr),
             expires_unix_ms: Int64((creds.expiresAt?.timeIntervalSince1970 ?? 0) * 1000),
-            refresh_token: UnsafePointer(refreshCStr)
+            refresh_token: refreshCStr.map { UnsafePointer($0) }
         )
     }
 
-    private func replaceCString(_ slot: inout UnsafeMutablePointer<CChar>?, with value: String) {
-        slot?.deallocate()
+    private func makeCString(_ value: String) -> UnsafeMutablePointer<CChar> {
         let cString = value.utf8CString
         let pointer = UnsafeMutablePointer<CChar>.allocate(capacity: cString.count)
         cString.withUnsafeBufferPointer { buffer in
             pointer.initialize(from: buffer.baseAddress!, count: buffer.count)
         }
-        slot = pointer
+        return pointer
     }
 }
 
