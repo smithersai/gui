@@ -1,20 +1,32 @@
 import XCTest
 
 class SmithersGUIUITestCase: XCTestCase {
-    private static let defaultWorkspacePath: String = {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .path
-    }()
-
     var app: XCUIApplication!
+    var workspacePath: String!
     var launchArguments: [String] { ["--uitesting"] }
     var launchEnvironmentOverrides: [String: String] { [:] }
 
+    static func makeTempWorkspace() -> String {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try! FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+
+        let git = URL(fileURLWithPath: "/usr/bin/git")
+        _ = try? Process.run(git, arguments: ["-C", tmp.path, "init"])
+        _ = try? Process.run(git, arguments: ["-C", tmp.path, "config", "user.email", "uitests@smithers.local"])
+        _ = try? Process.run(git, arguments: ["-C", tmp.path, "config", "user.name", "Smithers UI Tests"])
+
+        let readme = tmp.appendingPathComponent("README.md")
+        try? "# Smithers UI Test Workspace\n".write(to: readme, atomically: true, encoding: .utf8)
+        _ = try? Process.run(git, arguments: ["-C", tmp.path, "add", "."])
+        _ = try? Process.run(git, arguments: ["-C", tmp.path, "commit", "-m", "init"])
+
+        return tmp.path
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
+        workspacePath = Self.makeTempWorkspace()
 
         // Clear saved application state to prevent crash-recovery dialogs
         let savedStateDir = FileManager.default.homeDirectoryForCurrentUser
@@ -26,7 +38,7 @@ class SmithersGUIUITestCase: XCTestCase {
         var launchEnvironment: [String: String] = [
             "SMITHERS_GUI_UITEST": "1",
             "SMITHERS_GUI_DISABLE_ANIMATIONS": "1",
-            "SMITHERS_OPEN_WORKSPACE": Self.defaultWorkspacePath,
+            "SMITHERS_OPEN_WORKSPACE": workspacePath,
         ]
         launchEnvironment.merge(launchEnvironmentOverrides) { _, new in new }
         app.launchEnvironment = launchEnvironment
@@ -44,6 +56,10 @@ class SmithersGUIUITestCase: XCTestCase {
     override func tearDownWithError() throws {
         app?.terminate()
         app = nil
+        if let workspacePath {
+            try? FileManager.default.removeItem(atPath: workspacePath)
+        }
+        workspacePath = nil
     }
 
     func element(_ identifier: String) -> XCUIElement {

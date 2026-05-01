@@ -17,6 +17,7 @@ pub const Error = error{
 
     AbruptDisconnect,
     PeerClosed,
+    AlreadyClosed,
 
     OutOfMemory,
     IoError,

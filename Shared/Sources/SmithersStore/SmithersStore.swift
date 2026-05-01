@@ -58,6 +58,8 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
     private let eventQueue = DispatchQueue(label: "smithers.store.events", qos: .userInitiated)
     private let dispatchLock = NSLock()
     private var pendingEchoes: [UInt64: PendingEcho] = [:]
+    private var earlyWriteAcks: [UInt64: WriteAck] = [:]
+    private var earlyShapeEchoes: [UInt64: String] = [:]
 
     /// Outbound notifications so hosts (AppKit banners, iOS toasts) can react.
     public let authExpired = NotificationCenter()
@@ -69,6 +71,11 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
         var ackPayload: String?
         var didAck: Bool = false
         var didSeeShapeEcho: Bool = false
+    }
+
+    private struct WriteAck {
+        let payload: String
+        let ok: Bool
     }
 
     public convenience init(session: RuntimeSession) {
@@ -169,6 +176,7 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
 
         dispatchLock.lock()
         guard var pending = pendingEchoes[futureID] else {
+            earlyShapeEchoes[futureID] = shape
             dispatchLock.unlock()
             return
         }
@@ -202,6 +210,7 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
 
         dispatchLock.lock()
         guard var pending = pendingEchoes[fid] else {
+            earlyWriteAcks[fid] = WriteAck(payload: payload, ok: ok)
             dispatchLock.unlock()
             return
         }
@@ -224,19 +233,48 @@ public final class SmithersStore: SmithersStoreProtocol, @unchecked Sendable {
     public func dispatch(_ request: ActionRequest, echoTable: String?) async throws -> String? {
         let fid = try session.write(action: request.kind.rawValue, payloadJSON: request.payloadJSON)
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String?, Error>) in
-            dispatchLock.lock()
-            pendingEchoes[fid] = PendingEcho(table: echoTable, continuation: cont)
-            dispatchLock.unlock()
+            registerPendingWrite(futureID: fid, echoTable: echoTable, continuation: cont)
         }
     }
 
     public func dispatch(action: String, payloadJSON: String, echoTable: String?) async throws -> String? {
         let fid = try session.write(action: action, payloadJSON: payloadJSON)
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String?, Error>) in
-            dispatchLock.lock()
-            pendingEchoes[fid] = PendingEcho(table: echoTable, continuation: cont)
-            dispatchLock.unlock()
+            registerPendingWrite(futureID: fid, echoTable: echoTable, continuation: cont)
         }
+    }
+
+    private func registerPendingWrite(
+        futureID: UInt64,
+        echoTable: String?,
+        continuation: CheckedContinuation<String?, Error>
+    ) {
+        dispatchLock.lock()
+        var pending = PendingEcho(table: echoTable, continuation: continuation)
+
+        if let ack = earlyWriteAcks.removeValue(forKey: futureID) {
+            pending.ackPayload = ack.payload
+            pending.didAck = true
+            if echoTable == nil || !ack.ok {
+                dispatchLock.unlock()
+                continuation.resume(returning: ack.payload)
+                return
+            }
+        }
+
+        if let shape = earlyShapeEchoes[futureID], shape == echoTable {
+            earlyShapeEchoes.removeValue(forKey: futureID)
+            pending.didSeeShapeEcho = true
+            if pending.didAck {
+                let payload = pending.ackPayload
+                dispatchLock.unlock()
+                continuation.resume(returning: payload)
+                return
+            }
+        }
+
+        pendingEchoes[futureID] = pending
+        dispatchLock.unlock()
     }
 
     // MARK: - Sign-out

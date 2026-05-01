@@ -56,6 +56,7 @@ const Subscription = struct {
     transport_sub_id: u64,
     shape: schema.Shape,
     shape_name_owned: []u8,
+    params_json_owned: []u8,
 };
 
 const PtyAttachment = struct {
@@ -170,21 +171,24 @@ pub const Session = struct {
         const self = try a.create(Session);
         errdefer a.destroy(self);
 
-        const storage: ConfigStorage = .{
-            .engine_id = try a.dupe(u8, cfg_in.engine_id),
-            .base_url = try a.dupe(u8, cfg_in.base_url),
-            .shape_proxy_url = if (cfg_in.shape_proxy_url) |v| try a.dupe(u8, v) else null,
-            .ws_pty_url = if (cfg_in.ws_pty_url) |v| try a.dupe(u8, v) else null,
-            .cache_dir = if (cfg_in.cache_dir) |v| try a.dupe(u8, v) else null,
-        };
-        errdefer {
-            a.free(storage.engine_id);
-            a.free(storage.base_url);
-            if (storage.shape_proxy_url) |v| a.free(v);
-            if (storage.ws_pty_url) |v| a.free(v);
-            if (storage.cache_dir) |v| a.free(v);
-        }
+        const engine_id = try a.dupe(u8, cfg_in.engine_id);
+        errdefer a.free(engine_id);
+        const base_url = try a.dupe(u8, cfg_in.base_url);
+        errdefer a.free(base_url);
+        const shape_proxy_url = if (cfg_in.shape_proxy_url) |v| try a.dupe(u8, v) else null;
+        errdefer if (shape_proxy_url) |v| a.free(v);
+        const ws_pty_url = if (cfg_in.ws_pty_url) |v| try a.dupe(u8, v) else null;
+        errdefer if (ws_pty_url) |v| a.free(v);
+        const cache_dir = if (cfg_in.cache_dir) |v| try a.dupe(u8, v) else null;
+        errdefer if (cache_dir) |v| a.free(v);
 
+        const storage: ConfigStorage = .{
+            .engine_id = engine_id,
+            .base_url = base_url,
+            .shape_proxy_url = shape_proxy_url,
+            .ws_pty_url = ws_pty_url,
+            .cache_dir = cache_dir,
+        };
         const c = try CacheMod.Cache.openInMemory(a);
         errdefer c.close();
         // TODO(0120-followup): honour cfg_in.cache_dir for persistent path
@@ -257,7 +261,10 @@ pub const Session = struct {
         self.stopPump();
 
         self.mutex.lock();
-        for (self.subscriptions.items) |sub| self.allocator.free(sub.shape_name_owned);
+        for (self.subscriptions.items) |sub| {
+            self.allocator.free(sub.shape_name_owned);
+            self.allocator.free(sub.params_json_owned);
+        }
         self.subscriptions.deinit(self.allocator);
         self.pty_attachments.deinit(self.allocator);
         for (self.pending_shape_echoes.items) |pending| {
@@ -299,6 +306,14 @@ pub const Session = struct {
         errdefer self.cache.unregisterSubscription(cache_sub) catch {};
 
         const t_sub = self.transport_impl.subscribe(shape_name, params_json) catch return CoreError.TransportError;
+        errdefer self.transport_impl.unsubscribe(t_sub) catch |err| {
+            std.log.warn("subscribe cleanup failed for {s}: {}", .{ shape_name, err });
+        };
+
+        const shape_name_owned = try self.allocator.dupe(u8, shape_name);
+        errdefer self.allocator.free(shape_name_owned);
+        const params_json_owned = try self.allocator.dupe(u8, params_json);
+        errdefer self.allocator.free(params_json_owned);
 
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -309,7 +324,8 @@ pub const Session = struct {
             .cache_sub_id = cache_sub,
             .transport_sub_id = t_sub,
             .shape = shape,
-            .shape_name_owned = try self.allocator.dupe(u8, shape_name),
+            .shape_name_owned = shape_name_owned,
+            .params_json_owned = params_json_owned,
         });
         return public;
     }
@@ -323,8 +339,13 @@ pub const Session = struct {
                 const sub = self.subscriptions.items[i];
                 _ = self.subscriptions.swapRemove(i);
                 self.allocator.free(sub.shape_name_owned);
-                _ = self.transport_impl.unsubscribe(sub.transport_sub_id) catch {};
-                _ = self.cache.unregisterSubscription(sub.cache_sub_id) catch {};
+                self.allocator.free(sub.params_json_owned);
+                self.transport_impl.unsubscribe(sub.transport_sub_id) catch |err| {
+                    std.log.warn("unsubscribe transport cleanup failed for handle {d}: {}", .{ public_id, err });
+                };
+                self.cache.unregisterSubscription(sub.cache_sub_id) catch |err| {
+                    std.log.warn("unsubscribe cache cleanup failed for handle {d}: {}", .{ public_id, err });
+                };
                 return;
             }
         }
@@ -491,7 +512,9 @@ pub const Session = struct {
             }
         }
         self.mutex.unlock();
-        if (th_opt) |th| _ = self.transport_impl.ptyDetach(th) catch {};
+        if (th_opt) |th| self.transport_impl.ptyDetach(th) catch |err| {
+            std.log.warn("pty detach failed for handle {d}: {}", .{ public, err });
+        };
     }
 
     // --- Event pump -----------------------------------------------------
@@ -508,7 +531,9 @@ pub const Session = struct {
             for (drained.items) |d| transport.freeDelta(self.allocator, d);
             drained.deinit(self.allocator);
         }
-        self.transport_impl.tick(&drained, self.allocator) catch {};
+        self.transport_impl.tick(&drained, self.allocator) catch |err| {
+            std.log.warn("transport tick failed: {}", .{err});
+        };
 
         for (drained.items) |d| {
             switch (d) {
@@ -531,10 +556,12 @@ pub const Session = struct {
                 .up_to_date => |v| {
                     const shape = schema.Shape.parse(v.shape) orelse continue;
                     const sub_id = self.cacheSubForShape(shape) orelse continue;
-                    self.cache.updateCursor(sub_id, v.handle, v.offset) catch {};
+                    self.cache.updateCursor(sub_id, v.handle, v.offset) catch |err| {
+                        std.log.warn("cursor update failed for {s}: {}", .{ v.shape, err });
+                    };
                 },
-                .must_refetch => |_| {
-                    // TODO(0120-followup): implement local wipe + resubscribe.
+                .must_refetch => |v| {
+                    self.handleMustRefetch(v.shape);
                 },
                 .auth_expired => {
                     self.emitSimpleEvent(.auth_expired, null);
@@ -608,6 +635,28 @@ pub const Session = struct {
             if (att.transport_handle == th) return att.public_handle;
         }
         return null;
+    }
+
+    fn handleMustRefetch(self: *Session, shape_name: []const u8) void {
+        const shape = schema.Shape.parse(shape_name) orelse return;
+        var sub_id: ?i64 = null;
+        self.mutex.lock();
+        for (self.subscriptions.items) |sub| {
+            if (sub.shape == shape) {
+                sub_id = sub.cache_sub_id;
+                break;
+            }
+        }
+        self.mutex.unlock();
+
+        const id = sub_id orelse return;
+        self.cache.clearRowsForSubscription(id) catch |err| {
+            std.log.warn("must_refetch cache clear failed for {s}: {}", .{ shape_name, err });
+            return;
+        };
+        self.cache.updateCursor(id, "", "-1") catch |err| {
+            std.log.warn("must_refetch cursor reset failed for {s}: {}", .{ shape_name, err });
+        };
     }
 
     fn emitDeltaEvent(self: *Session, shape: []const u8, pk: []const u8, op: []const u8, future_id: ?u64) void {

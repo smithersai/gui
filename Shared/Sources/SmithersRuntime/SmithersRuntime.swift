@@ -449,12 +449,42 @@ fileprivate final class EventBox {
 
 fileprivate final class ProviderBox {
     let provider: CredentialsProvider
-    // Keep Swift-owned C string buffers alive while the callback runs.
-    var bearerCStr: ContiguousArray<CChar> = []
-    var refreshCStr: ContiguousArray<CChar>? = nil
+    private var bearerCStr: UnsafeMutablePointer<CChar>?
+    private var refreshCStr: UnsafeMutablePointer<CChar>?
 
     init(provider: @escaping CredentialsProvider) {
         self.provider = provider
+    }
+
+    deinit {
+        bearerCStr?.deallocate()
+        refreshCStr?.deallocate()
+    }
+
+    func updateCredentials(_ creds: SmithersCredentials) -> smithers_credentials_s {
+        replaceCString(&bearerCStr, with: creds.bearer)
+        if let refreshToken = creds.refreshToken {
+            replaceCString(&refreshCStr, with: refreshToken)
+        } else {
+            refreshCStr?.deallocate()
+            refreshCStr = nil
+        }
+
+        return smithers_credentials_s(
+            bearer: UnsafePointer(bearerCStr),
+            expires_unix_ms: Int64((creds.expiresAt?.timeIntervalSince1970 ?? 0) * 1000),
+            refresh_token: UnsafePointer(refreshCStr)
+        )
+    }
+
+    private func replaceCString(_ slot: inout UnsafeMutablePointer<CChar>?, with value: String) {
+        slot?.deallocate()
+        let cString = value.utf8CString
+        let pointer = UnsafeMutablePointer<CChar>.allocate(capacity: cString.count)
+        cString.withUnsafeBufferPointer { buffer in
+            pointer.initialize(from: buffer.baseAddress!, count: buffer.count)
+        }
+        slot = pointer
     }
 }
 
@@ -462,21 +492,7 @@ fileprivate let credentialsTrampoline: (@convention(c) (UnsafeMutableRawPointer?
     guard let ud, let out else { return false }
     let box = Unmanaged<ProviderBox>.fromOpaque(ud).takeUnretainedValue()
     guard let creds = box.provider() else { return false }
-
-    box.bearerCStr = creds.bearer.utf8CString
-    let bearerPtr = box.bearerCStr.withUnsafeBufferPointer { $0.baseAddress }
-    var refreshPtr: UnsafePointer<CChar>? = nil
-    if let rt = creds.refreshToken {
-        box.refreshCStr = rt.utf8CString
-        refreshPtr = box.refreshCStr!.withUnsafeBufferPointer { $0.baseAddress }
-    } else {
-        box.refreshCStr = nil
-    }
-    out.pointee = smithers_credentials_s(
-        bearer: bearerPtr,
-        expires_unix_ms: Int64((creds.expiresAt?.timeIntervalSince1970 ?? 0) * 1000),
-        refresh_token: refreshPtr
-    )
+    out.pointee = box.updateCredentials(creds)
     return true
 }
 
