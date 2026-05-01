@@ -94,3 +94,14 @@ See https://docs.jj-vcs.dev/latest/working-copy/#stale-working-copy for more inf
 
 [00:14:20] ✓ result-0185-runtime-pty-lifetime-and-concurrency-hardening (attempt 1)
 [00:14:20] → merge (attempt 1, iteration 0)
+[00:16:19] ✓ merge (attempt 1)
+[00:16:19] ✓ Run finished
+runId: report-gap-wave1-0184-0185-r4
+status: finished
+output: null
+cta:
+  description: "Next steps:"
+  commands[3]{command,description}:
+    smithers inspect report-gap-wave1-0184-0185-r4,Inspect run state
+    smithers logs report-gap-wave1-0184-0185-r4,View run logs
+    smithers chat report-gap-wave1-0184-0185-r4,View agent chat

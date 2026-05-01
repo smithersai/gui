@@ -36,9 +36,8 @@ final class SessionPersistenceE2ETests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        if let proc = daemonProcess, proc.isRunning {
-            proc.terminate()
-            proc.waitUntilExit()
+        if let proc = daemonProcess {
+            await terminateDaemonProcess(proc)
         }
         try? FileManager.default.removeItem(
             at: URL(fileURLWithPath: socketPath).deletingLastPathComponent()
@@ -271,6 +270,34 @@ final class SessionPersistenceE2ETests: XCTestCase {
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "daemon socket never appeared at \(path)"]
         )
+    }
+
+    private func terminateDaemonProcess(
+        _ proc: Process,
+        terminateTimeout: TimeInterval = 2,
+        killTimeout: TimeInterval = 2
+    ) async {
+        guard proc.isRunning else { return }
+
+        proc.terminate()
+        if await waitForProcessExit(proc, timeout: terminateTimeout) {
+            return
+        }
+
+        Darwin.kill(proc.processIdentifier, SIGKILL)
+        _ = await waitForProcessExit(proc, timeout: killTimeout)
+    }
+
+    private func waitForProcessExit(_ proc: Process, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while proc.isRunning && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        if proc.isRunning {
+            return false
+        }
+        proc.waitUntilExit()
+        return true
     }
 
     private func waitForCapture(

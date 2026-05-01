@@ -213,6 +213,7 @@
 		86229B43D9E92124A5F02C41 /* TreeKeyboardHandlerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2190D8E6981860FADE965D3 /* TreeKeyboardHandlerTests.swift */; };
 		865EE52473F437AC71F3998D /* DevToolsClientErrorMappingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75AD836F5611B64C8283851D /* DevToolsClientErrorMappingTests.swift */; };
 		86AB0670A570E9D4D7FF4D29 /* NativeTerminalRestoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 857DEEADD7F5F2E623EE863E /* NativeTerminalRestoreTests.swift */; };
+		86BC10D63AFB3592400431F9 /* AuthenticatedHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDC95930DEF94A91788C659C /* AuthenticatedHTTPClient.swift */; };
 		8786B4F5F88D0D9B2F064A9F /* LogsTabE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D22EB0B972094EBDB8796E25 /* LogsTabE2ETests.swift */; };
 		8B0C3868FBFCBDCB03FD8A29 /* SmithersiOSE2EApprovalsFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33B2AB8988D53C5E791ED8B9 /* SmithersiOSE2EApprovalsFlowTests.swift */; };
 		8BA22975F8FBC4C42DB88F08 /* Smithers.WorkspaceSwitcherSection.macOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B42EB784D9E5B0AA364523 /* Smithers.WorkspaceSwitcherSection.macOS.swift */; };
@@ -260,6 +261,7 @@
 		A981F2BEC685C93B68D63AD8 /* NavigationE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E873048241F8F1D8C08AC4 /* NavigationE2ETests.swift */; };
 		AA1F166F762B27E8C20EEB1D /* SharedNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68B24B420637E67970017F79 /* SharedNavigation.swift */; };
 		AA59E50BF1CFC6B5DFC6D3D6 /* DiagnosticsBundleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B27C0D5350844CDC77AEFA3D /* DiagnosticsBundleTests.swift */; };
+		AA84DBFD3D7A45B2C4D45CB0 /* AuthenticatedHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDC95930DEF94A91788C659C /* AuthenticatedHTTPClient.swift */; };
 		AB2A2BE85C1744B214C7D0FE /* VCSDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 084DCDF8CB360AEC7497D0DC /* VCSDashboardView.swift */; };
 		ABEF069F9EEDFD3EC3A7AFB1 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 425F30808B911A51C2916A3D /* AppIntents.framework */; };
 		AC081A7F3BC3E152A3779311 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1CEA9D8755141E850C0A0D21 /* WebKit.framework */; };
@@ -809,6 +811,7 @@
 		FADAFB0CF3E41DE6B5AC3564 /* OutputTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputTab.swift; sourceTree = "<group>"; };
 		FBE7CBBD2648B75803580850 /* SmithersGUIUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SmithersGUIUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FC756AF73B2904A1839C9790 /* HistoricalOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoricalOverlay.swift; sourceTree = "<group>"; };
+		FDC95930DEF94A91788C659C /* AuthenticatedHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedHTTPClient.swift; sourceTree = "<group>"; };
 		FE09D1B654EB6E252EB15120 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 		FE2278AE13CDB2E2F79E6FA3 /* WorkspaceSurfaceModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSurfaceModelsTests.swift; sourceTree = "<group>"; };
 		FF6588ADE8F231F587AE106A /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
@@ -1095,6 +1098,7 @@
 		445B471E4991A03824B12753 /* SmithersAuth */ = {
 			isa = PBXGroup;
 			children = (
+				FDC95930DEF94A91788C659C /* AuthenticatedHTTPClient.swift */,
 				1C20AEA21B74A0621F1E4624 /* AuthorizeSessionDriver.swift */,
 				2AFAA5B66424A6170F8E29B1 /* AuthViewModel.swift */,
 				9302CE1EA6077FDE239A4669 /* FeatureFlagsClient.swift */,
@@ -1835,6 +1839,7 @@
 				9572B59BB713F5B37C3876DC /* ApprovalsInboxView.swift in Sources */,
 				D1E0172FF952A910D9A4A5FB /* ApprovalsStore.swift in Sources */,
 				8299BFF07D0828133966D7FC /* AuthViewModel.swift in Sources */,
+				86BC10D63AFB3592400431F9 /* AuthenticatedHTTPClient.swift in Sources */,
 				2F0028DC33327925E407D737 /* AuthorizeSessionDriver.swift in Sources */,
 				4E105862CB93CA8F68C6C89D /* ContentShell.iOS.swift in Sources */,
 				F1B30250CD462C54EC104897 /* DeepLinkRouter.swift in Sources */,
@@ -1987,6 +1992,7 @@
 				1D451045B91618AAD06806C2 /* ApprovalsStore.swift in Sources */,
 				4341FBF94CD9390704264955 /* ApprovalsView.swift in Sources */,
 				26E899477B40EB3450956532 /* AuthViewModel.swift in Sources */,
+				AA84DBFD3D7A45B2C4D45CB0 /* AuthenticatedHTTPClient.swift in Sources */,
 				B9E0D27847A0FF58C1470168 /* AuthorizeSessionDriver.swift in Sources */,
 				424C6494A8BD00C292A427E9 /* BootstrapStage.swift in Sources */,
 				98275475B2164EB359BC5552 /* BrowserSurfaceView.swift in Sources */,

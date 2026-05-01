@@ -110,6 +110,16 @@ public final class SmithersRuntime {
         #endif
     }
 
+    // Test-only hook: keep Swift runtime tests on the deterministic fake
+    // transport while production runtime sessions use the real transport.
+    internal func _useFakeTransportForTest() {
+        #if canImport(CSmithersKit)
+        if let h = handle {
+            smithers_core_use_fake_transport_for_test(UnsafeMutableRawPointer(h))
+        }
+        #endif
+    }
+
     public func connect(_ config: EngineConfig) throws -> RuntimeSession {
         #if canImport(CSmithersKit)
         guard let h = handle else {
@@ -151,14 +161,17 @@ public final class SmithersRuntime {
 /// A single engine connection. Owns the transport + bounded cache in Zig.
 public final class RuntimePTY {
     public private(set) var handle: UInt64?
+    private let lock = NSLock()
 
     #if canImport(CSmithersKit)
     fileprivate var raw: UnsafeMutableRawPointer?
+    fileprivate var owner: RuntimeSession?
     #endif
 
     #if canImport(CSmithersKit)
-    fileprivate init(raw: UnsafeMutableRawPointer) {
+    fileprivate init(raw: UnsafeMutableRawPointer, owner: RuntimeSession) {
         self.raw = raw
+        self.owner = owner
         self.handle = smithers_core_pty_public_handle(raw)
     }
     #endif
@@ -169,10 +182,12 @@ public final class RuntimePTY {
 
     public func write(_ bytes: Data) throws {
         #if canImport(CSmithersKit)
+        lock.lock()
+        defer { lock.unlock() }
         guard let raw else { return }
         guard !bytes.isEmpty else { return }
 
-        let err: smithers_error_s = bytes.withUnsafeBytes { rawBuffer in
+        let err = bytes.withUnsafeBytes { rawBuffer in
             let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress
             return smithers_core_pty_write(raw, base, rawBuffer.count)
         }
@@ -189,6 +204,8 @@ public final class RuntimePTY {
 
     public func resize(cols: UInt16, rows: UInt16) throws {
         #if canImport(CSmithersKit)
+        lock.lock()
+        defer { lock.unlock() }
         guard let raw else { return }
         let err = smithers_core_pty_resize(raw, cols, rows)
         if err.code != 0 {
@@ -204,9 +221,18 @@ public final class RuntimePTY {
 
     public func detach() {
         #if canImport(CSmithersKit)
-        guard let raw else { return }
-        smithers_core_detach_pty(raw)
+        lock.lock()
+        guard let raw else {
+            lock.unlock()
+            return
+        }
         self.raw = nil
+        let retainedOwner = self.owner
+        self.owner = nil
+        lock.unlock()
+
+        smithers_core_detach_pty(raw)
+        _ = retainedOwner
         #endif
     }
 }
@@ -353,7 +379,7 @@ public final class RuntimeSession {
                 smithers_error_free(err)
                 throw SmithersRuntimeError(code: err.code, message: msg)
             }
-            return RuntimePTY(raw: handle!)
+            return RuntimePTY(raw: handle!, owner: self)
         }
         #else
         _ = sessionID

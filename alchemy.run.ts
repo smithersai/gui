@@ -77,7 +77,13 @@ async function build() {
   await $`xcrun stapler staple ${APP}`;
 
   console.log("→ dmg");
-  await $`hdiutil create -volname ${SCHEME} -srcfolder ${APP} -ov -format UDZO ${DMG}`;
+  const staging = join(BUILD, "dmg-staging");
+  rmSync(staging, { recursive: true, force: true });
+  mkdirSync(staging, { recursive: true });
+  await $`cp -R ${APP} ${staging}/`;
+  await $`ln -s /Applications ${staging}/Applications`;
+  await $`hdiutil create -volname ${SCHEME} -srcfolder ${staging} -ov -format UDZO ${DMG}`;
+  rmSync(staging, { recursive: true, force: true });
   console.log(`✓ ${DMG}`);
 }
 

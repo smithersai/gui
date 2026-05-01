@@ -585,6 +585,10 @@ pub const RealTransport = struct {
     fn subscribeImpl(ctx_opt: ?*anyopaque, shape: []const u8, params_json: []const u8) !u64 {
         const self: *RealTransport = @ptrCast(@alignCast(ctx_opt.?));
         self.mutex.lock();
+        if (self.shutting_down.load(.acquire)) {
+            self.mutex.unlock();
+            return error.TransportError;
+        }
         const sub_id = self.next_sub_id;
         self.next_sub_id += 1;
         self.mutex.unlock();
@@ -606,11 +610,17 @@ pub const RealTransport = struct {
             .shape_key_owned = shape_key,
         };
 
-        self.mutex.lock();
-        try self.subscriptions.append(self.allocator, worker);
-        self.mutex.unlock();
-
         worker.thread = try std.Thread.spawn(.{}, subscriptionThread, .{worker});
+
+        self.mutex.lock();
+        self.subscriptions.append(self.allocator, worker) catch |err| {
+            self.mutex.unlock();
+            worker.cancel.store(true, .release);
+            if (worker.thread) |t| t.join();
+            self.destroySubWorker(worker);
+            return err;
+        };
+        self.mutex.unlock();
         return sub_id;
     }
 
@@ -629,7 +639,9 @@ pub const RealTransport = struct {
         }
         self.mutex.unlock();
 
-        const worker = worker_opt orelse return;
+        const worker = worker_opt orelse {
+            return;
+        };
         worker.cancel.store(true, .release);
         if (worker.thread) |t| t.join();
         self.destroySubWorker(worker);
@@ -654,6 +666,10 @@ pub const RealTransport = struct {
     fn writeImpl(ctx_opt: ?*anyopaque, action: []const u8, payload_json: []const u8) !u64 {
         const self: *RealTransport = @ptrCast(@alignCast(ctx_opt.?));
         self.mutex.lock();
+        if (self.shutting_down.load(.acquire)) {
+            self.mutex.unlock();
+            return error.TransportError;
+        }
         const fut = self.next_future;
         self.next_future += 1;
         self.mutex.unlock();
@@ -688,6 +704,10 @@ pub const RealTransport = struct {
         const self: *RealTransport = @ptrCast(@alignCast(ctx_opt.?));
 
         self.mutex.lock();
+        if (self.shutting_down.load(.acquire)) {
+            self.mutex.unlock();
+            return error.TransportError;
+        }
         const handle = self.next_pty;
         self.next_pty += 1;
         self.mutex.unlock();
@@ -722,11 +742,21 @@ pub const RealTransport = struct {
         };
         worker.client = client;
 
-        self.mutex.lock();
-        try self.pty_workers.append(self.allocator, worker);
-        self.mutex.unlock();
-
         worker.thread = try std.Thread.spawn(.{}, ptyReaderThread, .{worker});
+
+        self.mutex.lock();
+        self.pty_workers.append(self.allocator, worker) catch |err| {
+            self.mutex.unlock();
+            worker.cancel.store(true, .release);
+            worker.write_mutex.lock();
+            if (worker.client) |*c| c.close(1000, "attach-failed") catch {};
+            worker.write_mutex.unlock();
+            if (worker.thread) |t| t.join();
+            if (worker.client) |*c| c.deinit();
+            self.allocator.destroy(worker);
+            return err;
+        };
+        self.mutex.unlock();
         return handle;
     }
 
@@ -740,12 +770,19 @@ pub const RealTransport = struct {
     fn ptyWriteImpl(ctx_opt: ?*anyopaque, handle: u64, bytes: []const u8) !void {
         const self: *RealTransport = @ptrCast(@alignCast(ctx_opt.?));
         self.mutex.lock();
+        if (self.shutting_down.load(.acquire)) {
+            self.mutex.unlock();
+            return error.TransportError;
+        }
         const worker = self.findPtyWorker(handle) orelse {
             self.mutex.unlock();
             return error.InvalidArgument;
         };
-        self.mutex.unlock();
+        // Lock-order discipline: transport mutex -> worker.write_mutex.
+        // This prevents detach/destroy from freeing the worker between
+        // lookup and write.
         worker.write_mutex.lock();
+        self.mutex.unlock();
         defer worker.write_mutex.unlock();
         if (worker.client) |*c| {
             c.writeBinary(bytes) catch return error.TransportError;
@@ -755,12 +792,19 @@ pub const RealTransport = struct {
     fn ptyResizeImpl(ctx_opt: ?*anyopaque, handle: u64, cols: u16, rows: u16) !void {
         const self: *RealTransport = @ptrCast(@alignCast(ctx_opt.?));
         self.mutex.lock();
+        if (self.shutting_down.load(.acquire)) {
+            self.mutex.unlock();
+            return error.TransportError;
+        }
         const worker = self.findPtyWorker(handle) orelse {
             self.mutex.unlock();
             return error.InvalidArgument;
         };
-        self.mutex.unlock();
+        // Lock-order discipline: transport mutex -> worker.write_mutex.
+        // This prevents detach/destroy from freeing the worker between
+        // lookup and resize.
         worker.write_mutex.lock();
+        self.mutex.unlock();
         defer worker.write_mutex.unlock();
         if (worker.client) |*c| {
             c.sendResize(cols, rows) catch return error.TransportError;
@@ -780,12 +824,19 @@ pub const RealTransport = struct {
                 break;
             }
         }
+
+        const worker = worker_opt orelse {
+            self.mutex.unlock();
+            return;
+        };
+        worker.cancel.store(true, .release);
+        // Lock-order discipline: transport mutex -> worker.write_mutex.
+        // With the global lock held, no new write/resize can acquire a
+        // pointer to this worker after removal.
+        worker.write_mutex.lock();
         self.mutex.unlock();
 
-        const worker = worker_opt orelse return;
-        worker.cancel.store(true, .release);
         // Send a close frame so the reader thread exits cleanly.
-        worker.write_mutex.lock();
         if (worker.client) |*c| c.close(1000, "detach") catch {};
         worker.write_mutex.unlock();
         if (worker.thread) |t| t.join();
@@ -817,6 +868,9 @@ pub const RealTransport = struct {
         const subs = self.subscriptions.toOwnedSlice(self.allocator) catch &[_]*SubscriptionWorker{};
         const ptys = self.pty_workers.toOwnedSlice(self.allocator) catch &[_]*PtyWorker{};
         const writes = self.write_threads.toOwnedSlice(self.allocator) catch &[_]std.Thread{};
+        self.subscriptions.clearRetainingCapacity();
+        self.pty_workers.clearRetainingCapacity();
+        self.write_threads.clearRetainingCapacity();
         self.mutex.unlock();
 
         for (writes) |t| t.join();
@@ -1147,6 +1201,202 @@ fn sinkMustRefetch(ctx: ?*anyopaque, shape: []const u8) anyerror!void {
 // -----------------------------------------------------------------------
 
 const testing = std.testing;
+
+fn testFetchBearer(_: ?*anyopaque, a: Allocator) anyerror!CredentialsRefresher.BearerSnapshot {
+    return .{ .bearer = try a.dupe(u8, "test-bearer") };
+}
+
+fn spawnIdlePtyWorker(rt: *RealTransport, handle: u64) !*PtyWorker {
+    const worker = try testing.allocator.create(PtyWorker);
+    errdefer testing.allocator.destroy(worker);
+    worker.* = .{
+        .parent = rt,
+        .handle = handle,
+    };
+    worker.thread = try std.Thread.spawn(.{}, idlePtyWorkerThread, .{worker});
+
+    rt.mutex.lock();
+    rt.pty_workers.append(testing.allocator, worker) catch |err| {
+        rt.mutex.unlock();
+        worker.cancel.store(true, .release);
+        if (worker.thread) |t| t.join();
+        testing.allocator.destroy(worker);
+        return err;
+    };
+    rt.mutex.unlock();
+    return worker;
+}
+
+fn idlePtyWorkerThread(worker: *PtyWorker) void {
+    while (!worker.cancel.load(.acquire)) {
+        std.Thread.sleep(250 * std.time.ns_per_us);
+    }
+}
+
+const PtyWriteResizeRaceCtx = struct {
+    transport: Transport,
+    handle: u64,
+    loops: usize,
+    ok_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    err_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    fn run(self: *PtyWriteResizeRaceCtx) void {
+        var i: usize = 0;
+        while (i < self.loops) : (i += 1) {
+            if (self.transport.ptyWrite(self.handle, "x")) |_| {
+                _ = self.ok_count.fetchAdd(1, .monotonic);
+            } else |_| {
+                _ = self.err_count.fetchAdd(1, .monotonic);
+            }
+
+            if (self.transport.ptyResize(self.handle, 80, 24)) |_| {
+                _ = self.ok_count.fetchAdd(1, .monotonic);
+            } else |_| {
+                _ = self.err_count.fetchAdd(1, .monotonic);
+            }
+        }
+    }
+};
+
+fn runDetachAfterShortDelay(t: Transport, handle: u64) void {
+    std.Thread.sleep(2 * std.time.ns_per_ms);
+    _ = t.ptyDetach(handle) catch {};
+}
+
+test "RealTransport: subscription worker is published only after thread init" {
+    const cache = try CacheMod.Cache.openInMemory(testing.allocator);
+    defer cache.close();
+
+    const rt = try RealTransport.create(testing.allocator, cache, .{
+        .shape_host = "127.0.0.1",
+        .shape_port = 1,
+        .api_host = "127.0.0.1",
+        .api_port = 1,
+        .ws_host = "127.0.0.1",
+        .ws_port = 1,
+        .origin = "http://localhost",
+    }, .{
+        .ctx = null,
+        .fetch_fn = testFetchBearer,
+    });
+    defer rt.transport().destroy(testing.allocator);
+
+    const sub = try rt.transport().subscribe("agent_sessions", "{}");
+    defer rt.transport().unsubscribe(sub) catch {};
+
+    rt.mutex.lock();
+    var found = false;
+    var thread_initialized = false;
+    for (rt.subscriptions.items) |worker| {
+        if (worker.sub_id == sub) {
+            found = true;
+            thread_initialized = worker.thread != null;
+            break;
+        }
+    }
+    rt.mutex.unlock();
+
+    try testing.expect(found);
+    try testing.expect(thread_initialized);
+}
+
+test "RealTransport: unsubscribe missing handle keeps mutex usable" {
+    const cache = try CacheMod.Cache.openInMemory(testing.allocator);
+    defer cache.close();
+
+    const rt = try RealTransport.create(testing.allocator, cache, .{
+        .shape_host = "127.0.0.1",
+        .shape_port = 1,
+        .api_host = "127.0.0.1",
+        .api_port = 1,
+        .ws_host = "127.0.0.1",
+        .ws_port = 1,
+        .origin = "http://localhost",
+    }, .{
+        .ctx = null,
+        .fetch_fn = testFetchBearer,
+    });
+    defer rt.transport().destroy(testing.allocator);
+
+    // Regression: unknown handles must not unlock an unlocked mutex.
+    try rt.transport().unsubscribe(9_999_999);
+
+    const sub = try rt.transport().subscribe("agent_sessions", "{}");
+    defer rt.transport().unsubscribe(sub) catch {};
+}
+
+test "RealTransport: missing PTY detach does not poison mutex" {
+    const cache = try CacheMod.Cache.openInMemory(testing.allocator);
+    defer cache.close();
+
+    const rt = try RealTransport.create(testing.allocator, cache, .{
+        .shape_host = "127.0.0.1",
+        .shape_port = 1,
+        .api_host = "127.0.0.1",
+        .api_port = 1,
+        .ws_host = "127.0.0.1",
+        .ws_port = 1,
+        .origin = "http://localhost",
+    }, .{
+        .ctx = null,
+        .fetch_fn = testFetchBearer,
+    });
+    defer rt.transport().destroy(testing.allocator);
+
+    // Regression: detach of an unknown handle must release transport mutex.
+    try rt.transport().ptyDetach(9_999_999);
+
+    const sub = try rt.transport().subscribe("agent_sessions", "{}");
+    defer rt.transport().unsubscribe(sub) catch {};
+}
+
+test "RealTransport: write/resize racing detach stays memory-safe" {
+    const cache = try CacheMod.Cache.openInMemory(testing.allocator);
+    defer cache.close();
+
+    const rt = try RealTransport.create(testing.allocator, cache, .{
+        .shape_host = "127.0.0.1",
+        .shape_port = 1,
+        .api_host = "127.0.0.1",
+        .api_port = 1,
+        .ws_host = "127.0.0.1",
+        .ws_port = 1,
+        .origin = "http://localhost",
+    }, .{
+        .ctx = null,
+        .fetch_fn = testFetchBearer,
+    });
+    defer rt.transport().destroy(testing.allocator);
+
+    _ = try spawnIdlePtyWorker(rt, 1);
+    const transport = rt.transport();
+
+    var contexts = [_]PtyWriteResizeRaceCtx{
+        .{ .transport = transport, .handle = 1, .loops = 500 },
+        .{ .transport = transport, .handle = 1, .loops = 500 },
+        .{ .transport = transport, .handle = 1, .loops = 500 },
+        .{ .transport = transport, .handle = 1, .loops = 500 },
+    };
+
+    var writers: [contexts.len]std.Thread = undefined;
+    for (&writers, &contexts) |*thread, *ctx| {
+        thread.* = try std.Thread.spawn(.{}, PtyWriteResizeRaceCtx.run, .{ctx});
+    }
+    const detacher = try std.Thread.spawn(.{}, runDetachAfterShortDelay, .{ transport, @as(u64, 1) });
+
+    for (writers) |thread| thread.join();
+    detacher.join();
+
+    // Handle is detached now; new writes should fail cleanly.
+    try testing.expectError(error.InvalidArgument, transport.ptyWrite(1, "x"));
+
+    var total_attempts: u32 = 0;
+    for (&contexts) |*ctx| {
+        total_attempts += ctx.ok_count.load(.acquire);
+        total_attempts += ctx.err_count.load(.acquire);
+    }
+    try testing.expect(total_attempts > 0);
+}
 
 test "FakeTransport: subscribe/unsubscribe" {
     const ft = try FakeTransport.create(testing.allocator);

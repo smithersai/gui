@@ -110,6 +110,9 @@ SMITHERS_API smithers_core_t smithers_core_new(
 
 SMITHERS_API void smithers_core_free(smithers_core_t core);
 
+// Test hook: force subsequently-created sessions to use FakeTransport.
+SMITHERS_API void smithers_core_use_fake_transport_for_test(smithers_core_t core);
+
 SMITHERS_API smithers_core_session_t smithers_core_connect(
     smithers_core_t core,
     const smithers_core_engine_config_s *cfg,
