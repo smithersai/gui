@@ -39,6 +39,7 @@ E2E_KEEP_STACK="${E2E_KEEP_STACK:-0}"
 E2E_SIMULATOR_NAME="${E2E_SIMULATOR_NAME:-iPhone 16}"
 E2E_SIMULATOR_OS="${E2E_SIMULATOR_OS:-18.6}"
 E2E_SCHEME="${E2E_SCHEME:-SmithersiOSE2ETests}"
+E2E_ONLY_TESTING="${E2E_ONLY_TESTING:-SmithersiOSE2ETests/SmithersiOSE2EHappyPathTests}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -209,6 +210,7 @@ mkdir -p "$REPO_ROOT/build"
 XCRESULT="$REPO_ROOT/build/e2e-results-$(date +%Y%m%d-%H%M%S).xcresult"
 
 log "running xcodebuild test → $XCRESULT"
+log "only-testing: $E2E_ONLY_TESTING"
 
 # The scheme's TestAction declares `EnvironmentVariables` whose values
 # use `$(SMITHERS_E2E_BEARER)` etc. — xcodebuild resolves those macros
@@ -258,6 +260,7 @@ xcodebuild \
     -destination "platform=iOS Simulator,id=$DEVICE_UDID,arch=arm64" \
     -resultBundlePath "$XCRESULT" \
     -derivedDataPath "$DERIVED_DATA" \
+    -only-testing "$E2E_ONLY_TESTING" \
     test 2>&1 | tee "$REPO_ROOT/build/e2e-xcodebuild.log"
 rc=${PIPESTATUS[0]}
 set -e
@@ -269,4 +272,5 @@ fi
 
 log "all E2E tests PASSED"
 log "xcresult: $XCRESULT"
+log "xcodebuild log: $REPO_ROOT/build/e2e-xcodebuild.log"
 exit 0

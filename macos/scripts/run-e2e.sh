@@ -40,6 +40,7 @@ fi
 PLUE_BASE_URL="${PLUE_BASE_URL:-http://localhost:4000}"
 E2E_KEEP_STACK="${E2E_KEEP_STACK:-0}"
 E2E_SCHEME="${E2E_SCHEME:-SmithersMacOSE2ETests}"
+E2E_ONLY_TESTING="${E2E_ONLY_TESTING:-SmithersMacOSE2ETests/SmithersMacOSE2EHappyPathTests}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -146,6 +147,7 @@ mkdir -p "$REPO_ROOT/build"
 XCRESULT="$REPO_ROOT/build/macos-e2e-results-$(date +%Y%m%d-%H%M%S).xcresult"
 
 log "running xcodebuild test → $XCRESULT"
+log "only-testing: $E2E_ONLY_TESTING"
 
 # Scheme env macros (see project.yml) resolve against the invoking
 # process environment at test time. Export everything the tests need.
@@ -168,6 +170,7 @@ xcodebuild \
     -scheme "$E2E_SCHEME" \
     -destination "platform=macOS" \
     -resultBundlePath "$XCRESULT" \
+    -only-testing "$E2E_ONLY_TESTING" \
     test 2>&1 | tee "$REPO_ROOT/build/macos-e2e-xcodebuild.log"
 rc=${PIPESTATUS[0]}
 set -e
@@ -179,4 +182,5 @@ fi
 
 log "all macOS E2E tests PASSED"
 log "xcresult: $XCRESULT"
+log "xcodebuild log: $REPO_ROOT/build/macos-e2e-xcodebuild.log"
 exit 0
