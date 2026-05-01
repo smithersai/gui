@@ -32,11 +32,6 @@ env:
   XCODEGEN_VERSION: "2.43.0"
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Regenerate the Xcode project and fail if project.yml drifted out of sync
-  # with the tracked .xcodeproj. Cheap sanity gate that runs before the heavy
-  # build jobs.
-  # ---------------------------------------------------------------------------
   xcodegen-check:
     name: XcodeGen regenerate
     runs-on: macos-14
@@ -46,23 +41,24 @@ jobs:
           submodules: false
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Regenerate project
-        run: xcodegen generate
+      - name: Regenerate project from canonical repo root
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p libsmithers/zig-out/bin/smithers-session-daemon
+          mkdir -p libsmithers/zig-out/bin/smithers-session-connect
+          xcodegen generate
       - name: Verify .xcodeproj is in sync
         run: |
-          # The generated xcodeproj is expected to be committed. If it differs
-          # from the checked-in version, fail — developer forgot to regenerate.
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
           if ! git diff --quiet -- SmithersGUI.xcodeproj; then
             echo "::error::SmithersGUI.xcodeproj is out of sync with project.yml."
-            echo "::error::Run 'xcodegen generate' and commit the result."
+            echo "::error::Run 'xcodegen generate' from the repository root and commit the result."
             git --no-pager diff --stat -- SmithersGUI.xcodeproj
             exit 1
           fi
 
-  # ---------------------------------------------------------------------------
-  # macOS app + tests. Uses the zig build shim so libsmithers + libghostty
-  # are built first (matching local developer flow).
-  # ---------------------------------------------------------------------------
   macos-build:
     name: macOS build & test
     runs-on: macos-14
@@ -84,7 +80,12 @@ jobs:
           zig build libsmithers
           zig build ghostty
       - name: Regenerate Xcode project
-        run: xcodegen generate
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p libsmithers/zig-out/bin/smithers-session-daemon
+          mkdir -p libsmithers/zig-out/bin/smithers-session-connect
+          xcodegen generate
       - name: Build SmithersGUI (macOS)
         run: |
           xcodebuild \
@@ -104,11 +105,6 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             test
 
-  # ---------------------------------------------------------------------------
-  # iOS simulator app + tests. No Zig prerequisites until 0123/0124 land the
-  # iOS artifacts for libghostty / libsmithers-core. Once those ship, reuse
-  # the same zig build steps as the macOS job.
-  # ---------------------------------------------------------------------------
   ios-simulator-build:
     name: iOS simulator build & test
     runs-on: macos-14
@@ -122,15 +118,77 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Regenerate Xcode project
-        run: xcodegen generate
-      - name: Show available iOS simulators
-        run: xcrun simctl list devices available | grep -E "iPhone" | head -20
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p libsmithers/zig-out/bin/smithers-session-daemon
+          mkdir -p libsmithers/zig-out/bin/smithers-session-connect
+          xcodegen generate
+      - name: Resolve simulator destination
+        id: simdest
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+import json
+import subprocess
+import sys
+
+raw = subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"], text=True)
+data = json.loads(raw)
+
+preferred_names = ["iPhone 16 Pro", "iPhone 16", "iPhone 15 Pro", "iPhone 15", "iPhone 14"]
+
+def runtime_score(runtime_key: str) -> tuple[int, int, str]:
+    if not runtime_key.startswith("com.apple.CoreSimulator.SimRuntime.iOS-"):
+        return (0, 0, "")
+    version = runtime_key.split("iOS-", 1)[1].replace("-", ".")
+    parts = version.split(".")
+    major = int(parts[0]) if parts and parts[0].isdigit() else 0
+    minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    return (major, minor, version)
+
+candidates = []
+for runtime, devices in data.get("devices", {}).items():
+    major, minor, version = runtime_score(runtime)
+    if major == 0:
+        continue
+    for d in devices:
+        if not d.get("isAvailable", False):
+            continue
+        name = d.get("name", "")
+        if not name.startswith("iPhone"):
+            continue
+        udid = d.get("udid", "")
+        if not udid:
+            continue
+        pref_index = preferred_names.index(name) if name in preferred_names else len(preferred_names)
+        candidates.append((major, minor, -pref_index, name, version, udid))
+
+if not candidates:
+    print("::error::No available iPhone simulator device found.")
+    sys.exit(1)
+
+candidates.sort(reverse=True)
+major, minor, _, name, version, udid = candidates[0]
+destination = f"platform=iOS Simulator,id={udid}"
+
+with open("/tmp/simdest.txt", "w", encoding="utf-8") as f:
+    f.write(destination)
+
+print(f"Resolved simulator: {name} (iOS {version}, {udid})")
+print(f"destination={destination}")
+PY
+          DESTINATION="$(cat /tmp/simdest.txt)"
+          echo "destination=${DESTINATION}" >> "$GITHUB_OUTPUT"
+      - name: Show chosen simulator destination
+        run: |
+          echo "Using destination: ${{ steps.simdest.outputs.destination }}"
       - name: Build SmithersiOS (simulator)
         run: |
           xcodebuild \
             -project SmithersGUI.xcodeproj \
             -scheme SmithersiOS \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination '${{ steps.simdest.outputs.destination }}' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             build
@@ -139,27 +197,11 @@ jobs:
           xcodebuild \
             -project SmithersGUI.xcodeproj \
             -scheme SmithersiOS \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination '${{ steps.simdest.outputs.destination }}' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             test
 
-  # ---------------------------------------------------------------------------
-  # Android core canary (ticket 0104).
-  #
-  # Builds `libsmithers_core.so` for `aarch64-linux-android` via Zig and
-  # then assembles the minimal Kotlin app under `poc/android-core/` via
-  # the Android Gradle Plugin. This is a CONTINUOUS BUILD CANARY — it
-  # exists to fail loudly when a Stage-0/1 change forecloses Android
-  # compilation. Required, not advisory: a failure here blocks the PR.
-  #
-  # No emulator run: spec accepts build-only in CI (emulator runs are
-  # dev-local). Runtime smoke is documented in poc/android-core/README.md.
-  #
-  # NDK version is pinned via the Android SDK manager invocation; bumping
-  # it is a real code review event (it can change libc symbols the Zig
-  # core links against).
-  # ---------------------------------------------------------------------------
   android-core-canary:
     name: Android core canary (build-only)
     runs-on: ubuntu-latest
@@ -178,9 +220,6 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          # Do not pass `packages:` here — the action installs the latest
-          # commandlinetools by default. We install the pinned components
-          # explicitly below so the NDK version is auditable in this file.
           log-accepted-android-sdk-licenses: false
       - name: Install pinned NDK + platforms
         run: |
@@ -198,9 +237,6 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
       - name: Zig cross-compile sanity check (aarch64-linux-android)
-        # Independent verification that the Zig source cross-compiles
-        # even before Gradle orchestrates it. Fast-fails when a Zig-side
-        # regression breaks the core.
         working-directory: poc/android-core
         run: zig build --release=small
       - name: Report .so size
@@ -215,8 +251,6 @@ jobs:
           fi
       - name: Assemble debug APK
         working-directory: poc/android-core
-        # Use `gradle` directly — no wrapper jar is checked in; the
-        # setup-gradle action provides the binary on PATH.
         run: gradle --no-daemon assembleDebug
       - name: Upload APK artifact (diagnostic)
         if: always()
@@ -227,10 +261,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # ---------------------------------------------------------------------------
-  # iOS device-slice build (no signing, no deploy). Proves the project is
-  # shaped correctly for App Store builds ahead of 0125's signing work.
-  # ---------------------------------------------------------------------------
   ios-device-build:
     name: iOS device-slice build (no signing)
     runs-on: macos-14
@@ -244,7 +274,12 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Regenerate Xcode project
-        run: xcodegen generate
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p libsmithers/zig-out/bin/smithers-session-daemon
+          mkdir -p libsmithers/zig-out/bin/smithers-session-connect
+          xcodegen generate
       - name: Build SmithersiOS (device slice, no signing)
         run: |
           xcodebuild \

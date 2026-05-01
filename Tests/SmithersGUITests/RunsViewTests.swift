@@ -73,9 +73,9 @@ final class RunSummaryTests: XCTestCase {
                        "Progress should count both finished and failed nodes as completed work")
     }
 
-    /// BUG: Progress percentage display uses `Int(run.progress * 100)` which truncates.
+    /// Known issue: Progress percentage display uses `Int(run.progress * 100)` which truncates.
     /// 1/3 = 0.333... shows as "33%" not "34%". Minor but inconsistent with rounded display.
-    func testBug_ProgressPercentageTruncatesInsteadOfRounding() {
+    func testKnownIssue_ProgressPercentageTruncatesInsteadOfRounding() {
         let run = makeRun(summary: ["total": 3, "finished": 1])
         let displayed = Int(run.progress * 100)
         XCTAssertEqual(displayed, 33, "Truncation: 33.33% -> 33% (not rounded to 33%)")
@@ -135,7 +135,7 @@ final class RunSummaryTests: XCTestCase {
         XCTAssertEqual(run.elapsedString, "1h 0m")
     }
 
-    /// BUG: elapsedString for hours format drops seconds entirely.
+    /// Known issue: elapsedString for hours format drops seconds entirely.
     /// "1h 1m" for 3661 seconds is fine, but there's no way to see seconds for long runs.
     /// This is a design choice, not necessarily a bug, but documented for completeness.
     func testElapsedStringDropsSecondsInHoursFormat() {
@@ -263,19 +263,19 @@ final class RunTaskTests: XCTestCase {
         }
     }
 
-    /// BUG: "waiting-approval" is used in the view to find blocked nodes for approve/deny
+    /// Known issue: "waiting-approval" is used in the view to find blocked nodes for approve/deny
     /// (line 298: `$0.state == "blocked" || $0.state == "waiting-approval"`),
     /// but the RunTask model documents only 6 states: pending, running, finished, failed, skipped, blocked.
     /// The nodeStateIcon and nodeStateColor functions don't handle "waiting-approval" — it falls to default.
     /// This means a node in "waiting-approval" state gets a generic gray circle icon instead of
     /// the warning-colored pause icon that "blocked" gets.
-    func testBug_WaitingApprovalStateNotHandledInIconMapping() {
+    func testKnownIssue_WaitingApprovalStateNotHandledInIconMapping() {
         // nodeStateIcon switch cases: running, finished, failed, skipped, blocked, default
         // "waiting-approval" hits default -> ("circle", Theme.textTertiary)
         // but logically it should probably map to the same as "blocked"
         let states = ["running", "finished", "failed", "skipped", "blocked"]
         XCTAssertFalse(states.contains("waiting-approval"),
-                       "BUG: 'waiting-approval' is not in the icon/color mapping switch cases")
+                       "Known issue: 'waiting-approval' is not in the icon/color mapping switch cases")
     }
 
     // MARK: - RUNS_NODE_ITERATION_TRACKING
@@ -483,16 +483,16 @@ final class RunsFilteringTests: XCTestCase {
         XCTAssertEqual(result.count, runs.count)
     }
 
-    /// BUG: Search on a run with nil workflowName uses empty string for comparison.
+    /// Known issue: Search on a run with nil workflowName uses empty string for comparison.
     /// Searching for "Unnamed" won't find runs with nil workflowName, even though the UI
     /// displays "Unnamed workflow" for those runs. The search and display are inconsistent.
-    func testBug_SearchDoesNotMatchFallbackWorkflowName() {
+    func testKnownIssue_SearchDoesNotMatchFallbackWorkflowName() {
         let run = makeRun(runId: "r99", workflowName: nil)
         let searchText = "Unnamed"
         let matches = (run.workflowName ?? "").localizedCaseInsensitiveContains(searchText) ||
                       run.runId.localizedCaseInsensitiveContains(searchText)
         XCTAssertFalse(matches,
-                       "BUG: Searching 'Unnamed' does not match runs with nil workflowName, " +
+                       "Known issue: Searching 'Unnamed' does not match runs with nil workflowName, " +
                        "even though UI shows 'Unnamed workflow'")
     }
 
@@ -566,12 +566,12 @@ final class RunsFilteringTests: XCTestCase {
         XCTAssertEqual(countText, "1 runs")
     }
 
-    /// BUG: Count display says "1 runs" (plural) for a single run. Should be "1 run".
-    func testBug_CountDisplayPluralForSingleRun() {
+    /// Known issue: Count display says "1 runs" (plural) for a single run. Should be "1 run".
+    func testKnownIssue_CountDisplayPluralForSingleRun() {
         let count = 1
         let text = "\(count) runs"
         XCTAssertEqual(text, "1 runs",
-                       "BUG: '1 runs' is grammatically incorrect; should be '1 run'")
+                       "Known issue: '1 runs' is grammatically incorrect; should be '1 run'")
     }
 
     // MARK: - RUNS_STATUS_SECTIONING
@@ -643,11 +643,11 @@ final class NodeStateIconMappingTests: XCTestCase {
         }
     }
 
-    /// BUG: nodeStateIcon handles only 5 named states + default (6 total),
+    /// Known issue: nodeStateIcon handles only 5 named states + default (6 total),
     /// but the approve/deny logic checks for "waiting-approval" state on nodes.
     /// "waiting-approval" falls to default case and gets a generic gray circle,
     /// while it should logically get the same treatment as "blocked".
-    func testBug_WaitingApprovalFallsToDefault() {
+    func testKnownIssue_WaitingApprovalFallsToDefault() {
         let state = "waiting-approval"
         let icon: String = {
             switch state {
@@ -660,7 +660,7 @@ final class NodeStateIconMappingTests: XCTestCase {
             }
         }()
         XCTAssertEqual(icon, "circle",
-                       "BUG: 'waiting-approval' gets default icon instead of pause.circle.fill")
+                       "Known issue: 'waiting-approval' gets default icon instead of pause.circle.fill")
     }
 }
 
@@ -697,31 +697,31 @@ final class BlockedNodeLookupTests: XCTestCase {
         XCTAssertNil(blocked, "No blocked node means approve/deny buttons should be disabled")
     }
 
-    /// BUG: When a run has waitingApproval status but no inspection loaded yet,
+    /// Known issue: When a run has waitingApproval status but no inspection loaded yet,
     /// the approve/deny buttons appear disabled (opacity 0.5) with empty action closures.
     /// The disabled buttons still render but do nothing.
     /// Also, if the inspection fails to load (silently caught), the buttons stay disabled forever
     /// with no error feedback to the user.
-    func testBug_ApproveButtonsDisabledWithNoInspection() {
+    func testKnownIssue_ApproveButtonsDisabledWithNoInspection() {
         // inspections[run.runId] is nil -> buttons show but disabled
         let inspections: [String: RunInspection] = [:]
         let run = makeRun(runId: "r1", status: .waitingApproval)
         let inspection = inspections[run.runId]
         XCTAssertNil(inspection,
-                     "BUG: No inspection data means approve/deny show disabled with no way to retry loading")
+                     "Known issue: No inspection data means approve/deny show disabled with no way to retry loading")
     }
 
-    /// BUG: The view uses `first(where:)` to find the blocked node, which means only
+    /// Known issue: The view uses `first(where:)` to find the blocked node, which means only
     /// the FIRST blocked/waiting-approval node can be approved/denied. If multiple nodes
     /// are blocked simultaneously, the user can only interact with the first one.
-    func testBug_OnlyFirstBlockedNodeIsActionable() {
+    func testKnownIssue_OnlyFirstBlockedNodeIsActionable() {
         let tasks = [
             RunTask(nodeId: "n1", label: "Gate A", iteration: nil, state: "blocked", lastAttempt: nil, updatedAtMs: nil),
             RunTask(nodeId: "n2", label: "Gate B", iteration: nil, state: "blocked", lastAttempt: nil, updatedAtMs: nil),
         ]
         let found = tasks.first(where: { $0.state == "blocked" || $0.state == "waiting-approval" })
         XCTAssertEqual(found?.nodeId, "n1",
-                       "BUG: Only first blocked node is actionable; 'Gate B' cannot be approved/denied")
+                       "Known issue: Only first blocked node is actionable; 'Gate B' cannot be approved/denied")
     }
 }
 
@@ -750,10 +750,10 @@ final class ExpandCollapseTests: XCTestCase {
         XCTAssertEqual(icon, "chevron.right")
     }
 
-    /// BUG: Only one run can be expanded at a time (expandedRunId is a single String?).
+    /// Known issue: Only one run can be expanded at a time (expandedRunId is a single String?).
     /// Clicking a second run collapses the first. This may be intentional UX, but
     /// it prevents comparing two runs side by side.
-    func testBug_OnlyOneRunExpandableAtATime() {
+    func testKnownIssue_OnlyOneRunExpandableAtATime() {
         var expandedRunId: String? = "r1"
         // Simulate toggling a different run
         let newRunId = "r2"
@@ -763,7 +763,7 @@ final class ExpandCollapseTests: XCTestCase {
             expandedRunId = newRunId
         }
         XCTAssertEqual(expandedRunId, "r2",
-                       "BUG: Expanding r2 collapsed r1; only one run expandable at a time")
+                       "Known issue: Expanding r2 collapsed r1; only one run expandable at a time")
     }
 }
 
@@ -803,10 +803,10 @@ final class LazyInspectionLoadingTests: XCTestCase {
         XCTAssertEqual(loadCount, 0, "Should not reload inspection if already cached")
     }
 
-    /// BUG: The toggleExpand function checks `inspections[run.id]` but loadInspection
+    /// Known issue: The toggleExpand function checks `inspections[run.id]` but loadInspection
     /// uses `run.runId` as the key. Since `run.id == run.runId`, this works, but the
     /// inconsistency (using `run.id` in one place and `run.runId` in another) is fragile.
-    func testBug_InconsistentKeyUsageIdVsRunId() {
+    func testKnownIssue_InconsistentKeyUsageIdVsRunId() {
         let run = makeRun(runId: "r1")
         // toggleExpand checks: inspections[run.id]
         // loadInspection stores: inspections[runId] (the parameter, which is run.runId)
@@ -1098,13 +1098,13 @@ final class RunRowProgressVisibilityTests: XCTestCase {
         XCTAssertFalse(show)
     }
 
-    /// BUG: Progress bar is hidden for waitingApproval status even if nodes are partially complete.
+    /// Known issue: Progress bar is hidden for waitingApproval status even if nodes are partially complete.
     /// A run that is waiting-approval might be 80% done, but the user sees no progress indicator.
-    func testBug_ProgressBarHiddenForWaitingApproval() {
+    func testKnownIssue_ProgressBarHiddenForWaitingApproval() {
         let run = makeRun(status: .waitingApproval, summary: ["total": 10, "finished": 8])
         let show = run.status == .running && run.totalNodes > 0
         XCTAssertFalse(show,
-                       "BUG: Progress bar hidden for waitingApproval even with progress data")
+                       "Known issue: Progress bar hidden for waitingApproval even with progress data")
         XCTAssertEqual(run.progress, 0.8, "Run is 80% done but no progress bar shown")
     }
 }
@@ -1113,7 +1113,7 @@ final class RunRowProgressVisibilityTests: XCTestCase {
 
 final class ApproveAfterActionTests: XCTestCase {
 
-    /// BUG: After approveNode/denyNode, the code calls:
+    /// Known issue: After approveNode/denyNode, the code calls:
     ///   await loadRuns()
     ///   if let expandedRunId { await loadInspection(expandedRunId) }
     /// But expandedRunId is the run.id (which == run.runId). However, loadInspection
@@ -1142,7 +1142,7 @@ final class ApproveAfterActionTests: XCTestCase {
 
 final class LoadRunsErrorTests: XCTestCase {
 
-    /// BUG: In approveNode, denyNode, and cancelRun, the catch block sets
+    /// Known issue: In approveNode, denyNode, and cancelRun, the catch block sets
     /// `self.error = error.localizedDescription`. But `error` here shadows the
     /// property `self.error` with the caught error. This is correct Swift behavior,
     /// but the error display shows the raw localizedDescription which may be
@@ -1181,10 +1181,10 @@ final class RunsEdgeCaseTests: XCTestCase {
         XCTAssertTrue(showError, "Error state should display even when runs are empty")
     }
 
-    /// BUG: When isLoading is true and runs are empty, neither error nor empty state shows.
+    /// Known issue: When isLoading is true and runs are empty, neither error nor empty state shows.
     /// The user sees a blank content area with only the loading spinner in the header.
     /// There's no skeleton/placeholder in the main content area during initial load.
-    func testBug_NoLoadingStateInContentArea() {
+    func testKnownIssue_NoLoadingStateInContentArea() {
         let runs: [RunSummary] = []
         let isLoading = true
         let error: String? = nil

@@ -120,6 +120,44 @@ final class AgentChatViewTests: XCTestCase {
         model.stopPolling()
     }
 
+    func testPollingBacksOffWhenNoNewMessagesArrive() async throws {
+        let session = makeStubbedSession()
+        URLProtocolStub.handler = { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("POST", "/api/repos/acme/widgets/agent/sessions/sess-1/messages"):
+                return try jsonResponse(for: request, statusCode: 200, jsonObject: [:])
+            case ("GET", "/api/repos/acme/widgets/agent/sessions/sess-1/messages"):
+                return try jsonResponse(for: request, statusCode: 200, jsonObject: [])
+            default:
+                return try textResponse(for: request, statusCode: 404, body: "unexpected request")
+            }
+        }
+
+        let model = AgentChatViewModel(
+            client: AgentChatAPIClient(
+                baseURL: URL(string: "https://plue.test")!,
+                repoOwner: "acme",
+                repoName: "widgets",
+                sessionID: "sess-1",
+                bearerProvider: { "test-token" },
+                session: session
+            ),
+            pollConfig: AgentChatPollConfig(activeSeconds: 0.01, maxSeconds: 0.2, backoffMultiplier: 2.0, maxIdleStreak: 4),
+            sleep: { _ in await Task.yield() }
+        )
+        model.draft = "start"
+        model.send()
+
+        let collected = await waitUntil(timeout: 2) { model.debugPollIntervals.count >= 4 }
+        XCTAssertTrue(collected)
+        model.stopPolling()
+
+        let intervals = Array(model.debugPollIntervals.prefix(4))
+        XCTAssertGreaterThanOrEqual(intervals.count, 4)
+        XCTAssertLessThanOrEqual(intervals[0], intervals[1])
+        XCTAssertLessThanOrEqual(intervals[1], intervals[2])
+    }
+
     func testHttpFailureSurfacesErrorMessage() async throws {
         let session = makeStubbedSession()
 

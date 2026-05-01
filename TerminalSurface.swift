@@ -130,6 +130,14 @@ public final class TerminalSurfaceModel: ObservableObject {
     /// the full libghostty VT decoder lands (see `0092` follow-up).
     @Published public private(set) var recentBytes: Data = Data()
     private let recentBytesCap = 64 * 1024
+    private let coalesceDelayNanoseconds: UInt64 = 16_000_000
+    private let coalesceFlushThresholdBytes = 4 * 1024
+    private var pendingBytes: Data = Data()
+    private var coalesceFlushTask: Task<Void, Never>?
+
+    public private(set) var debugIncomingChunkCount: Int = 0
+    public private(set) var debugPublishedChunkCount: Int = 0
+    public private(set) var debugDroppedByteCount: Int = 0
 
     public var callbacks: TerminalSurfaceCallbacks
 
@@ -176,6 +184,9 @@ public final class TerminalSurfaceModel: ObservableObject {
     public func detach() {
         transportStateCancellable?.cancel()
         transportStateCancellable = nil
+        coalesceFlushTask?.cancel()
+        coalesceFlushTask = nil
+        flushPendingBytes()
         _transport?.stop()
         _transport = nil
     }
@@ -206,8 +217,37 @@ public final class TerminalSurfaceModel: ObservableObject {
 
     private func appendBytes(_ data: Data) {
         isClosed = false
+        debugIncomingChunkCount += 1
+        pendingBytes.append(data)
+        if pendingBytes.count >= coalesceFlushThresholdBytes {
+            coalesceFlushTask?.cancel()
+            coalesceFlushTask = nil
+            flushPendingBytes()
+            return
+        }
+
+        guard coalesceFlushTask == nil else { return }
+        coalesceFlushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: self?.coalesceDelayNanoseconds ?? 16_000_000)
+            await MainActor.run {
+                self?.coalesceFlushTask = nil
+                self?.flushPendingBytes()
+            }
+        }
+    }
+
+    private func flushPendingBytes() {
+        guard !pendingBytes.isEmpty else { return }
+        let incoming = pendingBytes
+        pendingBytes.removeAll(keepingCapacity: true)
+        debugPublishedChunkCount += 1
+        applyRecentBytesCapAndAppend(incoming)
+    }
+
+    private func applyRecentBytesCapAndAppend(_ data: Data) {
         if recentBytes.count + data.count > recentBytesCap {
             let dropCount = recentBytes.count + data.count - recentBytesCap
+            debugDroppedByteCount += dropCount
             if dropCount < recentBytes.count {
                 recentBytes.removeFirst(dropCount)
             } else {

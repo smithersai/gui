@@ -36,6 +36,22 @@ final class TerminalSurfaceConnectionStateTests: XCTestCase {
         XCTAssertEqual(transport.reconnectCount, 1)
         model.detach()
     }
+
+    func test_terminal_byte_burst_is_coalesced() async {
+        let transport = FakeStateTransport()
+        let model = TerminalSurfaceModel()
+        model.attach(transport)
+
+        for _ in 0..<200 {
+            transport.emitBytes(Data("x".utf8))
+        }
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(model.debugIncomingChunkCount, 200)
+        XCTAssertLessThan(model.debugPublishedChunkCount, model.debugIncomingChunkCount)
+        XCTAssertEqual(model.recentBytes.count, 200)
+        model.detach()
+    }
 }
 
 @MainActor
@@ -49,9 +65,11 @@ private final class FakeStateTransport: TerminalPTYTransport {
     }
 
     private(set) var reconnectCount = 0
+    private var onBytes: ((Data) -> Void)?
 
     func start(onBytes: @escaping (Data) -> Void, onClosed: @escaping () -> Void) {
-        _ = (onBytes, onClosed)
+        _ = onClosed
+        self.onBytes = onBytes
         connectionState = .connected
     }
 
@@ -73,6 +91,10 @@ private final class FakeStateTransport: TerminalPTYTransport {
 
     func emit(_ state: TerminalSurfaceConnectionState) {
         connectionState = state
+    }
+
+    func emitBytes(_ data: Data) {
+        onBytes?(data)
     }
 }
 #endif

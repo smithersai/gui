@@ -179,9 +179,26 @@ final class AgentChatViewModel: ObservableObject {
     private var serverMessages: [AgentChatMessage] = []
     private var pendingMessages: [AgentChatMessage] = []
     private var pollingTask: Task<Void, Never>?
+    private var idlePollStreak = 0
+    private var lastPublishedMessageSignature = ""
+    private let pollConfig: AgentChatPollConfig
+    private let sleep: @Sendable (Duration) async -> Void
+    private let now: @Sendable () -> Date
+    public private(set) var debugPollIntervals: [Duration] = []
+    public private(set) var debugMessagesPublishCount = 0
 
-    init(client: AgentChatAPIClient) {
+    init(
+        client: AgentChatAPIClient,
+        pollConfig: AgentChatPollConfig = .default,
+        sleep: @escaping @Sendable (Duration) async -> Void = { duration in
+            try? await Task.sleep(for: duration)
+        },
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
         self.client = client
+        self.pollConfig = pollConfig
+        self.sleep = sleep
+        self.now = now
     }
 
     var canSend: Bool {
@@ -205,6 +222,7 @@ final class AgentChatViewModel: ObservableObject {
 
     func reload() async {
         await refreshMessages()
+        startPolling()
     }
 
     func send() {
@@ -228,6 +246,7 @@ final class AgentChatViewModel: ObservableObject {
             guard let self else { return }
             do {
                 try await self.client.sendMessage(text: text)
+                self.idlePollStreak = 0
                 await self.refreshMessages()
                 self.startPolling()
             } catch {
@@ -248,7 +267,9 @@ final class AgentChatViewModel: ObservableObject {
         pollingTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
+                let delay = self.nextPollDelay()
+                self.debugPollIntervals.append(delay)
+                await self.sleep(delay)
                 if Task.isCancelled { break }
                 await self.refreshMessages()
             }
@@ -265,6 +286,11 @@ final class AgentChatViewModel: ObservableObject {
         do {
             let loaded = try await client.fetchMessages()
             errorMessage = nil
+            if loaded == serverMessages {
+                idlePollStreak = min(idlePollStreak + 1, pollConfig.maxIdleStreak)
+            } else {
+                idlePollStreak = 0
+            }
             serverMessages = loaded
             publishMessages(scrollTo: loaded.last?.id)
         } catch {
@@ -276,8 +302,16 @@ final class AgentChatViewModel: ObservableObject {
         prunePendingMessages()
 
         let combined = (serverMessages + pendingMessages).sorted(by: AgentChatMessage.sort)
-        messages = combined
-        scrollTargetID = explicitTarget ?? combined.last?.id
+        let signature = combined.map(\.id).joined(separator: "|") + "#\(combined.count)"
+        if signature != lastPublishedMessageSignature || messages != combined {
+            messages = combined
+            debugMessagesPublishCount += 1
+            lastPublishedMessageSignature = signature
+        }
+        let target = explicitTarget ?? combined.last?.id
+        if scrollTargetID != target {
+            scrollTargetID = target
+        }
     }
 
     private func prunePendingMessages() {
@@ -291,6 +325,29 @@ final class AgentChatViewModel: ObservableObject {
             }
         }
     }
+
+    private func nextPollDelay() -> Duration {
+        if idlePollStreak == 0 {
+            return .seconds(pollConfig.activeSeconds)
+        }
+        let factor = pow(pollConfig.backoffMultiplier, Double(idlePollStreak))
+        let seconds = min(pollConfig.maxSeconds, pollConfig.activeSeconds * factor)
+        return .milliseconds(Int64(seconds * 1_000))
+    }
+}
+
+struct AgentChatPollConfig {
+    let activeSeconds: Double
+    let maxSeconds: Double
+    let backoffMultiplier: Double
+    let maxIdleStreak: Int
+
+    static let `default` = AgentChatPollConfig(
+        activeSeconds: 1.0,
+        maxSeconds: 8.0,
+        backoffMultiplier: 1.7,
+        maxIdleStreak: 6
+    )
 }
 
 struct AgentChatMessage: Identifiable, Equatable {

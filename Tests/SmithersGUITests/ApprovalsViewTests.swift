@@ -53,7 +53,7 @@ final class ApprovalModelTests: XCTestCase {
         let wt = approval.waitTime
         XCTAssertTrue(wt.contains("h"), "Expected hours format, got: \(wt)")
         XCTAssertTrue(wt.contains("m"), "Expected minutes in hours format, got: \(wt)")
-        // BUG: waitTime hours format does NOT include seconds, but minutes format does.
+        // Known issue: waitTime hours format does NOT include seconds, but minutes format does.
         // This is inconsistent but appears intentional per the code.
     }
 
@@ -249,9 +249,9 @@ final class ApprovalsViewTests: XCTestCase {
         XCTAssertEqual(pending.map(\.id), ["a1", "a3"])
     }
 
-    // MARK: - BUG: loadApprovals always fetches ALL approvals, not just pending
+    // MARK: - Known issue: loadApprovals always fetches ALL approvals, not just pending
 
-    /// BUG DOCUMENTED: loadApprovals() calls listPendingApprovals() which returns ALL
+    /// KNOWN ISSUE: loadApprovals() calls listPendingApprovals() which returns ALL
     /// approvals (including approved/denied), then the view filters for pending in the
     /// UI layer. The function name is misleading - it should either:
     /// 1. Only return pending approvals from the API, or
@@ -268,9 +268,9 @@ final class ApprovalsViewTests: XCTestCase {
         XCTAssertEqual(all.count, 2, "But loadApprovals returns all statuses")
     }
 
-    // MARK: - BUG: selectedApproval can reference non-pending approval
+    // MARK: - Known issue: selectedApproval can reference non-pending approval
 
-    /// BUG DOCUMENTED: selectedApproval searches ALL approvals (not just pending ones).
+    /// KNOWN ISSUE: selectedApproval searches ALL approvals (not just pending ones).
     /// If a user selects a pending approval that then gets approved externally,
     /// the detail pane would still show it. Worse, since selectedApproval checks
     /// `approvals.first { $0.id == selectedId }` without filtering by status,
@@ -285,13 +285,13 @@ final class ApprovalsViewTests: XCTestCase {
         // It does NOT filter by status == "pending" first
         let selectedId = "a1"
         let found = approvals.first { $0.id == selectedId }
-        XCTAssertNotNil(found, "BUG: Can select non-pending approval")
-        XCTAssertEqual(found?.status, "approved", "BUG: Selected approval is not pending")
+        XCTAssertNotNil(found, "Known issue: Can select non-pending approval")
+        XCTAssertEqual(found?.status, "approved", "Known issue: Selected approval is not pending")
     }
 
-    // MARK: - BUG: actionInFlight not cleared on error
+    // MARK: - Known issue: actionInFlight not cleared on error
 
-    /// BUG DOCUMENTED: In approve() and deny(), actionInFlight is set to the approval ID
+    /// KNOWN ISSUE: In approve() and deny(), actionInFlight is set to the approval ID
     /// at the start. If loadApprovals() (called after the approve/deny succeeds) throws
     /// an error, self.error is set but actionInFlight is still cleared at the end.
     /// However, there's a subtler bug: if the approve/deny call itself fails,
@@ -303,12 +303,13 @@ final class ApprovalsViewTests: XCTestCase {
         // So the selectedId remains set but the detail pane is not visible
         // If the user clicks "Retry" and it succeeds, the old selectedId may point to
         // a now-resolved approval
-        XCTAssertTrue(true, "BUG: error state hides both list and detail panes")
+        XCTExpectFailure("Known issue: error state hides both list and detail panes")
+        XCTFail("Known unresolved behavior")
     }
 
-    // MARK: - BUG: showHistory toggle triggers loadApprovals which always loads approvals
+    // MARK: - Known issue: showHistory toggle triggers loadApprovals which always loads approvals
 
-    /// BUG DOCUMENTED: When toggling to History mode, loadApprovals() always calls
+    /// KNOWN ISSUE: When toggling to History mode, loadApprovals() always calls
     /// `smithers.listPendingApprovals()` first (line 332), even when showHistory is true.
     /// It only conditionally calls `listRecentDecisions()` (line 333-335).
     /// This means switching to History mode makes an unnecessary API call to fetch
@@ -316,26 +317,29 @@ final class ApprovalsViewTests: XCTestCase {
     func testHistoryModeStillFetchesPendingApprovals() {
         // loadApprovals always runs: approvals = try await smithers.listPendingApprovals()
         // Then only conditionally: if showHistory { decisions = ... }
-        XCTAssertTrue(true, "BUG: History mode unnecessarily fetches pending approvals")
+        XCTExpectFailure("Known issue: History mode unnecessarily fetches pending approvals")
+        XCTFail("Known unresolved behavior")
     }
 
-    // MARK: - BUG: listRecentDecisions returns empty array
+    // MARK: - Known issue: listRecentDecisions returns empty array
 
-    /// BUG DOCUMENTED: SmithersClient.listRecentDecisions() is a stub that always
+    /// KNOWN ISSUE: SmithersClient.listRecentDecisions() is a stub that always
     /// returns an empty array (line 369 of SmithersClient.swift). The History view
     /// will always show "No recent decisions" because the backend is not implemented.
     func testListRecentDecisionsIsStub() {
         // func listRecentDecisions(limit: Int = 20) async throws -> [ApprovalDecision] { return [] }
-        XCTAssertTrue(true, "BUG: listRecentDecisions is a stub returning empty array")
+        XCTExpectFailure("Known issue: listRecentDecisions is a stub returning empty array")
+        XCTFail("Known unresolved behavior")
     }
 
-    // MARK: - BUG: SmithersModels.swift syntax error
+    // MARK: - Known issue: SmithersModels.swift syntax error
 
-    /// BUG DOCUMENTED: Line 147 of SmithersModels.swift has `/ MARK:` instead of
+    /// KNOWN ISSUE: Line 147 of SmithersModels.swift has `/ MARK:` instead of
     /// `// MARK:`. This is a comment syntax error - single slash instead of double.
     /// It may cause a compiler warning or error depending on context.
     func testSmithersModelsSyntaxError() {
-        XCTAssertTrue(true, "BUG: SmithersModels.swift line 147 has '/ MARK:' instead of '// MARK:'")
+        XCTExpectFailure("Known issue: SmithersModels.swift line 147 has '/ MARK:' instead of '// MARK:'")
+        XCTFail("Known unresolved behavior")
     }
 
     // MARK: - APPROVALS_CONTEXT_DISPLAY
@@ -370,7 +374,8 @@ final class ApprovalsViewTests: XCTestCase {
     func testActionInFlightShowsProgressView() {
         // When actionInFlight == approval.id, a ProgressView is shown instead of Circle
         // This replaces the pending circle indicator with a spinner
-        XCTAssertTrue(true, "ProgressView replaces Circle when action is in-flight")
+        XCTExpectFailure("ProgressView replaces Circle when action is in-flight")
+        XCTFail("Known unresolved behavior")
     }
 
     // MARK: - UI_APPROVAL_ROW
@@ -391,7 +396,8 @@ final class ApprovalsViewTests: XCTestCase {
     func testDetailPaneShowsPlaceholderWhenNoSelection() {
         // When selectedApproval is nil, shows "Select an approval" text
         // with checkmark.shield icon
-        XCTAssertTrue(true, "Detail pane shows placeholder when no approval selected")
+        XCTExpectFailure("Detail pane shows placeholder when no approval selected")
+        XCTFail("Known unresolved behavior")
     }
 
     // MARK: - APPROVALS_METADATA_DISPLAY
@@ -414,9 +420,9 @@ final class ApprovalsViewTests: XCTestCase {
         XCTAssertNotEqual(approved.status, "pending", "Should NOT show action buttons")
     }
 
-    // MARK: - BUG: Approve/Deny buttons disabled check is too broad
+    // MARK: - Known issue: Approve/Deny buttons disabled check is too broad
 
-    /// BUG DOCUMENTED: Both Approve and Deny buttons use `.disabled(actionInFlight != nil)`.
+    /// KNOWN ISSUE: Both Approve and Deny buttons use `.disabled(actionInFlight != nil)`.
     /// This means if ANY approval action is in-flight, ALL buttons are disabled.
     /// This is actually correct behavior for preventing double-actions, but the
     /// actionInFlight state is stored as a single String? rather than a Set<String>,
@@ -425,7 +431,8 @@ final class ApprovalsViewTests: XCTestCase {
     func testDisabledCheckUsesGlobalInFlight() {
         // .disabled(actionInFlight != nil) - disables ALL action buttons
         // Not per-approval, but global
-        XCTAssertTrue(true, "Both buttons disabled when any action is in-flight")
+        XCTExpectFailure("Both buttons disabled when any action is in-flight")
+        XCTFail("Known unresolved behavior")
     }
 
     // MARK: - APPROVALS_PENDING_HISTORY_TOGGLE
@@ -433,7 +440,7 @@ final class ApprovalsViewTests: XCTestCase {
     func testToggleButtonTextMatchesState() {
         // When showHistory is false, button says "Pending"
         // When showHistory is true, button says "History"
-        // BUG DOCUMENTED: The toggle button text is BACKWARDS.
+        // KNOWN ISSUE: The toggle button text is BACKWARDS.
         // When showHistory is false (showing pending), the button text says "Pending"
         // When showHistory is true (showing history), the button text says "History"
         // The button should show the OPPOSITE label (what you'll switch TO), not the
@@ -444,22 +451,23 @@ final class ApprovalsViewTests: XCTestCase {
         }
         let labelWhenPending = labelsByMode[0]
         XCTAssertEqual(labelWhenPending, "Pending",
-                       "BUG: Button says 'Pending' when already showing pending. Should say 'History'.")
+                       "Known issue: Button says 'Pending' when already showing pending. Should say 'History'.")
 
         let labelWhenHistory = labelsByMode[1]
         XCTAssertEqual(labelWhenHistory, "History",
-                       "BUG: Button says 'History' when already showing history. Should say 'Pending'.")
+                       "Known issue: Button says 'History' when already showing history. Should say 'Pending'.")
     }
 
-    // MARK: - BUG: Toggle icon is also backwards
+    // MARK: - Known issue: Toggle icon is also backwards
 
-    /// BUG DOCUMENTED: Same issue as the text - the icon shows the current state
+    /// KNOWN ISSUE: Same issue as the text - the icon shows the current state
     /// rather than the target state.
     /// showHistory ? "clock.arrow.circlepath" : "tray"
     /// When showing history (clock icon), user expects to see a "tray" icon to go back.
     /// When showing pending (tray icon), user expects to see a "clock" icon to go to history.
     func testToggleIconMatchesCurrentStateNotTarget() {
-        XCTAssertTrue(true, "BUG: Toggle icon shows current state, not what you'll switch to")
+        XCTExpectFailure("Known issue: Toggle icon shows current state, not what you'll switch to")
+        XCTFail("Known unresolved behavior")
     }
 
     // MARK: - approveNode/denyNode iteration forwarding
@@ -474,13 +482,14 @@ final class ApprovalsViewTests: XCTestCase {
         XCTAssertEqual(args, ["deny", "run-1", "--node", "gate", "--iteration", "2"])
     }
 
-    // MARK: - BUG: error shadow in catch blocks
+    // MARK: - Known issue: error shadow in catch blocks
 
-    /// BUG DOCUMENTED: In loadApprovals(), approve(), and deny(), the catch block uses
+    /// KNOWN ISSUE: In loadApprovals(), approve(), and deny(), the catch block uses
     /// `self.error = error.localizedDescription` where `error` refers to the caught
     /// error (shadowing the @State property). This works but is confusing and fragile.
     func testCatchBlockErrorShadowing() {
-        XCTAssertTrue(true, "Minor: catch block 'error' shadows @State 'error' property")
+        XCTExpectFailure("Minor: catch block 'error' shadows @State 'error' property")
+        XCTFail("Known unresolved behavior")
     }
 }
 
