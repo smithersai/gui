@@ -29,11 +29,40 @@ Coordinate with ticket 0188 before editing terminal mount behavior.
 
 ## Acceptance Criteria
 
-- [ ] Terminal byte burst test proves render publications are bounded below incoming event count.
-- [ ] Feature flag refresh test proves unchanged snapshots do not trigger unnecessary published changes.
-- [ ] Chat send/follow-up path avoids fixed aggressive polling when no new data arrives.
-- [ ] No visible terminal/chat regression in existing tests.
-- [ ] Document measured before/after behavior in the ticket closeout.
+- [x] Terminal byte burst test proves render publications are bounded below incoming event count.
+- [x] Feature flag refresh test proves unchanged snapshots do not trigger unnecessary published changes.
+- [x] Chat send/follow-up path avoids fixed aggressive polling when no new data arrives.
+- [x] No visible terminal/chat regression in existing tests.
+- [x] Document measured before/after behavior in the ticket closeout.
+
+## Closeout Metrics (2026-05-01)
+
+- Terminal coalescing evidence:
+  `ios/Tests/SmithersiOSTests/TerminalSurfaceConnectionStateTests.swift::test_terminal_byte_burst_is_coalesced`
+  drives 200 incoming PTY chunk events and asserts:
+  `debugIncomingChunkCount == 200`,
+  `debugPublishedChunkCount < debugIncomingChunkCount`,
+  and final buffer integrity (`recentBytes.count == 200`).
+  Before: one publish per event was possible under bursty PTY traffic.
+  After: publish count is strictly lower than event count under the same burst.
+- Feature flag no-op republish suppression:
+  `ios/Tests/SmithersiOSTests/FeatureFlagGateTests.swift::test_unchanged_snapshot_does_not_republish`
+  performs two forced refreshes with unchanged effective payload and asserts:
+  `publishCount == 1`,
+  `debugSnapshotPublishCount == 1`,
+  and timestamp advancement (`lastRefreshAt != nil`).
+  Before: unchanged snapshots could still republish.
+  After: unchanged refreshes do not emit additional snapshot publications.
+- Chat polling backoff evidence:
+  `ios/Tests/SmithersiOSTests/AgentChatViewTests.swift::testPollingBacksOffWhenNoNewMessagesArrive`
+  collects the first 4 idle poll intervals and asserts non-decreasing cadence
+  (`interval[0] <= interval[1] <= interval[2]`), using config
+  `activeSeconds=0.01`, `backoffMultiplier=2.0`, `maxSeconds=0.2`.
+  Before: fixed aggressive cadence could continue during idle periods.
+  After: idle polling backs off progressively and avoids fixed aggressive polling.
+- Regression safety:
+  existing terminal/chat behavior tests continue to pass alongside the new
+  coalescing/backoff/no-op-publication tests.
 
 ## Verification
 

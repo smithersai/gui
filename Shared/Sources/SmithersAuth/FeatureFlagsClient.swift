@@ -90,6 +90,7 @@ public final class FeatureFlagsClient: ObservableObject {
     private var cachedAt: Date?
     private var inFlightRefresh: Task<FeatureFlagsSnapshot, Error>?
     private var mockResponseProvider: MockResponseProvider?
+    public private(set) var debugSnapshotPublishCount: Int = 0
 
     public init(
         baseURL: URL,
@@ -199,7 +200,10 @@ public final class FeatureFlagsClient: ObservableObject {
     }
 
     private func apply(snapshot: FeatureFlagsSnapshot, at date: Date) {
-        self.snapshot = snapshot
+        if self.snapshot != snapshot {
+            self.snapshot = snapshot
+            debugSnapshotPublishCount += 1
+        }
         self.cachedAt = date
         self.lastRefreshAt = date
     }

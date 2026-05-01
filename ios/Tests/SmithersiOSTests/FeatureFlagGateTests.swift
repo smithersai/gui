@@ -1,4 +1,5 @@
 #if os(iOS)
+import Combine
 import XCTest
 import ViewInspector
 @testable import SmithersiOS
@@ -84,6 +85,21 @@ final class IOSFeatureFlagGateTests: XCTestCase {
                 environment: ["PLUE_REMOTE_SANDBOX_ENABLED": "1"]
             )
         )
+    }
+
+    func test_unchanged_snapshot_does_not_republish() async throws {
+        let box = FeatureFlagBox(remoteEnabled: true)
+        let client = makeMockFlagsClient(box: box)
+        var publishCount = 0
+        let cancellable = client.$snapshot.dropFirst().sink { _ in publishCount += 1 }
+        defer { cancellable.cancel() }
+
+        _ = try await client.refresh(force: true)
+        _ = try await client.refresh(force: true)
+
+        XCTAssertEqual(publishCount, 1)
+        XCTAssertEqual(client.debugSnapshotPublishCount, 1)
+        XCTAssertNotNil(client.lastRefreshAt)
     }
 
     func test_workspace_detail_gate_shows_kill_switch_empty_state_when_seeded_terminal_disabled() {
