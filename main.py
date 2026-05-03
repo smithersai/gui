@@ -9,18 +9,19 @@ import uvicorn
 from fastapi import FastAPI
 
 from agent import create_mcp_wrapper, create_simple_wrapper
-from config import DEFAULT_MODEL
+from config.defaults import DEFAULT_MODEL
 from core.permissions import PermissionChecker, PermissionStore
 from server import app, set_agent, set_permission_checker
 from server.event_bus import get_event_bus
 from server.logging_config import DISABLE_LOGGING_ENV, setup_logging
+from server.security import validate_server_binding
 
 # Initialize logging before anything else
 setup_logging()
 logger = logging.getLogger(__name__)
 
 # Constants
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_USE_MCP = True
 DEFAULT_DISABLE_LOGGING = False
@@ -85,6 +86,12 @@ def main() -> None:
         os.environ.get(DISABLE_LOGGING_ENV, str(DEFAULT_DISABLE_LOGGING)).lower()
         == "true"
     )
+
+    try:
+        validate_server_binding(host)
+    except ValueError as e:
+        logger.error("%s", e)
+        raise SystemExit(2) from e
 
     logger.info("Server listening on %s:%d", host, port)
 
