@@ -4,7 +4,7 @@
 //!   1. std.http.Client in Zig 0.15 does not expose the raw socket after
 //!      upgrade (connection-reuse logic assumes HTTP semantics continue).
 //!   2. We need exact control over `Origin`, `Authorization`, and
-//!      `Sec-WebSocket-Protocol` headers — plue checks Origin and we want
+//!      `Sec-WebSocket-Protocol` headers — Smithers checks Origin and we want
 //!      the handshake byte-exact for debugging.
 //!   3. It is ~100 lines of code to do correctly.
 
@@ -99,7 +99,7 @@ pub fn parseResponse(buf: []const u8) Err!Response {
         }
     }
 
-    // Validate status. Map plue-specific statuses to distinct errors.
+    // Validate status. Map Smithers-specific statuses to distinct errors.
     if (status != 101) {
         return switch (status) {
             401 => Err.HandshakeUnauthorized,

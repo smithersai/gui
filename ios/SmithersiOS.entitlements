@@ -56,7 +56,7 @@
     </array>
     <key>com.apple.developer.associated-domains</key>
     <array>
-        <string>applinks:smithers.ai</string>
+        <string>applinks:smithers.sh</string>
     </array>
 </dict>
 </plist>

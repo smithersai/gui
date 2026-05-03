@@ -1,6 +1,6 @@
 // Smithers.RemoteMode.swift — desktop-remote productization (ticket 0126).
 //
-// Owns the macOS-only product surfaces for remote (JJHub sandbox) mode
+// Owns the macOS-only product surfaces for remote Smithers sandbox mode
 // that sit on top of the shared SmithersAuth (0109) + SmithersStore
 // (0124) + SmithersRuntime (0120) layers.
 //
@@ -41,7 +41,7 @@ import SmithersE2ESupport
 /// Reads the `remote_sandbox_enabled` feature flag (0112).
 ///
 /// Startup precedence:
-///   1. `PLUE_REMOTE_SANDBOX_ENABLED` when explicitly set to a true/false-ish
+///   1. `SMITHERS_REMOTE_SANDBOX_ENABLED` when explicitly set to a true/false-ish
 ///      value. This remains the highest-priority dev/test override.
 ///   2. Otherwise read `UserDefaults["remote_sandbox_enabled"]` — the last
 ///      server-backed value persisted after a successful `/api/feature-flags`
@@ -50,12 +50,13 @@ import SmithersE2ESupport
 ///      local-only behaviour verbatim (no sign-in UI, no remote sections).
 enum RemoteSandboxFlag {
     static let key = "remote_sandbox_enabled"
-    static let envVar = "PLUE_REMOTE_SANDBOX_ENABLED"
+    static let envVar = "SMITHERS_REMOTE_SANDBOX_ENABLED"
+    static let legacyEnvVar = "PLUE_REMOTE_SANDBOX_ENABLED"
 
     static func environmentOverride(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool? {
-        guard let raw = environment[envVar]?.lowercased() else { return nil }
+        guard let raw = (environment[envVar] ?? environment[legacyEnvVar])?.lowercased() else { return nil }
         switch raw {
         case "1", "true", "yes", "on":
             return true
@@ -77,7 +78,7 @@ enum RemoteSandboxFlag {
         environmentOverride(environment: environment) ?? persisted(defaults: defaults)
     }
 
-    /// Persist a flag value reported by plue (`/api/feature-flags`) so the
+    /// Persist a flag value reported by Smithers (`/api/feature-flags`) so the
     /// next app launch opens with the correct UX without waiting on a
     /// network round-trip. Called opportunistically after sign-in.
     static func persist(_ value: Bool, defaults: UserDefaults = .standard) {
@@ -195,10 +196,10 @@ final class RemoteModeController: ObservableObject {
     private let defaults: UserDefaults
     private let featureFlagRefreshInterval: TimeInterval
 
-    /// macOS E2E bypass (ticket macos-e2e-harness). When `PLUE_E2E_MODE=1`
+    /// macOS E2E bypass (ticket macos-e2e-harness). When `SMITHERS_E2E_MODE=1`
     /// is set, we short-circuit the entire production auth + lifecycle
     /// path: tokens come from `SMITHERS_E2E_BEARER`, the base URL from
-    /// `PLUE_BASE_URL`, the flag is force-enabled, and the remote
+    /// `SMITHERS_BASE_URL`, the flag is force-enabled, and the remote
     /// workspace list is fetched directly via a single REST call so the
     /// XCUITest bundle does not depend on Electric shape bring-up.
     private let e2eConfig: E2EConfig?
@@ -278,7 +279,7 @@ final class RemoteModeController: ObservableObject {
 
         // E2E fast path: bypass the full SmithersSessionLifecycle (which
         // requires Electric shape bring-up and a runtime cache directory)
-        // and populate `remoteWorkspaces` via a direct plue REST call.
+        // and populate `remoteWorkspaces` via a direct Smithers REST call.
         if let e2e = e2eConfig {
             self.phase = .active
             wireAuthObservation()
@@ -300,13 +301,13 @@ final class RemoteModeController: ObservableObject {
         }
     }
 
-    /// Fetch `/api/user/workspaces` with the E2E bearer, decode the plue
+    /// Fetch `/api/user/workspaces` with the E2E bearer, decode the Smithers
     /// response shape, and populate `remoteWorkspaces` + auto-open the
     /// seeded workspace so the sidebar shows a `sidebar.remote.row.<id>`
     /// button. Any failure flips the phase to `.error(...)` so the test
     /// harness fails loudly instead of silently asserting an empty list.
     private func bootstrapE2EWorkspaces(config: E2EConfig) async {
-        struct PlueWorkspace: Decodable {
+        struct SmithersWorkspace: Decodable {
             let workspace_id: String
             let workspace_title: String
             let state: String
@@ -322,7 +323,7 @@ final class RemoteModeController: ObservableObject {
                 self.phase = .error("E2E fetch status=\(code)")
                 return
             }
-            let rows = try JSONDecoder().decode([PlueWorkspace].self, from: data)
+            let rows = try JSONDecoder().decode([SmithersWorkspace].self, from: data)
             let mapped = rows.map { row in
                 WorkspaceRow(
                     workspaceId: row.workspace_id,
@@ -697,10 +698,16 @@ final class RemoteModeController: ObservableObject {
         if let e2eBaseURL {
             return e2eBaseURL
         }
+        if let dev = environment["SMITHERS_BASE_URL"].flatMap(URL.init(string:)) {
+            return dev
+        }
+        if let dev = environment["SMITHERS_DEV_BASE_URL"].flatMap(URL.init(string:)) {
+            return dev
+        }
         if let dev = environment["SMITHERS_PLUE_URL"].flatMap(URL.init(string:)) {
             return dev
         }
-        return URL(string: "https://jjhub.smithers.ai")!
+        return URL(string: "https://app.smithers.sh")!
     }
 
     private static func websocketURL(from url: URL) -> URL {

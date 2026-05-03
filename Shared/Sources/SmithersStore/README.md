@@ -47,11 +47,11 @@ currently looking at" surface. The expected row fields are:
 
 Subscription rule: the shape where-clause must include BOTH repository and
 session filters, e.g. `repository_id IN (...) AND session_id IN (...)`.
-Repo-less filters are rejected by plue's Electric auth proxy.
+Repo-less filters are rejected by the Smithers Electric auth proxy.
 
 Adding a new `kind`:
 
-1. Extend the producer in plue/guest-agent.
+1. Extend the producer in the Smithers guest agent.
 2. Keep payload JSON-only and backward compatible.
 3. Add/extend client rendering; unknown kinds should fall back to generic JSON.
 
@@ -63,6 +63,6 @@ sessions reach terminal state.
 
 `libsmithers-core` today ships a FAKE transport (ticket 0120 note). End-to-end
 tests that actually exercise the shape subscriptions and HTTP writes must be
-guarded behind `POC_ELECTRIC_STACK=1`. Until a real plue stack is reachable,
+guarded behind `POC_ELECTRIC_STACK=1`. Until a real Smithers stack is reachable,
 this module compiles, wires, and unit-tests the Swift-side state machine; the
 last mile is validated by 0126 when the runtime is switched over.

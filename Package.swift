@@ -71,6 +71,7 @@ let package = Package(
                 "CONTRIBUTING.md",
                 "README.md",
                 "AGENTS.md",
+                "AgentApp",
                 "Tests",
                 "docs",
                 "libsmithers",
@@ -190,7 +191,7 @@ let package = Package(
         ),
 
         // Env-var-gated E2E test hooks. Production code only observes this
-        // when PLUE_E2E_MODE=1, so normal app execution stays unchanged.
+        // when SMITHERS_E2E_MODE=1, so normal app execution stays unchanged.
         .target(
             name: "SmithersE2ESupport",
             dependencies: ["SmithersAuth"],

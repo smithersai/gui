@@ -3,7 +3,7 @@
 # bundle.
 #
 # Ticket: ios-e2e-harness. Steps:
-#   1. Start the plue stack (`make docker-up` in the plue checkout).
+#   1. Start the Smithers stack (`make docker-up` in the backend checkout).
 #   2. Wait for Postgres + the api to accept traffic on localhost:4000.
 #   3. Seed the E2E user / token / workspace via `seed-e2e-data.sh`.
 #   4. Regenerate `SmithersGUI.xcodeproj` via XcodeGen.
@@ -18,10 +18,10 @@
 #   2  — environmental failure (docker, postgres, xcodebuild setup).
 #
 # Env knobs:
-#   PLUE_CHECKOUT       path to the plue repo (default: ../plue)
-#   PLUE_BASE_URL       override base URL (default: http://localhost:4000)
-#   PLUE_REMOTE_SANDBOX_ENABLED
-#                     plue-side remote sandbox flag for the local stack
+#   SMITHERS_CHECKOUT   path to the Smithers backend repo (default: ../plue)
+#   SMITHERS_BASE_URL   override base URL (default: http://localhost:4000)
+#   SMITHERS_REMOTE_SANDBOX_ENABLED
+#                     backend remote sandbox flag for the local stack
 #                     (default: 1 so the production kill switch path is on
 #                     during the iOS e2e suite)
 #   E2E_KEEP_STACK      if "1", do NOT tear down on exit (leave postgres
@@ -32,9 +32,9 @@
 
 set -euo pipefail
 
-PLUE_CHECKOUT="${PLUE_CHECKOUT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/../plue}"
-PLUE_BASE_URL="${PLUE_BASE_URL:-http://localhost:4000}"
-PLUE_REMOTE_SANDBOX_ENABLED="${PLUE_REMOTE_SANDBOX_ENABLED:-1}"
+SMITHERS_CHECKOUT="${SMITHERS_CHECKOUT:-${PLUE_CHECKOUT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/../plue}}"
+SMITHERS_BASE_URL="${SMITHERS_BASE_URL:-${PLUE_BASE_URL:-http://localhost:4000}}"
+SMITHERS_REMOTE_SANDBOX_ENABLED="${SMITHERS_REMOTE_SANDBOX_ENABLED:-${PLUE_REMOTE_SANDBOX_ENABLED:-1}}"
 E2E_KEEP_STACK="${E2E_KEEP_STACK:-0}"
 E2E_SIMULATOR_NAME="${E2E_SIMULATOR_NAME:-iPhone 16}"
 E2E_SIMULATOR_OS="${E2E_SIMULATOR_OS:-18.6}"
@@ -68,10 +68,10 @@ die() {
 cleanup() {
     local rc=$?
     if [[ "$E2E_KEEP_STACK" != "1" ]]; then
-        log "tearing down plue stack (E2E_KEEP_STACK=0)"
-        (cd "$PLUE_CHECKOUT" && docker compose down -v >/dev/null 2>&1 || true)
+        log "tearing down Smithers stack (E2E_KEEP_STACK=0)"
+        (cd "$SMITHERS_CHECKOUT" && docker compose down -v >/dev/null 2>&1 || true)
     else
-        log "leaving plue stack up (E2E_KEEP_STACK=1)"
+        log "leaving Smithers stack up (E2E_KEEP_STACK=1)"
     fi
     if [[ $rc -ne 0 ]]; then
         log "xcresult bundles (if any): $(ls -td "$REPO_ROOT"/build/e2e-results-*.xcresult 2>/dev/null | head -1)"
@@ -81,65 +81,66 @@ cleanup() {
 trap cleanup EXIT
 
 export_clean_env
-export PLUE_REMOTE_SANDBOX_ENABLED
+export SMITHERS_REMOTE_SANDBOX_ENABLED
+export PLUE_REMOTE_SANDBOX_ENABLED="$SMITHERS_REMOTE_SANDBOX_ENABLED"
 
 # ---------------------------------------------------------------------------
-# 1. Plue stack
+# 1. Smithers stack
 # ---------------------------------------------------------------------------
-if [[ ! -d "$PLUE_CHECKOUT" ]]; then
-    die "plue checkout not found at $PLUE_CHECKOUT (override with PLUE_CHECKOUT=...)"
+if [[ ! -d "$SMITHERS_CHECKOUT" ]]; then
+    die "Smithers backend checkout not found at $SMITHERS_CHECKOUT (override with SMITHERS_CHECKOUT=...)"
 fi
 
-log "starting plue stack at $PLUE_CHECKOUT"
-if ! (cd "$PLUE_CHECKOUT" && make docker-up); then
+log "starting Smithers stack at $SMITHERS_CHECKOUT"
+if ! (cd "$SMITHERS_CHECKOUT" && make docker-up); then
     log "make docker-up failed — likely the bun.lock drift issue."
     log "attempting bun install as the ticket suggests, then retrying…"
-    if [[ -d "$PLUE_CHECKOUT/apps/workflow-runtime" ]]; then
-        (cd "$PLUE_CHECKOUT/apps/workflow-runtime" && bun install) || true
+    if [[ -d "$SMITHERS_CHECKOUT/apps/workflow-runtime" ]]; then
+        (cd "$SMITHERS_CHECKOUT/apps/workflow-runtime" && bun install) || true
     fi
-    (cd "$PLUE_CHECKOUT" && bun install) || true
-    if ! (cd "$PLUE_CHECKOUT" && make docker-up); then
-        die "make docker-up still failing after bun install; inspect $PLUE_CHECKOUT"
+    (cd "$SMITHERS_CHECKOUT" && bun install) || true
+    if ! (cd "$SMITHERS_CHECKOUT" && make docker-up); then
+        die "make docker-up still failing after bun install; inspect $SMITHERS_CHECKOUT"
     fi
 fi
 
 # ---------------------------------------------------------------------------
 # 2. Wait for services
 # ---------------------------------------------------------------------------
-log "waiting for plue api on $PLUE_BASE_URL"
+log "waiting for Smithers API on $SMITHERS_BASE_URL"
 deadline=$((SECONDS + 120))
-until curl -sf -o /dev/null -w '%{http_code}' "$PLUE_BASE_URL/api/health" 2>/dev/null | grep -qE '^(200|404|401)$'; do
+until curl -sf -o /dev/null -w '%{http_code}' "$SMITHERS_BASE_URL/api/health" 2>/dev/null | grep -qE '^(200|404|401)$'; do
     if (( SECONDS >= deadline )); then
-        die "plue api not reachable at $PLUE_BASE_URL after 120s"
+        die "Smithers API not reachable at $SMITHERS_BASE_URL after 120s"
     fi
     sleep 2
 done
-log "plue api reachable"
+log "Smithers API reachable"
 
 REMOTE_FLAG=$(
-    curl -sf "$PLUE_BASE_URL/api/feature-flags" \
+    curl -sf "$SMITHERS_BASE_URL/api/feature-flags" \
         | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin).get("flags", {}).get("remote_sandbox_enabled", False))' \
         2>/dev/null || true
 )
-if [[ "$PLUE_REMOTE_SANDBOX_ENABLED" == "1" && "$REMOTE_FLAG" != "True" ]]; then
-    log "remote_sandbox_enabled is off on the running plue stack; recycling with PLUE_REMOTE_SANDBOX_ENABLED=1"
-    (cd "$PLUE_CHECKOUT" && docker compose down -v >/dev/null 2>&1 || true)
-    (cd "$PLUE_CHECKOUT" && make docker-up)
+if [[ "$SMITHERS_REMOTE_SANDBOX_ENABLED" == "1" && "$REMOTE_FLAG" != "True" ]]; then
+    log "remote_sandbox_enabled is off on the running Smithers stack; recycling with SMITHERS_REMOTE_SANDBOX_ENABLED=1"
+    (cd "$SMITHERS_CHECKOUT" && docker compose down -v >/dev/null 2>&1 || true)
+    (cd "$SMITHERS_CHECKOUT" && make docker-up)
     deadline=$((SECONDS + 120))
-    until curl -sf -o /dev/null -w '%{http_code}' "$PLUE_BASE_URL/api/health" 2>/dev/null | grep -qE '^(200|404|401)$'; do
+    until curl -sf -o /dev/null -w '%{http_code}' "$SMITHERS_BASE_URL/api/health" 2>/dev/null | grep -qE '^(200|404|401)$'; do
         if (( SECONDS >= deadline )); then
-            die "plue api not reachable at $PLUE_BASE_URL after remote-flag recycle"
+            die "Smithers API not reachable at $SMITHERS_BASE_URL after remote-flag recycle"
         fi
         sleep 2
     done
     REMOTE_FLAG=$(
-        curl -sf "$PLUE_BASE_URL/api/feature-flags" \
+        curl -sf "$SMITHERS_BASE_URL/api/feature-flags" \
             | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin).get("flags", {}).get("remote_sandbox_enabled", False))' \
             2>/dev/null || true
     )
 fi
-if [[ "$PLUE_REMOTE_SANDBOX_ENABLED" == "1" && "$REMOTE_FLAG" != "True" ]]; then
-    die "remote_sandbox_enabled is still off at $PLUE_BASE_URL/api/feature-flags"
+if [[ "$SMITHERS_REMOTE_SANDBOX_ENABLED" == "1" && "$REMOTE_FLAG" != "True" ]]; then
+    die "remote_sandbox_enabled is still off at $SMITHERS_BASE_URL/api/feature-flags"
 fi
 
 # ---------------------------------------------------------------------------
@@ -218,7 +219,9 @@ log "only-testing: $E2E_ONLY_TESTING"
 # the values and invoke xcodebuild; no positional key=value args needed
 # (those only configure build settings, not runtime env).
 export SMITHERS_E2E_BEARER
-export PLUE_BASE_URL
+export SMITHERS_BASE_URL
+export PLUE_BASE_URL="$SMITHERS_BASE_URL"
+export SMITHERS_E2E_MODE=1
 export PLUE_E2E_SEEDED=1
 export PLUE_E2E_SEEDED_WORKSPACE_TITLE="${PLUE_E2E_SEEDED_WORKSPACE_TITLE:-e2e-workspace}"
 export PLUE_E2E_WORKSPACE_ID
@@ -235,7 +238,7 @@ export PLUE_E2E_REPO_NAME="${PLUE_E2E_REPO_NAME:-}"
 
 # Reconnect scenario: the test asks for the docker api container name to
 # `docker pause` + `docker unpause` mid-test. We discover it by prefix so
-# users running a differently-named plue worktree still have their
+# users running a differently-named Smithers worktree still have their
 # container picked up. When no match: the test logs why + skips.
 # BSD grep (macOS) interprets some POSIX character classes differently;
 # explicit ERE with -E + [0-9] works on both BSD + GNU. Match any

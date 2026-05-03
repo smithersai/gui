@@ -171,7 +171,7 @@ pub const VCSDashboardView = extern struct {
             try vh.appendJsonViewer(alloc, body, "Sync Status", text, 130);
         }
         const metrics = gtk.Box.new(.horizontal, 12);
-        try vh.appendMetric(alloc, metrics, "Changes", changes.items.len, "recent JJHub changes");
+        try vh.appendMetric(alloc, metrics, "Changes", changes.items.len, "recent Smithers changes");
         try vh.appendMetric(alloc, metrics, "Landings", countOpen(landings.items), "open or ready");
         try vh.appendMetric(alloc, metrics, "Issues", issues.items.len, "open issues");
         try vh.appendMetric(alloc, metrics, "Tickets", tickets.items.len, "local Smithers tickets");
@@ -181,7 +181,7 @@ pub const VCSDashboardView = extern struct {
         try self.appendRecentCommits(recent_commits.items, changes.items);
         try self.appendSection("Open Landings", landings.items, "emblem-documents-symbolic");
         try self.appendSection("Open Issues", issues.items, "emblem-documents-symbolic");
-        try self.appendSection("JJHub Workflows", workflows.items, "media-playlist-shuffle-symbolic");
+        try self.appendSection("Smithers Workflows", workflows.items, "media-playlist-shuffle-symbolic");
     }
 
     fn loadItems(self: *Self, method: []const u8, fields: []const vh.JsonField, roots: []const []const u8, spec: vh.ItemSpec) !std.ArrayList(vh.Item) {

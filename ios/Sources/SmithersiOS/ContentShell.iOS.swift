@@ -14,8 +14,8 @@
 // `switcher.ios.root`, `switcher.loading`, `switcher.empty.signedIn`,
 // `switcher.empty.signedOut`, `switcher.empty.backendUnavailable`, and
 // `switcher.rows` identifiers. When
-// `PLUE_E2E_MODE=1` is set, the shell wires a real
-// `URLSessionRemoteWorkspaceFetcher` against `PLUE_BASE_URL` so
+// `SMITHERS_E2E_MODE=1` is set, the shell wires a real
+// `URLSessionRemoteWorkspaceFetcher` against `SMITHERS_BASE_URL` so
 // `/api/user/workspaces` is exercised end-to-end.
 
 #if os(iOS)

@@ -266,7 +266,7 @@ struct VCSDashboardView: View {
                         Divider().background(Theme.border)
                         DashboardMetricRow(
                             icon: "point.3.filled.connected.trianglepath.dotted",
-                            title: "JJHub Workflows",
+                            title: "Smithers Workflows",
                             detail: sourceDetail(.jjhubWorkflows, "\(jjhubWorkflows.count) total · \(activeWorkflows.count) active")
                         )
                     }
@@ -377,7 +377,7 @@ struct VCSDashboardView: View {
                 if sourceErrors[.jjhubWorkflows] != nil && jjhubWorkflows.isEmpty && !isLoading {
                     emptySection("Unable to load workflows", icon: "exclamationmark.triangle")
                 } else if jjhubWorkflows.isEmpty && !isLoading {
-                    emptySection("No JJHub workflows found", icon: "point.3.filled.connected.trianglepath.dotted")
+                    emptySection("No Smithers workflows found", icon: "point.3.filled.connected.trianglepath.dotted")
                 } else {
                     ForEach(jjhubWorkflows) { workflow in
                         VCSWorkflowRow(workflow: workflow)

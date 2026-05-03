@@ -5,7 +5,7 @@ final class JJHubWorkflowsE2ETests: SmithersGUIUITestCase {
     // MARK: - Happy Path
 
     func testListLoadsAndSelectingWorkflowShowsDetail() {
-        navigate(to: "JJHub Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
+        navigate(to: "Smithers Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
 
         XCTAssertTrue(element("jjhubWorkflows.root").waitForExistence(timeout: 5))
         XCTAssertTrue(element("jjhubWorkflows.list").waitForExistence(timeout: 5))
@@ -19,7 +19,7 @@ final class JJHubWorkflowsE2ETests: SmithersGUIUITestCase {
     }
 
     func testRunWorkflowPromptAndCancel() {
-        navigate(to: "JJHub Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
+        navigate(to: "Smithers Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
 
         waitForElement("jjhubWorkflows.row.1").click()
         waitForElement("jjhubWorkflows.runButton").click()
@@ -36,7 +36,7 @@ final class JJHubWorkflowsE2ETests: SmithersGUIUITestCase {
     }
 
     func testTriggerWorkflowShowsSuccessMessage() {
-        navigate(to: "JJHub Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
+        navigate(to: "Smithers Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
 
         waitForElement("jjhubWorkflows.row.1").click()
         waitForElement("jjhubWorkflows.runButton").click()
@@ -56,7 +56,7 @@ final class JJHubWorkflowsE2ETests: SmithersGUIUITestCase {
     }
 
     func testSelectingDifferentWorkflowClosesRunPrompt() {
-        navigate(to: "JJHub Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
+        navigate(to: "Smithers Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
 
         waitForElement("jjhubWorkflows.row.1").click()
         waitForElement("jjhubWorkflows.runButton").click()
@@ -72,7 +72,7 @@ final class JJHubWorkflowsE2ETests: SmithersGUIUITestCase {
     }
 
     func testPlaceholderShownWhenNoWorkflowSelected() {
-        navigate(to: "JJHub Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
+        navigate(to: "Smithers Workflows", expectedViewIdentifier: "view.jjhubWorkflows")
 
         // Before selecting anything, detail shows placeholder
         XCTAssertTrue(app.staticTexts["Select a workflow"].waitForExistence(timeout: 5))

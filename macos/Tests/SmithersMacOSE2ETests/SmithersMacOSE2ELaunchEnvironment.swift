@@ -7,7 +7,7 @@
 // Every test in this bundle is expected to call
 // `applyE2ELaunchEnvironment(to:)` on its `XCUIApplication` BEFORE
 // `app.launch()` so the app boots directly into the signed-in, flag-on
-// shell talking to a local plue stack. The env-var contract is
+// shell talking to a local Smithers stack. The env-var contract is
 // duplicated here intentionally (string constants) because the XCUITest
 // bundle does not link the SmithersE2ESupport module — tests are driven
 // externally and the app under test reads the same keys on its own side.
@@ -18,9 +18,9 @@ import XCTest
 /// Keys that the XCUITest runner stamps into `launchEnvironment`. Kept in
 /// sync with `E2EEnvironmentKey` in `Shared/Sources/SmithersE2ESupport/`.
 enum MacE2ELaunchKey {
-    static let mode = "PLUE_E2E_MODE"
+    static let mode = "SMITHERS_E2E_MODE"
     static let bearer = "SMITHERS_E2E_BEARER"
-    static let baseURL = "PLUE_BASE_URL"
+    static let baseURL = "SMITHERS_BASE_URL"
     static let refreshToken = "SMITHERS_E2E_REFRESH"
     /// Force the `remote_sandbox_enabled` feature flag on for the app
     /// process. Without this, the macOS `RemoteSandboxFlag` reads from

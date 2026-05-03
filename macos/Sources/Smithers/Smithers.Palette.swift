@@ -716,7 +716,7 @@ private extension NavDestination {
         case "snapshots": return .snapshots
         case "workflows": return .workflows
         case "triggers": return .triggers
-        case "jjhubworkflows", "jjhub-workflows": return .jjhubWorkflows
+        case "smithersworkflows", "smithers-workflows", "jjhubworkflows", "jjhub-workflows": return .jjhubWorkflows
         case "approvals": return .approvals
         case "prompts": return .prompts
         case "scores": return .scores

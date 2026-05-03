@@ -325,7 +325,7 @@ pub const MainWindow = extern struct {
             },
             .jjhub_workflows => {
                 priv.jjhub_workflows_view.refresh();
-                self.setTitle("JJHub Workflows");
+                self.setTitle("Smithers Workflows");
                 priv.stack.setVisibleChildName("jjhub-workflows");
             },
             .runs => {
@@ -685,7 +685,7 @@ pub const MainWindow = extern struct {
         _ = priv.stack.addTitled(priv.workflows_view.as(gtk.Widget), "workflows", "Workflows");
 
         priv.jjhub_workflows_view = try JJHubWorkflowsView.new(self);
-        _ = priv.stack.addTitled(priv.jjhub_workflows_view.as(gtk.Widget), "jjhub-workflows", "JJHub Workflows");
+        _ = priv.stack.addTitled(priv.jjhub_workflows_view.as(gtk.Widget), "jjhub-workflows", "Smithers Workflows");
 
         priv.runs_view = try RunsView.new(self);
         _ = priv.stack.addTitled(priv.runs_view.as(gtk.Widget), "runs", "Runs");
@@ -1070,7 +1070,7 @@ pub const MainWindow = extern struct {
         const box = self.private().workspaces_box;
         ui.clearBox(box);
         box.append(ui.heading("Workspaces").as(gtk.Widget));
-        box.append(ui.dim("Recent and JJHub workspaces known to Smithers.").as(gtk.Widget));
+        box.append(ui.dim("Recent Smithers workspaces.").as(gtk.Widget));
 
         const list = gtk.ListBox.new();
         list.as(gtk.Widget).addCssClass("boxed-list");

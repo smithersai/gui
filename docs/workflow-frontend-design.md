@@ -30,7 +30,7 @@ The POC is intentionally implemented in the workspace, not in Smithers core, but
 
 If the frontend contract lives in Smithers:
 
-- the same workflow app can run in Smithers GUI, a browser, or a future JJHub surface
+- the same workflow app can run in Smithers GUI, a browser, or a future Smithers surface
 - workflow authors only target one API/runtime contract
 - the GUI does not need workflow-specific Swift code
 - the lifecycle is correct: when Smithers can inspect a run, it can also serve the UI for that run
@@ -164,7 +164,7 @@ The frontend contract should be framework-agnostic, but React should be the docu
 
 ### Phase 3
 
-- Support remote/JJHub-hosted workflow frontends.
+- Support remote Smithers-hosted workflow frontends.
 - Support auth/session-aware frontends.
 - Support host capabilities like file download, clipboard, open-tab, or deep-linking.
 

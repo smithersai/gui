@@ -17,8 +17,8 @@ final class DeepLinkRouter: ObservableObject {
 
     private static let universalLinkHosts: Set<String> = [
         "app.smithers.sh",
-        "smithers.ai",
-        "www.smithers.ai",
+        "smithers.sh",
+        "www.smithers.sh",
     ]
 
     private init() {}

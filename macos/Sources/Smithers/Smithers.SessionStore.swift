@@ -21,7 +21,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private var externalAgentWatchers: [String: ExternalAgentSessionWatcher] = [:]
     private var stateChangedObserver: NSObjectProtocol?
     private var willTerminateObserver: NSObjectProtocol?
-    private var pendingSaveTask: Task<Void, Never>?
+    private var pendingSaveWorkItem: DispatchWorkItem?
     private let sessionPersistenceDisabled: Bool
     private var nativeSurfaceOperationsInFlight: Set<NativeSurfaceKey> = []
 
@@ -98,8 +98,8 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     deinit {
-        pendingSaveTask?.cancel()
-        pendingSaveTask = nil
+        pendingSaveWorkItem?.cancel()
+        pendingSaveWorkItem = nil
         sessions.removeAll()
         if let stateChangedObserver {
             NotificationCenter.default.removeObserver(stateChangedObserver)
@@ -1025,28 +1025,30 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         guard !sessionPersistenceDisabled else { return }
         guard app.persistence() != nil else { return }
 
-        pendingSaveTask?.cancel()
-        pendingSaveTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: Self.persistenceSaveDebounceNanoseconds)
-            } catch {
-                return
+        pendingSaveWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.saveSessionsNow()
             }
-            self?.saveSessionsNow()
         }
+        pendingSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .nanoseconds(Int(Self.persistenceSaveDebounceNanoseconds)),
+            execute: workItem
+        )
     }
 
     func flushSessionPersistence() {
         guard !sessionPersistenceDisabled else { return }
-        pendingSaveTask?.cancel()
-        pendingSaveTask = nil
+        pendingSaveWorkItem?.cancel()
+        pendingSaveWorkItem = nil
         saveSessionsNow()
     }
 
     private func saveSessionsNow() {
         guard !sessionPersistenceDisabled else { return }
         guard let persistence = app.persistence() else { return }
-        pendingSaveTask = nil
+        pendingSaveWorkItem = nil
 
         let entries = runTabs.map(PersistedSessionEntry.init(runTab:)) +
             terminalTabs.map(PersistedSessionEntry.init(terminalTab:))

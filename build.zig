@@ -13,11 +13,11 @@
 //!   zig build legacy-tui
 //!                       build the legacy Go terminal UI from the old tui branch
 //!   zig build everything-up
-//!                       bring up the full dev stack: plue docker-compose
+//!                       bring up the full dev stack: Smithers docker-compose
 //!                       backend, seed a test user/token, build SmithersiOS,
 //!                       boot an iPhone simulator, and launch the app signed
 //!                       in against the local backend.
-//!                       Override plue location with PLUE_CHECKOUT=/path.
+//!                       Override backend location with SMITHERS_CHECKOUT=/path.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -111,9 +111,12 @@ pub fn build(b: *std.Build) void {
     // ---- xcodebuild ---------------------------------------------------------
     const xcode_build = b.addSystemCommand(&.{
         "xcodebuild",
-        "-project",   "SmithersGUI.xcodeproj",
-        "-scheme",    "SmithersGUI",
-        "-configuration", if (release) "Release" else "Debug",
+        "-project",
+        "SmithersGUI.xcodeproj",
+        "-scheme",
+        "SmithersGUI",
+        "-configuration",
+        if (release) "Release" else "Debug",
         "build",
     });
     xcode_build.step.dependOn(check_ghostty);
@@ -142,11 +145,9 @@ pub fn build(b: *std.Build) void {
     // Smithers (and `xcframework_lib` above) expects the single-arch
     // `macos-arm64/libghostty-fat.a` layout produced by the native target.
     const ghostty_build = b.addSystemCommand(&.{
-        "zig", "build",
-        "-Doptimize=ReleaseFast",
-        "-Dapp-runtime=none",
-        "-Demit-xcframework=true",
-        "-Dxcframework-target=native",
+        "zig",                     "build",
+        "-Doptimize=ReleaseFast",  "-Dapp-runtime=none",
+        "-Demit-xcframework=true", "-Dxcframework-target=native",
     });
     ghostty_build.setCwd(b.path("ghostty"));
     ghostty_build.step.dependOn(check_submodules);
@@ -209,10 +210,10 @@ pub fn build(b: *std.Build) void {
     clean_step.dependOn(&swift_clean.step);
 
     // ---- everything-up ------------------------------------------------------
-    // One-shot dev loop: plue backend via docker compose → health check →
+    // One-shot dev loop: Smithers backend via docker compose → health check →
     // seed token → xcodebuild SmithersiOS → boot simulator → launch app with
     // E2E bypass env vars so the app is signed-in against the local stack.
-    const everything_up = b.step("everything-up", "Bring up plue backend + run iOS sim signed-in against it");
+    const everything_up = b.step("everything-up", "Bring up Smithers backend + run iOS sim signed-in against it");
     everything_up.makeFn = everythingUp;
 
     // ---- default ------------------------------------------------------------
@@ -228,24 +229,25 @@ fn everythingUp(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!v
     const ally = b.allocator;
     step.result_cached = false;
 
-    // Resolve plue checkout. Default ../plue, override with PLUE_CHECKOUT.
-    const plue_path = std.process.getEnvVarOwned(ally, "PLUE_CHECKOUT") catch
+    // Resolve Smithers backend checkout. Default ../plue, override with SMITHERS_CHECKOUT.
+    const smithers_path = std.process.getEnvVarOwned(ally, "SMITHERS_CHECKOUT") catch
+        std.process.getEnvVarOwned(ally, "PLUE_CHECKOUT") catch
         try ally.dupe(u8, "../plue");
-    defer ally.free(plue_path);
-    std.fs.cwd().access(plue_path, .{}) catch {
+    defer ally.free(smithers_path);
+    std.fs.cwd().access(smithers_path, .{}) catch {
         return step.fail(
-            "plue checkout not found at {s} — set PLUE_CHECKOUT=/path/to/plue",
-            .{plue_path},
+            "Smithers backend checkout not found at {s} — set SMITHERS_CHECKOUT=/path/to/backend",
+            .{smithers_path},
         );
     };
 
     // 1. docker compose up -d --build
-    log("==> plue: make docker-up ({s})", .{plue_path});
-    try runStream(step, &.{ "make", "docker-up" }, plue_path, null);
+    log("==> Smithers backend: make docker-up ({s})", .{smithers_path});
+    try runStream(step, &.{ "make", "docker-up" }, smithers_path, null);
 
     // 2. wait for :4000 to accept requests. Any HTTP response (even 404/401)
     //    counts as "up" — matches the contract in ios/scripts/run-e2e.sh.
-    log("==> waiting for plue api on http://localhost:4000", .{});
+    log("==> waiting for Smithers API on http://localhost:4000", .{});
     try waitForHealth(step);
 
     // 3. seed a test user + token + workspace. Needs libpq (psql) on PATH;
@@ -269,11 +271,16 @@ fn everythingUp(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!v
     log("==> building SmithersiOS", .{});
     try runStream(step, &.{
         "xcodebuild",
-        "-project",       "SmithersGUI.xcodeproj",
-        "-scheme",        "SmithersiOS",
-        "-configuration", "Debug",
-        "-destination",   "generic/platform=iOS Simulator",
-        "-derivedDataPath", "build/DerivedData-everything-up",
+        "-project",
+        "SmithersGUI.xcodeproj",
+        "-scheme",
+        "SmithersiOS",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "generic/platform=iOS Simulator",
+        "-derivedDataPath",
+        "build/DerivedData-everything-up",
         "build",
     }, null, null);
 
@@ -291,9 +298,9 @@ fn everythingUp(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!v
     log("==> launching SmithersiOS with e2e bypass", .{});
     var launch_env = try std.process.getEnvMap(ally);
     defer launch_env.deinit();
-    try launch_env.put("SIMCTL_CHILD_PLUE_E2E_MODE", "1");
+    try launch_env.put("SIMCTL_CHILD_SMITHERS_E2E_MODE", "1");
     try launch_env.put("SIMCTL_CHILD_SMITHERS_E2E_BEARER", bearer);
-    try launch_env.put("SIMCTL_CHILD_PLUE_BASE_URL", "http://localhost:4000");
+    try launch_env.put("SIMCTL_CHILD_SMITHERS_BASE_URL", "http://localhost:4000");
     try runStream(
         step,
         &.{ "xcrun", "simctl", "launch", "booted", "com.smithers.ios" },
@@ -301,8 +308,8 @@ fn everythingUp(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!v
         &launch_env,
     );
 
-    log("==> ready. Simulator is signed in against plue at :4000.", .{});
-    log("    Tear down with:  (cd {s} && make docker-down)", .{plue_path});
+    log("==> ready. Simulator is signed in against Smithers at :4000.", .{});
+    log("    Tear down with:  (cd {s} && make docker-down)", .{smithers_path});
 }
 
 fn log(comptime fmt: []const u8, args: anytype) void {
@@ -399,9 +406,8 @@ fn waitForHealth(step: *std.Build.Step) !void {
         const result = std.process.Child.run(.{
             .allocator = ally,
             .argv = &.{
-                "curl", "-s", "-o", "/dev/null",
-                "-w",   "%{http_code}",
-                "--max-time", "2",
+                "curl",                             "-s",           "-o",         "/dev/null",
+                "-w",                               "%{http_code}", "--max-time", "2",
                 "http://localhost:4000/api/health",
             },
         }) catch |err| {
@@ -416,7 +422,7 @@ fn waitForHealth(step: *std.Build.Step) !void {
         std.Thread.sleep(2 * std.time.ns_per_s);
         elapsed_ms += 2_000;
     }
-    return step.fail("plue api on :4000 did not respond within 120s", .{});
+    return step.fail("Smithers API on :4000 did not respond within 120s", .{});
 }
 
 fn extractKey(

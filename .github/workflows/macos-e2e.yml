@@ -4,7 +4,7 @@
 # native macOS destination instead of the iOS Simulator. Runs on macos-14
 # hosted runners — no iOS-simulator boot is required.
 #
-# Gating: expensive (~10-15 min) because it spins the full plue stack,
+# Gating: expensive (~10-15 min) because it spins the full Smithers stack,
 # so it runs only on push-to-main and on PRs that explicitly target
 # main. Contributors can run it locally via `macos/scripts/run-e2e.sh`.
 
@@ -32,12 +32,12 @@ jobs:
         with:
           path: gui
 
-      - name: Checkout plue
+      - name: Checkout Smithers backend
         uses: actions/checkout@v4
         with:
           repository: smithers-sh/plue
-          path: plue
-          token: ${{ secrets.PLUE_CHECKOUT_TOKEN }}
+          path: smithers-backend
+          token: ${{ secrets.SMITHERS_CHECKOUT_TOKEN || secrets.PLUE_CHECKOUT_TOKEN }}
           persist-credentials: false
 
       - name: Install Xcode toolchain
@@ -54,20 +54,20 @@ jobs:
       - name: Set up Docker (macOS)
         uses: docker/setup-docker-action@v4
 
-      - name: Install Bun (for plue workflow-runtime build)
+      - name: Install Bun (for Smithers workflow-runtime build)
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.12"
 
-      - name: Pre-warm plue bun.lock
-        working-directory: plue
+      - name: Pre-warm Smithers bun.lock
+        working-directory: smithers-backend
         run: bun install || true
 
       - name: Run macOS E2E harness
         working-directory: gui
         env:
-          PLUE_CHECKOUT: ${{ github.workspace }}/plue
-          PLUE_BASE_URL: http://localhost:4000
+          SMITHERS_CHECKOUT: ${{ github.workspace }}/smithers-backend
+          SMITHERS_BASE_URL: http://localhost:4000
           # macOS builds DO NOT need the iOS-specific env scrub
           # (SDKROOT / LIBRARY_PATH / RUSTFLAGS). Hosted runner env is
           # clean; the harness script runs with full shell env intact.

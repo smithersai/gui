@@ -723,7 +723,7 @@ struct RunInspectView: View {
         guard !rerunning else { return }
 
         rerunning = true
-        setActionMessage("Triggering JJHub rerun...", color: Theme.accent, level: .info)
+        setActionMessage("Triggering Smithers rerun...", color: Theme.accent, level: .info)
 
         Task { @MainActor in
             defer { rerunning = false }

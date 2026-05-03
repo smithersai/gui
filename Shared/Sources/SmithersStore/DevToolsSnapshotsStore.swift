@@ -29,7 +29,7 @@ public final class DevToolsSnapshotsStore: ObservableObject {
 
     /// Lazily subscribe when a view opens a specific agent session.
     /// The underlying where-clause intentionally includes BOTH repository_id
-    /// and session_id because plue's electric auth proxy rejects repo-less
+    /// and session_id because the Smithers Electric auth proxy rejects repo-less
     /// subscriptions.
     public func ensureSubscribed(repositoryId: String, sessionId: String) {
         let scope = Scope(repositoryId: repositoryId, sessionId: sessionId)

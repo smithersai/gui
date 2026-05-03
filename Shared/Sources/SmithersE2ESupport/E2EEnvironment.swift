@@ -7,7 +7,7 @@
 // transport inside the test bundle. Tests set three launch-environment
 // variables on `XCUIApplication.launchEnvironment`:
 //
-//   PLUE_E2E_MODE=1          — opt-in kill-switch. When unset, EVERY
+//   SMITHERS_E2E_MODE=1      — opt-in kill-switch. When unset, EVERY
 //                              helper in this file returns nil/false and
 //                              the production code path runs untouched.
 //                              This is the single guard the rest of the
@@ -15,7 +15,7 @@
 //   SMITHERS_E2E_BEARER=...  — the bearer token to install as the signed-
 //                              in session. Typically `jjhub_e2e_<hex>`
 //                              issued by `ios/scripts/seed-e2e-data.sh`.
-//   PLUE_BASE_URL=...        — overrides the production Plue base URL so
+//   SMITHERS_BASE_URL=...    — overrides the production Smithers base URL so
 //                              the runtime + workspace fetcher talk to
 //                              `http://localhost:4000` during tests.
 //
@@ -24,7 +24,7 @@
 // The only way they take effect is inside an XCUITest runner (which
 // sets them via `launchEnvironment`). This makes the gate tight: even
 // if a shipped build somehow includes this module, a user can't flip
-// `PLUE_E2E_MODE` from outside and escape production auth.
+// `SMITHERS_E2E_MODE` from outside and escape production auth.
 
 import Foundation
 #if SWIFT_PACKAGE
@@ -58,9 +58,11 @@ public struct DictionaryEnvironmentSource: E2EEnvironmentSource {
 /// The E2E env-var keys, exposed so tests and the harness script use the
 /// same canonical spellings.
 public enum E2EEnvironmentKey {
-    public static let mode = "PLUE_E2E_MODE"
+    public static let mode = "SMITHERS_E2E_MODE"
+    public static let legacyMode = "PLUE_E2E_MODE"
     public static let bearer = "SMITHERS_E2E_BEARER"
-    public static let baseURL = "PLUE_BASE_URL"
+    public static let baseURL = "SMITHERS_BASE_URL"
+    public static let legacyBaseURL = "PLUE_BASE_URL"
     /// Optional — when set, the E2E mode also installs a synthetic refresh
     /// token so `refresh()` code paths can be exercised deterministically.
     /// Not required for the basic sign-in bypass.
@@ -83,20 +85,22 @@ public struct E2EConfig: Equatable {
 }
 
 public enum E2EEnvironment {
-    /// Parse the process environment. Returns nil unless `PLUE_E2E_MODE=1`.
-    /// If `PLUE_E2E_MODE=1` is set but `SMITHERS_E2E_BEARER` is missing
-    /// or `PLUE_BASE_URL` is not a valid URL, returns nil and (by design)
+    /// Parse the process environment. Returns nil unless `SMITHERS_E2E_MODE=1`.
+    /// Legacy `PLUE_*` keys are accepted for older harnesses.
+    /// If E2E mode is set but `SMITHERS_E2E_BEARER` is missing
+    /// or `SMITHERS_BASE_URL` is not a valid URL, returns nil and (by design)
     /// the app falls back to the production path. The xcuitest harness
     /// treats that as a test failure because the sign-in shell will
     /// appear instead of the workspace switcher.
     public static func parse(_ source: E2EEnvironmentSource = ProcessInfoEnvironmentSource()) -> E2EConfig? {
-        guard let mode = source.value(forKey: E2EEnvironmentKey.mode), mode == "1" else {
+        let mode = firstValue(source, E2EEnvironmentKey.mode, E2EEnvironmentKey.legacyMode)
+        guard mode == "1" else {
             return nil
         }
         guard let bearer = source.value(forKey: E2EEnvironmentKey.bearer), !bearer.isEmpty else {
             return nil
         }
-        guard let baseString = source.value(forKey: E2EEnvironmentKey.baseURL),
+        guard let baseString = firstValue(source, E2EEnvironmentKey.baseURL, E2EEnvironmentKey.legacyBaseURL),
               let baseURL = URL(string: baseString),
               let scheme = baseURL.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
@@ -105,6 +109,15 @@ public enum E2EEnvironment {
         }
         let refresh = source.value(forKey: E2EEnvironmentKey.refreshToken)
         return E2EConfig(bearer: bearer, baseURL: baseURL, refreshToken: refresh)
+    }
+
+    private static func firstValue(_ source: E2EEnvironmentSource, _ keys: String...) -> String? {
+        for key in keys {
+            if let value = source.value(forKey: key), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
     }
 
     /// Convenience: build an `OAuth2Tokens` that can be `install()`-ed

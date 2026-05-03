@@ -346,7 +346,7 @@ Expected dry-run behavior:
 ## Out of scope for this ticket
 
 - Universal links are not production-ready yet. The entitlement contains
-  an `applinks:smithers.ai` placeholder, but the domain still needs a
+  an `applinks:smithers.sh` placeholder, but the domain still needs a
   valid `apple-app-site-association` file and a matching provisioning
   profile before universal links can be claimed to work. The reliable
   OAuth2 path is the custom URL scheme (`smithers://oauth2/callback`).

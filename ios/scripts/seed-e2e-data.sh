@@ -3,7 +3,7 @@
 # harness.
 #
 # Ticket: ios-e2e-harness. Writes a known user + access token + repository
-# + workspace row into a running plue Postgres instance so the XCUITest
+# + workspace row into a running Smithers Postgres instance so the XCUITest
 # suite has real server state to exercise.
 #
 # Token contract: prefix `jjhub_e2e_` followed by 32 hex chars. The value
@@ -43,8 +43,7 @@ set -euo pipefail
 
 export PGPASSWORD
 
-# Generate a fresh token per run. Plue's ExtractToken (see
-# plue/internal/middleware/auth.go `isValidTokenFormat`) requires the
+# Generate a fresh token per run. Smithers token extraction requires the
 # strict format `jjhub_<40 hex chars>` — any extra prefix (e.g.
 # `jjhub_e2e_`) makes ExtractToken return empty and RequireAuth yields
 # 401. To still distinguish e2e tokens from production ones, we use a
@@ -67,7 +66,7 @@ elif command -v docker >/dev/null 2>&1 &&
      docker ps --format '{{.Names}}' | grep -qx 'plue-postgres-1'; then
   PSQL=(docker exec -i -e "PGPASSWORD=$PGPASSWORD" plue-postgres-1 psql -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -tA)
 else
-  echo "seed-e2e-data.sh: psql not found; install psql or run the local plue postgres container" >&2
+  echo "seed-e2e-data.sh: psql not found; install psql or run the local Smithers postgres container" >&2
   exit 1
 fi
 
@@ -142,9 +141,9 @@ BEGIN
             scopes = EXCLUDED.scopes,
             updated_at = NOW();
 
-    -- Native iOS OAuth2 public client. This mirrors plue/db/seed.sql so
+    -- Native iOS OAuth2 public client. This mirrors the backend seed so
     -- the E2E harness can exercise the real authorization-code + S256 PKCE
-    -- flow against a local plue database even when the docker seed has not
+    -- flow against a local Smithers database even when the docker seed has not
     -- been re-run.
     INSERT INTO oauth2_applications (
         client_id,
@@ -177,7 +176,7 @@ BEGIN
             confidential = EXCLUDED.confidential,
             updated_at = NOW();
 
-    -- Repository owned by our e2e user. The plue schema uses
+    -- Repository owned by our e2e user. The Smithers schema uses
     -- is_public BOOLEAN (not a string visibility column) and requires
     -- a non-empty shard_id. We use the same shard the dev seed uses.
     -- Unique index on (user_id, lower_name) is partial (WHERE org_id

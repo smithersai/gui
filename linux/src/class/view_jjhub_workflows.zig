@@ -51,7 +51,7 @@ pub const JJHubWorkflowsView = extern struct {
     }
 
     pub fn refresh(self: *Self) void {
-        self.load() catch |err| vh.setStatus(self.allocator(), self.private().detail, "dialog-error-symbolic", "JJHub workflows unavailable", @errorName(err));
+        self.load() catch |err| vh.setStatus(self.allocator(), self.private().detail, "dialog-error-symbolic", "Smithers workflows unavailable", @errorName(err));
     }
 
     fn allocator(self: *Self) std.mem.Allocator {
@@ -67,7 +67,7 @@ pub const JJHubWorkflowsView = extern struct {
         root.as(gtk.Orientable).setOrientation(.vertical);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>r", self, shortcutRefresh);
         vh.installShortcut(Self, root.as(gtk.Widget), "<Control>f", self, shortcutSearch);
-        const header = vh.makeHeader("JJHub Workflows", null);
+        const header = vh.makeHeader("Smithers Workflows", null);
         self.private().repo_label = ui.dim("");
         header.append(self.private().repo_label.as(gtk.Widget));
         self.private().search_entry = gtk.Entry.new();
@@ -78,7 +78,7 @@ pub const JJHubWorkflowsView = extern struct {
         const active = ui.textButton("Active", false);
         _ = gtk.Button.signals.clicked.connect(active, *Self, activeClicked, self, .{});
         header.append(active.as(gtk.Widget));
-        const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh JJHub workflows");
+        const refresh_button = ui.iconButton("view-refresh-symbolic", "Refresh Smithers workflows");
         _ = gtk.Button.signals.clicked.connect(refresh_button, *Self, refreshClicked, self, .{});
         header.append(refresh_button.as(gtk.Widget));
         root.append(header.as(gtk.Widget));
@@ -124,7 +124,7 @@ pub const JJHubWorkflowsView = extern struct {
         if (self.private().selected_index) |selected| {
             try self.renderDetail(selected);
         } else {
-            vh.setStatus(alloc, self.private().detail, "media-playlist-shuffle-symbolic", "Select a workflow", "Trigger a JJHub workflow by ref.");
+            vh.setStatus(alloc, self.private().detail, "media-playlist-shuffle-symbolic", "Select a workflow", "Trigger a Smithers workflow by ref.");
         }
     }
 
@@ -156,7 +156,7 @@ pub const JJHubWorkflowsView = extern struct {
         const alloc = self.allocator();
         ui.clearList(self.private().list);
         if (self.private().workflows.items.len == 0) {
-            self.private().list.append((try ui.row(alloc, "media-playlist-shuffle-symbolic", "No JJHub workflows", "Repository workflows appear here.")).as(gtk.Widget));
+            self.private().list.append((try ui.row(alloc, "media-playlist-shuffle-symbolic", "No Smithers workflows", "Repository workflows appear here.")).as(gtk.Widget));
             return;
         }
         const query = std.mem.trim(u8, std.mem.span(self.private().search_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);

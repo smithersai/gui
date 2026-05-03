@@ -121,7 +121,7 @@ final class HighCoverageViewRenderTests: XCTestCase {
     func testJJHubWorkflowsViewInitialRenderCoversHeaderListAndPlaceholder() throws {
         let inspected = try JJHubWorkflowsView(smithers: client()).inspect()
 
-        assertText("JJHub Workflows", existsIn: inspected)
+        assertText("Smithers Workflows", existsIn: inspected)
         assertText("Select a workflow", existsIn: inspected)
     }
 }

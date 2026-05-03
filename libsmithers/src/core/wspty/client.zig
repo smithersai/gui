@@ -1,7 +1,7 @@
 //! High-level client: owns a TCP socket, does handshake, owns a reassembly
 //! buffer, exposes readEvent / writeBinary / sendResize / close.
 //!
-//! No TLS yet — plue dev is `ws://`. TLS is documented as a follow-up.
+//! No TLS yet — Smithers dev is `ws://`. TLS is documented as a follow-up.
 
 const std = @import("std");
 const net = std.net;
@@ -21,9 +21,9 @@ pub const ConnectOptions = struct {
     path: []const u8,
     origin: []const u8,
     bearer: ?[]const u8 = null,
-    /// Defaults to "terminal" (plue's subprotocol).
+    /// Defaults to "terminal" (Smithers subprotocol).
     subprotocol: ?[]const u8 = "terminal",
-    /// Max reassembled message size. Defaults to 1 MiB to safely exceed plue's
+    /// Max reassembled message size. Defaults to 1 MiB to safely exceed Smithers
     /// 64 KiB frame size × reasonable multi-frame outputs.
     max_message_size: usize = 1 * 1024 * 1024,
 };
@@ -321,13 +321,13 @@ pub const Client = struct {
 
 // ===========================================================================
 // Tests that exercise the Client against an in-memory transport.
-// Full integration (real TCP + plue) lives in test/integration_tests.zig.
+// Full integration (real TCP + Smithers) lives in test/integration_tests.zig.
 // ===========================================================================
 
 const testing = std.testing;
 
-test "ResizeMsg: JSON format matches plue's terminalResizeMsg" {
-    // Plue expects exactly: {"type":"resize","cols":N,"rows":N}
+test "ResizeMsg: JSON format matches Smithers terminalResizeMsg" {
+    // Smithers expects exactly: {"type":"resize","cols":N,"rows":N}
     // The implementation is inline in sendResize(); replicate here to guard
     // against accidental drift.
     var buf: [64]u8 = undefined;

@@ -152,7 +152,7 @@ targets:
           - README.md
       # ticket macos-e2e-harness — env-var-gated test hooks (mirrors the
       # iOS wiring). In production builds the whole module is dormant
-      # because `E2EEnvironment.parse()` returns nil when PLUE_E2E_MODE
+      # because `E2EEnvironment.parse()` returns nil when SMITHERS_E2E_MODE
       # is unset, so it is safe to ship.
       - path: Shared/Sources/SmithersE2ESupport
       - path: Resources/MarkdownShell
@@ -229,8 +229,8 @@ targets:
         SUPPORTED_PLATFORMS: macosx
   # ---------------------------------------------------------------------------
   # macOS E2E test target (ticket macos-e2e-harness). Full-stack XCUITest
-  # bundle that talks to a real plue backend on localhost:4000 via the
-  # PLUE_E2E_MODE env-var bypass in SmithersE2ESupport. Mirrors the iOS
+  # bundle that talks to a real Smithers backend on localhost:4000 via the
+  # SMITHERS_E2E_MODE env-var bypass in SmithersE2ESupport. Mirrors the iOS
   # SmithersiOSE2ETests target. See macos/scripts/run-e2e.sh for the
   # orchestration. Kept distinct from SmithersGUIUITests (the cheap
   # launch-smoke UI test bundle).
@@ -291,7 +291,7 @@ targets:
       - WorkspaceSwitcherView.swift
       # ticket ios-e2e-harness — env-var-gated test hooks. In production
       # builds the whole module is dormant (E2EEnvironment.parse()
-      # returns nil when PLUE_E2E_MODE is unset), so it is safe to ship
+        # returns nil when SMITHERS_E2E_MODE is unset), so it is safe to ship
       # in the App Store binary.
       - path: Shared/Sources/SmithersE2ESupport
     info:
@@ -306,8 +306,9 @@ targets:
         CFBundlePackageType: "$(PRODUCT_BUNDLE_PACKAGE_TYPE)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        SmithersBaseURL: "$(SMITHERS_BASE_URL)"
         SmithersPlueBaseURL: "$(PLUE_BASE_URL)"
-        SmithersPreviewURL: "$(PLUE_PREVIEW_URL)"
+        SmithersPreviewURL: "$(SMITHERS_PREVIEW_URL)"
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
         UIApplicationSceneManifest:
@@ -442,8 +443,9 @@ targets:
         CFBundlePackageType: "$(PRODUCT_BUNDLE_PACKAGE_TYPE)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        SmithersBaseURL: "$(SMITHERS_BASE_URL)"
         SmithersPlueBaseURL: "$(PLUE_BASE_URL)"
-        SmithersPreviewURL: "$(PLUE_PREVIEW_URL)"
+        SmithersPreviewURL: "$(SMITHERS_PREVIEW_URL)"
         NSExtension:
           NSExtensionAttributes:
             NSExtensionActivationRule:
@@ -543,7 +545,7 @@ targets:
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
   # ---------------------------------------------------------------------------
   # iOS E2E test target (ticket ios-e2e-harness). Full-stack XCUITest bundle
-  # that talks to a real plue backend on localhost:4000 via the PLUE_E2E_MODE
+  # that talks to a real Smithers backend on localhost:4000 via the SMITHERS_E2E_MODE
   # env-var bypass in SmithersE2ESupport. See ios/scripts/run-e2e.sh for the
   # orchestration. DISTINCT from SmithersiOSUITests (which is the unit-y
   # launch smoke bundle from 0121) — keep them separate so the cheap launch
@@ -598,14 +600,14 @@ schemes:
         - variable: SMITHERS_E2E_BEARER
           value: $(SMITHERS_E2E_BEARER)
           isEnabled: true
-        - variable: PLUE_BASE_URL
-          value: $(PLUE_BASE_URL)
+        - variable: SMITHERS_BASE_URL
+          value: $(SMITHERS_BASE_URL)
           isEnabled: true
-        - variable: PLUE_E2E_MODE
-          value: $(PLUE_E2E_MODE)
+        - variable: SMITHERS_E2E_MODE
+          value: $(SMITHERS_E2E_MODE)
           isEnabled: true
-        - variable: PLUE_REMOTE_SANDBOX_ENABLED
-          value: $(PLUE_REMOTE_SANDBOX_ENABLED)
+        - variable: SMITHERS_REMOTE_SANDBOX_ENABLED
+          value: $(SMITHERS_REMOTE_SANDBOX_ENABLED)
           isEnabled: true
         - variable: PLUE_E2E_SEEDED
           value: $(PLUE_E2E_SEEDED)
@@ -666,8 +668,8 @@ schemes:
         - variable: SMITHERS_E2E_BEARER
           value: $(SMITHERS_E2E_BEARER)
           isEnabled: true
-        - variable: PLUE_BASE_URL
-          value: $(PLUE_BASE_URL)
+        - variable: SMITHERS_BASE_URL
+          value: $(SMITHERS_BASE_URL)
           isEnabled: true
         - variable: PLUE_E2E_SEEDED
           value: $(PLUE_E2E_SEEDED)

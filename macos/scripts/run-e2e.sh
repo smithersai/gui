@@ -3,7 +3,7 @@
 # bundle.
 #
 # Ticket: macos-e2e-harness. Mirrors `ios/scripts/run-e2e.sh`. Steps:
-#   1. Start the plue stack (`make docker-up` in the plue checkout).
+#   1. Start the Smithers stack (`make docker-up` in the backend checkout).
 #   2. Wait for Postgres + the api to accept traffic on localhost:4000.
 #   3. Seed the E2E user / token / workspace by REUSING
 #      `ios/scripts/seed-e2e-data.sh` verbatim (do NOT fork).
@@ -18,26 +18,27 @@
 #   2  — environmental failure (docker, postgres, xcodebuild setup).
 #
 # Env knobs:
-#   PLUE_CHECKOUT       path to the plue repo (default: user's worktree
+#   SMITHERS_CHECKOUT   path to the Smithers backend repo (default: user's worktree
 #                       at /Users/williamcory/plue/.claude/worktrees/
 #                       iort-0149-migration-numbers, with a fallback to
 #                       ../plue for CI).
-#   PLUE_BASE_URL       override base URL (default: http://localhost:4000)
+#   SMITHERS_BASE_URL   override base URL (default: http://localhost:4000)
 #   E2E_KEEP_STACK      if "1", do NOT tear down on exit.
 #   E2E_SCHEME          default "SmithersMacOSE2ETests"
 
 set -euo pipefail
 
 DEFAULT_PLUE_WORKTREE="/Users/williamcory/plue/.claude/worktrees/iort-0149-migration-numbers"
-if [[ -z "${PLUE_CHECKOUT:-}" ]]; then
+if [[ -z "${SMITHERS_CHECKOUT:-}" && -z "${PLUE_CHECKOUT:-}" ]]; then
     if [[ -d "$DEFAULT_PLUE_WORKTREE" ]]; then
-        PLUE_CHECKOUT="$DEFAULT_PLUE_WORKTREE"
+        SMITHERS_CHECKOUT="$DEFAULT_PLUE_WORKTREE"
     else
-        PLUE_CHECKOUT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/../plue"
+        SMITHERS_CHECKOUT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/../plue"
     fi
 fi
+SMITHERS_CHECKOUT="${SMITHERS_CHECKOUT:-${PLUE_CHECKOUT:-}}"
 
-PLUE_BASE_URL="${PLUE_BASE_URL:-http://localhost:4000}"
+SMITHERS_BASE_URL="${SMITHERS_BASE_URL:-${PLUE_BASE_URL:-http://localhost:4000}}"
 E2E_KEEP_STACK="${E2E_KEEP_STACK:-0}"
 E2E_SCHEME="${E2E_SCHEME:-SmithersMacOSE2ETests}"
 E2E_ONLY_TESTING="${E2E_ONLY_TESTING:-SmithersMacOSE2ETests/SmithersMacOSE2EHappyPathTests}"
@@ -55,10 +56,10 @@ die() {
 cleanup() {
     local rc=$?
     if [[ "$E2E_KEEP_STACK" != "1" ]]; then
-        log "tearing down plue stack (E2E_KEEP_STACK=0)"
-        (cd "$PLUE_CHECKOUT" && docker compose down -v >/dev/null 2>&1 || true)
+        log "tearing down Smithers stack (E2E_KEEP_STACK=0)"
+        (cd "$SMITHERS_CHECKOUT" && docker compose down -v >/dev/null 2>&1 || true)
     else
-        log "leaving plue stack up (E2E_KEEP_STACK=1)"
+        log "leaving Smithers stack up (E2E_KEEP_STACK=1)"
     fi
     if [[ $rc -ne 0 ]]; then
         log "xcresult bundles (if any): $(ls -td "$REPO_ROOT"/build/macos-e2e-results-*.xcresult 2>/dev/null | head -1)"
@@ -79,25 +80,25 @@ if ! command -v psql >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 1. Plue stack
+# 1. Smithers stack
 # ---------------------------------------------------------------------------
-if [[ ! -d "$PLUE_CHECKOUT" ]]; then
-    die "plue checkout not found at $PLUE_CHECKOUT (override with PLUE_CHECKOUT=...)"
+if [[ ! -d "$SMITHERS_CHECKOUT" ]]; then
+    die "Smithers backend checkout not found at $SMITHERS_CHECKOUT (override with SMITHERS_CHECKOUT=...)"
 fi
 
 # Check if the stack is already up to avoid redundant `make docker-up`.
-if curl -sf -o /dev/null -w '%{http_code}' "$PLUE_BASE_URL/api/health" 2>/dev/null | grep -qE '^(200|404|401)$'; then
-    log "plue stack already reachable at $PLUE_BASE_URL — skipping docker-up"
+if curl -sf -o /dev/null -w '%{http_code}' "$SMITHERS_BASE_URL/api/health" 2>/dev/null | grep -qE '^(200|404|401)$'; then
+    log "Smithers stack already reachable at $SMITHERS_BASE_URL — skipping docker-up"
 else
-    log "starting plue stack at $PLUE_CHECKOUT"
-    if ! (cd "$PLUE_CHECKOUT" && make docker-up); then
+    log "starting Smithers stack at $SMITHERS_CHECKOUT"
+    if ! (cd "$SMITHERS_CHECKOUT" && make docker-up); then
         log "make docker-up failed — attempting bun install recovery…"
-        if [[ -d "$PLUE_CHECKOUT/apps/workflow-runtime" ]]; then
-            (cd "$PLUE_CHECKOUT/apps/workflow-runtime" && bun install) || true
+        if [[ -d "$SMITHERS_CHECKOUT/apps/workflow-runtime" ]]; then
+            (cd "$SMITHERS_CHECKOUT/apps/workflow-runtime" && bun install) || true
         fi
-        (cd "$PLUE_CHECKOUT" && bun install) || true
-        if ! (cd "$PLUE_CHECKOUT" && make docker-up); then
-            die "make docker-up still failing after bun install; inspect $PLUE_CHECKOUT"
+        (cd "$SMITHERS_CHECKOUT" && bun install) || true
+        if ! (cd "$SMITHERS_CHECKOUT" && make docker-up); then
+            die "make docker-up still failing after bun install; inspect $SMITHERS_CHECKOUT"
         fi
     fi
 fi
@@ -105,15 +106,15 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Wait for services
 # ---------------------------------------------------------------------------
-log "waiting for plue api on $PLUE_BASE_URL"
+log "waiting for Smithers API on $SMITHERS_BASE_URL"
 deadline=$((SECONDS + 120))
-until curl -sf -o /dev/null -w '%{http_code}' "$PLUE_BASE_URL/api/health" 2>/dev/null | grep -qE '^(200|404|401)$'; do
+until curl -sf -o /dev/null -w '%{http_code}' "$SMITHERS_BASE_URL/api/health" 2>/dev/null | grep -qE '^(200|404|401)$'; do
     if (( SECONDS >= deadline )); then
-        die "plue api not reachable at $PLUE_BASE_URL after 120s"
+        die "Smithers API not reachable at $SMITHERS_BASE_URL after 120s"
     fi
     sleep 2
 done
-log "plue api reachable"
+log "Smithers API reachable"
 
 # ---------------------------------------------------------------------------
 # 3. Seed test data — reuse the iOS seed script verbatim.
@@ -152,9 +153,11 @@ log "only-testing: $E2E_ONLY_TESTING"
 # Scheme env macros (see project.yml) resolve against the invoking
 # process environment at test time. Export everything the tests need.
 export SMITHERS_E2E_BEARER
-export PLUE_BASE_URL
-export PLUE_E2E_MODE=1
-export PLUE_REMOTE_SANDBOX_ENABLED=1
+export SMITHERS_BASE_URL
+export PLUE_BASE_URL="$SMITHERS_BASE_URL"
+export SMITHERS_E2E_MODE=1
+export SMITHERS_REMOTE_SANDBOX_ENABLED=1
+export PLUE_REMOTE_SANDBOX_ENABLED="$SMITHERS_REMOTE_SANDBOX_ENABLED"
 export PLUE_E2E_SEEDED=1
 export PLUE_E2E_SEEDED_WORKSPACE_TITLE="${PLUE_E2E_SEEDED_WORKSPACE_TITLE:-e2e-workspace}"
 export PLUE_E2E_WORKSPACE_ID

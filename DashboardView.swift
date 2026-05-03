@@ -356,7 +356,7 @@ struct DashboardView: View {
             }
 
             if hasJJHubTransport {
-                SectionCard(title: "Codeplane At A Glance") {
+                SectionCard(title: "Smithers At A Glance") {
                     DashboardMetricRow(
                         icon: "arrow.down.to.line",
                         title: "Landings",

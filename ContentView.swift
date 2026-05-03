@@ -823,7 +823,7 @@ struct ContentView: View {
             ("Snapshots", .snapshots),
             ("Workflows", .workflows),
             ("Triggers", .triggers),
-            ("JJHub Workflows", .jjhubWorkflows),
+            ("Smithers Workflows", .jjhubWorkflows),
             ("Approvals", .approvals),
             ("Prompts", .prompts),
             ("Scores", .scores),

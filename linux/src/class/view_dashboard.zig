@@ -107,7 +107,7 @@ pub const DashboardView = extern struct {
     fn refreshImpl(self: *Self) !void {
         const alloc = self.allocator();
         const body = self.private().body;
-        vh.setStatus(alloc, body, "content-loading-symbolic", "Loading dashboard", "Fetching Smithers and JJHub activity.");
+        vh.setStatus(alloc, body, "content-loading-symbolic", "Loading dashboard", "Fetching Smithers activity.");
 
         var source_errors: usize = 0;
 
@@ -198,7 +198,7 @@ pub const DashboardView = extern struct {
         try vh.appendMetricPrimary(alloc, primary, "Active Runs", countActiveRuns(runs.items), "running or waiting");
         try vh.appendMetricPrimary(alloc, primary, "Pending Approvals", approvals.items.len, "gates to review");
         try vh.appendMetricPrimary(alloc, primary, "Failed Runs", countRunStatus(runs.items, "failed"), "needs attention");
-        try vh.appendMetricPrimary(alloc, primary, "Open Landings", countStatus(landings.items, "open"), "JJHub requests");
+        try vh.appendMetricPrimary(alloc, primary, "Open Landings", countStatus(landings.items, "open"), "Smithers requests");
         body.append(primary.as(gtk.Widget));
 
         const caption = ui.label("AT A GLANCE", "caption");

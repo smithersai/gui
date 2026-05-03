@@ -7,10 +7,10 @@
 // `SharedNavigation.swift`. Tickets 0123/0124 expand the leaves it can
 // render once TerminalView / libsmithers-core are iOS-portable.
 //
-// Ticket ios-e2e-harness: when `PLUE_E2E_MODE=1` is set in the process
+// Ticket ios-e2e-harness: when `SMITHERS_E2E_MODE=1` is set in the process
 // launch environment, the app reads `SMITHERS_E2E_BEARER` +
-// `PLUE_BASE_URL`, seeds an in-memory `TokenStore`, and validates that
-// bearer against plue before mounting the signed-in shell. The gate is
+// `SMITHERS_BASE_URL`, seeds an in-memory `TokenStore`, and validates that
+// bearer against Smithers before mounting the signed-in shell. The gate is
 // strictly env-var-based: in a shipped build with no such env vars,
 // every E2E branch is a no-op.
 
@@ -20,14 +20,21 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
-enum SmithersPlueEndpoint {
-    static let baseURLInfoKey = "SmithersPlueBaseURL"
+enum SmithersBackendEndpoint {
+    static let baseURLInfoKey = "SmithersBaseURL"
+    static let legacyBaseURLInfoKey = "SmithersPlueBaseURL"
     static let previewURLInfoKey = "SmithersPreviewURL"
 
     static func configuredBaseURL(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundle: Bundle = .main
     ) -> URL? {
+        if let url = parsedURL(environment["SMITHERS_BASE_URL"]) {
+            return url
+        }
+        if let url = parsedURL(environment["SMITHERS_PREVIEW_URL"]) {
+            return url
+        }
         if let url = parsedURL(environment["PLUE_BASE_URL"]) {
             return url
         }
@@ -37,10 +44,13 @@ enum SmithersPlueEndpoint {
         if let url = parsedURL(bundle.object(forInfoDictionaryKey: baseURLInfoKey)) {
             return url
         }
+        if let url = parsedURL(bundle.object(forInfoDictionaryKey: legacyBaseURLInfoKey)) {
+            return url
+        }
         if let url = parsedURL(bundle.object(forInfoDictionaryKey: previewURLInfoKey)) {
             return url
         }
-        if environment["PLUE_E2E_MODE"] == "1" {
+        if environment["SMITHERS_E2E_MODE"] == "1" || environment["PLUE_E2E_MODE"] == "1" {
             return URL(string: "http://localhost:4000")!
         }
         return nil
@@ -108,17 +118,19 @@ struct SmithersiOSApp: App {
 
     private static func makeAuthModel(e2e: E2EConfig?) -> AuthViewModel {
         // Base URL precedence:
-        //   1. E2E (`PLUE_BASE_URL` via E2EEnvironment) when E2E mode is on
+        //   1. E2E (`SMITHERS_BASE_URL` via E2EEnvironment) when E2E mode is on
         //   2. Device/simulator preview URL from env or Info.plist
-        //   3. `SMITHERS_PLUE_URL` dev override
-        //   4. Debug default to local Plue
+        //   3. `SMITHERS_DEV_BASE_URL` dev override
+        //   4. Debug default to local Smithers
         //   5. Production default.
         let base: URL
         let environment = ProcessInfo.processInfo.environment
         if let e2e {
             base = e2e.baseURL
-        } else if let preview = SmithersPlueEndpoint.configuredBaseURL(environment: environment) {
+        } else if let preview = SmithersBackendEndpoint.configuredBaseURL(environment: environment) {
             base = preview
+        } else if let dev = environment["SMITHERS_DEV_BASE_URL"].flatMap(URL.init(string:)) {
+            base = dev
         } else if let dev = environment["SMITHERS_PLUE_URL"].flatMap(URL.init(string:)) {
             base = dev
         } else {
@@ -139,7 +151,7 @@ struct SmithersiOSApp: App {
 
         // Token store: production uses the Keychain. E2E mode uses an
         // in-memory store pre-seeded with the test bearer so the app can
-        // validate the bearer against plue without an
+        // validate the bearer against Smithers without an
         // `ASWebAuthenticationSession` round trip.
         let store: TokenStore
         if let e2e {

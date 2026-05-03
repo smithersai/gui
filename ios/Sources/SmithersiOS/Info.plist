@@ -57,10 +57,12 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>SmithersBaseURL</key>
+	<string>$(SMITHERS_BASE_URL)</string>
 	<key>SmithersPlueBaseURL</key>
 	<string>$(PLUE_BASE_URL)</string>
 	<key>SmithersPreviewURL</key>
-	<string>$(PLUE_PREVIEW_URL)</string>
+	<string>$(SMITHERS_PREVIEW_URL)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

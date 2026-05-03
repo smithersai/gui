@@ -33,7 +33,7 @@ final class NavigationE2ETests: SmithersGUIUITestCase {
             ("Workspaces", "view.workspaces"),
             ("Logs", "view.logs"),
             ("Changes", "view.changes"),
-            ("JJHub Workflows", "view.jjhubWorkflows"),
+            ("Smithers Workflows", "view.jjhubWorkflows"),
             ("Landings", "view.landings"),
             ("Tickets", "view.tickets"),
             ("Issues", "view.issues"),

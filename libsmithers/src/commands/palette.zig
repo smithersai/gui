@@ -106,7 +106,7 @@ const destination_items = [_]ItemMeta{
     .{ .id = "route:memory", .title = "Memory", .subtitle = "Navigate to Memory.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
     .{ .id = "route:workspaces", .title = "Workspaces", .subtitle = "Navigate to Workspaces.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
     .{ .id = "route:changes", .title = "Changes", .subtitle = "Navigate to Changes.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
-    .{ .id = "route:jjhub-workflows", .title = "JJHub Workflows", .subtitle = "Navigate to JJHub Workflows.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
+    .{ .id = "route:jjhub-workflows", .title = "Smithers Workflows", .subtitle = "Navigate to Smithers Workflows.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
     .{ .id = "route:landings", .title = "Landings", .subtitle = "Navigate to Landings.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
     .{ .id = "route:tickets", .title = "Tickets", .subtitle = "Navigate to Tickets.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },
     .{ .id = "route:issues", .title = "Issues", .subtitle = "Navigate to Issues.", .kind = "destination", .base = 20, .options = .{ .section = "Destinations" } },

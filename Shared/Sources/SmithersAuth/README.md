@@ -1,7 +1,7 @@
 # SmithersAuth
 
 OAuth2 PKCE sign-in module shared between the macOS and iOS Smithers apps
-(ticket 0109). Sibling of plue ticket 0106 (the server-side authorize flow
+(ticket 0109). Sibling of Smithers ticket 0106 (the server-side authorize flow
 that this module talks to).
 
 ## Files
@@ -47,7 +47,7 @@ Two options, both supported:
   127.0.0.1, accepts exactly one request, returns a plaintext "done"
   page, and shuts down. Port is ephemeral per sign-in.
 
-Plue's registered redirect URIs (set by 0106) must include the iOS
+Smithers registered redirect URIs (set by 0106) must include the iOS
 custom scheme, the macOS custom scheme, and the macOS loopback route.
 
 ## Resetting the Keychain during testing
@@ -64,11 +64,11 @@ The in-app `Sign out` button revokes + wipes via
 
 ## Whitelist rejection UX
 
-When plue returns `access_not_yet_granted` (or the legacy
+When Smithers returns `access_not_yet_granted` (or the legacy
 `whitelist_denied`) from `/api/oauth2/token`, the view model transitions
 to `.whitelistDenied(message)`. That phase is terminal — `signIn()` is a
 no-op while in this state. The static page asks the user to contact their
-administrator. The only escape is app-restart after plue adds them to
+administrator. The only escape is app-restart after Smithers adds them to
 the whitelist.
 
 ## Env-pollution gotcha
@@ -82,7 +82,7 @@ prefixed with `env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS …`.
 
 ```sh
 # Unit + mocked-integration suite. Runs in seconds. Hermetic — no
-# plue dependency.
+# Smithers dependency.
 cd Shared && env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS swift test
 
 # iOS simulator suite (includes UI launch test):

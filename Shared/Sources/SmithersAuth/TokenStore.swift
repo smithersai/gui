@@ -9,7 +9,7 @@
 //     contract: callers must write the new tokens BEFORE retrying the
 //     authenticated request. If the write fails, the sign-in session is
 //     discarded rather than kept alive with the old refresh token — the
-//     old refresh token was invalidated server-side the moment plue
+//     old refresh token was invalidated server-side the moment Smithers
 //     issued a new one.
 //
 // The API surface is small intentionally — this is a credential boundary.

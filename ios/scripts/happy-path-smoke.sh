@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# End-to-end backend happy-path smoke test for a running plue stack.
+# End-to-end backend happy-path smoke test for a running Smithers stack.
 #
-# This intentionally does not start plue. It only verifies that the API and
+# This intentionally does not start Smithers. It only verifies that the API and
 # Postgres-backed seed path are reachable, seeds deterministic E2E data via
 # seed-e2e-data.sh, then exercises the server-side happy path with curl.
 
@@ -11,7 +11,7 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-BASE_URL="${PLUE_BASE_URL:-http://localhost:4000}"
+BASE_URL="${SMITHERS_BASE_URL:-${PLUE_BASE_URL:-http://localhost:4000}}"
 while [[ "$BASE_URL" == */ ]]; do
     BASE_URL="${BASE_URL%/}"
 done
@@ -276,7 +276,7 @@ preflight_api() {
     code="$(curl -sS --connect-timeout 3 --max-time 8 -o "$out" -w "%{http_code}" "$BASE_URL/api/feature-flags" 2>"$err")"
     local rc=$?
     if [[ "$rc" -ne 0 || "$code" == "000" ]]; then
-        fail_setup "plue API is not reachable at $BASE_URL; start the stack first" "$(cat "$err")"
+        fail_setup "Smithers API is not reachable at $BASE_URL; start the stack first" "$(cat "$err")"
     fi
 }
 

@@ -7,7 +7,7 @@
 //!
 //! Scope: GET-only for shape polling; chunked + Content-Length bodies;
 //! long-poll-friendly (connection kept open by server via `?live=true`);
-//! HTTP only (no TLS — plue dev stack is plaintext, TLS is a follow-up).
+//! HTTP only (no TLS — Smithers dev stack is plaintext, TLS is a follow-up).
 
 const std = @import("std");
 const Err = @import("errors.zig").Error;

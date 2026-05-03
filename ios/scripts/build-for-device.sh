@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build SmithersiOS with a device-reachable Plue backend URL baked into
+# Build SmithersiOS with a device-reachable Smithers backend URL baked into
 # Info.plist. Defaults to LAN testing; source build/preview-tunnel/*.env first
 # to use an ngrok preview URL instead.
 
@@ -20,8 +20,8 @@ elif [[ -n "${DEVICE_ID:-}" ]]; then
 else
     DESTINATION="generic/platform=iOS"
 fi
-LAN_INTERFACE="${PLUE_LAN_INTERFACE:-en0}"
-PLUE_PORT="${PLUE_PORT:-4000}"
+LAN_INTERFACE="${SMITHERS_LAN_INTERFACE:-${PLUE_LAN_INTERFACE:-en0}}"
+SMITHERS_PORT="${SMITHERS_PORT:-${PLUE_PORT:-4000}}"
 INSTALL_ON_DEVICE="${INSTALL_ON_DEVICE:-}"
 
 log() { echo "[build-for-device] $*" >&2; }
@@ -77,17 +77,23 @@ PY
 }
 
 select_base_url() {
-    local raw="${PLUE_DEVICE_BASE_URL:-}"
+    local raw="${SMITHERS_DEVICE_BASE_URL:-${PLUE_DEVICE_BASE_URL:-}}"
+    if [[ -z "$raw" && -n "${SMITHERS_PREVIEW_URL:-}" ]]; then
+        raw="$SMITHERS_PREVIEW_URL"
+    fi
     if [[ -z "$raw" && -n "${PLUE_PREVIEW_URL:-}" ]]; then
         raw="$PLUE_PREVIEW_URL"
+    fi
+    if [[ -z "$raw" && -n "${SMITHERS_BASE_URL:-}" ]]; then
+        raw="$SMITHERS_BASE_URL"
     fi
     if [[ -z "$raw" && -n "${PLUE_BASE_URL:-}" ]]; then
         raw="$PLUE_BASE_URL"
     fi
     if [[ -z "$raw" ]]; then
         local lan_ip
-        lan_ip="${PLUE_LAN_IP:-$(detect_lan_ip)}"
-        raw="http://${lan_ip}:${PLUE_PORT}"
+        lan_ip="${SMITHERS_LAN_IP:-${PLUE_LAN_IP:-$(detect_lan_ip)}}"
+        raw="http://${lan_ip}:${SMITHERS_PORT}"
     fi
     trim_base_url "$raw"
 }
@@ -119,8 +125,9 @@ prepare_info_plist() {
 
     mkdir -p "$STATE_DIR"
     cp "$SOURCE_PLIST" "$GENERATED_PLIST"
+    plist_set_string ":SmithersBaseURL" "$base_url"
     plist_set_string ":SmithersPlueBaseURL" "$base_url"
-    plist_set_string ":SmithersPreviewURL" "${PLUE_PREVIEW_URL:-}"
+    plist_set_string ":SmithersPreviewURL" "${SMITHERS_PREVIEW_URL:-${PLUE_PREVIEW_URL:-}}"
 
     if [[ "$scheme" == "http" ]]; then
         plist_ensure_dict ":NSAppTransportSecurity"
@@ -187,7 +194,7 @@ main() {
 
     prepare_info_plist "$base_url" "$scheme" "$host"
 
-    log "PLUE_BASE_URL=$base_url"
+    log "SMITHERS_BASE_URL=$base_url"
     log "generated Info.plist=$GENERATED_PLIST"
     if [[ "$scheme" == "http" ]]; then
         log "ATS exception domain=$host"
@@ -201,6 +208,8 @@ main() {
 
     local build_settings=(
         "INFOPLIST_FILE=$GENERATED_PLIST"
+        "SMITHERS_BASE_URL=$base_url"
+        "SMITHERS_PREVIEW_URL=${SMITHERS_PREVIEW_URL:-${PLUE_PREVIEW_URL:-}}"
         "PLUE_BASE_URL=$base_url"
         "PLUE_PREVIEW_URL=${PLUE_PREVIEW_URL:-}"
         "CODE_SIGN_STYLE=${IOS_CODE_SIGN_STYLE:-Automatic}"

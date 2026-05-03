@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Stand-in for the plue api during local smoke-runs of the E2E harness.
+"""Stand-in for the Smithers API during local smoke-runs of the E2E harness.
 
-Ticket: ios-e2e-harness. The real E2E target is a live plue stack via
+Ticket: ios-e2e-harness. The real E2E target is a live Smithers stack via
 `ios/scripts/run-e2e.sh`. This script exists so a developer can verify
-the iOS-side XCUITest wiring without cloning plue or coordinating the
-cross-repo docker build — useful when the plue side is temporarily
+the iOS-side XCUITest wiring without cloning the backend or coordinating the
+cross-repo docker build — useful when the Smithers side is temporarily
 broken (migration drift, bun.lock drift, etc.).
 
 Responds to:
@@ -24,7 +24,7 @@ def handler_factory(seeded: bool, workspace_title: str):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             import sys
-            print("[mock-plue]", fmt % args, file=sys.stderr, flush=True)
+            print("[mock-smithers]", fmt % args, file=sys.stderr, flush=True)
 
         def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler API)
             if self.path == "/api/health":
@@ -81,7 +81,7 @@ def main():
         ("127.0.0.1", args.port),
         handler_factory(args.seeded, args.workspace_title),
     )
-    print(f"[mock-plue] listening on http://127.0.0.1:{args.port} (seeded={args.seeded})")
+    print(f"[mock-smithers] listening on http://127.0.0.1:{args.port} (seeded={args.seeded})")
     server.serve_forever()
 
 

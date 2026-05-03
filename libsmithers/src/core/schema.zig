@@ -13,7 +13,7 @@ const std = @import("std");
 
 /// SQL executed at cache open. Keep it idempotent (`IF NOT EXISTS`).
 ///
-/// Shape tables mirror plue column names. `row_json` is the denormalised
+/// Shape tables mirror Smithers column names. `row_json` is the denormalised
 /// value Electric gave us — we decode on demand rather than shredding.
 /// `pk` is the shape's primary key (string id). `subscription_id` ties a
 /// row to the subscription that wrote it, for pinning + eviction.

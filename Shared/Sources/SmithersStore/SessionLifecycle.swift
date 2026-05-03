@@ -38,7 +38,7 @@ public final class SmithersSessionLifecycle {
     /// Construct a lifecycle using a token source for credentials injection.
     ///
     /// FAKE-TRANSPORT CAVEAT: 0120's runtime currently does not actually
-    /// reach plue. This factory will still succeed locally; behaviour
+    /// reach Smithers. This factory will still succeed locally; behaviour
     /// against a real stack is verified behind `POC_ELECTRIC_STACK=1`
     /// (see Shared/Tests/SmithersStoreTests).
     public static func bootstrap(

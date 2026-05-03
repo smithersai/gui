@@ -305,7 +305,7 @@ pub const FakeTransport = struct {
 // implementation. Replaces the 0120 skeleton.
 // -----------------------------------------------------------------------
 
-/// Action-kind → plue REST route mapping. The action kind is what Swift
+/// Action-kind → Smithers REST route mapping. The action kind is what Swift
 /// sends into `smithers_core_write`; this table translates into the HTTP
 /// method + path (a `{owner}/{repo}` pair is interpolated from the payload,
 /// which must carry `repo_owner` + `repo_name` fields).
@@ -472,16 +472,16 @@ pub const CredentialsRefresher = struct {
 
 /// Configuration the Session hands to RealTransport at create-time.
 pub const RealConfig = struct {
-    /// Host for Electric shape proxy (e.g. plue's `/v1/shape` endpoint).
+    /// Host for Electric shape proxy (e.g. Smithers `/v1/shape` endpoint).
     shape_host: []const u8,
     shape_port: u16,
-    /// Host for plue HTTP REST API (writes).
+    /// Host for Smithers HTTP REST API (writes).
     api_host: []const u8,
     api_port: u16,
     /// Host for WebSocket PTY.
     ws_host: []const u8,
     ws_port: u16,
-    /// Origin header value. plue's proxy rejects mismatched Origins.
+    /// Origin header value. Smithers proxy rejects mismatched Origins.
     origin: []const u8,
 };
 
@@ -1124,7 +1124,7 @@ fn ptyReaderThread(worker: *PtyWorker) void {
                 self.enqueueDelta(.{ .pty_data = .{ .handle = worker.handle, .bytes = bytes } });
             },
             .text => {
-                // Plue occasionally emits text status messages; forward as
+                // Smithers occasionally emits text status messages; forward as
                 // bytes for now.
                 const bytes = self.allocator.dupe(u8, ev.payload) catch continue;
                 self.enqueueDelta(.{ .pty_data = .{ .handle = worker.handle, .bytes = bytes } });

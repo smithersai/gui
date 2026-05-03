@@ -128,7 +128,7 @@ public struct SwitcherWorkspace: Sendable, Codable, Equatable, Hashable, Identif
 
 // MARK: - 0135 wire shape
 
-/// JSON payload shape emitted by plue's `GET /api/user/workspaces?limit=100`.
+/// JSON payload shape emitted by Smithers `GET /api/user/workspaces?limit=100`.
 /// Field names are the 0135 contract; decoder uses the same millisecond /
 /// ISO-8601 strategy as `StoreDecoder`.
 public struct UserWorkspaceDTO: Sendable, Codable, Equatable, Hashable {
@@ -183,7 +183,7 @@ public struct UserWorkspacesListResponse: Sendable, Codable, Equatable {
 
 /// Thin abstraction over 0135's HTTP call so the view-model is testable
 /// without URLSession. Production wires this to a closure that calls the
-/// plue API with the current bearer token.
+/// Smithers API with the current bearer token.
 public protocol RemoteWorkspaceFetcher: Sendable {
     /// Fetch up to `limit` workspaces in server-recency order. Throws on
     /// network/HTTP failure; throws `.authExpired` on 401.

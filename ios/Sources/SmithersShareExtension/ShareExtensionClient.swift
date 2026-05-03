@@ -416,7 +416,8 @@ private let shareDecoder: JSONDecoder = {
 }()
 
 enum ShareExtensionEndpoint {
-    static let baseURLInfoKey = "SmithersPlueBaseURL"
+    static let baseURLInfoKey = "SmithersBaseURL"
+    static let legacyBaseURLInfoKey = "SmithersPlueBaseURL"
     static let previewURLInfoKey = "SmithersPreviewURL"
 
     static func resolvedBaseURL(
@@ -425,6 +426,9 @@ enum ShareExtensionEndpoint {
     ) -> URL {
         if let configured = configuredBaseURL(environment: environment, bundle: bundle) {
             return configured
+        }
+        if let dev = parsedURL(environment["SMITHERS_DEV_BASE_URL"]) {
+            return dev
         }
         if let dev = parsedURL(environment["SMITHERS_PLUE_URL"]) {
             return dev
@@ -440,6 +444,12 @@ enum ShareExtensionEndpoint {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundle: Bundle = .main
     ) -> URL? {
+        if let url = parsedURL(environment["SMITHERS_BASE_URL"]) {
+            return url
+        }
+        if let url = parsedURL(environment["SMITHERS_PREVIEW_URL"]) {
+            return url
+        }
         if let url = parsedURL(environment["PLUE_BASE_URL"]) {
             return url
         }
@@ -447,6 +457,9 @@ enum ShareExtensionEndpoint {
             return url
         }
         if let url = parsedURL(bundle.object(forInfoDictionaryKey: baseURLInfoKey)) {
+            return url
+        }
+        if let url = parsedURL(bundle.object(forInfoDictionaryKey: legacyBaseURLInfoKey)) {
             return url
         }
         if let url = parsedURL(bundle.object(forInfoDictionaryKey: previewURLInfoKey)) {

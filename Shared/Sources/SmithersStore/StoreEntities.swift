@@ -440,8 +440,8 @@ public enum StoreDecoder {
     }()
 }
 
-/// Table names mirror the plue/Electric slice names. Keep these in ONE place
-/// so renames in plue only touch a single constant here.
+/// Table names mirror the Smithers/Electric slice names. Keep these in ONE place
+/// so backend renames only touch a single constant here.
 public enum StoreTable {
     public static let workflowRuns = "workflow_runs"
     public static let approvals = "approvals"

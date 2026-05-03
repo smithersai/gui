@@ -1,13 +1,13 @@
 // OAuth2Client.swift — wire-level OAuth2 exchange, refresh, revoke.
 //
-// Ticket 0109. Mirrors plue's `/api/oauth2/token`, `/api/oauth2/revoke`,
+// Ticket 0109. Mirrors Smithers `/api/oauth2/token`, `/api/oauth2/revoke`,
 // and `/api/oauth2/revoke-all` routes. Network I/O is injected via
 // `HTTPTransport` so unit tests can feed fixed responses and assert request
 // shapes without touching the real wire.
 
 import Foundation
 
-/// Config pairs with the plue-registered public client from 0106.
+/// Config pairs with the Smithers-registered public client from 0106.
 public struct OAuth2ClientConfig: Equatable, Sendable {
     public let baseURL: URL
     public let clientID: String
@@ -33,7 +33,7 @@ public struct OAuth2ClientConfig: Equatable, Sendable {
 public enum OAuth2Error: Error, Equatable {
     case unauthorized // 401 on token exchange / refresh
     case invalidGrant(String) // server returned `invalid_grant` or similar
-    case whitelistDenied(String) // structured error from plue; render static page
+    case whitelistDenied(String) // structured error from Smithers; render static page
     case badStatus(Int, String)
     case invalidResponse
     case transport(String)
@@ -42,7 +42,7 @@ public enum OAuth2Error: Error, Equatable {
 /// Cheap authenticated probe used by restored-session bootstrap paths.
 /// `.indeterminate` preserves the existing session when the backend is
 /// temporarily unavailable, while `.invalid` is reserved for clear auth
-/// failures from plue.
+/// failures from Smithers.
 public enum AccessTokenValidationResult: Equatable {
     case valid
     case invalid
@@ -81,7 +81,7 @@ public final class URLSessionHTTPTransport: HTTPTransport {
     }
 }
 
-/// Plue structured error body. Matches what 0106 returns on non-2xx.
+/// Smithers structured error body. Matches what 0106 returns on non-2xx.
 /// See RFC 6749 §5.2 for the `error`/`error_description` convention.
 public struct OAuth2ErrorBody: Decodable, Equatable {
     public let error: String
@@ -150,7 +150,7 @@ public final class OAuth2Client {
         return try await postToken(body: form.percentEncodedQuery ?? "")
     }
 
-    /// Verifies whether an access token still authenticates against plue's
+    /// Verifies whether an access token still authenticates against Smithers
     /// cheap `/api/user` endpoint.
     public func validateAccessToken(_ accessToken: String) async -> AccessTokenValidationResult {
         var req = URLRequest(url: config.baseURL.appendingPathComponent("api/user"))
@@ -175,7 +175,7 @@ public final class OAuth2Client {
     }
 
     /// Best-effort app-wide revoke. When the route does not exist on the
-    /// target plue build, returns `.unavailable` so callers can fall back
+    /// target Smithers build, returns `.unavailable` so callers can fall back
     /// to per-token revocation. All other failures are non-fatal.
     func revokeAll(accessToken: String) async -> RevokeAllResult {
         var req = URLRequest(url: config.baseURL.appendingPathComponent("api/oauth2/revoke-all"))

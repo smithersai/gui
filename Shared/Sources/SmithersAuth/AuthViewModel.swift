@@ -51,7 +51,7 @@ public final class AuthViewModel: ObservableObject {
         self.callbackScheme = callbackScheme
         self.startupSessionValidator = startupSessionValidator
         // Restore from storage on init. Some callers provide an async
-        // validator so we don't trust a restored access token until plue
+        // validator so we don't trust a restored access token until Smithers
         // confirms it still authenticates.
         if tokens.hasSession {
             self.phase = startupSessionValidator == nil ? .signedIn : .restoringSession

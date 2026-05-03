@@ -9,7 +9,7 @@
 // We support both. `ASWebAuthenticationSession` delivers a callback for
 // the custom-scheme path without any help from us. The loopback path
 // uses this helper when a redirect URI with `http://127.0.0.1` is
-// registered with plue (0106).
+// registered with Smithers (0106).
 //
 // The server listens only long enough to capture ONE request, then stops.
 // It binds to 127.0.0.1 (IPv4 loopback) — the external network is never

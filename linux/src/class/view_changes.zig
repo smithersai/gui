@@ -122,7 +122,7 @@ pub const ChangesView = extern struct {
         const alloc = self.allocator();
         ui.clearList(self.private().list);
         if (self.private().changes.items.len == 0) {
-            self.private().list.append((try ui.row(alloc, "view-list-symbolic", "No changes found", "JJHub changes appear here.")).as(gtk.Widget));
+            self.private().list.append((try ui.row(alloc, "view-list-symbolic", "No changes found", "Smithers changes appear here.")).as(gtk.Widget));
             return;
         }
         const query = std.mem.trim(u8, std.mem.span(self.private().search_entry.as(gtk.Editable).getText()), &std.ascii.whitespace);

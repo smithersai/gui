@@ -12,7 +12,7 @@
 //      store BEFORE returning to the retry closure**, and only then invoke
 //      the closure with the new access token.
 //   4. If the Keychain write fails for any reason, the user is signed out
-//      rather than retained with a stale refresh token. Rationale: plue
+//      rather than retained with a stale refresh token. Rationale: Smithers
 //      has already invalidated the old refresh token by issuing a new
 //      one. Keeping it in Keychain is worse than wiping.
 //

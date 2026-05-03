@@ -64,7 +64,7 @@ struct JJHubWorkflowsView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("JJHub Workflows")
+                Text("Smithers Workflows")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundColor(Theme.textPrimary)
                 if let repoLabel {
@@ -104,7 +104,7 @@ struct JJHubWorkflowsView: View {
                         Image(systemName: "point.3.filled.connected.trianglepath.dotted")
                             .font(.system(size: 24))
                             .foregroundColor(Theme.textTertiary)
-                        Text("No JJHub workflows found.")
+                        Text("No Smithers workflows found.")
                             .font(.system(size: 12))
                             .foregroundColor(Theme.textTertiary)
                     }

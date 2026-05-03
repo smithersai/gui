@@ -109,7 +109,7 @@ enum SlashCommandRegistry {
             command("prompts", "Prompts", "Browse prompt files.", .smithers, ["prompt"], .navigate(.prompts)),
             command("tickets", "Tickets", "Browse tickets.", .smithers, ["ticket"], .navigate(.tickets)),
             command("issues", "Issues", "Browse issues.", .smithers, ["issue"], .navigate(.issues)),
-            command("changes", "Changes", "Open JJHub changes.", .smithers, ["vcs"], .navigate(.changes)),
+            command("changes", "Changes", "Open Smithers changes.", .smithers, ["vcs"], .navigate(.changes)),
             command("terminal", "Terminal", "Open a terminal.", .action, ["term", "shell"], .navigate(.terminal(id: "default"))),
             command("help", "Help", "Show available slash commands.", .action, ["?"], .showHelp),
             command("debug", "Developer Debug", "Toggle developer diagnostics.", .action, ["dev"], .toggleDeveloperDebug),

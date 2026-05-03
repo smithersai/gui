@@ -67,12 +67,12 @@ pub const Error = error{
     UnknownShape,
 };
 
-/// Feature flag for 0112. Until plue lands it as a real flag, we honour
+/// Feature flag for 0112. Until Smithers lands it as a real flag, we honour
 /// the env var SMITHERS_REMOTE_SANDBOX_ENABLED=1. Default: enabled in
 /// tests, disabled in release (override at create time).
 fn remoteSandboxEnabled(allocator: std.mem.Allocator) bool {
     const override = std.process.getEnvVarOwned(allocator, "SMITHERS_REMOTE_SANDBOX_ENABLED") catch {
-        return true; // default on; plue will flip this when 0112 lands.
+        return true; // default on; Smithers will flip this when 0112 lands.
     };
     defer allocator.free(override);
     return std.mem.eql(u8, override, "1") or std.mem.eql(u8, override, "true");
@@ -93,7 +93,7 @@ pub const Core = struct {
 
     /// Test-only flag: when true, sessions construct a `FakeTransport`
     /// instead of the real Electric/WS/HTTP stack. This keeps the 0120
-    /// lifecycle tests deterministic without requiring a live plue.
+    /// lifecycle tests deterministic without requiring a live Smithers.
     ///
     /// When FALSE (default), sessions build a `RealTransport` per 0140.
     /// Integration tests gated on `POC_ELECTRIC_STACK=1` leave this off.

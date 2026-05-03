@@ -226,7 +226,7 @@ jobs:
           APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
           MARKETING_VERSION: ${{ steps.meta.outputs.marketing_version }}
           CURRENT_PROJECT_VERSION: ${{ steps.meta.outputs.build_number }}
-          PLUE_BASE_URL: ${{ vars.PLUE_BASE_URL || 'https://jjhub.tech' }}
+          SMITHERS_BASE_URL: ${{ vars.SMITHERS_BASE_URL || 'https://app.smithers.sh' }}
         run: |
           set -euo pipefail
           # The SDKROOT / LIBRARY_PATH / RUSTFLAGS scrub is handled by the

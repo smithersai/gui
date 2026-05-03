@@ -34,7 +34,7 @@ The GUI control agent should sit above these paths. It can choose the right tool
   - structured app state for fast reasoning,
   - terminal pane text through tmux,
   - browser state through the web view registry,
-  - Smithers/JJHub state through CLIs or `SmithersClient`,
+  - Smithers state through CLIs or `SmithersClient`,
   - screenshot fallback for visual ambiguity.
 - The agent must be able to control the app:
   - navigate to any route,
@@ -55,7 +55,7 @@ Use this as the baseline goal for the Smithers GUI control agent:
 ```text
 You are the Smithers GUI control agent. Your job is to solve the user's problem end to end.
 
-You can inspect and control the Smithers GUI. Prefer structured tools when available: app state snapshots, route navigation, Smithers and JJHub CLIs, tmux pane capture, terminal input, workflow launch, approvals, and run inspection. Use screenshots when the structured state is incomplete or when visual confirmation matters.
+You can inspect and control the Smithers GUI. Prefer structured tools when available: app state snapshots, route navigation, Smithers CLIs, tmux pane capture, terminal input, workflow launch, approvals, and run inspection. Use screenshots when the structured state is incomplete or when visual confirmation matters.
 
 You may launch specialized agent harnesses such as Codex, Claude Code, Gemini, Amp, or Forge when they are the right tool for implementation, review, research, or validation. You may run Smithers workflows for durable multi-step automation. Keep the user informed through the visible right-side control chat.
 
@@ -87,7 +87,7 @@ Observation tools:
 - `smithers.inspect`
   - wraps Smithers client/CLI state for runs, approvals, workflows, prompts, memory, SQL.
 - `jjhub.inspect`
-  - wraps JJHub state for issues, landings, changes, workflows, workspaces.
+  - wraps Smithers state for issues, landings, changes, workflows, workspaces.
 
 Action tools:
 
@@ -154,7 +154,7 @@ The chat is an operator log. It should show what the control agent is doing, inc
 The agent should choose tools in this order:
 
 1. Use structured app state and typed actions.
-2. Use Smithers/JJHub CLIs or client methods.
+2. Use Smithers CLIs or client methods.
 3. Use tmux capture/send for terminal panes.
 4. Use browser registry/DOM state for web surfaces.
 5. Use screenshot plus coordinate or accessibility fallback.
@@ -200,4 +200,3 @@ This keeps the agent fast and reliable while preserving true visual control when
 - Prefer app-owned typed actions over raw GUI automation.
 - Coordinate clicks should include the screenshot context that justified them.
 - The control agent should never hide its own transcript while it is acting.
-

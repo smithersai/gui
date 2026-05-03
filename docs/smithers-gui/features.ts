@@ -489,7 +489,7 @@ export enum SmithersFeature {
   SEARCH_RESULT_DESCRIPTION = "SEARCH_RESULT_DESCRIPTION",
 
   // ═══════════════════════════════════════════════════════════════════
-  // LANDINGS (JJHub)
+  // LANDINGS (Smithers)
   // ═══════════════════════════════════════════════════════════════════
 
   LANDINGS_LIST = "LANDINGS_LIST",
@@ -513,7 +513,7 @@ export enum SmithersFeature {
   LANDINGS_CREATED_AT_DISPLAY = "LANDINGS_CREATED_AT_DISPLAY",
 
   // ═══════════════════════════════════════════════════════════════════
-  // ISSUES (JJHub)
+  // ISSUES (Smithers)
   // ═══════════════════════════════════════════════════════════════════
 
   ISSUES_LIST = "ISSUES_LIST",

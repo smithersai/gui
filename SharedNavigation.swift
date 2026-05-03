@@ -71,7 +71,7 @@ enum NavDestination: Hashable {
         case .snapshots: return "Snapshots"
         case .workflows: return "Workflows"
         case .triggers: return "Triggers"
-        case .jjhubWorkflows: return "JJHub Workflows"
+        case .jjhubWorkflows: return "Smithers Workflows"
         case .approvals: return "Approvals"
         case .prompts: return "Prompts"
         case .scores: return "Scores"
