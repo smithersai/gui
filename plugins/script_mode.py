@@ -15,6 +15,8 @@ Create a plugin that hooks into the agent's execution. Plugins intercept the age
 
 __plugin__ = {"api": "1.0", "name": "my_plugin"}
 
+from plugins import ToolCall, ToolResult, on_begin, on_done, on_final, on_resolve_tool, on_tool_call, on_tool_result
+
 @on_begin
 async def init(ctx):
     """Called once when request starts."""
@@ -52,7 +54,7 @@ async def transform_response(ctx, text):
 @on_done
 async def cleanup(ctx):
     """Called when request completes."""
-    pass
+    ctx.state.clear()
 ```
 
 ## Hooks Reference
@@ -100,6 +102,8 @@ class ToolResult:
 __plugin__ = {"api": "1.0", "name": "logger"}
 
 import logging
+from plugins import on_tool_call
+
 logger = logging.getLogger("plugin.logger")
 
 @on_tool_call
@@ -112,6 +116,8 @@ async def log_call(ctx, call):
 ```python
 """Blocks shell commands containing dangerous patterns."""
 __plugin__ = {"api": "1.0", "name": "shell_blocker"}
+
+from plugins import ToolCall, on_tool_call
 
 BLOCKED_PATTERNS = ["rm -rf", "sudo", "curl | bash"]
 

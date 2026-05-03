@@ -3,6 +3,7 @@
 import pytest
 from pathlib import Path
 from plugins.storage import (
+    InvalidPluginName,
     ensure_plugins_dir,
     save_plugin,
     list_plugins,
@@ -56,6 +57,12 @@ class TestSavePlugin:
 
         assert path.read_text() == "updated"
 
+    @pytest.mark.parametrize("name", ["../escape", "nested/plugin", "", "bad.py/evil"])
+    def test_save_rejects_unsafe_names(self, tmp_path: Path, name: str):
+        """Test plugin names cannot escape the plugin directory."""
+        with pytest.raises(InvalidPluginName):
+            save_plugin(name, "pass", tmp_path)
+
 
 class TestListPlugins:
     """Tests for list_plugins."""
@@ -106,6 +113,11 @@ class TestGetPluginPath:
         path = get_plugin_path("missing", tmp_path)
 
         assert path is None
+
+    def test_rejects_unsafe_name(self, tmp_path: Path):
+        """Test get_plugin_path validates the plugin name."""
+        with pytest.raises(InvalidPluginName):
+            get_plugin_path("../escape", tmp_path)
 
 
 class TestGetPluginContent:

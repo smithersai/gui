@@ -13,6 +13,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from config.features import feature_manager
+from plugins.storage import InvalidPluginName, validate_plugin_name
+from plugins.validator import inspect_plugin_source
 
 router = APIRouter(prefix="/plugin", tags=["plugins"])
 logger = logging.getLogger(__name__)
@@ -87,6 +89,12 @@ def _check_feature_enabled() -> None:
         )
 
 
+def _storage_error(e: Exception) -> HTTPException:
+    if isinstance(e, InvalidPluginName):
+        return HTTPException(status_code=400, detail=str(e))
+    return HTTPException(status_code=500, detail=str(e))
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -100,21 +108,20 @@ async def list_plugins_endpoint() -> PluginListResponse:
     Works even when plugins feature is disabled (to show available plugins).
     """
     from plugins.storage import list_plugins as list_plugin_files
-    from plugins.loader import load_plugin_from_file
 
     plugins = []
     for path in list_plugin_files():
         try:
-            loaded = load_plugin_from_file(path)
+            loaded = inspect_plugin_source(path.read_text(), path.stem)
             plugins.append(
                 PluginInfo(
                     name=loaded.name,
-                    hooks=list(loaded.hooks.keys()),
+                    hooks=loaded.hooks,
                     metadata=loaded.metadata,
                 )
             )
         except Exception as e:
-            logger.warning("Failed to load plugin %s: %s", path.stem, e)
+            logger.warning("Failed to inspect plugin %s: %s", path.stem, e)
             plugins.append(
                 PluginInfo(
                     name=path.stem,
@@ -143,22 +150,27 @@ async def get_plugin_endpoint(name: str) -> PluginDetail:
         HTTPException: If plugin not found
     """
     from plugins.storage import get_plugin_path, get_plugin_content
-    from plugins.loader import load_plugin_from_file
 
-    path = get_plugin_path(name)
+    try:
+        path = get_plugin_path(name)
+    except InvalidPluginName as e:
+        raise _storage_error(e)
     if not path:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
 
-    content = get_plugin_content(name)
+    try:
+        content = get_plugin_content(name)
+    except InvalidPluginName as e:
+        raise _storage_error(e)
     if content is None:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
 
     try:
-        loaded = load_plugin_from_file(path)
+        loaded = inspect_plugin_source(content, path.stem)
         return PluginDetail(
             name=loaded.name,
             path=str(path),
-            hooks=list(loaded.hooks.keys()),
+            hooks=loaded.hooks,
             metadata=loaded.metadata,
             content=content,
         )
@@ -191,9 +203,12 @@ async def save_plugin_endpoint(request: SavePluginRequest) -> SavePluginResponse
     from plugins.storage import save_plugin
 
     try:
-        path = save_plugin(request.name, request.content)
-        logger.info("Saved plugin '%s' to %s", request.name, path)
-        return SavePluginResponse(name=request.name, path=str(path))
+        safe_name = validate_plugin_name(request.name)
+        path = save_plugin(safe_name, request.content)
+        logger.info("Saved plugin '%s' to %s", safe_name, path)
+        return SavePluginResponse(name=safe_name, path=str(path))
+    except InvalidPluginName as e:
+        raise _storage_error(e)
     except Exception as e:
         logger.error("Failed to save plugin '%s': %s", request.name, e)
         raise HTTPException(status_code=500, detail=f"Failed to save plugin: {e}")
@@ -216,9 +231,15 @@ async def delete_plugin_endpoint(name: str) -> DeletePluginResponse:
 
     from plugins.storage import delete_plugin
 
-    if delete_plugin(name):
-        logger.info("Deleted plugin '%s'", name)
-        return DeletePluginResponse(deleted=name)
+    try:
+        safe_name = validate_plugin_name(name)
+        deleted = delete_plugin(safe_name)
+    except InvalidPluginName as e:
+        raise _storage_error(e)
+
+    if deleted:
+        logger.info("Deleted plugin '%s'", safe_name)
+        return DeletePluginResponse(deleted=safe_name)
 
     raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
 
@@ -243,12 +264,17 @@ async def reload_plugin_endpoint(name: str) -> PluginInfo:
     from plugins.registry import plugin_registry
     from plugins.storage import plugin_exists
 
-    if not plugin_exists(name):
+    try:
+        safe_name = validate_plugin_name(name)
+        exists = plugin_exists(safe_name)
+    except InvalidPluginName as e:
+        raise _storage_error(e)
+    if not exists:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
 
     try:
-        plugin = plugin_registry.reload(name)
-        logger.info("Reloaded plugin '%s'", name)
+        plugin = plugin_registry.reload(safe_name)
+        logger.info("Reloaded plugin '%s'", safe_name)
         return PluginInfo(
             name=plugin.name,
             hooks=list(plugin.hooks.keys()),
@@ -263,7 +289,7 @@ async def reload_plugin_endpoint(name: str) -> PluginInfo:
 async def validate_plugin_endpoint(request: SavePluginRequest) -> PluginInfo:
     """Validate plugin code without saving.
 
-    Attempts to compile and load the plugin to check for errors.
+    Parses plugin source without executing it.
 
     Args:
         request: Plugin name and source code
@@ -272,27 +298,22 @@ async def validate_plugin_endpoint(request: SavePluginRequest) -> PluginInfo:
         Plugin information if valid
 
     Raises:
-        HTTPException: If plugin code is invalid
+        HTTPException: If plugins are disabled or plugin code is invalid
     """
-    import tempfile
-    from pathlib import Path
+    _check_feature_enabled()
 
-    from plugins.loader import load_plugin_from_file
-
-    # Write to temp file and try to load
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = Path(tmpdir) / f"{request.name}.py"
-        path.write_text(request.content)
-
-        try:
-            loaded = load_plugin_from_file(path)
-            return PluginInfo(
-                name=loaded.name,
-                hooks=list(loaded.hooks.keys()),
-                metadata=loaded.metadata,
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid plugin code: {e}",
-            )
+    try:
+        safe_name = validate_plugin_name(request.name)
+        loaded = inspect_plugin_source(request.content, safe_name)
+        return PluginInfo(
+            name=loaded.name,
+            hooks=loaded.hooks,
+            metadata=loaded.metadata,
+        )
+    except InvalidPluginName as e:
+        raise _storage_error(e)
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid plugin code: {e}",
+        )
