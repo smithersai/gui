@@ -1,11 +1,13 @@
 """Permission checker implementation."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import Dict
 
 from core.events import Event, EventBus
-from core.models import gen_id
+from core.ids import gen_id
 
 from .dangerous import is_dangerous_bash_command
 from .models import Action, Level, Request, Response

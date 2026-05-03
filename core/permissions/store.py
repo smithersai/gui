@@ -1,5 +1,7 @@
 """Permission storage for session-level permissions."""
 
+from __future__ import annotations
+
 import logging
 from typing import Dict
 
@@ -112,15 +114,16 @@ class PermissionStore:
             response: The user's response
         """
         if response.action == "always":
-            # Add exact command as allowed pattern
+            config = self.get_config(request.session_id)
             if request.operation == "bash":
                 command = request.details.get("command", "")
                 self.add_bash_pattern(request.session_id, command, Level.ALLOW)
             elif request.operation == "edit":
-                # For edit, we could add file path patterns, but for now just log
-                logger.info("Always allow for edit not yet implemented")
+                config.edit = Level.ALLOW
+                logger.info("Allowed edit operations for session %s", request.session_id)
             elif request.operation == "webfetch":
-                logger.info("Always allow for webfetch not yet implemented")
+                config.webfetch = Level.ALLOW
+                logger.info("Allowed webfetch operations for session %s", request.session_id)
 
         elif response.action == "pattern" and response.pattern:
             # Add custom pattern

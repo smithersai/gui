@@ -1,20 +1,37 @@
-"""
-Event types and EventBus protocol.
+"""Event types and EventBus protocol."""
 
-The EventBus is an abstract interface that core uses to publish events.
-The server layer provides an SSE-based implementation.
-"""
-
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Protocol
 
-from pydantic import BaseModel
+
+def _dump_value(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if isinstance(value, dict):
+        return {key: _dump_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_dump_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_dump_value(item) for item in value]
+    return value
 
 
-class Event(BaseModel):
+@dataclass
+class Event:
     """Domain event that can be published to subscribers."""
 
     type: str
-    properties: dict[str, Any]
+    properties: dict[str, Any] = field(default_factory=dict)
+
+    def model_dump(self) -> dict[str, Any]:
+        """Return a JSON-ready event payload."""
+        return {
+            "type": self.type,
+            "properties": _dump_value(self.properties),
+        }
 
 
 # Event type constants for task delegation
@@ -38,4 +55,4 @@ class NullEventBus:
 
     async def publish(self, event: Event) -> None:
         """Discard the event."""
-        pass
+        return None

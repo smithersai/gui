@@ -1,9 +1,11 @@
 """Permission response endpoints."""
 
 import logging
-from fastapi import APIRouter, HTTPException
+from typing import Any
 
-from core.permissions import Action, Response
+from fastapi import APIRouter, Body, HTTPException
+
+from core.permissions import Response
 from ..state import get_permission_checker
 
 logger = logging.getLogger(__name__)
@@ -12,7 +14,10 @@ router = APIRouter()
 
 
 @router.post("/session/{sessionID}/permission/respond")
-async def respond_to_permission(sessionID: str, response: Response) -> dict:
+async def respond_to_permission(
+    sessionID: str,
+    response_payload: dict[str, Any] = Body(...),
+) -> dict:
     """
     Respond to a permission request.
 
@@ -28,6 +33,7 @@ async def respond_to_permission(sessionID: str, response: Response) -> dict:
         raise HTTPException(status_code=500, detail="Permission checker not initialized")
 
     try:
+        response = Response.from_mapping(response_payload)
         checker.respond_to_request(response)
         logger.info(
             "Permission response for session %s: %s -> %s",
@@ -36,6 +42,9 @@ async def respond_to_permission(sessionID: str, response: Response) -> dict:
             response.action,
         )
         return {"success": True}
+    except (KeyError, ValueError, TypeError) as e:
+        logger.warning("Invalid permission response payload for session %s: %s", sessionID, e)
+        raise HTTPException(status_code=400, detail="Invalid permission response payload")
     except Exception as e:
         logger.error("Failed to process permission response: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

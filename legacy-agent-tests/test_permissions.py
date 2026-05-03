@@ -142,6 +142,47 @@ class TestPermissionStore:
         assert "git status" in config.bash.patterns
         assert config.bash.patterns["git status"] == Level.ALLOW
 
+    def test_apply_response_always_edit(self):
+        """Test applying 'always' response for edit operations."""
+        store = PermissionStore()
+        request = Request(
+            id="req_123",
+            session_id="test_session",
+            message_id="msg_123",
+            operation="edit",
+            details={"file_path": "/tmp/test.txt"},
+        )
+        response = Response(
+            request_id="req_123",
+            action=Action.APPROVE_ALWAYS,
+        )
+
+        store.apply_response(request, response)
+
+        config = store.get_config("test_session")
+        assert config.edit == Level.ALLOW
+
+    def test_apply_response_always_webfetch(self):
+        """Test applying 'always' response for webfetch operations."""
+        store = PermissionStore()
+        store.get_config("test_session").webfetch = Level.ASK
+        request = Request(
+            id="req_123",
+            session_id="test_session",
+            message_id="msg_123",
+            operation="webfetch",
+            details={"url": "https://example.com"},
+        )
+        response = Response(
+            request_id="req_123",
+            action=Action.APPROVE_ALWAYS,
+        )
+
+        store.apply_response(request, response)
+
+        config = store.get_config("test_session")
+        assert config.webfetch == Level.ALLOW
+
     def test_apply_response_pattern(self):
         """Test applying custom pattern response."""
         store = PermissionStore()
@@ -341,3 +382,32 @@ class TestPermissionResponse:
         )
 
         assert response.action == Action.DENY
+
+    def test_response_from_mapping(self):
+        """Test creating a response from an API-style payload."""
+        response = Response.from_mapping({
+            "request_id": "req_123",
+            "action": "always",
+        })
+
+        assert response.request_id == "req_123"
+        assert response.action == Action.APPROVE_ALWAYS
+        assert response.model_dump()["action"] == "always"
+
+
+class TestPermissionEvents:
+    """Tests for permission event serialization."""
+
+    def test_event_model_dump_serializes_enums(self):
+        """Test event payloads are JSON-ready."""
+        from core.events import Event
+
+        event = Event(
+            type="permission.responded",
+            properties={"action": Action.APPROVE_ALWAYS},
+        )
+
+        assert event.model_dump() == {
+            "type": "permission.responded",
+            "properties": {"action": "always"},
+        }
