@@ -310,10 +310,14 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     private func applyNativeSessionReady(key: NativeSurfaceKey, sessionId: String) {
-        if let workspace = terminalWorkspaces[key.terminalId] {
+        var appliedToWorkspace = false
+        if let workspace = terminalWorkspaces[key.terminalId],
+           workspace.surfaces[key.surfaceId] != nil {
             workspace.markNativeTerminalReady(surfaceId: key.surfaceId, sessionId: sessionId)
+            appliedToWorkspace = true
         }
-        if let idx = terminalTabs.firstIndex(where: { $0.terminalId == key.terminalId }) {
+        if appliedToWorkspace,
+           let idx = terminalTabs.firstIndex(where: { $0.terminalId == key.terminalId }) {
             terminalTabs[idx].sessionId = sessionId
             terminalTabs[idx].timestamp = Date()
         }
@@ -325,14 +329,18 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         message: String,
         preservingSessionId: Bool = false
     ) {
-        if let workspace = terminalWorkspaces[key.terminalId] {
+        var appliedToWorkspace = false
+        if let workspace = terminalWorkspaces[key.terminalId],
+           workspace.surfaces[key.surfaceId] != nil {
             workspace.markNativeTerminalUnavailable(
                 surfaceId: key.surfaceId,
                 message: message,
                 preservingSessionId: preservingSessionId
             )
+            appliedToWorkspace = true
         }
-        if let idx = terminalTabs.firstIndex(where: { $0.terminalId == key.terminalId }) {
+        if appliedToWorkspace,
+           let idx = terminalTabs.firstIndex(where: { $0.terminalId == key.terminalId }) {
             if !preservingSessionId {
                 terminalTabs[idx].sessionId = nil
             }
@@ -426,6 +434,66 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         guard let tab = terminalTabs.first(where: { $0.terminalId == terminalId }),
               let kind = tab.agentKind else { return false }
         return kind.supportsResume && tab.agentSessionId != nil && tab.command != nil
+    }
+
+    func canRestartTerminalTab(_ terminalId: String) -> Bool {
+        if let workspace = terminalWorkspaces[terminalId] {
+            return workspace.orderedSurfaces.contains { $0.kind == .terminal }
+        }
+        guard let tab = terminalTabs.first(where: { $0.terminalId == terminalId }) else {
+            return false
+        }
+        if let snapshot = tab.snapshot {
+            return snapshot.surfaces.contains { $0.kind == .terminal }
+        }
+        return tab.rootKind == .terminal
+    }
+
+    @discardableResult
+    func restartTerminalTab(_ terminalId: String) -> Bool {
+        guard let tabIndex = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }),
+              canRestartTerminalTab(terminalId) else {
+            return false
+        }
+
+        let tab = terminalTabs[tabIndex]
+        let restartWorkingDirectory = terminalWorkingDirectory(terminalId)
+            ?? normalizedOptionalText(tab.workingDirectory)
+            ?? workingDirectory
+        let excludedAgentSessionIds: Set<String> = {
+            guard let kind = tab.agentKind else { return [] }
+            return ExternalAgentSessionSnapshot.existingSessionIds(
+                kind: kind,
+                workingDirectory: restartWorkingDirectory
+            )
+        }()
+
+        externalAgentWatchers[terminalId]?.cancel()
+        externalAgentWatchers[terminalId] = nil
+
+        let workspace = ensureTerminalWorkspace(terminalId)
+        guard workspace.restartTerminalSurfaces() else { return false }
+
+        syncTerminalTabMetadata(from: workspace)
+        if let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }) {
+            let firstTerminal = workspace.orderedSurfaces.first { $0.kind == .terminal }
+            terminalTabs[idx].sessionId = firstTerminal?.sessionId
+            terminalTabs[idx].agentSessionId = nil
+            terminalTabs[idx].timestamp = Date()
+        }
+
+        if let kind = tab.agentKind,
+           kind.sessionDirectory(forWorkingDirectory: restartWorkingDirectory) != nil {
+            startAgentSessionWatcher(
+                terminalId: terminalId,
+                kind: kind,
+                workingDirectory: restartWorkingDirectory,
+                excludedSessionIds: excludedAgentSessionIds
+            )
+        }
+
+        scheduleSave()
+        return true
     }
 
     private func startAgentSessionWatcher(

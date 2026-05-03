@@ -75,8 +75,10 @@ final class AppPreferenceKeysTests: XCTestCase {
         let keys = [
             AppPreferenceKeys.vimModeEnabled,
             AppPreferenceKeys.developerToolsEnabled,
+            AppPreferenceKeys.guiControlSidebarEnabled,
             AppPreferenceKeys.externalAgentUnsafeFlagsEnabled,
             AppPreferenceKeys.browserSearchEngine,
+            AppPreferenceKeys.shortcutCheatSheetFooterEnabled,
         ]
 
         XCTAssertEqual(Set(keys).count, keys.count)
@@ -138,6 +140,32 @@ final class ContentViewRoutingSourceTests: XCTestCase {
         XCTAssertTrue(
             source.contains("store.removeTerminalTab(terminalId)"),
             "Expected confirmed terminal close to remove the terminal workspace."
+        )
+    }
+
+    func testShortcutCheatSheetFooterSettingIsWiredThroughShell() throws {
+        let contentSource = try contentViewSource()
+        let shellSource = try contentShellSource()
+
+        XCTAssertTrue(
+            contentSource.contains("AppPreferenceKeys.shortcutCheatSheetFooterEnabled"),
+            "Expected Settings and ContentView to read the shortcut footer preference."
+        )
+        XCTAssertTrue(
+            contentSource.contains("settings.shortcuts.footer.toggle"),
+            "Expected Settings to expose a stable toggle for the shortcut footer."
+        )
+        XCTAssertTrue(
+            shellSource.contains("shortcutCheatSheetFooterEnabled"),
+            "Expected the macOS shell to receive the shortcut footer preference."
+        )
+        XCTAssertTrue(
+            shellSource.contains("ShortcutCheatSheetFooter("),
+            "Expected the macOS shell to render the shortcut cheat sheet footer."
+        )
+        XCTAssertTrue(
+            shellSource.contains("shortcutFooter.item.\\(action.rawValue)"),
+            "Expected footer shortcut items to expose stable accessibility identifiers."
         )
     }
 

@@ -598,6 +598,7 @@ class TerminalSurfaceView: NSView {
     var onSplitDown: (() -> Void)?
     var onOpenBrowser: (() -> Void)?
     var onJumpToUnread: (() -> Void)?
+    var onRestart: (() -> Void)?
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)?
 
     // Keep C strings alive for the lifetime of the surface
@@ -827,6 +828,11 @@ class TerminalSurfaceView: NSView {
             if menu.items.count > 0 {
                 menu.addItem(.separator())
             }
+            if onRestart != nil {
+                let restart = NSMenuItem(title: "Restart", action: #selector(contextMenuRestart(_:)), keyEquivalent: "")
+                restart.target = self
+                menu.addItem(restart)
+            }
             let item = NSMenuItem(title: "Close", action: #selector(contextMenuClose(_:)), keyEquivalent: "")
             item.target = self
             menu.addItem(item)
@@ -845,6 +851,10 @@ class TerminalSurfaceView: NSView {
 
     @objc private func contextMenuClose(_ sender: Any?) {
         onClose?()
+    }
+
+    @objc private func contextMenuRestart(_ sender: Any?) {
+        onRestart?()
     }
 
     override func rightMouseUp(with event: NSEvent) {
@@ -1708,6 +1718,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
     var onSplitDown: (() -> Void)? = nil
     var onOpenBrowser: (() -> Void)? = nil
     var onJumpToUnread: (() -> Void)? = nil
+    var onRestart: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     func makeNSView(context: Context) -> TerminalSurfaceView {
@@ -1749,6 +1760,7 @@ struct TerminalSurfaceRepresentable: NSViewRepresentable {
         view.onSplitDown = onSplitDown
         view.onOpenBrowser = onOpenBrowser
         view.onJumpToUnread = onJumpToUnread
+        view.onRestart = onRestart
         view.onAppShortcutCommand = onAppShortcutCommand
     }
 
@@ -1780,6 +1792,7 @@ struct TerminalView: View {
     var onSplitDown: (() -> Void)? = nil
     var onOpenBrowser: (() -> Void)? = nil
     var onJumpToUnread: (() -> Void)? = nil
+    var onRestart: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
     var body: some View {
@@ -1829,6 +1842,7 @@ struct TerminalView: View {
                         onSplitDown: onSplitDown,
                         onOpenBrowser: onOpenBrowser,
                         onJumpToUnread: onJumpToUnread,
+                        onRestart: onRestart,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
                 }

@@ -54,6 +54,39 @@ final class WorkspaceLayoutNodeTests: XCTestCase {
         let result = tree.removingLeaf("missing")
         XCTAssertEqual(result, tree)
     }
+
+    func testReplacingSurfaceIdsPreservesSplitShape() {
+        let tree: WorkspaceLayoutNode = .split(
+            id: "root",
+            axis: .vertical,
+            first: .split(
+                id: "left",
+                axis: .horizontal,
+                first: .leaf("a"),
+                second: .leaf("b")
+            ),
+            second: .leaf("c")
+        )
+
+        let result = tree.replacingSurfaceIds(["a": "new-a", "c": "new-c"])
+
+        guard case .split(let rootId, let rootAxis, let left, let right) = result else {
+            XCTFail("Expected root split")
+            return
+        }
+        XCTAssertEqual(rootId, "root")
+        XCTAssertEqual(rootAxis, .vertical)
+        XCTAssertEqual(right, .leaf("new-c"))
+
+        guard case .split(let leftId, let leftAxis, let first, let second) = left else {
+            XCTFail("Expected nested split")
+            return
+        }
+        XCTAssertEqual(leftId, "left")
+        XCTAssertEqual(leftAxis, .horizontal)
+        XCTAssertEqual(first, .leaf("new-a"))
+        XCTAssertEqual(second, .leaf("b"))
+    }
 }
 
 final class BrowserURLResolverTests: XCTestCase {
@@ -216,6 +249,78 @@ final class WorkspaceSurfaceIdentityTests: XCTestCase {
 
         XCTAssertEqual(reorderResult.workspaceID, firstID)
         XCTAssertEqual(store.terminalTabs.map(\.terminalId).prefix(2), [firstWorkspaceId, secondWorkspaceId])
+    }
+
+    func testRestartingWorkspaceReplacesTerminalSurfaceIDsButKeepsNonTerminalSurfaces() throws {
+        let workspace = TerminalWorkspace(
+            id: WorkspaceID(),
+            title: "Workspace",
+            workingDirectory: "/tmp/project",
+            command: "zsh",
+            backend: .native
+        )
+        let firstTerminalId = try XCTUnwrap(workspace.layout.firstSurfaceId)
+        let browserId = workspace.splitFocused(axis: .horizontal, kind: .browser)
+        let secondTerminalId = workspace.splitFocused(axis: .vertical, kind: .terminal)
+        workspace.focusSurface(secondTerminalId)
+
+        XCTAssertTrue(workspace.restartTerminalSurfaces())
+
+        let restartedSurfaceIds = Set(workspace.orderedSurfaces.map(\.id))
+        XCTAssertFalse(restartedSurfaceIds.contains(firstTerminalId))
+        XCTAssertFalse(restartedSurfaceIds.contains(secondTerminalId))
+        XCTAssertTrue(restartedSurfaceIds.contains(browserId))
+        XCTAssertEqual(workspace.orderedSurfaces.filter { $0.kind == .terminal }.count, 2)
+        XCTAssertEqual(workspace.orderedSurfaces.filter { $0.kind == .browser }.map(\.id), [browserId])
+        XCTAssertNotEqual(workspace.focusedSurfaceId, secondTerminalId)
+        XCTAssertEqual(
+            workspace.focusedSurfaceId.flatMap { workspace.surfaces[$0]?.kind },
+            .terminal
+        )
+        for surface in workspace.orderedSurfaces where surface.kind == .terminal {
+            XCTAssertNil(surface.sessionId)
+            XCTAssertEqual(workspace.nativeTerminalState(surfaceId: surface.id), .pending)
+        }
+    }
+
+    func testRestartingTerminalTabPreservesTabIdentityAndClearsSessionMetadata() throws {
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RestartTerminalTabTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let workspacePath = tmpDir.appendingPathComponent("workspace", isDirectory: true).path
+        try FileManager.default.createDirectory(
+            at: URL(fileURLWithPath: workspacePath, isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        let store = SessionStore(
+            workingDirectory: workspacePath,
+            app: Smithers.App(databasePath: tmpDir.appendingPathComponent("app.sqlite").path)
+        )
+        let terminalId = store.addTerminalTab(
+            title: "Codex",
+            workingDirectory: workspacePath,
+            command: "codex"
+        )
+        let workspace = store.ensureTerminalWorkspace(terminalId)
+        let originalSurfaceId = try XCTUnwrap(workspace.layout.firstSurfaceId)
+        workspace.markNativeTerminalReady(surfaceId: originalSurfaceId, sessionId: "old-session")
+
+        XCTAssertTrue(store.restartTerminalTab(terminalId))
+
+        let tab = try XCTUnwrap(store.terminalTabs.first { $0.terminalId == terminalId })
+        let restartedWorkspace = try XCTUnwrap(store.terminalWorkspaceIfAvailable(terminalId))
+        let restartedSurfaceId = try XCTUnwrap(restartedWorkspace.layout.firstSurfaceId)
+
+        XCTAssertEqual(store.terminalTabs.count, 1)
+        XCTAssertEqual(tab.terminalId, terminalId)
+        XCTAssertEqual(tab.title, "Codex")
+        XCTAssertNil(tab.sessionId)
+        XCTAssertNotEqual(restartedSurfaceId, originalSurfaceId)
+        XCTAssertEqual(tab.rootSurfaceId, restartedSurfaceId.rawValue)
+        XCTAssertFalse(tab.snapshot?.surfaces.contains { $0.id == originalSurfaceId } ?? true)
     }
 
     func testTerminalTabsPersistAcrossSessionStoreRelaunch() throws {

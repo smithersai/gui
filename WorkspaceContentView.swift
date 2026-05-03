@@ -4,6 +4,7 @@ struct TerminalTabsLayer: View {
     @ObservedObject var store: SessionStore
     let activeTerminalId: String?
     var onRequestClose: (String) -> Void
+    var onRequestRestart: ((String) -> Void)? = nil
     var onProcessExited: ((String) -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
@@ -14,6 +15,7 @@ struct TerminalTabsLayer: View {
                     store: store,
                     terminalId: tab.terminalId,
                     onClose: { onRequestClose(tab.terminalId) },
+                    onRestart: onRequestRestart.map { handler in { handler(tab.terminalId) } },
                     onProcessExited: onProcessExited.map { handler in { handler(tab.terminalId) } },
                     onAppShortcutCommand: onAppShortcutCommand
                 )
@@ -30,6 +32,7 @@ struct TerminalWorkspaceRouteView: View {
     @ObservedObject var store: SessionStore
     let terminalId: String
     var onClose: () -> Void
+    var onRestart: (() -> Void)? = nil
     var onProcessExited: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
@@ -45,6 +48,7 @@ struct TerminalWorkspaceRouteView: View {
                 TerminalWorkspaceView(
                     workspace: currentWorkspace,
                     onCloseWorkspace: onClose,
+                    onRestartWorkspace: onRestart,
                     onWorkspaceProcessExited: onProcessExited,
                     onAppShortcutCommand: onAppShortcutCommand
                 )
@@ -69,6 +73,7 @@ struct TerminalWorkspaceView: View {
     @ObservedObject var workspace: TerminalWorkspace
     @ObservedObject private var notifications = SurfaceNotificationStore.shared
     var onCloseWorkspace: () -> Void
+    var onRestartWorkspace: (() -> Void)? = nil
     var onWorkspaceProcessExited: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
@@ -78,6 +83,7 @@ struct TerminalWorkspaceView: View {
                 workspace: workspace,
                 node: workspace.layout,
                 onCloseWorkspace: onCloseWorkspace,
+                onRestartWorkspace: onRestartWorkspace,
                 onWorkspaceProcessExited: onWorkspaceProcessExited,
                 onAppShortcutCommand: onAppShortcutCommand
             )
@@ -97,6 +103,7 @@ private struct WorkspaceSplitNodeView: View {
     @ObservedObject var workspace: TerminalWorkspace
     let node: WorkspaceLayoutNode
     var onCloseWorkspace: () -> Void
+    var onRestartWorkspace: (() -> Void)? = nil
     var onWorkspaceProcessExited: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
@@ -108,6 +115,7 @@ private struct WorkspaceSplitNodeView: View {
                     workspace: workspace,
                     surface: surface,
                     onCloseWorkspace: onCloseWorkspace,
+                    onRestartWorkspace: onRestartWorkspace,
                     onWorkspaceProcessExited: onWorkspaceProcessExited,
                     onAppShortcutCommand: onAppShortcutCommand
                 )
@@ -121,6 +129,7 @@ private struct WorkspaceSplitNodeView: View {
                         workspace: workspace,
                         node: first,
                         onCloseWorkspace: onCloseWorkspace,
+                        onRestartWorkspace: onRestartWorkspace,
                         onWorkspaceProcessExited: onWorkspaceProcessExited,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
@@ -129,6 +138,7 @@ private struct WorkspaceSplitNodeView: View {
                         workspace: workspace,
                         node: second,
                         onCloseWorkspace: onCloseWorkspace,
+                        onRestartWorkspace: onRestartWorkspace,
                         onWorkspaceProcessExited: onWorkspaceProcessExited,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
@@ -140,6 +150,7 @@ private struct WorkspaceSplitNodeView: View {
                         workspace: workspace,
                         node: first,
                         onCloseWorkspace: onCloseWorkspace,
+                        onRestartWorkspace: onRestartWorkspace,
                         onWorkspaceProcessExited: onWorkspaceProcessExited,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
@@ -148,6 +159,7 @@ private struct WorkspaceSplitNodeView: View {
                         workspace: workspace,
                         node: second,
                         onCloseWorkspace: onCloseWorkspace,
+                        onRestartWorkspace: onRestartWorkspace,
                         onWorkspaceProcessExited: onWorkspaceProcessExited,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
@@ -163,6 +175,7 @@ private struct WorkspaceSurfaceContainer: View {
     @ObservedObject private var notifications = SurfaceNotificationStore.shared
     let surface: WorkspaceSurface
     var onCloseWorkspace: () -> Void
+    var onRestartWorkspace: (() -> Void)? = nil
     var onWorkspaceProcessExited: (() -> Void)? = nil
     var onAppShortcutCommand: ((KeyboardShortcutCommand) -> Void)? = nil
 
@@ -181,36 +194,43 @@ private struct WorkspaceSurfaceContainer: View {
 
     @ViewBuilder
     private var surfaceContextMenu: some View {
-            Button("Split Right") {
-                workspace.focusSurface(surface.id)
-                workspace.splitFocused(axis: .horizontal, kind: .terminal)
-            }
-            .appKeyboardShortcut(.splitRight)
+        Button("Split Right") {
+            workspace.focusSurface(surface.id)
+            workspace.splitFocused(axis: .horizontal, kind: .terminal)
+        }
+        .appKeyboardShortcut(.splitRight)
 
-            Button("Split Down") {
-                workspace.focusSurface(surface.id)
-                workspace.splitFocused(axis: .vertical, kind: .terminal)
+        Button("Split Down") {
+            workspace.focusSurface(surface.id)
+            workspace.splitFocused(axis: .vertical, kind: .terminal)
+        }
+        .appKeyboardShortcut(.splitDown)
+
+        Divider()
+
+        if notifications.latestUnreadSurface(in: workspace.id.rawValue) != nil {
+            Button("Jump to Latest Unread") {
+                jumpToLatestUnread()
             }
-            .appKeyboardShortcut(.splitDown)
+            .appKeyboardShortcut(.jumpToUnread)
 
             Divider()
+        }
 
-            if notifications.latestUnreadSurface(in: workspace.id.rawValue) != nil {
-                Button("Jump to Latest Unread") {
-                    jumpToLatestUnread()
-                }
-                .appKeyboardShortcut(.jumpToUnread)
-
-                Divider()
+        if surface.kind == .terminal, let onRestartWorkspace {
+            Button("Restart") {
+                workspace.focusSurface(surface.id)
+                onRestartWorkspace()
             }
+        }
 
-            Button("Close", role: .destructive) {
-                if workspace.orderedSurfaces.count <= 1 {
-                    onCloseWorkspace()
-                } else {
-                    workspace.closeSurface(surface.id)
-                }
+        Button("Close", role: .destructive) {
+            if workspace.orderedSurfaces.count <= 1 {
+                onCloseWorkspace()
+            } else {
+                workspace.closeSurface(surface.id)
             }
+        }
     }
 
     private func jumpToLatestUnread() {
@@ -315,6 +335,10 @@ private struct WorkspaceSurfaceContainer: View {
                     workspace.focusSurface(surfaceId)
                 }
             },
+            onRestart: onRestartWorkspace.map { restart in {
+                workspace.focusSurface(surface.id)
+                restart()
+            } },
             onAppShortcutCommand: onAppShortcutCommand
         )
         .onAppear {

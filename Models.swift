@@ -7,6 +7,7 @@ enum AppPreferenceKeys {
     static let guiControlSidebarEnabled = "settings.guiControlSidebarEnabled"
     static let externalAgentUnsafeFlagsEnabled = "settings.externalAgentUnsafeFlagsEnabled"
     static let browserSearchEngine = "settings.browserSearchEngine"
+    static let shortcutCheatSheetFooterEnabled = "settings.shortcutCheatSheetFooterEnabled"
 }
 
 enum NeovimDetector {

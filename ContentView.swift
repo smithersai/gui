@@ -29,6 +29,7 @@ struct SettingsView: View {
     @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
     @AppStorage(AppPreferenceKeys.externalAgentUnsafeFlagsEnabled) private var externalAgentUnsafeFlagsEnabled = false
     @AppStorage(AppPreferenceKeys.browserSearchEngine) private var browserSearchEngine = BrowserSearchEngine.duckDuckGo.rawValue
+    @AppStorage(AppPreferenceKeys.shortcutCheatSheetFooterEnabled) private var shortcutCheatSheetFooterEnabled = false
     @StateObject private var shortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
     @State private var neovimPath: String? = NeovimDetector.executablePath()
 
@@ -305,6 +306,26 @@ struct SettingsView: View {
 
             Divider().background(Theme.border)
 
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Shortcut footer")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Show a compact shortcut cheat sheet at the bottom of the app.")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer(minLength: 16)
+
+                Toggle("", isOn: $shortcutCheatSheetFooterEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .accessibilityIdentifier("settings.shortcuts.footer.toggle")
+            }
+
+            Divider().background(Theme.border)
+
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(ShortcutAction.allCases) { action in
                     ShortcutSettingsRow(action: action)
@@ -441,6 +462,7 @@ struct ContentView: View {
 
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
     @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
+    @AppStorage(AppPreferenceKeys.shortcutCheatSheetFooterEnabled) private var shortcutCheatSheetFooterEnabled = false
     @State private var destination: NavDestination
     @State private var navHistory: [NavDestination] = [.home]
     @State private var navHistoryIndex: Int = 0
@@ -551,6 +573,7 @@ struct ContentView: View {
             developerDebugPanelVisible: $developerDebugPanelVisible,
             developerToolsEnabled: developerToolsEnabled,
             guiControlSidebarEnabled: guiControlSidebarEnabled,
+            shortcutCheatSheetFooterEnabled: shortcutCheatSheetFooterEnabled,
             guiControlSidebarExpanded: $guiControlSidebarExpanded,
             activeTerminalId: activeTerminalId,
             shouldShowSmithersVersionWarning: shouldShowSmithersVersionWarning,
@@ -562,6 +585,7 @@ struct ContentView: View {
             onOpenNewTabPicker: { openCommandPalette(prefill: NewTabPaletteCatalog.expandedQuery) },
             onAppShortcutCommand: handleKeyboardShortcutCommand,
             onRequestTerminalClose: requestTerminalClose,
+            onRequestTerminalRestart: restartTerminalTab,
             onTerminalProcessExited: handleTerminalProcessExited,
             onDropMarkdown: handleMarkdownFileDrop,
             onHandleNavigation: handleNavigation,
@@ -1617,6 +1641,18 @@ struct ContentView: View {
     private func requestTerminalClose(_ terminalId: String) {
         pendingTerminalCloseId = terminalId
         pendingTerminalCloseTitle = store.terminalTabs.first(where: { $0.terminalId == terminalId })?.title ?? terminalId
+    }
+
+    private func restartTerminalTab(_ terminalId: String) {
+        guard store.restartTerminalTab(terminalId) else {
+            AppNotifications.shared.post(
+                title: "Restart",
+                message: "This tab cannot be restarted.",
+                level: .warning
+            )
+            return
+        }
+        destination = .terminal(id: terminalId)
     }
 
     private func handleTerminalProcessExited(_ terminalId: String) {

@@ -29,6 +29,7 @@ struct MacOSContentShell<DetailContent: View, PaletteOverlay: View, QuickLaunchO
 
     let developerToolsEnabled: Bool
     let guiControlSidebarEnabled: Bool
+    let shortcutCheatSheetFooterEnabled: Bool
     @Binding var guiControlSidebarExpanded: Bool
 
     let activeTerminalId: String?
@@ -43,6 +44,7 @@ struct MacOSContentShell<DetailContent: View, PaletteOverlay: View, QuickLaunchO
     let onOpenNewTabPicker: () -> Void
     let onAppShortcutCommand: (KeyboardShortcutCommand) -> Void
     let onRequestTerminalClose: (String) -> Void
+    let onRequestTerminalRestart: (String) -> Void
     let onTerminalProcessExited: (String) -> Void
     let onDropMarkdown: ([NSItemProvider]) -> Bool
     let onHandleNavigation: (NavDestination) -> Void
@@ -64,6 +66,15 @@ struct MacOSContentShell<DetailContent: View, PaletteOverlay: View, QuickLaunchO
     @ViewBuilder let quickLaunchOverlay: () -> QuickLaunchOverlay
     @ViewBuilder let hiddenShortcutButtons: () -> ShortcutButtons
 
+    private var shortcutFooterActions: [ShortcutAction] {
+        ShortcutAction.allCases.filter { action in
+            if action == .toggleDeveloperDebug {
+                return developerToolsEnabled
+            }
+            return true
+        }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             NavigationSplitView(columnVisibility: $navigationSplitVisibility) {
@@ -77,32 +88,46 @@ struct MacOSContentShell<DetailContent: View, PaletteOverlay: View, QuickLaunchO
                 )
                 .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)
             } detail: {
-                ZStack(alignment: .topLeading) {
-                    TerminalTabsLayer(
+                VStack(spacing: 0) {
+                    ZStack(alignment: .topLeading) {
+                        TerminalTabsLayer(
                         store: store,
                         activeTerminalId: activeTerminalId,
                         onRequestClose: onRequestTerminalClose,
+                        onRequestRestart: onRequestTerminalRestart,
                         onProcessExited: onTerminalProcessExited,
                         onAppShortcutCommand: onAppShortcutCommand
                     )
-                    .opacity(activeTerminalId != nil ? 1 : 0)
-                    .allowsHitTesting(activeTerminalId != nil)
-                    .accessibilityHidden(activeTerminalId == nil)
+                        .opacity(activeTerminalId != nil ? 1 : 0)
+                        .allowsHitTesting(activeTerminalId != nil)
+                        .accessibilityHidden(activeTerminalId == nil)
 
-                    if activeTerminalId == nil {
-                        VStack(spacing: 0) {
-                            if shouldShowSmithersVersionWarning,
-                               let installed = smithers.orchestratorVersion,
-                               smithers.orchestratorVersionMeetsMinimum == false {
-                                SmithersVersionWarningBanner(
-                                    installed: installed,
-                                    onUpgrade: onUpgradeSmithers,
-                                    upgradeStatus: smithersUpgrader.status
-                                )
+                        if activeTerminalId == nil {
+                            VStack(spacing: 0) {
+                                if shouldShowSmithersVersionWarning,
+                                   let installed = smithers.orchestratorVersion,
+                                   smithers.orchestratorVersionMeetsMinimum == false {
+                                    SmithersVersionWarningBanner(
+                                        installed: installed,
+                                        onUpgrade: onUpgradeSmithers,
+                                        upgradeStatus: smithersUpgrader.status
+                                    )
+                                }
+                                detailContent()
                             }
-                            detailContent()
+                            .id("\(String(describing: destination)):\(detailRefreshNonce)")
                         }
-                        .id("\(String(describing: destination)):\(detailRefreshNonce)")
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if shortcutCheatSheetFooterEnabled {
+                        ShortcutCheatSheetFooter(
+                            actions: shortcutFooterActions,
+                            onOpenCheatSheet: {
+                                onAppShortcutCommand(.shortcut(.showShortcutCheatSheet))
+                            }
+                        )
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -199,6 +224,179 @@ struct MacOSContentShell<DetailContent: View, PaletteOverlay: View, QuickLaunchO
         } message: {
             Text("Terminate \"\(pendingTerminalCloseTitle)\"? This will stop the terminal session and close the workspace. This action cannot be undone.")
         }
+    }
+}
+
+private struct ShortcutCheatSheetFooter: View {
+    let actions: [ShortcutAction]
+    let onOpenCheatSheet: () -> Void
+    @StateObject private var shortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
+
+    var body: some View {
+        let _ = shortcutSettingsObserver.revision
+
+        HStack(spacing: 10) {
+            Button(action: onOpenCheatSheet) {
+                Image(systemName: "keyboard")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Theme.textSecondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open shortcut cheat sheet (\(shortcutString(for: .showShortcutCheatSheet)))")
+            .accessibilityIdentifier("shortcutFooter.openCheatSheet")
+
+            Rectangle()
+                .fill(Theme.border)
+                .frame(width: 1, height: 18)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(actions) { action in
+                        ShortcutCheatSheetFooterItem(
+                            label: footerLabel(for: action),
+                            shortcut: shortcutString(for: action)
+                        )
+                        .accessibilityIdentifier("shortcutFooter.item.\(action.rawValue)")
+                    }
+                }
+                .padding(.trailing, 12)
+            }
+        }
+        .padding(.leading, 10)
+        .frame(height: 38)
+        .frame(maxWidth: .infinity)
+        .background(Theme.surface1)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Theme.border)
+                .frame(height: 1)
+        }
+        .accessibilityIdentifier("shortcutFooter")
+    }
+
+    private func shortcutString(for action: ShortcutAction) -> String {
+        action.displayedShortcutString(for: KeyboardShortcutSettings.current(for: action))
+    }
+
+    private func footerLabel(for action: ShortcutAction) -> String {
+        switch action {
+        case .commandPalette:
+            return "Launcher"
+        case .commandPaletteCommandMode:
+            return "Commands"
+        case .commandPaletteAskAI:
+            return "Ask AI"
+        case .newTerminal:
+            return "Terminal"
+        case .reopenClosedTab:
+            return "Reopen"
+        case .closeCurrentTab:
+            return "Close"
+        case .nextSidebarTab:
+            return "Next Workspace"
+        case .prevSidebarTab:
+            return "Prev Workspace"
+        case .selectWorkspaceByNumber:
+            return "Workspace 1-9"
+        case .toggleDeveloperDebug:
+            return "Debug"
+        case .toggleSidebar:
+            return "Sidebar"
+        case .splitRight:
+            return "Split Right"
+        case .splitDown:
+            return "Split Down"
+        case .focusLeft:
+            return "Focus Left"
+        case .focusRight:
+            return "Focus Right"
+        case .focusUp:
+            return "Focus Up"
+        case .focusDown:
+            return "Focus Down"
+        case .toggleSplitZoom:
+            return "Zoom"
+        case .nextSurface:
+            return "Next Pane"
+        case .prevSurface:
+            return "Prev Pane"
+        case .selectSurfaceByNumber:
+            return "Pane 1-9"
+        case .renameWorkspace:
+            return "Rename Workspace"
+        case .renameSurface:
+            return "Rename Pane"
+        case .jumpToUnread:
+            return "Unread"
+        case .triggerFlash:
+            return "Flash"
+        case .showNotifications:
+            return "Notifications"
+        case .toggleFullScreen:
+            return "Full Screen"
+        case .focusBrowserAddressBar:
+            return "Address"
+        case .browserBack:
+            return "Browser Back"
+        case .browserForward:
+            return "Browser Forward"
+        case .browserReload:
+            return "Browser Reload"
+        case .find:
+            return "Find"
+        case .findNext:
+            return "Find Next"
+        case .findPrevious:
+            return "Find Previous"
+        case .hideFind:
+            return "Hide Find"
+        case .useSelectionForFind:
+            return "Selection Find"
+        case .openBrowser:
+            return "Browser"
+        case .globalSearch:
+            return "Search"
+        case .refreshCurrentView:
+            return "Refresh"
+        case .cancelCurrentOperation:
+            return "Cancel"
+        case .showShortcutCheatSheet:
+            return "All Shortcuts"
+        case .linearNavigationPrefix:
+            return "Navigation Prefix"
+        case .tmuxPrefix:
+            return "Tmux Prefix"
+        }
+    }
+}
+
+private struct ShortcutCheatSheetFooterItem: View {
+    let label: String
+    let shortcut: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(shortcut)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Theme.pillBg)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Theme.pillBorder, lineWidth: 1)
+                )
+
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Theme.textSecondary)
+                .lineLimit(1)
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

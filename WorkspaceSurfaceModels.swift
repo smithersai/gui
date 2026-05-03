@@ -113,6 +113,20 @@ indirect enum WorkspaceLayoutNode: Hashable, Codable {
         }
     }
 
+    func replacingSurfaceIds(_ replacements: [SurfaceID: SurfaceID]) -> WorkspaceLayoutNode {
+        switch self {
+        case .leaf(let surfaceId):
+            return .leaf(replacements[surfaceId] ?? surfaceId)
+        case .split(let id, let axis, let first, let second):
+            return .split(
+                id: id,
+                axis: axis,
+                first: first.replacingSurfaceIds(replacements),
+                second: second.replacingSurfaceIds(replacements)
+            )
+        }
+    }
+
     func removingLeaf(_ surfaceId: SurfaceID) -> WorkspaceLayoutNode? {
         switch self {
         case .leaf(let currentId):
@@ -803,6 +817,59 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         notifyChanged()
     }
 
+    @discardableResult
+    func restartTerminalSurfaces() -> Bool {
+        let terminalSurfaces = orderedSurfaces.filter { $0.kind == .terminal }
+        guard !terminalSurfaces.isEmpty else { return false }
+
+        let focusedBeforeRestart = focusedSurfaceId
+        var replacements: [SurfaceID: SurfaceID] = [:]
+        var restartedSurfaces: [WorkspaceSurface] = []
+        var nextSurfaces = surfaces
+        var nextPaneIdsBySurfaceId = paneIdsBySurfaceId
+        var nextNativeTerminalStates = nativeTerminalStates
+
+        for surface in terminalSurfaces {
+            let newSurfaceId = SurfaceID()
+            let restarted = restartedTerminalSurface(from: surface, newId: newSurfaceId)
+
+            cleanUpTerminalSurfaceForRestart(surface)
+            replacements[surface.id] = newSurfaceId
+            nextSurfaces[surface.id] = nil
+            nextSurfaces[newSurfaceId] = restarted
+            nextPaneIdsBySurfaceId[newSurfaceId] = nextPaneIdsBySurfaceId[surface.id] ?? PaneID()
+            nextPaneIdsBySurfaceId[surface.id] = nil
+            nextNativeTerminalStates[surface.id] = nil
+            restartedSurfaces.append(restarted)
+        }
+
+        surfaces = nextSurfaces
+        layout = layout.replacingSurfaceIds(replacements)
+        paneIdsBySurfaceId = nextPaneIdsBySurfaceId
+        nativeTerminalStates = nextNativeTerminalStates
+
+        if let focusedBeforeRestart, let replacement = replacements[focusedBeforeRestart] {
+            focusedSurfaceId = replacement
+        } else if let focusedBeforeRestart, surfaces[focusedBeforeRestart] != nil {
+            focusedSurfaceId = focusedBeforeRestart
+        } else {
+            focusedSurfaceId = layout.firstSurfaceId
+        }
+
+        for surface in restartedSurfaces {
+            SurfaceNotificationStore.shared.register(surfaceId: surface.id.rawValue, workspaceId: id.rawValue)
+            initializeNativeTerminalState(for: surface, restored: false)
+            prepareTerminalSession(surface)
+        }
+        if let focusedSurfaceId {
+            SurfaceNotificationStore.shared.setFocusedSurface(focusedSurfaceId.rawValue, workspaceId: id.rawValue)
+            SurfaceNotificationStore.shared.markRead(surfaceId: focusedSurfaceId.rawValue)
+        }
+
+        notifyChanged()
+        return true
+    }
+
     func updateWorkspaceTitle(_ title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -985,6 +1052,49 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
             command: surface.terminalCommand,
             title: surface.title
         )
+    }
+
+    private func cleanUpTerminalSurfaceForRestart(_ surface: WorkspaceSurface) {
+        SurfaceNotificationStore.shared.unregister(surfaceId: surface.id.rawValue)
+        TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id.rawValue)
+
+        switch surface.terminalBackend {
+        case .tmux:
+            TmuxController.terminateSession(
+                socketName: surface.tmuxSocketName,
+                sessionName: surface.tmuxSessionName
+            )
+        case .native:
+            if let sid = surface.sessionId {
+                Task.detached {
+                    try? await SessionController.shared.terminate(sessionId: PTYSessionID(sid))
+                }
+            }
+        case .ghostty:
+            break
+        }
+    }
+
+    private func restartedTerminalSurface(from surface: WorkspaceSurface, newId: SurfaceID) -> WorkspaceSurface {
+        let target = surface.terminalBackend == .tmux ? Self.tmuxTarget(
+            surfaceId: newId,
+            workingDirectory: surface.terminalWorkingDirectory ?? defaultWorkingDirectory,
+            socketName: surface.tmuxSocketName ?? tmuxSocketName
+        ) : nil
+        var restarted = WorkspaceSurface.terminal(
+            id: newId,
+            workingDirectory: surface.terminalWorkingDirectory ?? defaultWorkingDirectory,
+            command: surface.terminalCommand,
+            runId: surface.runId,
+            backend: surface.terminalBackend,
+            tmuxSocketName: target?.socketName,
+            tmuxSessionName: target?.sessionName,
+            sessionId: nil
+        )
+        restarted.title = surface.title
+        restarted.subtitle = surface.terminalWorkingDirectory ?? defaultWorkingDirectory ?? surface.subtitle
+        restarted.hasCustomTitle = surface.hasCustomTitle
+        return restarted
     }
 
     private func notifyChanged() {
