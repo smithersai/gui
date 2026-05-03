@@ -12,13 +12,13 @@ final class SmithersiOSSettingsUITests: XCTestCase {
             ?? "http://127.0.0.1:4173"
         try XCTSkipUnless(
             Self.mockServerIsReachable(baseURL: baseURL),
-            "Start a mock Plue server at \(baseURL) or set SMITHERS_SETTINGS_UI_BASE_URL to run this focused UI test."
+            "Start a mock Smithers server at \(baseURL) or set SMITHERS_SETTINGS_UI_BASE_URL to run this focused UI test."
         )
         let bearer = ProcessInfo.processInfo.environment["SMITHERS_SETTINGS_UI_BEARER"] ?? "settings-ui-bearer"
 
         let app = XCUIApplication()
-        app.launchEnvironment["PLUE_E2E_MODE"] = "1"
-        app.launchEnvironment["PLUE_BASE_URL"] = baseURL
+        app.launchEnvironment["SMITHERS_E2E_MODE"] = "1"
+        app.launchEnvironment["SMITHERS_BASE_URL"] = baseURL
         app.launchEnvironment["SMITHERS_E2E_BEARER"] = bearer
         app.launchEnvironment["PLUE_E2E_SEEDED"] = "0"
         app.launchEnvironment["PLUE_REMOTE_SANDBOX_ENABLED"] = "1"
@@ -35,6 +35,7 @@ final class SmithersiOSSettingsUITests: XCTestCase {
         XCTAssertTrue(element("settings.sign-out", in: app).exists)
         XCTAssertTrue(element("settings.delete-account", in: app).exists)
         XCTAssertTrue(element("settings.backend-url", in: app).exists)
+        XCTAssertTrue(element("settings.support-contact", in: app).exists)
         XCTAssertTrue(element("settings.replay-tour", in: app).exists)
         XCTAssertTrue(element("settings.reset-cache", in: app).exists)
 

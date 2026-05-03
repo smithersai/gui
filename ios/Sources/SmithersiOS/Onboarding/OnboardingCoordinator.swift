@@ -73,10 +73,10 @@ struct OnboardingFlow: View {
         Step(
             id: 2,
             systemImage: "person.crop.circle.badge.checkmark",
-            title: "Sign in with JJHub",
-            message: "Create or use a JJHub account, then connect a repository so Smithers can prepare an agent workspace.",
-            linkTitle: "Sign up at jjhub.tech",
-            linkURL: URL(string: "https://jjhub.tech")
+            title: "Sign in with Smithers",
+            message: "Create or use a Smithers account, then connect a repository so Smithers can prepare an agent workspace.",
+            linkTitle: "Sign up for Smithers",
+            linkURL: URL(string: "https://app.smithers.sh")
         ),
         Step(
             id: 3,
@@ -118,6 +118,17 @@ struct OnboardingFlow: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
+
+            HStack(spacing: 16) {
+                Link("Support", destination: SettingsLinks.supportEmailURL)
+                    .accessibilityIdentifier("onboarding.support")
+                Link("Privacy", destination: SettingsLinks.privacyPolicyURL)
+                    .accessibilityIdentifier("onboarding.privacy")
+                Link("Terms", destination: SettingsLinks.termsOfServiceURL)
+                    .accessibilityIdentifier("onboarding.terms")
+            }
+            .font(.footnote.weight(.semibold))
+            .padding(.bottom, 12)
 
             Group {
                 if selectedStep < Self.steps.count {

@@ -176,12 +176,12 @@ struct SettingsView: View {
             LabeledContent("Version", value: model.versionText)
                 .accessibilityIdentifier("settings.version")
 
-            Link(destination: URL(string: "https://smithers.ai/privacy")!) {
+            Link(destination: SettingsLinks.privacyPolicyURL) {
                 Label("Privacy policy", systemImage: "hand.raised")
             }
             .accessibilityIdentifier("settings.privacy-policy")
 
-            Link(destination: URL(string: "https://smithers.ai/terms")!) {
+            Link(destination: SettingsLinks.termsOfServiceURL) {
                 Label("Terms of service", systemImage: "doc.text")
             }
             .accessibilityIdentifier("settings.terms-of-service")
@@ -197,6 +197,11 @@ struct SettingsView: View {
 
     private var supportSection: some View {
         Section("Support") {
+            Link(destination: SettingsLinks.supportEmailURL) {
+                Label(SettingsLinks.supportEmail, systemImage: "envelope")
+            }
+            .accessibilityIdentifier("settings.support-contact")
+
             Button {
                 Task { await exportDiagnostics() }
             } label: {
@@ -240,6 +245,10 @@ struct SettingsView: View {
                 Section {
                     Text("Permanently delete your account? Type DELETE to confirm.")
                         .font(.body)
+
+                    Text("If deletion fails, contact \(SettingsLinks.supportEmail).")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
 
                     TextField("DELETE", text: $deleteConfirmationText)
                         .textInputAutocapitalization(.characters)
@@ -302,6 +311,13 @@ private struct DiagnosticsActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+enum SettingsLinks {
+    static let supportEmail = "will@smithers.sh"
+    static let supportEmailURL = URL(string: "mailto:\(supportEmail)")!
+    static let privacyPolicyURL = URL(string: "https://smithers.sh/privacy")!
+    static let termsOfServiceURL = URL(string: "https://smithers.sh/terms")!
 }
 
 @MainActor
@@ -645,6 +661,9 @@ enum SettingsEnvironment {
         if environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
             return true
         }
+        if parsedPreviewURL(environment["SMITHERS_PREVIEW_URL"]) != nil {
+            return true
+        }
         if parsedPreviewURL(environment["PLUE_PREVIEW_URL"]) != nil {
             return true
         }
@@ -654,7 +673,7 @@ enum SettingsEnvironment {
     static func isAccountDeletionEnabled(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
-        environment["PLUE_E2E_MODE"] != "1"
+        environment["SMITHERS_E2E_MODE"] != "1" && environment["PLUE_E2E_MODE"] != "1"
     }
 
     private static func parsedPreviewURL(_ rawValue: Any?) -> URL? {
