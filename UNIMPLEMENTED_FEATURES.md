@@ -22,15 +22,30 @@ The following are already being worked on and are excluded from the gap analysis
 
 ---
 
+## Reconciled Implemented / Needs Verification
+
+These items were previously listed as missing, but current source now contains
+an implementation. They still need aggregate release validation after the local
+`syspolicyd` blocker is resolved.
+
+| Feature | Current evidence | Remaining release work |
+|---------|------------------|------------------------|
+| `exec / e` CLI | `tui/main.go` routes `exec`/`e` to `execCommand`; `tui/exec.go` implements prompt input, streaming, JSON, timeout, model, cwd, and `--no-tools` options. | `go test ./...` could not run because `go` is not installed on PATH. |
+| `apply / a` CLI | `tui/main.go` routes `apply`/`a`; `tui/apply.go` builds `git apply` input from session diffs. | Needs Go test coverage and manual conflict-path validation. |
+| `unified_exec` + `write_stdin` | `agent/tools/pty_exec.py` implements PTY sessions, stdin writes, output truncation, listing, closing, and `timeout_ms`. | Focused Python PTY tests pass; full suite remains blocked by `syspolicyd`. |
+| Feature flags backend | `config/features.py` defines stable/beta/experimental flags and `server/routes/features.py` exposes them. | Needs release policy, persistence story, and user-facing controls. |
+| Skills backend | `config/skills.py`, `server/routes/skills.py`, and message expansion support `$skill-name` references. | Needs UX integration and full API validation. |
+| Custom slash commands backend | `config/commands.py` loads `~/.agent/prompts/*.md`; `server/routes/commands.py` lists/expands custom commands. | Needs complete TUI command-palette behavior validation. |
+
+---
+
 ## CLI Commands
 
 ### Missing Commands
 
 | Command | Description | Priority |
 |---------|-------------|----------|
-| `exec / e` | Non-interactive automation mode | High |
 | `review` | Non-interactive code review | Medium |
-| `apply / a` | Apply latest diff as git apply | High |
 | `login / logout` | Dedicated authentication commands | Medium |
 | `mcp add/list/get/remove` | Full MCP server management | Medium |
 | `sandbox` | Run commands directly in sandbox | Low |
@@ -47,7 +62,6 @@ The following are already being worked on and are excluded from the gap analysis
 | Tool | Description | Priority |
 |------|-------------|----------|
 | `list_dir` with depth/pagination | We only have basic listing; Codex has depth, offset, limit | Medium |
-| `unified_exec` + `write_stdin` | Interactive PTY sessions with stdin input | High |
 | `update_plan` | Agent-managed task planning (different structure than todowrite) | Low |
 
 ### Tool Enhancements Needed
@@ -147,9 +161,7 @@ The following are already being worked on and are excluded from the gap analysis
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| **Skills System** | Custom skill files with YAML frontmatter | Medium |
 | **Execpolicy Rules** | Starlark-based command approval rules | Medium |
-| **Custom Slash Commands** | ~/.codex/prompts/*.md files for custom commands | Medium |
 | **AGENTS.md Hierarchy** | Directory-level instruction inheritance | Low |
 | **AGENTS.override.md** | Override file for directory-specific instructions | Low |
 
@@ -183,9 +195,12 @@ The following are already being worked on and are excluded from the gap analysis
 
 ## Feature Flags System
 
-### Missing Capability
+### Remaining Capability Gaps
 
-Our agent lacks a feature flag system. Codex has:
+The backend now has a feature flag registry. Remaining gaps are product and
+release-management gaps: persisted user/project overrides, a user-facing TUI or
+settings surface, documented rollout policy, and release gates for experimental
+features.
 
 | Flag Type | Examples |
 |-----------|----------|
@@ -201,14 +216,12 @@ This allows gradual rollout and testing of features.
 
 ### High Priority (Core Functionality)
 
-1. `exec` command - Non-interactive automation mode
-2. `apply` command - Apply diffs to working tree
-3. `/compact` - Manual context compaction
-4. `/model` - Model switching in session
-5. Sandbox modes - read-only, workspace-write levels
-6. `unified_exec` - Interactive PTY sessions
-7. @ File Search - Fuzzy filename search in TUI
-8. History compaction - Auto/manual context compression
+1. `/compact` - Manual context compaction
+2. `/model` - Model switching in session
+3. Sandbox modes - read-only, workspace-write levels
+4. @ File Search - Fuzzy filename search in TUI
+5. History compaction - Auto/manual context compression
+6. Verify `exec`/`apply` CLI behavior with Go installed
 
 ### Medium Priority (Enhanced UX)
 
@@ -220,8 +233,8 @@ This allows gradual rollout and testing of features.
 6. Image paste - Direct paste support
 7. Ghost commits - Per-turn git commits
 8. Turn diff tracking
-9. Skills system
-10. Custom slash commands
+9. Skills UX integration
+10. Custom slash command TUI validation
 11. Execpolicy rules
 12. Custom model providers
 13. OSS model support (LM Studio, Ollama)
@@ -231,7 +244,7 @@ This allows gradual rollout and testing of features.
 1. Desktop notifications
 2. Terminal animations
 3. Shell completion generation
-4. Feature flags system
+4. Feature flags persistence/settings surface
 5. OpenTelemetry integration
 6. Keyring credential storage
 7. File opener IDE integration
