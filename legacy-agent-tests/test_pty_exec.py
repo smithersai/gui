@@ -41,6 +41,39 @@ async def test_unified_exec_simple_command(pty_manager):
 
 
 @pytest.mark.asyncio
+async def test_unified_exec_timeout_terminates_process(pty_manager):
+    """Test timeout_ms terminates commands that run too long."""
+    result = await unified_exec(
+        cmd="sleep 2",
+        pty_manager=pty_manager,
+        yield_time_ms=50,
+        timeout_ms=100,
+    )
+
+    assert result["success"] is False
+    assert result["timed_out"] is True
+    assert result["running"] is False
+    assert "timed out" in result["error"].lower()
+    assert result["session_id"] not in pty_manager.sessions
+
+
+@pytest.mark.asyncio
+async def test_unified_exec_timeout_allows_fast_command(pty_manager):
+    """Test timeout_ms waits for a fast command and returns its exit status."""
+    result = await unified_exec(
+        cmd="echo done",
+        pty_manager=pty_manager,
+        yield_time_ms=50,
+        timeout_ms=1000,
+    )
+
+    assert result["success"] is True
+    assert "done" in result["output"]
+    assert result["running"] is False
+    assert result["exit_code"] == 0
+
+
+@pytest.mark.asyncio
 async def test_unified_exec_long_running(pty_manager):
     """Test executing a command that keeps running."""
     result = await unified_exec(
@@ -172,7 +205,7 @@ async def test_output_truncation(pty_manager):
     """Test that output is truncated to token limit."""
     # Generate a lot of output
     result = await unified_exec(
-        cmd="python3 -c \"print('x' * 50000)\"",
+        cmd="yes x | head -c 50000",
         pty_manager=pty_manager,
         yield_time_ms=500,
         max_output_tokens=100,  # Very small limit

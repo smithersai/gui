@@ -5,8 +5,10 @@ Provides unified_exec and write_stdin tools for running and interacting with
 interactive programs in pseudo-terminal (PTY) sessions.
 """
 
+import asyncio
 import json
 import os
+import time
 from typing import Any, Optional
 
 from core.pty_manager import PTYManager
@@ -49,6 +51,22 @@ def _truncate_output(text: str, max_tokens: int) -> tuple[str, bool]:
     return text, False
 
 
+async def _settled_process_status(
+    pty_manager: PTYManager,
+    session_id: str,
+    attempts: int = 25,
+    delay_seconds: float = 0.02,
+) -> dict[str, Any]:
+    """Give short-lived shell commands a brief chance to report their exit."""
+    status = pty_manager.get_process_status(session_id)
+    for _ in range(attempts):
+        if not status["running"]:
+            break
+        await asyncio.sleep(delay_seconds)
+        status = pty_manager.get_process_status(session_id)
+    return status
+
+
 async def unified_exec(
     cmd: str,
     pty_manager: PTYManager,
@@ -72,7 +90,8 @@ async def unified_exec(
         login: Use login shell
         yield_time_ms: Time to wait for output before returning
         max_output_tokens: Maximum output tokens to capture
-        timeout_ms: Command timeout in milliseconds (not implemented yet)
+        timeout_ms: Optional command timeout in milliseconds. When provided,
+            the call waits for the process to exit or terminates it on timeout.
 
     Returns:
         Dictionary with:
@@ -99,18 +118,58 @@ async def unified_exec(
             login=login,
         )
 
-        # Wait for initial output
-        output = await pty_manager.read_output(
-            session.id,
-            timeout_ms=yield_time_ms,
-            max_bytes=MAX_OUTPUT_CHARS,
-        )
+        if timeout_ms is not None:
+            deadline = time.monotonic() + (timeout_ms / 1000.0)
+            output_parts: list[str] = []
+            status = {"running": True, "exit_code": None}
+
+            while status["running"]:
+                remaining_ms = int((deadline - time.monotonic()) * 1000)
+                if remaining_ms <= 0:
+                    output = "".join(output_parts)
+                    output, was_truncated = _truncate_output(output, max_output_tokens)
+                    await pty_manager.close_session(session.id, force=True)
+                    result = {
+                        "success": False,
+                        "session_id": session.id,
+                        "output": output,
+                        "running": False,
+                        "exit_code": -9,
+                        "timed_out": True,
+                        "error": f"Command timed out after {timeout_ms}ms",
+                    }
+                    if was_truncated:
+                        result["truncated"] = True
+                    return result
+
+                output_parts.append(
+                    await pty_manager.read_output(
+                        session.id,
+                        timeout_ms=min(remaining_ms, max(yield_time_ms, 50)),
+                        max_bytes=MAX_OUTPUT_CHARS,
+                    )
+                )
+                status = pty_manager.get_process_status(session.id)
+
+            output_parts.append(
+                await pty_manager.read_output(
+                    session.id,
+                    timeout_ms=max(yield_time_ms, 50),
+                    max_bytes=MAX_OUTPUT_CHARS,
+                )
+            )
+            output = "".join(output_parts)
+        else:
+            # Wait for initial output
+            output = await pty_manager.read_output(
+                session.id,
+                timeout_ms=yield_time_ms,
+                max_bytes=MAX_OUTPUT_CHARS,
+            )
+            status = await _settled_process_status(pty_manager, session.id)
 
         # Truncate to token limit
         output, was_truncated = _truncate_output(output, max_output_tokens)
-
-        # Check process status
-        status = pty_manager.get_process_status(session.id)
 
         result = {
             "success": True,
@@ -186,8 +245,7 @@ async def write_stdin(
         # Truncate to token limit
         output, was_truncated = _truncate_output(output, max_output_tokens)
 
-        # Check process status
-        status = pty_manager.get_process_status(session_id)
+        status = await _settled_process_status(pty_manager, session_id)
 
         result = {
             "success": True,

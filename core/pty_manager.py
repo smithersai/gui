@@ -304,7 +304,7 @@ class PTYManager:
                     os.close(session.master_fd)
                 except (OSError, ChildProcessError):
                     # Process may have already exited or FD already closed
-                    pass
+                    return
 
     async def _cleanup_stale_sessions(self) -> None:
         """Remove sessions that have timed out."""
@@ -317,7 +317,7 @@ class PTYManager:
             try:
                 await self.close_session(sid)
             except KeyError:
-                pass  # Already removed
+                continue  # Already removed
 
     async def cleanup_all(self) -> None:
         """Close all active sessions."""
@@ -326,7 +326,7 @@ class PTYManager:
             try:
                 await self.close_session(sid)
             except KeyError:
-                pass
+                continue
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """List all active sessions.
