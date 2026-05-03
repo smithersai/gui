@@ -23,6 +23,10 @@ struct TerminalIOSRendererBridge: View {
     var command: String?
     var workingDirectory: String?
 
+    private enum Layout {
+        static let inputBarHeight: CGFloat = 56
+    }
+
     var body: some View {
         ZStack {
             switch model.connectionState {
@@ -68,13 +72,29 @@ struct TerminalIOSRendererBridge: View {
                     .padding(.vertical, 4)
                     .background(Color.black.opacity(0.05))
             }
-            TerminalIOSTextView(model: model)
+            terminalRenderer
                 .background(Color.black)
-                .accessibilityIdentifier("terminal.ios.text")
                 .overlay(alignment: .bottom) {
                     TerminalIOSInputBar(model: model)
                 }
         }
+    }
+
+    @ViewBuilder
+    private var terminalRenderer: some View {
+#if canImport(GhosttyVt)
+        GeometryReader { geometry in
+            TerminalIOSGhosttyView(
+                model: model,
+                availableSize: geometry.size,
+                bottomInset: Layout.inputBarHeight
+            )
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+#else
+        TerminalIOSTextView(model: model)
+            .accessibilityIdentifier("terminal.ios.text")
+#endif
     }
 }
 

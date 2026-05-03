@@ -2,14 +2,14 @@
 import SwiftUI
 import UIKit
 
-fileprivate struct TerminalIOSGridSignature: Equatable {
+struct TerminalIOSGridSignature: Equatable {
     let cols: UInt16
     let rows: UInt16
     let cellWidthPx: UInt32
     let cellHeightPx: UInt32
 }
 
-fileprivate struct TerminalIOSGridMetrics {
+struct TerminalIOSGridMetrics {
     static let fontSize: CGFloat = 14
     static let baseFont = UIFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
 
@@ -56,12 +56,12 @@ fileprivate struct TerminalIOSGridMetrics {
     }
 }
 
-fileprivate struct TerminalIOSFontKey: Hashable {
+struct TerminalIOSFontKey: Hashable {
     let bold: Bool
     let italic: Bool
 }
 
-fileprivate final class TerminalIOSGhosttyHostView: UIView, UIKeyInput {
+final class TerminalIOSGhosttyHostView: UIView, UIKeyInput {
     var bottomInset: CGFloat = 56 {
         didSet {
             setNeedsLayout()
@@ -74,13 +74,13 @@ fileprivate final class TerminalIOSGhosttyHostView: UIView, UIKeyInput {
 
     var snapshot: TerminalIOSRenderSnapshot? {
         didSet {
-            accessibilityMirror.text = snapshot?.plainText ?? ""
-            accessibilityMirror.accessibilityValue = snapshot?.plainText ?? ""
+            updateAccessibilitySnapshot(snapshot)
             setNeedsDisplay()
         }
     }
 
     private let accessibilityMirror = UITextView()
+    private let renderMetadata = UILabel()
     private var panRowOffset: Int = 0
     private var fontCache: [TerminalIOSFontKey: UIFont] = [:]
 
@@ -99,6 +99,15 @@ fileprivate final class TerminalIOSGhosttyHostView: UIView, UIKeyInput {
         accessibilityMirror.font = TerminalIOSGridMetrics.baseFont
         accessibilityMirror.accessibilityIdentifier = "terminal.ios.text"
         addSubview(accessibilityMirror)
+
+        renderMetadata.backgroundColor = .clear
+        renderMetadata.textColor = .clear
+        renderMetadata.font = .systemFont(ofSize: 1)
+        renderMetadata.numberOfLines = 1
+        renderMetadata.isUserInteractionEnabled = false
+        renderMetadata.accessibilityIdentifier = "terminal.ios.render-metadata"
+        renderMetadata.isAccessibilityElement = true
+        addSubview(renderMetadata)
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         addGestureRecognizer(tap)
@@ -124,6 +133,7 @@ fileprivate final class TerminalIOSGhosttyHostView: UIView, UIKeyInput {
     override func layoutSubviews() {
         super.layoutSubviews()
         accessibilityMirror.frame = bounds
+        renderMetadata.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
     }
 
     var hasText: Bool { false }
@@ -147,7 +157,7 @@ fileprivate final class TerminalIOSGhosttyHostView: UIView, UIKeyInput {
         ]
     }
 
-    fileprivate var gridMetrics: TerminalIOSGridMetrics {
+    var gridMetrics: TerminalIOSGridMetrics {
         TerminalIOSGridMetrics(bounds: bounds, bottomInset: bottomInset)
     }
 
@@ -254,6 +264,56 @@ fileprivate final class TerminalIOSGhosttyHostView: UIView, UIKeyInput {
         return font
     }
 
+    private func updateAccessibilitySnapshot(_ snapshot: TerminalIOSRenderSnapshot?) {
+        let plainText = snapshot?.plainText ?? ""
+        accessibilityMirror.text = plainText
+        accessibilityMirror.accessibilityValue = plainText
+
+        let styledCells = snapshot.map(styledCellCount(in:)) ?? 0
+        let cursorDescriptor: String
+        if let cursor = snapshot?.cursor {
+            cursorDescriptor = "\(cursor.row):\(cursor.column)"
+        } else {
+            cursorDescriptor = "none"
+        }
+        let metadata = "styledCells=\(styledCells);cursor=\(cursorDescriptor)"
+        renderMetadata.text = metadata
+        renderMetadata.accessibilityLabel = metadata
+        renderMetadata.accessibilityValue = metadata
+    }
+
+    private func styledCellCount(in snapshot: TerminalIOSRenderSnapshot) -> Int {
+        snapshot.cells.reduce(0) { total, row in
+            total + row.reduce(0) { rowTotal, cell in
+                let hasStyleFlag = cell.bold || cell.italic || cell.faint || cell.underline || cell.strikethrough || cell.invisible
+                let hasColorShift =
+                    !Self.colorsEqual(cell.foregroundColor, snapshot.defaultForeground) ||
+                    !Self.colorsEqual(cell.backgroundColor, snapshot.defaultBackground)
+                return rowTotal + ((hasStyleFlag || hasColorShift) ? 1 : 0)
+            }
+        }
+    }
+
+    private static func colorsEqual(_ lhs: UIColor, _ rhs: UIColor, tolerance: CGFloat = 0.002) -> Bool {
+        var lhsRed: CGFloat = 0
+        var lhsGreen: CGFloat = 0
+        var lhsBlue: CGFloat = 0
+        var lhsAlpha: CGFloat = 0
+        var rhsRed: CGFloat = 0
+        var rhsGreen: CGFloat = 0
+        var rhsBlue: CGFloat = 0
+        var rhsAlpha: CGFloat = 0
+
+        guard lhs.getRed(&lhsRed, green: &lhsGreen, blue: &lhsBlue, alpha: &lhsAlpha),
+              rhs.getRed(&rhsRed, green: &rhsGreen, blue: &rhsBlue, alpha: &rhsAlpha) else {
+            return lhs.cgColor == rhs.cgColor
+        }
+        return abs(lhsRed - rhsRed) <= tolerance &&
+            abs(lhsGreen - rhsGreen) <= tolerance &&
+            abs(lhsBlue - rhsBlue) <= tolerance &&
+            abs(lhsAlpha - rhsAlpha) <= tolerance
+    }
+
     @objc private func handleTap() {
         _ = becomeFirstResponder()
     }
@@ -306,7 +366,7 @@ fileprivate final class TerminalIOSGhosttyHostView: UIView, UIKeyInput {
 }
 
 @MainActor
-private struct TerminalIOSGhosttyView: UIViewRepresentable {
+struct TerminalIOSGhosttyView: UIViewRepresentable {
     @ObservedObject var model: TerminalSurfaceModel
     var availableSize: CGSize
     var bottomInset: CGFloat

@@ -62,24 +62,30 @@ The terminal is being migrated from a macOS-only AppKit path to a
 cross-platform SwiftUI surface fed by `libghostty`'s pipes backend via
 `libsmithers-core`:
 
-- `TerminalSurface.swift` — shared SwiftUI entry point. Compiles on
-  macOS + iOS. Driven by byte streams from a `TerminalPTYTransport`.
-- `TerminalView+macOS.swift` — macOS bridge that delegates to the
-  existing apprt-backed `TerminalSurfaceRepresentable` (in
-  `TerminalView.swift`, now guarded `#if os(macOS)`).
-- `ios/Sources/SmithersiOS/Terminal/TerminalIOSRenderer.swift` — iOS
-  UITextView renderer over the shared model. libghostty VT-level
-  rendering (via `ghostty-vt.xcframework` from the 0092 PoC) replaces
-  this body in a follow-up.
+- `TerminalSurface.swift` — shared SwiftUI entry point used by both
+  macOS and iOS. Bytes flow through `TerminalPTYTransport`.
+- `TerminalView+macOS.swift` — macOS bridge that keeps the existing
+  apprt-backed renderer.
+- `ios/Sources/SmithersiOS/Terminal/TerminalIOSRenderer.swift` +
+  `ios/Sources/SmithersiOS/Terminal/TerminalIOSCellView.swift` +
+  `ios/Sources/SmithersiOS/Terminal/TerminalIOSGhostty.swift` — iOS
+  Ghostty VT cell-grid renderer (SGR colors + cursor), backed by
+  `ghostty-vt.xcframework`.
+- iOS input behavior keeps both paths:
+  on-screen `terminal.ios.input` / `terminal.ios.send` fallback for
+  touch, plus hardware keyboard routing through
+  `TerminalSurfaceModel.sendInput`.
+- UITest placeholder mode is unchanged (`UITestSupport.isEnabled` still
+  mounts `terminal.placeholder`).
 
-Compatibility note: `RuntimePTYTransport` is wired through 0120's
-`SmithersRuntime` wrapper but the 0120 runtime still ships a fake
-transport with no real byte stream. macOS therefore continues to use
-the legacy `smithers-session-daemon` path inside
-`TerminalSurfaceRepresentable` during migration. Once the 0094
-WebSocket PTY lands and 0120's transport graduates, flip shared
-callers off `TerminalView` (macOS-only) onto `TerminalSurface` and
-delete the daemon fallback.
+Size overhead measurement (Release, `generic/platform=iOS`,
+`CODE_SIGNING_ALLOWED=NO`, zipped `Payload/*.app` as `.ipa`):
+
+- Before activation (placeholder path): `1,740,341` bytes
+- After activation (Ghostty cell renderer): `2,915,886` bytes
+- Delta: `+1,175,545` bytes (`+1.121 MB`) — within the `<= 2 MB` gate
+
+For reference, the uncompressed `.app` bundle delta is `+3.469 MB`.
 
 ### Live-run DevTools reconnect + ghost budget
 
@@ -160,7 +166,7 @@ Pass `-Drelease=true` to any build step for release-mode compilation.
 ### iOS Device Preview Backend
 
 Physical iPhones cannot reach the Mac's `localhost:4000`. For preview
-testing, build SmithersiOS with a reachable Plue base URL baked into
+testing, build SmithersiOS with a reachable Smithers base URL baked into
 `Info.plist`.
 
 **Internet-reachable review with ngrok:**
@@ -170,14 +176,14 @@ testing, build SmithersiOS with a reachable Plue base URL baked into
 ./ios/scripts/start-preview-tunnel.sh
 
 # Terminal 2: build/install with the generated tunnel URL
-source build/preview-tunnel/plue-preview.env
+source build/preview-tunnel/smithers-preview.env
 DEVICE_ID=<device-identifier> INSTALL_ON_DEVICE=1 ./ios/scripts/build-for-device.sh
 ```
 
-`start-preview-tunnel.sh` starts the local Plue Docker stack if
+`start-preview-tunnel.sh` starts the local Smithers Docker stack if
 `http://localhost:4000/api/health` is not already healthy, starts
-`ngrok http 4000`, captures the HTTPS URL as `PLUE_PREVIEW_URL`, and
-writes `PLUE_BASE_URL` exports to `build/preview-tunnel/plue-preview.env`.
+`ngrok http 4000`, captures the HTTPS URL as `SMITHERS_PREVIEW_URL`, and
+writes `SMITHERS_BASE_URL` exports to `build/preview-tunnel/smithers-preview.env`.
 
 **Zero-egress LAN testing:**
 
@@ -185,22 +191,22 @@ writes `PLUE_BASE_URL` exports to `build/preview-tunnel/plue-preview.env`.
 ./ios/scripts/build-for-device.sh
 ```
 
-With no `PLUE_PREVIEW_URL` or `PLUE_BASE_URL`, the build script detects the
+With no `SMITHERS_PREVIEW_URL` or `SMITHERS_BASE_URL`, the build script detects the
 Mac's LAN IP with `ipconfig getifaddr en0`, bakes
-`http://<LAN-IP>:4000` into `SmithersPlueBaseURL`, and generates a temporary
+`http://<LAN-IP>:4000` into `SmithersBaseURL`, and generates a temporary
 Info.plist with a narrow ATS exception for that IP only. Override with
-`PLUE_LAN_IP=...` or `PLUE_DEVICE_BASE_URL=...` when needed.
+`SMITHERS_LAN_IP=...` or `SMITHERS_DEVICE_BASE_URL=...` when needed.
 
 The OAuth2 redirect remains `smithers://oauth2/callback`; the app accepts
 the `smithers` callback scheme and derives the backend base URL from the
-baked `PLUE_BASE_URL` / `PLUE_PREVIEW_URL` value. No production Plue deploy
-is involved.
+baked `SMITHERS_BASE_URL` / `SMITHERS_PREVIEW_URL` value. No production Smithers
+deploy is involved.
 
 Validation sequence:
 
 ```bash
 ./ios/scripts/start-preview-tunnel.sh
-source build/preview-tunnel/plue-preview.env
+source build/preview-tunnel/smithers-preview.env
 DEVICE_ID=<device-identifier> INSTALL_ON_DEVICE=1 ./ios/scripts/build-for-device.sh
 # Launch on device, tap Sign In, complete OAuth2, and return via smithers://.
 
