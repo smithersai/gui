@@ -5,6 +5,7 @@ Connects to the BrowserAPIServer running in the Swift app to expose
 browser automation capabilities as MCP tools.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ DEFAULT_PORT = 48484
 PORT_FILE_PATH = Path.home() / ".plue" / "browser-api.port"
 REQUEST_TIMEOUT_SECONDS = 30.0
 BASE_URL_TEMPLATE = "http://127.0.0.1:{port}"
+
+logger = logging.getLogger(__name__)
 
 
 class BrowserClient:
@@ -44,15 +47,15 @@ class BrowserClient:
                 self._port = int(env_port)
                 return self._port
             except ValueError:
-                pass
+                logger.debug("Ignoring invalid BROWSER_API_PORT value: %s", env_port)
 
         # Check port file
         if PORT_FILE_PATH.exists():
             try:
                 self._port = int(PORT_FILE_PATH.read_text().strip())
                 return self._port
-            except (ValueError, IOError):
-                pass
+            except (ValueError, IOError) as e:
+                logger.debug("Ignoring invalid browser API port file %s: %s", PORT_FILE_PATH, e)
 
         # Fall back to default
         self._port = DEFAULT_PORT

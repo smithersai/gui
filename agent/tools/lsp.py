@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 from typing import Any, Callable, ClassVar
+
+logger = logging.getLogger(__name__)
 
 # Constants
 LSP_INIT_TIMEOUT_SECONDS = 5.0
@@ -158,27 +161,22 @@ EXTENSION_TO_LANGUAGE: dict[str, str] = {
 
 class LSPError(Exception):
     """Base exception for LSP errors."""
-    pass
 
 
 class LSPConnectionError(LSPError):
     """Failed to connect to language server."""
-    pass
 
 
 class LSPTimeoutError(LSPError):
     """Request timed out."""
-    pass
 
 
 class LSPServerNotFoundError(LSPError):
     """Language server binary not found."""
-    pass
 
 
 class LSPInitializationError(LSPError):
     """Server failed to initialize."""
-    pass
 
 
 # --- Type Definitions ---
@@ -483,7 +481,7 @@ class LSPConnection:
                                 handler(message.get("params", {}))
                             except Exception:
                                 # Don't let handler errors crash the listener
-                                pass
+                                logger.debug("LSP notification handler failed", exc_info=True)
                     # Ignore requests from server (method + id) - we don't handle those
                 except asyncio.CancelledError:
                     break
@@ -588,13 +586,13 @@ class LSPConnection:
             try:
                 await self._response_task
             except asyncio.CancelledError:
-                pass
+                logger.debug("LSP response task cancelled during close")
 
         self.writer.close()
         try:
             await asyncio.wait_for(self.writer.wait_closed(), timeout=1.0)
-        except (asyncio.TimeoutError, Exception):
-            pass
+        except Exception:
+            logger.debug("LSP writer did not close cleanly", exc_info=True)
 
         # Terminate process
         try:
@@ -604,7 +602,7 @@ class LSPConnection:
             self.process.kill()
             await self.process.wait()
         except Exception:
-            pass
+            logger.debug("LSP process did not terminate cleanly", exc_info=True)
 
 
 # --- LSP Client ---
@@ -1036,7 +1034,7 @@ class LSPClient:
                 await asyncio.wait_for(event.wait(), timeout=timeout)
             except asyncio.TimeoutError:
                 # Return whatever we have (might be empty)
-                pass
+                return self._diagnostics.get(file_path, [])
 
             return self._diagnostics.get(file_path, [])
         finally:
@@ -1074,7 +1072,7 @@ class LSPClient:
                 # Send exit notification
                 await self.connection.send_notification("exit", {})
             except Exception:
-                pass
+                logger.debug("LSP shutdown request failed", exc_info=True)
 
         await self.connection.close()
 
@@ -1156,7 +1154,7 @@ class LSPManager:
                 try:
                     await oldest.close()
                 except Exception:
-                    pass
+                    logger.debug("LSP client eviction close failed", exc_info=True)
 
             # Spawn new client
             try:
@@ -1181,7 +1179,7 @@ class LSPManager:
                 try:
                     await client.close()
                 except Exception:
-                    pass
+                    logger.debug("LSP client shutdown failed", exc_info=True)
             self._clients.clear()
 
     def get_all_diagnostics(self) -> dict[str, list[Diagnostic]]:

@@ -97,7 +97,7 @@ async def fetch_url(url: str, timeout: float = DEFAULT_WEB_TIMEOUT) -> str:
                     try:
                         encoding = content_type.split("charset=")[1].split(";")[0].strip()
                     except (IndexError, AttributeError):
-                        pass
+                        encoding = "utf-8"
 
                 try:
                     return data.decode(encoding)
