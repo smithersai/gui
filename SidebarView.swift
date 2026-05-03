@@ -106,42 +106,7 @@ struct SidebarView: View {
                 }
             }
 
-            VStack(spacing: 0) {
-                Divider().background(Theme.border)
-                NavRow(
-                    icon: NavDestination.settings.icon,
-                    label: NavDestination.settings.label,
-                    isSelected: destination == .settings
-                ) {
-                    destination = .settings
-                }
-                .padding(.vertical, 8)
-
-                VStack(spacing: 2) {
-                    if let smithersVersion {
-                        let meetsMin = SmithersClient.versionAtLeast(
-                            smithersVersion,
-                            minimum: SmithersClient.minimumOrchestratorVersion
-                        )
-                        Text("Smithers \(smithersVersion)")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(meetsMin ? Theme.textTertiary : Theme.danger)
-                            .accessibilityIdentifier("sidebar.smithersVersion")
-                        if !meetsMin {
-                            Text("Update required (≥ \(SmithersClient.minimumOrchestratorVersion))")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(Theme.danger)
-                                .accessibilityIdentifier("sidebar.smithersVersionWarning")
-                        }
-                    }
-                    Text("GUI \(Self.guiVersion)")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(Theme.textTertiary)
-                        .accessibilityIdentifier("sidebar.guiVersion")
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.bottom, 6)
-            }
+            sidebarFooter
         }
         .task {
             if smithersVersion == nil, let versionProvider {
@@ -181,6 +146,71 @@ struct SidebarView: View {
         }
         .background(Theme.sidebarBg)
         .accessibilityIdentifier("sidebar")
+    }
+
+    private var sidebarFooter: some View {
+        VStack(spacing: 0) {
+            Divider().background(Theme.border)
+
+            HStack(alignment: .center, spacing: 8) {
+                Button {
+                    destination = .settings
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: NavDestination.settings.icon)
+                            .font(.system(size: 12))
+                            .frame(width: 16)
+                        Text(NavDestination.settings.label)
+                            .font(.system(size: 12, weight: destination == .settings ? .semibold : .regular))
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .foregroundColor(destination == .settings ? Theme.accent : Theme.textSecondary)
+                    .themedSidebarRowBackground(isSelected: destination == .settings, cornerRadius: 6)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("nav.\(NavDestination.settings.label.replacingOccurrences(of: " ", with: ""))")
+
+                Spacer(minLength: 4)
+
+                sidebarVersions
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+        }
+    }
+
+    private var sidebarVersions: some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            if let smithersVersion {
+                let meetsMin = SmithersClient.versionAtLeast(
+                    smithersVersion,
+                    minimum: SmithersClient.minimumOrchestratorVersion
+                )
+                Text("Smithers \(smithersVersion)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(meetsMin ? Theme.textTertiary : Theme.danger)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .accessibilityIdentifier("sidebar.smithersVersion")
+                if !meetsMin {
+                    Text("Update >= \(SmithersClient.minimumOrchestratorVersion)")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(Theme.danger)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .accessibilityIdentifier("sidebar.smithersVersionWarning")
+                }
+            }
+            Text("GUI \(Self.guiVersion)")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(Theme.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .accessibilityIdentifier("sidebar.guiVersion")
+        }
+        .frame(maxWidth: 128, alignment: .trailing)
     }
 
     private var workspaceList: some View {
@@ -246,6 +276,13 @@ struct SidebarView: View {
                                 }
                                 Button("Rename terminal") {
                                     beginRenameTerminal(terminalID: terminalId, currentTitle: tab.title)
+                                }
+                                if store.canRestartTerminalTab(terminalId) {
+                                    Button("Restart") {
+                                        store.restartTerminalTab(terminalId)
+                                        destination = .terminal(id: terminalId)
+                                    }
+                                    .accessibilityIdentifier("sidebar.contextMenu.restart")
                                 }
                                 if tab.agentKind?.supportsResume == true {
                                     Button("Fork chat") {
