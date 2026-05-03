@@ -4,6 +4,7 @@ import SwiftUI
 struct ChatBlockRenderer: View {
     let block: ChatBlock
     let timestamp: String?
+    let privacyMode: Bool
 
     @State private var isExpanded = false
 
@@ -12,12 +13,21 @@ struct ChatBlockRenderer: View {
     private static let defaultCollapsedLineLimit = 3
     private static let userCollapsedLineLimit = 8
 
+    init(block: ChatBlock, timestamp: String?, privacyMode: Bool = false) {
+        self.block = block
+        self.timestamp = timestamp
+        self.privacyMode = privacyMode
+    }
+
     private var role: String {
         block.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private var content: String {
-        Self.decodeHTMLEntities(block.content)
+        guard !privacyMode else {
+            return ChatPrivacyRedactor.redactedContent(forRole: block.role)
+        }
+        return ChatContentText.decoded(block.content)
     }
 
     var body: some View {
@@ -176,12 +186,11 @@ struct ChatBlockRenderer: View {
                     .foregroundColor(Theme.textTertiary)
                     .italic()
             } else {
-                Text(content)
-                    .font(font)
-                    .foregroundColor(textColor)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .lineLimit(effectiveLineLimit)
+                renderedContent(
+                    font: font,
+                    textColor: textColor,
+                    lineLimit: effectiveLineLimit
+                )
             }
 
             if shouldShowExpand {
@@ -196,6 +205,61 @@ struct ChatBlockRenderer: View {
                 .accessibilityIdentifier("logs.block.expand")
             }
         }
+    }
+
+    @ViewBuilder
+    private func renderedContent(
+        font: Font,
+        textColor: Color,
+        lineLimit: Int?
+    ) -> some View {
+        let segments = ChatMarkdownSegmenter.segments(in: content)
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case let .text(text):
+                    Text(text)
+                        .font(font)
+                        .foregroundColor(textColor)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .lineLimit(lineLimit)
+                case let .code(language, code):
+                    codeBlock(language: language, code: code, lineLimit: lineLimit)
+                }
+            }
+        }
+    }
+
+    private func codeBlock(language: String?, code: String, lineLimit: Int?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let language, !language.isEmpty {
+                Text(language.uppercased())
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.surface2.opacity(0.75))
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code.isEmpty ? " " : code)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Theme.textPrimary)
+                    .padding(8)
+                    .textSelection(.enabled)
+                    .lineLimit(lineLimit)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .background(Theme.surface1)
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Theme.border, lineWidth: 1)
+        )
+        .accessibilityIdentifier("logs.block.code")
     }
 
     static func roleLabel(for role: String) -> String {
@@ -213,14 +277,15 @@ struct ChatBlockRenderer: View {
 
     static func plainTextTranscript(
         blocks: [ChatBlock],
-        timestampProvider: (ChatBlock) -> String?
+        timestampProvider: (ChatBlock) -> String?,
+        privacyMode: Bool = false
     ) -> String {
-        blocks.map { plainText($0, timestamp: timestampProvider($0)) }
+        blocks.map { plainText($0, timestamp: timestampProvider($0), privacyMode: privacyMode) }
             .joined(separator: "\n\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func plainText(_ block: ChatBlock, timestamp: String?) -> String {
+    static func plainText(_ block: ChatBlock, timestamp: String?, privacyMode: Bool = false) -> String {
         let role = roleLabel(for: block.role).uppercased()
         let header: String
         if let timestamp, !timestamp.isEmpty {
@@ -228,28 +293,9 @@ struct ChatBlockRenderer: View {
         } else {
             header = role
         }
-        return "\(header)\n\(decodeHTMLEntities(block.content))"
-    }
-
-    private static func decodeHTMLEntities(_ text: String) -> String {
-        guard text.contains("&") else { return text }
-        let entities: [(String, String)] = [
-            ("&quot;", "\""),
-            ("&amp;", "&"),
-            ("&lt;", "<"),
-            ("&gt;", ">"),
-            ("&apos;", "'"),
-            ("&#39;", "'"),
-            ("&#x27;", "'"),
-            ("&#34;", "\""),
-            ("&#x22;", "\""),
-            ("&nbsp;", " "),
-        ]
-
-        var result = text
-        for (entity, replacement) in entities {
-            result = result.replacingOccurrences(of: entity, with: replacement)
-        }
-        return result
+        let content = privacyMode
+            ? ChatPrivacyRedactor.redactedContent(forRole: block.role)
+            : ChatContentText.decoded(block.content)
+        return "\(header)\n\(content)"
     }
 }

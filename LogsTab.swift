@@ -76,6 +76,8 @@ final class LogsTabModel: ObservableObject {
     @Published private(set) var blocks: [ChatBlock] = []
     @Published var followToBottom = true
     @Published var hideNoise = true
+    @Published var privacyMode = false
+    @Published var transcriptSearchQuery = ""
     @Published private(set) var isStreaming = false
     @Published private(set) var streamError: String?
     @Published private(set) var scrollRequestToken = UUID()
@@ -96,21 +98,28 @@ final class LogsTabModel: ObservableObject {
         streamProvider: ChatStreamProviding,
         historyProvider: ChatHistoryProviding = EmptyChatHistoryProvider.shared,
         pasteboard: TranscriptPasteboarding = SystemTranscriptPasteboard(),
-        hideNoiseByDefault: Bool = true
+        hideNoiseByDefault: Bool = true,
+        privacyModeByDefault: Bool = false
     ) {
         self.streamProvider = streamProvider
         self.historyProvider = historyProvider
         self.pasteboard = pasteboard
         hideNoise = hideNoiseByDefault
+        privacyMode = privacyModeByDefault
     }
 
     var visibleBlocks: [ChatBlock] {
-        blocks.filter {
+        let denoised = blocks.filter {
             !ChatBlockFilter.shouldHide(
                 $0,
                 enabled: hideNoise
             )
         }
+        return ChatTranscriptSearch.filtered(denoised, query: transcriptSearchQuery)
+    }
+
+    var hasTranscriptSearch: Bool {
+        !transcriptSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func activate(runId: String, nodeId: String) {
@@ -275,7 +284,8 @@ final class LogsTabModel: ObservableObject {
     func copyVisibleTranscript(timestampProvider: (ChatBlock) -> String?) -> String {
         let transcript = ChatBlockRenderer.plainTextTranscript(
             blocks: visibleBlocks,
-            timestampProvider: timestampProvider
+            timestampProvider: timestampProvider,
+            privacyMode: privacyMode
         )
         pasteboard.write(transcript)
         return transcript
@@ -469,6 +479,14 @@ struct LogsTab: View {
                 .accessibilityIdentifier("logs.noiseToggle")
                 .help("Hide stderr, warnings, and timestamp-only log lines so only chat blocks remain.")
 
+            Toggle("Privacy", isOn: $model.privacyMode)
+                .toggleStyle(.switch)
+                .font(.system(size: 11))
+                .accessibilityIdentifier("logs.privacyToggle")
+                .help("Hide transcript bodies for screen sharing and copied transcripts.")
+
+            transcriptSearchControl
+
             Spacer()
 
             if model.isStreaming {
@@ -512,15 +530,15 @@ struct LogsTab: View {
         Group {
             if model.visibleBlocks.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "text.bubble")
+                    Image(systemName: model.hasTranscriptSearch ? "magnifyingglass" : "text.bubble")
                         .font(.system(size: 22))
                         .foregroundColor(Theme.textTertiary)
-                    Text("No transcript yet.")
+                    Text(model.hasTranscriptSearch ? "No matching transcript blocks." : "No transcript yet.")
                         .font(.system(size: 12))
                         .foregroundColor(Theme.textTertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("logs.empty")
+                .accessibilityIdentifier(model.hasTranscriptSearch ? "logs.search.empty" : "logs.empty")
             } else {
                 ScrollViewReader { proxy in
                     GeometryReader { geo in
@@ -529,7 +547,8 @@ struct LogsTab: View {
                                 ForEach(model.visibleBlocks, id: \.stableId) { block in
                                     ChatBlockRenderer(
                                         block: block,
-                                        timestamp: timestampLabel(for: block)
+                                        timestamp: timestampLabel(for: block),
+                                        privacyMode: model.privacyMode
                                     )
                                     .id(block.stableId)
                                     .accessibilityIdentifier(blockAccessibilityIdentifier(block))
@@ -564,6 +583,45 @@ struct LogsTab: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var transcriptSearchControl: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10))
+                .foregroundColor(Theme.textTertiary)
+
+            TextField("Search transcript...", text: $model.transcriptSearchQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textPrimary)
+                .accessibilityIdentifier("logs.search")
+
+            if model.hasTranscriptSearch {
+                Text("\(model.visibleBlocks.count)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+                    .accessibilityIdentifier("logs.search.count")
+
+                Button {
+                    model.transcriptSearchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(Theme.textTertiary)
+                .help("Clear transcript search")
+                .accessibilityLabel("Clear transcript search")
+                .accessibilityIdentifier("logs.search.clear")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .frame(width: 220, height: 24)
+        .background(Theme.inputBg)
+        .cornerRadius(6)
+        .accessibilityIdentifier("logs.search.container")
     }
 
     private func errorBanner(_ message: String) -> some View {

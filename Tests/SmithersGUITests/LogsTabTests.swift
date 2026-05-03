@@ -176,6 +176,68 @@ final class LogsTabTests: XCTestCase {
         XCTAssertTrue(rendered.contains("copied text"))
     }
 
+    func testCopyTranscriptHonorsPrivacyMode() async {
+        let provider = MockChatStreamProvider()
+        let pasteboard = MockTranscriptPasteboard()
+        let model = LogsTabModel(streamProvider: provider, pasteboard: pasteboard)
+
+        model.activate(runId: "run-1", nodeId: "task:review")
+        provider.send(makeLogsBlock(nodeId: "task:review", role: "prompt", content: "secret prompt", id: "copy-private-1"))
+        let receivedBlock = await waitUntil(timeout: 1.0) { model.visibleBlocks.count == 1 }
+        XCTAssertTrue(receivedBlock)
+
+        model.privacyMode = true
+        let rendered = model.copyVisibleTranscript { _ in "12:00:00" }
+
+        XCTAssertEqual(rendered, pasteboard.lastText)
+        XCTAssertTrue(rendered.contains("[12:00:00] USER"))
+        XCTAssertTrue(rendered.contains("[prompt hidden in privacy mode]"))
+        XCTAssertFalse(rendered.contains("secret prompt"))
+    }
+
+    func testTranscriptSearchFiltersVisibleBlocksByContentAndRole() async {
+        let provider = MockChatStreamProvider()
+        let model = LogsTabModel(streamProvider: provider)
+
+        model.activate(runId: "run-1", nodeId: "task:review")
+        provider.send(makeLogsBlock(nodeId: "task:review", role: "assistant", content: "Deploy succeeded", id: "search-1"))
+        provider.send(makeLogsBlock(nodeId: "task:review", role: "prompt", content: "Review the docs", id: "search-2"))
+        provider.send(makeLogsBlock(nodeId: "task:review", role: "tool", content: "cat README.md", id: "search-3"))
+        let receivedBlocks = await waitUntil(timeout: 1.0) { model.visibleBlocks.count == 3 }
+        XCTAssertTrue(receivedBlocks)
+
+        model.transcriptSearchQuery = "DEPLOY"
+        XCTAssertEqual(model.visibleBlocks.map(\.id), ["search-1"])
+
+        model.transcriptSearchQuery = "prompt docs"
+        XCTAssertEqual(model.visibleBlocks.map(\.id), ["search-2"])
+
+        model.transcriptSearchQuery = "tool readme"
+        XCTAssertEqual(model.visibleBlocks.map(\.id), ["search-3"])
+
+        model.transcriptSearchQuery = "missing"
+        XCTAssertTrue(model.visibleBlocks.isEmpty)
+    }
+
+    func testCopyTranscriptHonorsSearchFilter() async {
+        let provider = MockChatStreamProvider()
+        let pasteboard = MockTranscriptPasteboard()
+        let model = LogsTabModel(streamProvider: provider, pasteboard: pasteboard)
+
+        model.activate(runId: "run-1", nodeId: "task:review")
+        provider.send(makeLogsBlock(nodeId: "task:review", content: "first answer", id: "copy-search-1"))
+        provider.send(makeLogsBlock(nodeId: "task:review", content: "second answer", id: "copy-search-2"))
+        let receivedBlocks = await waitUntil(timeout: 1.0) { model.visibleBlocks.count == 2 }
+        XCTAssertTrue(receivedBlocks)
+
+        model.transcriptSearchQuery = "second"
+        let rendered = model.copyVisibleTranscript { _ in nil }
+
+        XCTAssertEqual(rendered, pasteboard.lastText)
+        XCTAssertTrue(rendered.contains("second answer"))
+        XCTAssertFalse(rendered.contains("first answer"))
+    }
+
     func testNoiseToggleReappliesImmediately() async {
         let provider = MockChatStreamProvider()
         let model = LogsTabModel(streamProvider: provider)
