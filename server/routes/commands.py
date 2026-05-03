@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from config.commands import command_registry
+from server.command_manifest import BUILTIN_COMMANDS as BUILTIN_COMMAND_MANIFEST
 
 
 router = APIRouter()
@@ -54,20 +55,8 @@ class ExpandRequest(BaseModel):
 # =============================================================================
 
 BUILTIN_COMMANDS = [
-    Command(name="help", description="Show help information"),
-    Command(name="clear", description="Clear conversation"),
-    Command(name="new", description="Start new session"),
-    Command(name="sessions", description="List all sessions"),
-    Command(name="compact", description="Summarize conversation to reduce context"),
-    Command(name="model", description="Select AI model"),
-    Command(name="agent", description="Select agent mode"),
-    Command(name="theme", description="Change color theme"),
-    Command(name="settings", description="Open settings"),
-    Command(name="diff", description="Show file changes in session"),
-    Command(name="copy", description="Copy last response"),
-    Command(name="quit", description="Exit application"),
-    Command(name="plugin", description="Create a new plugin interactively"),
-    Command(name="script", description="Create a new plugin interactively (alias for /plugin)"),
+    Command(name=command.name, description=command.description)
+    for command in BUILTIN_COMMAND_MANIFEST
 ]
 
 

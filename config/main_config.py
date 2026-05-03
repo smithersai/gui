@@ -35,7 +35,7 @@ class Config(BaseModel):
     )
     mcp: dict[str, MCPServerConfig] = Field(
         default_factory=dict,
-        description="MCP server configurations (placeholder for future)",
+        description="MCP server configurations by name",
     )
     experimental: ExperimentalConfig = Field(
         default_factory=ExperimentalConfig,

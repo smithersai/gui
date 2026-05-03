@@ -3,7 +3,6 @@ Tests for the feature flags system.
 """
 
 import pytest
-from fastapi.testclient import TestClient
 
 from config.features import (
     FEATURE_FLAGS,
@@ -12,10 +11,6 @@ from config.features import (
     FeatureStage,
     feature_manager,
 )
-from server.app import app
-
-
-client = TestClient(app)
 
 
 class TestFeatureFlag:
@@ -254,6 +249,11 @@ class TestFeaturesAPI:
 
     def test_list_features_endpoint(self):
         """Test GET /features endpoint."""
+        from fastapi.testclient import TestClient
+
+        from server.app import app
+
+        client = TestClient(app)
         response = client.get("/features")
         assert response.status_code == 200
 
@@ -273,6 +273,11 @@ class TestFeaturesAPI:
 
     def test_list_features_contains_all_stages(self):
         """Test that list features includes all stages."""
+        from fastapi.testclient import TestClient
+
+        from server.app import app
+
+        client = TestClient(app)
         response = client.get("/features")
         features = response.json()
 
@@ -283,6 +288,11 @@ class TestFeaturesAPI:
 
     def test_get_feature_endpoint(self):
         """Test GET /features/{feature_name} endpoint."""
+        from fastapi.testclient import TestClient
+
+        from server.app import app
+
+        client = TestClient(app)
         response = client.get("/features/shell_tool")
         assert response.status_code == 200
 
@@ -292,6 +302,11 @@ class TestFeaturesAPI:
 
     def test_get_feature_disabled(self):
         """Test getting a disabled feature."""
+        from fastapi.testclient import TestClient
+
+        from server.app import app
+
+        client = TestClient(app)
         response = client.get("/features/ghost_commit")
         assert response.status_code == 200
 
@@ -301,6 +316,11 @@ class TestFeaturesAPI:
 
     def test_get_feature_unknown(self):
         """Test getting an unknown feature returns False."""
+        from fastapi.testclient import TestClient
+
+        from server.app import app
+
+        client = TestClient(app)
         response = client.get("/features/unknown_feature")
         assert response.status_code == 200
 
@@ -310,6 +330,11 @@ class TestFeaturesAPI:
 
     def test_features_reflect_overrides(self):
         """Test that API reflects feature overrides."""
+        from fastapi.testclient import TestClient
+
+        from server.app import app
+
+        client = TestClient(app)
         # Enable a feature
         feature_manager.enable("ghost_commit")
 

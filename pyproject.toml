@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<4.0"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
@@ -21,4 +21,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["agent*", "snapshot*"]
+include = ["agent*", "config*", "core*", "plugins*", "server*", "snapshot*"]

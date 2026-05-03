@@ -9,8 +9,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from config import get_config, AgentConfig as ConfigAgentConfig
-
 
 class AgentMode(str, Enum):
     """Agent operation mode."""
@@ -245,15 +243,26 @@ Prioritize breadth-first exploration to give users a quick understanding before 
 class AgentRegistry:
     """Registry for managing agent configurations."""
 
-    def __init__(self, project_root: Path | None = None):
+    def __init__(self, project_root: Path | None = None, load_custom: bool = True):
         """
         Initialize registry with built-in agents and load custom configs.
 
         Args:
             project_root: Optional project root for loading custom configs
+            load_custom: Whether to load project config immediately
         """
         self._agents: dict[str, AgentConfig] = BUILTIN_AGENTS.copy()
-        self._load_custom_agents(project_root)
+        self._custom_project_root = project_root
+        self._custom_loaded = False
+        if load_custom:
+            self.load_custom_agents_once()
+
+    def load_custom_agents_once(self) -> None:
+        """Load custom agent configs once, deferring pydantic config imports."""
+        if self._custom_loaded:
+            return
+        self._load_custom_agents(self._custom_project_root)
+        self._custom_loaded = True
 
     def _load_custom_agents(self, project_root: Path | None = None) -> None:
         """
@@ -263,6 +272,8 @@ class AgentRegistry:
             project_root: Optional project root for config loading
         """
         try:
+            from config import get_config
+
             config = get_config(project_root)
             # Convert config agents to registry agent configs
             for name, agent_config in config.agents.items():
@@ -353,8 +364,9 @@ class AgentRegistry:
         return name in self._agents
 
 
-# Global registry instance
-_registry = AgentRegistry()
+# Global registry instance. Custom config loading is deferred so importing this
+# module does not initialize pydantic-heavy configuration models.
+_registry = AgentRegistry(load_custom=False)
 
 
 def get_agent_config(name: str) -> AgentConfig | None:
@@ -367,6 +379,7 @@ def get_agent_config(name: str) -> AgentConfig | None:
     Returns:
         Agent configuration or None if not found
     """
+    _registry.load_custom_agents_once()
     return _registry.get(name)
 
 
@@ -377,6 +390,7 @@ def list_agents() -> list[AgentConfig]:
     Returns:
         List of all agent configurations
     """
+    _registry.load_custom_agents_once()
     return _registry.list()
 
 
@@ -387,6 +401,7 @@ def list_agent_names() -> list[str]:
     Returns:
         List of agent names
     """
+    _registry.load_custom_agents_once()
     return _registry.list_names()
 
 
@@ -410,4 +425,5 @@ def agent_exists(name: str) -> bool:
     Returns:
         True if agent exists
     """
+    _registry.load_custom_agents_once()
     return _registry.exists(name)

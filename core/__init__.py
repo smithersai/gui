@@ -1,56 +1,72 @@
-"""
-Core business logic package.
+"""Core business logic package."""
 
-This package contains transport-agnostic business logic for the agent platform.
-The server package provides HTTP bindings around these core operations.
-"""
+from importlib import import_module
 
-from .compaction import compact_conversation, should_auto_compact
-from .events import Event, EventBus, NullEventBus
-from .exceptions import CoreError, InvalidOperationError, NotFoundError
-from .models import (
-    AssistantMessage,
-    CompactionInfo,
-    CompactionResult,
-    FileDiff,
-    FilePart,
-    GhostCommitInfo,
-    Message,
-    MessageTime,
-    ModelInfo,
-    Part,
-    PartTime,
-    PathInfo,
-    ReasoningPart,
-    RevertInfo,
-    Session,
-    SessionSummary,
-    SessionTime,
-    TextPart,
-    TokenInfo,
-    ToolPart,
-    ToolState,
-    ToolStateCompleted,
-    ToolStatePending,
-    ToolStateRunning,
-    UserMessage,
-    gen_id,
-)
-from .messages import get_message, list_messages, send_message
-from .sessions import (
-    abort_session,
-    create_session,
-    delete_session,
-    fork_session,
-    get_session,
-    get_session_diff,
-    list_sessions,
-    revert_session,
-    undo_turns,
-    unrevert_session,
-    update_session,
-)
-from .snapshots import compute_diff, init_snapshot, restore_snapshot, track_snapshot
+_SYMBOL_MODULES = {
+    "compact_conversation": "core.compaction",
+    "should_auto_compact": "core.compaction",
+    "Event": "core.events",
+    "EventBus": "core.events",
+    "NullEventBus": "core.events",
+    "CoreError": "core.exceptions",
+    "InvalidOperationError": "core.exceptions",
+    "NotFoundError": "core.exceptions",
+    "AssistantMessage": "core.models",
+    "CompactionInfo": "core.models",
+    "CompactionResult": "core.models",
+    "FileDiff": "core.models",
+    "FilePart": "core.models",
+    "GhostCommitInfo": "core.models",
+    "Message": "core.models",
+    "MessageTime": "core.models",
+    "ModelInfo": "core.models",
+    "Part": "core.models",
+    "PartTime": "core.models",
+    "PathInfo": "core.models",
+    "ReasoningPart": "core.models",
+    "RevertInfo": "core.models",
+    "Session": "core.models",
+    "SessionSummary": "core.models",
+    "SessionTime": "core.models",
+    "TextPart": "core.models",
+    "TokenInfo": "core.models",
+    "ToolPart": "core.models",
+    "ToolState": "core.models",
+    "ToolStateCompleted": "core.models",
+    "ToolStatePending": "core.models",
+    "ToolStateRunning": "core.models",
+    "UserMessage": "core.models",
+    "gen_id": "core.ids",
+    "get_message": "core.messages",
+    "list_messages": "core.messages",
+    "send_message": "core.messages",
+    "abort_session": "core.sessions",
+    "create_session": "core.sessions",
+    "delete_session": "core.sessions",
+    "fork_session": "core.sessions",
+    "get_session": "core.sessions",
+    "get_session_diff": "core.sessions",
+    "list_sessions": "core.sessions",
+    "revert_session": "core.sessions",
+    "undo_turns": "core.sessions",
+    "unrevert_session": "core.sessions",
+    "update_session": "core.sessions",
+    "compute_diff": "core.snapshots",
+    "init_snapshot": "core.snapshots",
+    "restore_snapshot": "core.snapshots",
+    "track_snapshot": "core.snapshots",
+}
+
+
+def __getattr__(name: str):
+    """Load public core exports on first access."""
+    module_name = _SYMBOL_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module 'core' has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     # Exceptions

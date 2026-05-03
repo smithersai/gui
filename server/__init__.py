@@ -5,11 +5,32 @@ Implements the OpenCode API specification for use with OpenCode clients
 (including Go Bubbletea TUI).
 """
 
-from .app import app
-from .routes import register_routes
-from .state import get_agent, set_agent, set_permission_checker, get_permission_checker
+from importlib import import_module
+from typing import Any
 
-# Register all routes with the app
-register_routes(app)
+_SYMBOL_MODULES = {
+    "app": "server.app",
+    "get_agent": "server.state",
+    "set_agent": "server.state",
+    "get_permission_checker": "server.state",
+    "set_permission_checker": "server.state",
+}
 
-__all__ = ["app", "set_agent", "get_agent", "set_permission_checker", "get_permission_checker"]
+
+def __getattr__(name: str) -> Any:
+    """Load server exports on first access."""
+    module_name = _SYMBOL_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module 'server' has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+__all__ = [
+    "app",
+    "set_agent",
+    "get_agent",
+    "set_permission_checker",
+    "get_permission_checker",
+]

@@ -10,8 +10,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
-from pydantic_ai import Agent
-
 from .registry import get_agent_config
 
 if TYPE_CHECKING:

@@ -14,9 +14,7 @@ from typing import AsyncGenerator, Generator
 import httpx
 import pytest
 import pytest_asyncio
-import uvicorn
 
-from agent.wrapper import create_mcp_wrapper
 from core.state import session_messages, sessions
 from server import app, set_agent
 
@@ -123,6 +121,8 @@ def clear_state():
 @pytest_asyncio.fixture
 async def mcp_agent(api_key: str, e2e_temp_dir: Path):
     """Create MCP-enabled agent and configure server."""
+    from agent.wrapper import create_mcp_wrapper
+
     wrapper = None
     try:
         async with create_mcp_wrapper(
@@ -144,6 +144,8 @@ async def mcp_agent(api_key: str, e2e_temp_dir: Path):
 @pytest_asyncio.fixture
 async def e2e_client(mcp_agent) -> AsyncGenerator[httpx.AsyncClient, None]:
     """Create async HTTP client for testing."""
+    import uvicorn
+
     # Run server in background
     config = uvicorn.Config(app, host="127.0.0.1", port=TEST_SERVER_PORT, log_level="warning")
     server = uvicorn.Server(config)

@@ -2,13 +2,13 @@
 Message route registration.
 """
 
-from fastapi import FastAPI
-
-from . import get, list, send
+from typing import Any
 
 
-def register_routes(app: FastAPI) -> None:
+def register_routes(app: Any) -> None:
     """Register all message routes."""
+    from . import get, list, send
+
     app.include_router(list.router)
     app.include_router(get.router)
     app.include_router(send.router)

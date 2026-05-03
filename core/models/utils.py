@@ -1,8 +1,5 @@
 """ID generation utility."""
 
-import secrets
+from core.ids import gen_id
 
-
-def gen_id(prefix: str) -> str:
-    """Generate IDs matching OpenCode format: ses_xxx, msg_xxx, prt_xxx"""
-    return f"{prefix}{secrets.token_urlsafe(12)}"
+__all__ = ["gen_id"]

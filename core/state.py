@@ -11,9 +11,8 @@ from typing import Any, TYPE_CHECKING
 from snapshot import Snapshot
 from agent.tools.file_time import FileTimeTracker
 
-from .models import Session
-
 if TYPE_CHECKING:
+    from .models import Session
     from .snapshots import GhostCommitManager
 
 
@@ -21,7 +20,7 @@ if TYPE_CHECKING:
 # Session Storage
 # =============================================================================
 
-sessions: dict[str, Session] = {}
+sessions: dict[str, "Session"] = {}
 session_messages: dict[str, list[dict[str, Any]]] = {}  # sessionID -> [{info, parts}]
 
 

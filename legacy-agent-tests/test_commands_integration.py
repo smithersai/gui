@@ -9,7 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from config.commands import CommandRegistry, CustomCommand, CommandArg
-from server.routes.commands import BUILTIN_COMMANDS
+from server.command_manifest import BUILTIN_COMMANDS
 
 
 class TestCommandRegistry:
