@@ -1,5 +1,9 @@
 # 0189 iOS Workspace Session Happy Path
 
+## Needs Review
+
+2026-05-02: The current iOS detail flow can discover and mount existing repo-scoped agent sessions, but a true production "start/resume agent session for this selected workspace" still depends on backend/product contract clarity. The current plue API creates repo-bound agent sessions and does not expose a workspace-bound assertion path, so adding a start action would risk misleading users about workspace association.
+
 Audit date: 2026-04-30
 
 ## Summary

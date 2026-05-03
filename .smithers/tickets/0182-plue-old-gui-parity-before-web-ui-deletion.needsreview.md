@@ -1,5 +1,9 @@
 # 0182 Plue Old GUI Parity Before Web UI Deletion
 
+## Needs Review
+
+2026-05-02: The current checked-in `docs/reference-app-feature-parity.md` is not the required plue old-GUI parity matrix. This ticket requires owner sign-off on legacy browser/desktop features that are implemented, retired, CLI/API-only, or missing before plue deletes the old UI.
+
 Audit date: 2026-04-24
 
 ## Summary
@@ -49,4 +53,3 @@ Feature groups to cover:
 
 - `/Users/williamcory/plue/.smithers/tickets/20-delete-deprecated-browser-gui.md`
 - `/Users/williamcory/plue/.smithers/tickets/23-live-deployment-infra-reconciliation.md`
-

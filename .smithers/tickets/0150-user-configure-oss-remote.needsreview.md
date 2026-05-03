@@ -1,5 +1,9 @@
 # User: configure writable oss remote
 
+## Needs Review
+
+2026-05-02: This ticket explicitly requires user-owned remote configuration and credentials for the oss repository. I cannot safely create or push to a writable remote without your direction.
+
 ## Context
 
 Ticket 0144 landed 9 commits to `/Users/williamcory/plue/oss` on local

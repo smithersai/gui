@@ -1,5 +1,9 @@
 # 0180 - Privacy / PII Audit
 
+## Needs Review
+
+2026-05-02: The audit deliverable exists, but the ticket states App Store/GDPR/CCPA answers are blocked until high findings are resolved or accepted with legal/product sign-off. This needs legal/product review before it can be closed as safe.
+
 Date: 2026-04-24
 Scope: `/Users/williamcory/gui` and `/Users/williamcory/plue`
 Status: App Store / GDPR / CCPA responses are blocked until the High findings below are resolved or explicitly accepted with legal/product sign-off.

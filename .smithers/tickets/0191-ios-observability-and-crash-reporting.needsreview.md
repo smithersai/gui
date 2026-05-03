@@ -1,5 +1,9 @@
 # 0191 iOS Observability And Crash Reporting
 
+## Needs Review
+
+2026-05-02: Manual diagnostics export exists, but the ticket still requires beta observability decisions: local counters for key flows, tester instructions, and whether automatic remote crash/error reporting is in scope. That crash-reporting decision affects privacy/release posture and needs product/legal input.
+
 Audit date: 2026-04-30
 
 ## Summary

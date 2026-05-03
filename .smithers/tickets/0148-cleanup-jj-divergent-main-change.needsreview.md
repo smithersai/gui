@@ -1,5 +1,9 @@
 # Plue: clean up divergent jj change on main bookmark
 
+## Needs Review
+
+2026-05-02: This is a destructive source-control cleanup against the plue repository's main bookmark. It likely requires abandoning/rebasing divergent jj changes and should only be done after the repo owner confirms which changes are user-authored and which may be discarded.
+
 ## Context
 
 During ticket 0106 (P-OAUTH-SRV) orchestration, a migration-rename +

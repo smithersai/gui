@@ -1,5 +1,9 @@
 # Plue/oss: batch-commit accumulated submodule schema + query changes
 
+## Needs Review
+
+2026-05-02: This ticket requires committing/pushing a separate `plue/oss` repository and resolving a user-authored stash. The current `/Users/williamcory/plue` checkout does not contain that top-level `oss/` working tree, and manipulating a separate repo's stash/history would be unsafe without explicit direction.
+
 ## Context
 
 Multiple plue tickets (0105, 0114, 0115, 0116, 0117, 0118, 0135, 0136,

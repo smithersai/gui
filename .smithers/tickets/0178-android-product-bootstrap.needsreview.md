@@ -1,5 +1,9 @@
 # Android product bootstrap
 
+## Needs Review
+
+2026-05-02: The ticket itself records Android as outside the current iOS/remote rollout. Starting a production Android app would materially expand product scope, package identity, CI, signing, and support commitments; this needs a product decision before implementation.
+
 ## Status (audited 2026-04-24) -- NOT STARTED
 
 - `android/` does not exist at the repository root.

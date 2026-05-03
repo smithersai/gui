@@ -1,5 +1,9 @@
 # 0190 iOS Onboarding Settings And Account Management
 
+## Needs Review
+
+2026-05-02: Branding, support contact, and account-deletion behavior are now resolved. The app uses `will@smithers.sh`, links privacy/terms to `https://smithers.sh/privacy` and `https://smithers.sh/terms`, and keeps in-app `DELETE /api/user` as the primary deletion path with support as fallback. This ticket remains needs-review until the backend/web repo actually serves the privacy and terms pages; tracked in `/Users/williamcory/plue/.smithers/tickets/28-add-smithers-legal-pages.md`.
+
 Audit date: 2026-04-30
 
 ## Summary
@@ -43,7 +47,5 @@ xcodebuild -project SmithersGUI.xcodeproj -scheme SmithersiOS -destination 'plat
 
 ## Product Inputs Needed
 
-- Support URL/email
-- Privacy policy URL
-- Terms URL
-- Account deletion policy and URL/API owner
+- Publish `https://smithers.sh/privacy`.
+- Publish `https://smithers.sh/terms`.
