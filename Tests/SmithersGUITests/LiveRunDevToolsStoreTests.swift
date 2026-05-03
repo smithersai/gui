@@ -121,6 +121,31 @@ private final class ReconnectFixtureStreamProvider: DevToolsStreamProvider, @unc
     }
 }
 
+@MainActor
+private final class HoldingStreamProvider: DevToolsStreamProvider, @unchecked Sendable {
+    var streamCallCount = 0
+    var terminationCount = 0
+
+    func streamDevTools(runId: String, afterSeq: Int?) -> AsyncThrowingStream<DevToolsEvent, Error> {
+        streamCallCount += 1
+        return AsyncThrowingStream { continuation in
+            continuation.onTermination = { @Sendable _ in
+                Task { @MainActor in
+                    self.terminationCount += 1
+                }
+            }
+        }
+    }
+
+    func getDevToolsSnapshot(runId: String, frameNo: Int?) async throws -> DevToolsSnapshot {
+        throw DevToolsClientError.runNotFound(runId)
+    }
+
+    func jumpToFrame(runId: String, frameNo: Int, confirm: Bool) async throws -> DevToolsJumpResult {
+        throw DevToolsClientError.runNotFound(runId)
+    }
+}
+
 // MARK: - Helpers
 
 private func makeNode(
@@ -248,6 +273,8 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     func testLargeSeqGapTriggersResync() {
         let provider = MockDevToolsStreamProvider()
         let store = DevToolsStore(streamProvider: provider)
+        defer { store.disconnect() }
+
         store.connect(runId: "run_test")
 
         let root = makeNode(id: 1, type: .workflow, name: "wf")
@@ -451,6 +478,8 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     func testConnectSetsConnecting() {
         let provider = MockDevToolsStreamProvider()
         let store = DevToolsStore(streamProvider: provider)
+        defer { store.disconnect() }
+
         store.connect(runId: "run_test")
         XCTAssertEqual(store.connectionState, .connecting)
     }
@@ -470,6 +499,8 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
         ]
 
         let store = DevToolsStore(streamProvider: provider)
+        defer { store.disconnect() }
+
         store.connect(runId: "run_test")
         try? await Task.sleep(nanoseconds: 40_000_000)
 
@@ -490,15 +521,39 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     func testDoubleConnectCancelsFirst() {
         let provider = MockDevToolsStreamProvider()
         let store = DevToolsStore(streamProvider: provider)
+        defer { store.disconnect() }
+
         store.connect(runId: "run_a")
         store.connect(runId: "run_b")
         XCTAssertEqual(store.runId, "run_b")
+    }
+
+    func testStoreDeinitCancelsActiveStream() async {
+        let provider = HoldingStreamProvider()
+        weak var weakStore: DevToolsStore?
+        var store: DevToolsStore? = DevToolsStore(streamProvider: provider)
+        weakStore = store
+
+        store?.connect(runId: "run_test")
+        await waitForMainActorCondition("stream was not started") {
+            provider.streamCallCount == 1
+        }
+
+        store = nil
+
+        await waitForMainActorCondition("store should deallocate after its last strong reference is released") {
+            weakStore == nil
+        }
+        await waitForMainActorCondition("active stream should terminate when the store deallocates") {
+            provider.terminationCount == 1
+        }
     }
 
     func testReconnectUsesStoredCursorPerRun() async {
         let provider = MockDevToolsStreamProvider()
         provider.events = [.snapshot(makeSnapshot(runId: "run_test", frameNo: 1, seq: 9))]
         let store = DevToolsStore(streamProvider: provider)
+        defer { store.disconnect() }
 
         store.connect(runId: "run_test")
         try? await Task.sleep(nanoseconds: 20_000_000)
@@ -531,6 +586,7 @@ final class LiveRunDevToolsStoreTests: XCTestCase {
     func testSwitchingBackToRunRequestsFreshSnapshotAfterTreeReset() async {
         let provider = MockDevToolsStreamProvider()
         let store = DevToolsStore(streamProvider: provider)
+        defer { store.disconnect() }
 
         provider.events = [.snapshot(makeSnapshot(runId: "run_a", frameNo: 1, seq: 9))]
         store.connect(runId: "run_a")

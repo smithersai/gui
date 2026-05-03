@@ -191,6 +191,24 @@ private func waitFor(
     return false
 }
 
+@MainActor
+private func streamCall(
+    _ provider: ScriptedStreamProvider,
+    at index: Int,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) -> (runId: String, afterSeq: Int?)? {
+    guard provider.streamCalls.indices.contains(index) else {
+        XCTFail(
+            "Expected stream call at index \(index), got \(provider.streamCalls.count) call(s)",
+            file: file,
+            line: line
+        )
+        return nil
+    }
+    return provider.streamCalls[index]
+}
+
 // MARK: - Tests
 
 @MainActor
@@ -234,8 +252,8 @@ final class DevToolsCLITransportReconnectTests: XCTestCase {
 
         let ok = await waitFor { provider.streamCalls.count >= 2 }
         XCTAssertTrue(ok, "Reconnect must occur")
-        XCTAssertNil(provider.streamCalls.first?.afterSeq, "First call has no cursor")
-        XCTAssertEqual(provider.streamCalls[1].afterSeq, 6, "Reconnect must resume from last applied seq")
+        XCTAssertNil(streamCall(provider, at: 0)?.afterSeq, "First call has no cursor")
+        XCTAssertEqual(streamCall(provider, at: 1)?.afterSeq, 6, "Reconnect must resume from last applied seq")
     }
 
     func testReconnectsAfterMidStreamNetworkError() async {
@@ -368,7 +386,7 @@ final class DevToolsCLITransportReconnectTests: XCTestCase {
         let ok = await waitFor { store.tree?.findNode(byId: 11) != nil }
         XCTAssertTrue(ok, "Post-reconnect delta must apply on top of pre-error state")
         XCTAssertEqual(provider.streamCalls.count, 2)
-        XCTAssertEqual(provider.streamCalls[1].afterSeq, 2,
+        XCTAssertEqual(streamCall(provider, at: 1)?.afterSeq, 2,
             "Reconnect must use the last applied seq (2), not start over")
         XCTAssertEqual(store.seq, 3)
     }
@@ -514,7 +532,7 @@ final class DevToolsCLITransportReconnectTests: XCTestCase {
 
         let ok = await waitFor { provider.streamCalls.count >= 2 }
         XCTAssertTrue(ok, "Mismatched baseSeq must trigger a resync stream call")
-        XCTAssertNil(provider.streamCalls[1].afterSeq, "Resync must NOT pass afterSeq")
+        XCTAssertNil(streamCall(provider, at: 1)?.afterSeq, "Resync must NOT pass afterSeq")
         XCTAssertNil(store.tree?.findNode(byId: 7), "The bad delta must not have applied")
     }
 

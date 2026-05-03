@@ -33,6 +33,7 @@ final class StoreScrubTests: XCTestCase {
     func testReturnToLiveReappliesBufferedLatestTreeAndResubscribes() async {
         let provider = MockDevToolsStreamProvider()
         let store = DevToolsStore(streamProvider: provider)
+        defer { store.disconnect() }
 
         store.connect(runId: "run-test")
         await waitForStoreScrubCondition("initial stream was not started") {
@@ -56,8 +57,6 @@ final class StoreScrubTests: XCTestCase {
         await waitForStoreScrubCondition("return to live did not resubscribe") {
             provider.streamCallCount >= baselineStreamCalls + 1
         }
-
-        store.disconnect()
     }
 
     func testStreamEventsBufferedInHistoricalModeThenAppliedOnReturnToLive() async {

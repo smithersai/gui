@@ -204,6 +204,11 @@ class DevToolsStore: ObservableObject {
         self.toastSink = toastSink
     }
 
+    deinit {
+        streamTask?.cancel()
+        staleBannerTask?.cancel()
+    }
+
     // MARK: - Connect / Disconnect
 
     func connect(runId: String) {
@@ -594,17 +599,22 @@ class DevToolsStore: ObservableObject {
 
     private func startStream(runId: String, afterSeq: Int?) {
         streamTask?.cancel()
-        streamTask = Task { [weak self] in
-            guard let self, let provider = self.streamProvider else { return }
+        guard let provider = streamProvider else { return }
 
-            let stream = provider.streamDevTools(runId: runId, afterSeq: afterSeq)
+        streamTask = Task { [weak self, provider] in
+            let stream = await MainActor.run {
+                provider.streamDevTools(runId: runId, afterSeq: afterSeq)
+            }
 
             do {
-                await MainActor.run { self.connectionState = .connecting }
+                await MainActor.run { [weak self] in
+                    self?.connectionState = .connecting
+                }
 
                 for try await event in stream {
                     guard !Task.isCancelled else { return }
-                    await MainActor.run {
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
                         if case .connecting = self.connectionState {
                             self.connectionState = .streaming
                         }
@@ -613,11 +623,15 @@ class DevToolsStore: ObservableObject {
                 }
 
                 guard !Task.isCancelled else { return }
-                self.handleStreamEnd(runId: runId)
+                await MainActor.run { [weak self] in
+                    self?.handleStreamEnd(runId: runId)
+                }
 
             } catch {
                 guard !Task.isCancelled else { return }
-                self.handleStreamError(error, runId: runId)
+                await MainActor.run { [weak self] in
+                    self?.handleStreamError(error, runId: runId)
+                }
             }
         }
     }
