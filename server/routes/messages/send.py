@@ -89,6 +89,7 @@ async def send_message_route(
                 model_id=model_id,
                 provider_id=provider_id,
                 reasoning_effort=reasoning_effort,
+                tools=request.tools,
                 pipeline=pipeline,
             ):
                 yield {

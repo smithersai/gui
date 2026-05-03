@@ -272,12 +272,62 @@ async def test_specific_file_search(sample_python_files):
     file_path = sample_python_files / "simple.py"
     result = await grep(
         pattern="def",
-        path=str(file_path)
+        path=str(file_path),
+        working_dir=str(sample_python_files),
     )
 
     assert result["success"] is True
     assert len(result["matches"]) >= 2
     assert all("simple.py" in m["path"] for m in result["matches"])
+
+
+@pytest.mark.asyncio
+async def test_specific_relative_file_search_stays_in_working_dir(sample_python_files):
+    """Test searching a relative path resolves inside working_dir."""
+    result = await grep(
+        pattern="def",
+        path="simple.py",
+        working_dir=str(sample_python_files),
+    )
+
+    assert result["success"] is True
+    assert len(result["matches"]) >= 2
+    assert all("simple.py" in m["path"] for m in result["matches"])
+
+
+@pytest.mark.asyncio
+async def test_specific_absolute_file_inside_working_dir_allowed(sample_python_files):
+    """Test searching an absolute path is allowed when contained by working_dir."""
+    file_path = sample_python_files / "simple.py"
+    result = await grep(
+        pattern="def",
+        path=str(file_path),
+        working_dir=str(sample_python_files),
+    )
+
+    assert result["success"] is True
+    assert len(result["matches"]) >= 2
+    assert all("simple.py" in m["path"] for m in result["matches"])
+
+
+@pytest.mark.asyncio
+async def test_specific_absolute_file_outside_working_dir_rejected(tmp_path):
+    """Test absolute paths outside working_dir are rejected before ripgrep runs."""
+    working_dir = tmp_path / "workspace"
+    outside_dir = tmp_path / "outside"
+    working_dir.mkdir()
+    outside_dir.mkdir()
+    outside_file = outside_dir / "secret.py"
+    outside_file.write_text("def secret():\n    return True\n")
+
+    result = await grep(
+        pattern="secret",
+        path=str(outside_file),
+        working_dir=str(working_dir),
+    )
+
+    assert result["success"] is False
+    assert "current working directory" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -424,6 +474,7 @@ async def test_grep_with_all_options(sample_python_files):
         multiline=True,
         case_insensitive=True,
         max_count=1,
+        working_dir=str(sample_python_files),
     )
 
     assert result["success"] is True

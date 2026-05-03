@@ -49,7 +49,7 @@ def mark_file_read(path: str) -> None:
         tracker.mark_read(path)
     except RuntimeError:
         # No session ID set - skip tracking (for backwards compatibility)
-        pass
+        return
 
 
 def check_file_writable(path: str) -> None:
@@ -80,7 +80,7 @@ def check_file_writable(path: str) -> None:
         tracker.assert_not_modified(path)
     except RuntimeError:
         # No session ID set - skip enforcement (for backwards compatibility)
-        pass
+        return
 
 
 def mark_file_written(path: str) -> None:
@@ -100,7 +100,7 @@ def mark_file_written(path: str) -> None:
         tracker.mark_written(path)
     except RuntimeError:
         # No session ID set - skip tracking (for backwards compatibility)
-        pass
+        return
 
 
 def clear_file_tracking(path: str) -> None:
@@ -116,4 +116,4 @@ def clear_file_tracking(path: str) -> None:
         tracker.clear_file(path)
     except RuntimeError:
         # No session ID set - skip (for backwards compatibility)
-        pass
+        return

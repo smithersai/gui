@@ -98,6 +98,7 @@ async def send_message(
     model_id: str = "default",
     provider_id: str = "default",
     reasoning_effort: str | None = None,
+    tools: dict[str, bool] | None = None,
     pipeline: PluginPipeline | None = None,
 ) -> AsyncGenerator[Event, None]:
     """
@@ -115,6 +116,7 @@ async def send_message(
         model_id: Model ID for metadata
         provider_id: Provider ID for metadata
         reasoning_effort: Optional reasoning effort level (minimal, low, medium, high)
+        tools: Optional request-level tool configuration
         pipeline: Optional plugin pipeline for hook execution
 
     Yields:
@@ -143,6 +145,8 @@ async def send_message(
         },
         "parts": [],
     }
+    if tools is not None:
+        user_msg["info"]["tools"] = tools
 
     # Add text parts from request
     for part in parts:
@@ -245,6 +249,7 @@ async def send_message(
                 session_id=session_id,
                 model_id=model_id,
                 reasoning_effort=reasoning_effort,
+                tools=tools,
             ):
                 event_type = getattr(event, "event_type", "text")
 

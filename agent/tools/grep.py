@@ -11,6 +11,8 @@ import os
 import subprocess
 from typing import Any
 
+from .edit import resolve_and_validate_path
+
 # Constants
 DEFAULT_TIMEOUT_SECONDS = 30
 MAX_COUNT_DEFAULT = None
@@ -100,6 +102,16 @@ async def grep(
         - Use head_limit for pagination instead of getting all results
         - Keep patterns as specific as possible
     """
+    cwd = working_dir or os.getcwd()
+    search_path = path
+    if search_path is not None:
+        search_path, path_error = resolve_and_validate_path(search_path, cwd)
+        if path_error:
+            return {
+                "success": False,
+                "error": path_error,
+            }
+
     # Get ripgrep path
     rg_path = "rg"  # Assume ripgrep is in PATH
 
@@ -140,8 +152,8 @@ async def grep(
     args.append(pattern)
 
     # Add path to search
-    if path:
-        args.append(path)
+    if search_path:
+        args.append(search_path)
     elif working_dir:
         args.append(working_dir)
 
@@ -152,7 +164,7 @@ async def grep(
             capture_output=True,
             text=True,
             timeout=DEFAULT_TIMEOUT_SECONDS,
-            cwd=working_dir or os.getcwd(),
+            cwd=cwd,
         )
 
         # Handle no matches (exit code 1)

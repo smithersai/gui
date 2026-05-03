@@ -21,9 +21,11 @@ This module implements read-before-write enforcement to prevent blind file overw
    - `mark_file_read()` - Records a file as read
    - `check_file_writable()` - Enforces read-before-write rules
 
-4. **Integration Points** (`wrapper.py`)
+4. **Integration Points** (`wrapper.py`, `read_file_safe.py`)
    - Sets session context before agent execution
-   - Can intercept tool calls for enforcement (optional)
+   - Rejects unsafe MCP write-like tool calls before execution
+   - Records successful MCP read and write results
+   - Provides a safe direct read helper with path containment and truncation
 
 ## How It Works
 
@@ -47,84 +49,15 @@ When a file is written:
 
 New files (non-existent paths) can be written without requiring a read.
 
-## Current Implementation Status
-
-### ✅ Completed
+## Implementation Status
 
 - FileTimeTracker class with full path normalization
 - Session-scoped tracking infrastructure
-- Helper functions for marking reads and checking writes
-- Comprehensive test suite (20 tests, all passing)
+- Helper functions for marking reads, writes, and checking write safety
 - Context variable for session tracking
 - Session ID propagation in wrapper
-
-### ⚠️ Partial / In Progress
-
-- **MCP Tool Interception**: The wrapper sets session context but doesn't yet intercept MCP filesystem calls
-- **Custom File Tools**: Safe file operation tools exist but aren't registered with the agent yet
-
-### 🔄 Integration Options
-
-There are two approaches to complete the integration:
-
-#### Option 1: Replace MCP Filesystem Server (Recommended)
-
-Remove the MCP filesystem server and use custom tools instead:
-
-```python
-# In create_agent_with_mcp():
-
-# Don't add filesystem MCP server
-mcp_servers = [shell_server]  # Only shell, no filesystem
-
-# Register custom tools with session dependency
-@agent.tool_plain
-async def read_file(path: str, session_id: str = "default") -> str:
-    from .tools.filesystem import set_current_session_id, mark_file_read
-    set_current_session_id(session_id)
-
-    with open(path, 'r') as f:
-        content = f.read()
-
-    mark_file_read(path)
-    return content
-
-@agent.tool_plain
-async def write_file(path: str, content: str, session_id: str = "default") -> str:
-    from .tools.filesystem import set_current_session_id, check_file_writable, mark_file_read
-    set_current_session_id(session_id)
-
-    check_file_writable(path)  # Enforce safety
-
-    with open(path, 'w') as f:
-        f.write(content)
-
-    mark_file_read(path)  # Update tracking
-    return f"Successfully wrote {len(content)} bytes"
-```
-
-**Pros:**
-- Full control over safety enforcement
-- No dependency on external MCP server behavior
-- Clear error messages
-- Complete integration
-
-**Cons:**
-- Must implement all file operations ourselves
-- Lose MCP server features (search_files, etc.)
-
-#### Option 2: MCP Server Wrapper/Proxy
-
-Create a proxy MCP server that wraps the filesystem server and adds safety checks.
-
-**Pros:**
-- Keeps all MCP filesystem features
-- Transparent to agent code
-
-**Cons:**
-- More complex implementation
-- Requires MCP protocol knowledge
-- Harder to debug
+- MCP file-tool enforcement in wrapper for read, write, edit, and move operations
+- Safe direct read helper with working-directory containment and line truncation
 
 ## Usage Examples
 
@@ -165,7 +98,11 @@ async with create_mcp_wrapper(model_id="claude-sonnet-4") as wrapper:
 Run the test suite:
 
 ```bash
-pytest tests/test_agent/test_tools/test_file_safety.py -v
+poetry run python -m pytest \
+  legacy-agent-tests/test_agent/test_tools/test_file_safety.py \
+  legacy-agent-tests/test_agent/test_wrapper_file_safety.py \
+  legacy-agent-tests/test_agent/test_truncation.py \
+  -q
 ```
 
 Test coverage:
@@ -174,6 +111,8 @@ Test coverage:
 - Session isolation
 - External modification detection
 - New file creation
+- Wrapper-level MCP read/write tracking
+- Direct safe read path containment and truncation
 - Edge cases (permissions, rapid cycles, etc.)
 
 ## Error Messages
@@ -191,15 +130,6 @@ You MUST use the Read tool first before writing to existing files
 ValueError: File /path/to/file.txt has been modified since it was last read.
 Please use the Read tool again to get the latest contents
 ```
-
-## Future Enhancements
-
-1. **Conflict Resolution**: Provide diff when external modifications detected
-2. **Auto-Retry**: Automatically re-read and retry on external modification
-3. **Batch Operations**: Track multiple files in a single operation
-4. **TTL for Reads**: Expire read timestamps after a configurable duration
-5. **Bypass Mode**: Allow disabling safety for specific tools or sessions
-6. **Audit Log**: Track all file operations for debugging
 
 ## Design Decisions
 
@@ -226,7 +156,8 @@ ContextVars are async-safe and automatically propagate through async call chains
 
 - `agent/tools/file_time.py` - FileTimeTracker implementation
 - `agent/tools/filesystem.py` - Helper functions and safe file operations
-- `agent/tools/safe_file_ops.py` - Pre-built safe file tools (not yet integrated)
+- `agent/tools/read_file_safe.py` - Safe direct read helper and line truncation
 - `core/state.py` - Session state management
 - `agent/wrapper.py` - Session context propagation
-- `tests/test_agent/test_tools/test_file_safety.py` - Test suite
+- `legacy-agent-tests/test_agent/test_tools/test_file_safety.py` - Tracker test suite
+- `legacy-agent-tests/test_agent/test_wrapper_file_safety.py` - Wrapper enforcement tests

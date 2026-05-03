@@ -14,7 +14,14 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from .edit import edit as edit_impl, resolve_and_validate_path
+from .edit import (
+    DEFAULT_FILE_MODE,
+    ERROR_FILE_NOT_FOUND,
+    ERROR_PATH_IS_DIRECTORY,
+    create_diff,
+    replace,
+    resolve_and_validate_path,
+)
 
 # Error messages (matching Go implementation)
 ERROR_FILE_PATH_REQUIRED = "file_path parameter is required"
@@ -171,49 +178,116 @@ async def multiedit(
     except ValueError:
         rel_path = abs_file_path
 
-    # Execute edits sequentially
+    original_exists = os.path.exists(abs_file_path)
+    if original_exists and os.path.isdir(abs_file_path):
+        return {
+            "success": False,
+            "file_path": file_path,
+            "edit_count": 0,
+            "error": ERROR_PATH_IS_DIRECTORY.format(abs_file_path),
+        }
+
+    if not original_exists and operations[0].old_string != "":
+        return {
+            "success": False,
+            "file_path": file_path,
+            "edit_count": 0,
+            "error": ERROR_FILE_NOT_FOUND.format(abs_file_path),
+        }
+
+    if original_exists:
+        try:
+            with open(abs_file_path, "r", encoding="utf-8") as f:
+                content_original = f.read()
+        except OSError as e:
+            return {
+                "success": False,
+                "file_path": file_path,
+                "edit_count": 0,
+                "error": f"failed to read file: {e}",
+            }
+
+        try:
+            file_mode = os.stat(abs_file_path).st_mode
+        except OSError:
+            file_mode = DEFAULT_FILE_MODE
+    else:
+        content_original = ""
+        file_mode = DEFAULT_FILE_MODE
+
+    # Simulate every edit before touching disk. Empty old_string mirrors the Edit
+    # tool's file-creation behavior by replacing the whole in-memory content.
+    content_current = content_original
     results: list[dict[str, Any]] = []
-
     for i, operation in enumerate(operations):
-        # Execute the edit using the Edit tool
-        result = await edit_impl(
-            file_path=abs_file_path,
-            old_string=operation.old_string,
-            new_string=operation.new_string,
-            replace_all=operation.replace_all,
-            working_dir=working_dir,
-        )
+        content_before = content_current
 
-        if not result.get("success"):
-            # Edit failed - return error with index
+        if operation.old_string == "":
+            content_current = operation.new_string
+            replace_error = None
+        else:
+            content_current, replace_error = replace(
+                content_current,
+                operation.old_string,
+                operation.new_string,
+                operation.replace_all,
+            )
+
+        if replace_error:
             return {
                 "success": False,
                 "file_path": rel_path,
-                "edit_count": i,
-                "error": ERROR_EDIT_FAILED.format(i + 1, result.get("error", "unknown")),
+                "edit_count": 0,
+                "error": ERROR_EDIT_FAILED.format(i + 1, replace_error),
                 "metadata": {
                     "results": results,
                     "failed_at": i,
                 },
             }
 
-        # Collect result metadata
         results.append({
             "index": i,
             "success": True,
-            "diff": result.get("diff", ""),
-            "metadata": result.get("metadata", {}),
+            "diff": create_diff(rel_path, content_before, content_current),
+            "metadata": {
+                "filePath": abs_file_path,
+                "created": not original_exists and i == 0,
+            },
         })
 
+    parent_dir = os.path.dirname(abs_file_path)
+    if parent_dir and not os.path.exists(parent_dir):
+        try:
+            os.makedirs(parent_dir, exist_ok=True)
+        except OSError as e:
+            return {
+                "success": False,
+                "file_path": file_path,
+                "edit_count": 0,
+                "error": f"failed to create directory: {e}",
+            }
+
+    try:
+        with open(abs_file_path, "w", encoding="utf-8") as f:
+            f.write(content_current)
+        if original_exists:
+            os.chmod(abs_file_path, file_mode)
+    except OSError as e:
+        return {
+            "success": False,
+            "file_path": file_path,
+            "edit_count": 0,
+            "error": f"failed to write file: {e}",
+        }
+
     # All edits successful
-    # Use the output from the last edit result
-    last_output = results[-1]["diff"] if results else ""
+    final_diff = create_diff(rel_path, content_original, content_current)
 
     return {
         "success": True,
         "file_path": rel_path,
         "edit_count": len(operations),
-        "output": last_output,
+        "output": final_diff,
         "metadata": {
             "results": [r.get("metadata", {}) for r in results],
         },

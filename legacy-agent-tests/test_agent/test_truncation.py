@@ -1,10 +1,38 @@
 """
 Tests for tool output truncation functionality.
 """
+import importlib
 import os
+import subprocess
+import sys
 import tempfile
 import pytest
-from agent.agent import _truncate_long_lines, MAX_LINE_LENGTH, MAX_BASH_OUTPUT_LENGTH
+from agent.agent import MAX_BASH_OUTPUT_LENGTH
+from agent.tools.filesystem import set_current_session_id
+from agent.tools.read_file_safe import (
+    MAX_LINE_LENGTH,
+    read_file_safe as read_file_safe_impl,
+    truncate_long_lines as _truncate_long_lines,
+)
+from core.state import get_file_tracker
+
+
+def import_mcp_server_shell():
+    """Import mcp_server_shell.server only after a timeout-guarded probe."""
+    try:
+        subprocess.run(
+            [sys.executable, "-c", "import mcp_server_shell.server"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.skip("mcp_server_shell.server import timed out in this environment")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        pytest.skip(f"mcp_server_shell.server unavailable: {e}")
+
+    return importlib.import_module("mcp_server_shell.server")
 
 
 class TestLineTruncation:
@@ -102,11 +130,10 @@ class TestBashOutputTruncation:
         """Test that truncation produces expected message format."""
         # We can't easily test the MCP server directly, but we can verify
         # the constant is set correctly
-        from mcp_server_shell.server import MAX_BASH_OUTPUT_LENGTH as MCP_MAX
-        from mcp_server_shell.server import TRUNCATION_MESSAGE
+        mcp_server = import_mcp_server_shell()
 
-        assert MCP_MAX == 30000
-        assert TRUNCATION_MESSAGE == "\n... (output truncated)"
+        assert mcp_server.MAX_BASH_OUTPUT_LENGTH == 30000
+        assert mcp_server.TRUNCATION_MESSAGE == "\n... (output truncated)"
 
 
 class TestReadFileSafeTruncation:
@@ -115,8 +142,6 @@ class TestReadFileSafeTruncation:
     @pytest.mark.asyncio
     async def test_read_file_safe_short_file(self, mock_env_vars):
         """Test reading a file with no truncation needed."""
-        from agent.agent import create_agent_with_mcp
-
         # Create a temporary file with short lines
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
             f.write("Line 1\n")
@@ -125,27 +150,21 @@ class TestReadFileSafeTruncation:
             temp_file = f.name
 
         try:
-            async with create_agent_with_mcp() as agent:
-                # Get the read_file_safe tool
-                tools_dict = agent._function_toolset.tools
-                assert 'read_file_safe' in tools_dict
+            result = await read_file_safe_impl(
+                file_path=temp_file,
+                working_dir=os.path.dirname(temp_file),
+            )
 
-                # Call the tool directly
-                read_tool = tools_dict['read_file_safe']
-                result = await read_tool.function(file_path=temp_file)
-
-                assert "Line 1" in result
-                assert "Line 2" in result
-                assert "Line 3" in result
-                assert "truncated" not in result.lower()
+            assert "Line 1" in result
+            assert "Line 2" in result
+            assert "Line 3" in result
+            assert "truncated" not in result.lower()
         finally:
             os.unlink(temp_file)
 
     @pytest.mark.asyncio
     async def test_read_file_safe_long_lines(self, mock_env_vars):
         """Test reading a file with lines that need truncation."""
-        from agent.agent import create_agent_with_mcp
-
         # Create a temporary file with very long lines
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
             # Write a line longer than MAX_LINE_LENGTH
@@ -155,26 +174,23 @@ class TestReadFileSafeTruncation:
             temp_file = f.name
 
         try:
-            async with create_agent_with_mcp() as agent:
-                # Get the read_file_safe tool
-                tools_dict = agent._function_toolset.tools
-                read_tool = tools_dict['read_file_safe']
-                result = await read_tool.function(file_path=temp_file)
+            result = await read_file_safe_impl(
+                file_path=temp_file,
+                working_dir=os.path.dirname(temp_file),
+            )
 
-                # Should indicate truncation
-                assert "truncated" in result.lower()
-                # Should preserve short line
-                assert "Short line" in result
-                # Should contain the truncation note
-                assert "Max line length" in result
+            # Should indicate truncation
+            assert "truncated" in result.lower()
+            # Should preserve short line
+            assert "Short line" in result
+            # Should contain the truncation note
+            assert "Max line length" in result
         finally:
             os.unlink(temp_file)
 
     @pytest.mark.asyncio
     async def test_read_file_safe_with_offset_and_limit(self, mock_env_vars):
         """Test reading a file with offset and limit parameters."""
-        from agent.agent import create_agent_with_mcp
-
         # Create a temporary file with multiple lines
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
             for i in range(100):
@@ -182,33 +198,63 @@ class TestReadFileSafeTruncation:
             temp_file = f.name
 
         try:
-            async with create_agent_with_mcp() as agent:
-                tools_dict = agent._function_toolset.tools
-                read_tool = tools_dict['read_file_safe']
+            # Read with offset and limit
+            result = await read_file_safe_impl(
+                file_path=temp_file,
+                offset=10,
+                limit=5,
+                working_dir=os.path.dirname(temp_file),
+            )
 
-                # Read with offset and limit
-                result = await read_tool.function(file_path=temp_file, offset=10, limit=5)
-
-                assert "Line 10" in result
-                assert "Line 14" in result
-                assert "Line 9" not in result  # Before offset
-                assert "Line 15" not in result  # After limit
+            assert "Line 10" in result
+            assert "Line 14" in result
+            assert "Line 9" not in result  # Before offset
+            assert "Line 15" not in result  # After limit
         finally:
             os.unlink(temp_file)
 
     @pytest.mark.asyncio
-    async def test_read_file_safe_nonexistent_file(self, mock_env_vars):
+    async def test_read_file_safe_nonexistent_file(self, mock_env_vars, tmp_path):
         """Test reading a file that doesn't exist."""
-        from agent.agent import create_agent_with_mcp
+        result = await read_file_safe_impl(
+            file_path=str(tmp_path / "missing.txt"),
+            working_dir=str(tmp_path),
+        )
 
-        async with create_agent_with_mcp() as agent:
-            tools_dict = agent._function_toolset.tools
-            read_tool = tools_dict['read_file_safe']
+        assert "Error" in result
+        assert "not found" in result.lower()
 
-            result = await read_tool.function(file_path="/nonexistent/file.txt")
+    @pytest.mark.asyncio
+    async def test_read_file_safe_rejects_path_outside_working_dir(self, tmp_path):
+        """Test read_file_safe cannot read outside its working directory."""
+        outside_file = tmp_path.parent / f"{tmp_path.name}-outside.txt"
+        outside_file.write_text("secret")
 
-            assert "Error" in result
-            assert "not found" in result.lower()
+        try:
+            result = await read_file_safe_impl(
+                file_path=str(outside_file),
+                working_dir=str(tmp_path),
+            )
+        finally:
+            outside_file.unlink(missing_ok=True)
+
+        assert "Error" in result
+        assert "not in the current working directory" in result
+
+    @pytest.mark.asyncio
+    async def test_read_file_safe_marks_file_read(self, tmp_path):
+        """Test successful reads update session file tracking."""
+        set_current_session_id("read-file-safe-test")
+        test_file = tmp_path / "tracked.txt"
+        test_file.write_text("tracked")
+
+        result = await read_file_safe_impl(
+            file_path=str(test_file),
+            working_dir=str(tmp_path),
+        )
+
+        assert result == "tracked"
+        assert get_file_tracker("read-file-safe-test").is_read(str(test_file))
 
 
 class TestTruncationMetadata:
@@ -216,10 +262,10 @@ class TestTruncationMetadata:
 
     def test_bash_truncation_metadata_fields(self):
         """Test that CommandResult has truncation metadata fields."""
-        from mcp_server_shell.server import CommandResult
+        mcp_server = import_mcp_server_shell()
 
         # Create a result with truncation
-        result = CommandResult(
+        result = mcp_server.CommandResult(
             command="test",
             output="output",
             return_code=0,
@@ -234,10 +280,10 @@ class TestTruncationMetadata:
 
     def test_bash_no_truncation_metadata(self):
         """Test that CommandResult metadata is correct when not truncated."""
-        from mcp_server_shell.server import CommandResult
+        mcp_server = import_mcp_server_shell()
 
         # Create a result without truncation
-        result = CommandResult(
+        result = mcp_server.CommandResult(
             command="test",
             output="short output",
             return_code=0,

@@ -237,12 +237,8 @@ func runAgent(ctx context.Context, client *agent.Client, prompt string, flags *E
 		},
 	}
 
-	// NOTE: The --no-tools flag is currently not implemented.
-	// The backend API accepts the tools parameter but does not process it.
-	// To disable tools, you would need to configure the agent on the backend side.
-	// TODO: Implement tools configuration support in the backend (core/messages.py, agent/agent.py)
 	if flags.noTools {
-		formatter.StatusMessage("Warning: --no-tools flag is not currently supported by the backend")
+		req.Tools = map[string]bool{"*": false}
 	}
 
 	// Set model if specified

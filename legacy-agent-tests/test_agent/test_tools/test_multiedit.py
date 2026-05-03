@@ -471,7 +471,10 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_partial_failure_reporting(self, temp_dir, sample_file):
-        """Test that partial failures report which edit failed."""
+        """Test that partial failures report which edit failed without writing."""
+        with open(sample_file) as f:
+            original_content = f.read()
+
         result = await multiedit(
             sample_file,
             [
@@ -482,8 +485,11 @@ class TestErrorHandling:
         )
         assert not result["success"]
         assert "edit 2 failed" in result["error"]
-        # First edit should have been applied
-        assert result.get("edit_count", 0) == 1
+        assert result.get("edit_count", 0) == 0
+
+        with open(sample_file) as f:
+            current_content = f.read()
+        assert current_content == original_content
 
 
 # --- Atomicity Tests ---
@@ -539,6 +545,25 @@ class TestAtomicity:
         with open(sample_file) as f:
             current_content = f.read()
         assert current_content == original_content
+
+    @pytest.mark.asyncio
+    async def test_create_file_rolls_back_when_later_edit_fails(self, temp_dir):
+        """Test that a failed operation does not leave a new file behind."""
+        new_file = os.path.join(temp_dir, "subdir", "new_file.txt")
+
+        result = await multiedit(
+            new_file,
+            [
+                {"old_string": "", "new_string": "draft content"},
+                {"old_string": "missing", "new_string": "replacement"},
+            ],
+            temp_dir,
+        )
+
+        assert not result["success"]
+        assert "edit 2 failed" in result["error"]
+        assert not os.path.exists(new_file)
+        assert not os.path.exists(os.path.dirname(new_file))
 
 
 # --- Path Resolution Tests ---

@@ -4,6 +4,7 @@ Pydantic AI Agent configuration using MCP servers for tools.
 Uses external MCP servers for shell and filesystem operations,
 minimizing custom tool code that needs to be maintained.
 """
+from __future__ import annotations
 
 import json
 import os
@@ -12,9 +13,6 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 import httpx
-from pydantic_ai import Agent, WebSearchTool
-from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 from .browser_client import get_browser_client, is_browser_available
 from .task_executor import TaskExecutor
@@ -31,6 +29,12 @@ from .tools.pty_exec import unified_exec as unified_exec_impl
 from .tools.pty_exec import write_stdin as write_stdin_impl
 from .tools.pty_exec import close_pty_session as close_pty_session_impl
 from .tools.pty_exec import list_pty_sessions as list_pty_sessions_impl
+from .tools.read_file_safe import (
+    DEFAULT_READ_LIMIT,
+    MAX_LINE_LENGTH,
+    read_file_safe as read_file_safe_impl,
+    truncate_long_lines as _truncate_long_lines,
+)
 from .tools.web_fetch import fetch_url
 from core.pty_manager import PTYManager
 
@@ -47,7 +51,8 @@ def _get_duckduckgo_tool():
             _duckduckgo_search_tool = False  # Mark as unavailable
     return _duckduckgo_search_tool if _duckduckgo_search_tool else None
 
-from config import DEFAULT_MODEL, load_system_prompt_markdown
+from config.defaults import DEFAULT_MODEL
+from config.markdown_loader import load_system_prompt_markdown
 from .registry import get_agent_config
 
 # Constants
@@ -58,48 +63,18 @@ MAX_OUTPUT_TOKENS = 64000  # Max output tokens for Claude models
 
 # Tool output truncation constants
 MAX_BASH_OUTPUT_LENGTH = 30000
-MAX_LINE_LENGTH = 2000
-DEFAULT_READ_LIMIT = 2000
 
 
-def _truncate_long_lines(content: str, max_line_length: int = MAX_LINE_LENGTH) -> tuple[str, bool, int]:
-    """Truncate long lines in content to prevent context overflow.
-
-    Args:
-        content: The text content to process
-        max_line_length: Maximum allowed length per line
-
-    Returns:
-        Tuple of (truncated_content, was_truncated, original_length)
-    """
-    lines = content.splitlines(keepends=True)
-    truncated_lines = []
-    was_truncated = False
-    original_length = len(content)
-
-    for line in lines:
-        # Check line length without the newline character
-        line_without_newline = line.rstrip('\r\n')
-        if len(line_without_newline) > max_line_length:
-            # Truncate the line and add indicator
-            truncated_lines.append(line_without_newline[:max_line_length] + "...\n")
-            was_truncated = True
-        else:
-            truncated_lines.append(line)
-
-    return ''.join(truncated_lines), was_truncated, original_length
-
-
-def get_anthropic_model_settings(enable_thinking: bool = True) -> AnthropicModelSettings:
+def get_anthropic_model_settings(enable_thinking: bool = True) -> dict[str, Any]:
     """Get Anthropic model settings with optional extended thinking.
 
     Args:
         enable_thinking: Whether to enable extended thinking (default True)
 
     Returns:
-        AnthropicModelSettings configured for the agent
+        Anthropic model settings configured for the agent
     """
-    settings: AnthropicModelSettings = {
+    settings: dict[str, Any] = {
         'max_tokens': MAX_OUTPUT_TOKENS,  # Required to be > thinking budget
     }
 
@@ -189,7 +164,7 @@ def _build_system_prompt(
     return base_prompt
 
 
-def create_mcp_servers(working_dir: str | None = None) -> list[MCPServerStdio]:
+def create_mcp_servers(working_dir: str | None = None) -> list[Any]:
     """
     Create MCP server instances for tools.
 
@@ -199,6 +174,8 @@ def create_mcp_servers(working_dir: str | None = None) -> list[MCPServerStdio]:
     Returns:
         List of MCP server configurations
     """
+    from pydantic_ai.mcp import MCPServerStdio
+
     cwd = working_dir or os.getcwd()
 
     servers = []
@@ -240,7 +217,7 @@ async def create_agent_with_mcp(
     model_id: str = DEFAULT_MODEL,
     agent_name: str = "build",
     working_dir: str | None = None,
-) -> AsyncIterator[Agent]:
+) -> AsyncIterator[Any]:
     """
     Create and configure a Pydantic AI agent with MCP tools.
 
@@ -261,6 +238,8 @@ async def create_agent_with_mcp(
     agent_config = get_agent_config(agent_name)
     if agent_config is None:
         raise ValueError(f"Unknown agent: {agent_name}")
+
+    from pydantic_ai import Agent, WebSearchTool
 
     # Create MCP servers
     mcp_servers = create_mcp_servers(working_dir)
@@ -539,32 +518,13 @@ async def create_agent_with_mcp(
         Returns:
             File content with long lines truncated, or error message
         """
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                # Read all lines
-                all_lines = f.readlines()
-
-                # Apply offset and limit
-                lines_to_read = all_lines[offset:offset + limit] if limit > 0 else all_lines[offset:]
-
-                # Join lines and check for truncation
-                content = ''.join(lines_to_read)
-                truncated_content, was_truncated, original_length = _truncate_long_lines(content)
-
-                # Add metadata if truncated
-                if was_truncated:
-                    truncated_content += f"\n\n[Note: Some lines were truncated. Original content length: {original_length} chars, Max line length: {MAX_LINE_LENGTH} chars]"
-
-                return truncated_content
-
-        except FileNotFoundError:
-            return f"Error: File not found: {file_path}"
-        except PermissionError:
-            return f"Error: Permission denied: {file_path}"
-        except UnicodeDecodeError:
-            return f"Error: File is not a text file or uses unsupported encoding: {file_path}"
-        except Exception as e:
-            return f"Error reading file: {str(e)}"
+        cwd = working_dir or os.getcwd()
+        return await read_file_safe_impl(
+            file_path=file_path,
+            offset=offset,
+            limit=limit,
+            working_dir=cwd,
+        )
 
     # Custom web fetch tool with size limits
     @agent.tool_plain
@@ -750,7 +710,8 @@ async def create_agent_with_mcp(
             login: Use login shell
             yield_time_ms: Time to wait for output before returning (default 100ms)
             max_output_tokens: Maximum output tokens to capture (default 10000)
-            timeout_ms: Command timeout in milliseconds (not implemented yet)
+            timeout_ms: Command timeout in milliseconds. When set, the command
+                must finish before the deadline or it is terminated.
 
         Returns:
             JSON string with:
@@ -967,7 +928,7 @@ def create_agent(
     api_key: str | None = None,
     agent_name: str = "build",
     working_dir: str | None = None,
-) -> Agent:
+) -> Any:
     """
     Create a simple agent WITHOUT MCP tools (for backwards compatibility).
 
@@ -986,6 +947,8 @@ def create_agent(
     agent_config = get_agent_config(agent_name)
     if agent_config is None:
         raise ValueError(f"Unknown agent: {agent_name}")
+
+    from pydantic_ai import Agent, WebSearchTool
 
     # Determine search tool based on model
     use_anthropic = _is_anthropic_model(model_id)
