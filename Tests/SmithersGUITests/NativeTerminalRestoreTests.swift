@@ -193,7 +193,8 @@ final class NativeTerminalRestoreTests: XCTestCase {
         defer { context.cleanup() }
 
         let controller = SessionController(socketPathOverride: daemon.socketPath)
-        let created = try await controller.createSession(
+        let created = try await createSessionOrSkip(
+            controller: controller,
             title: "Codex",
             shell: "/bin/sh",
             command: "while :; do sleep 1; done",
@@ -289,7 +290,8 @@ final class NativeTerminalRestoreTests: XCTestCase {
         defer { context.cleanup() }
 
         let controller = SessionController(socketPathOverride: daemon.socketPath)
-        let created = try await controller.createSession(
+        let created = try await createSessionOrSkip(
+            controller: controller,
             title: "Codex",
             shell: "/bin/sh",
             command: "while :; do sleep 1; done",
@@ -383,6 +385,9 @@ final class NativeTerminalRestoreTests: XCTestCase {
                     return sessionId
                 }
             case .unavailable(let message):
+                if let message, message.contains("OpenPtyFailed") {
+                    throw XCTSkip("Native PTY allocation is unavailable in this environment: \(message)")
+                }
                 throw NSError(
                     domain: "NativeTerminalRestoreTests",
                     code: 4,
@@ -398,6 +403,31 @@ final class NativeTerminalRestoreTests: XCTestCase {
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "timed out waiting for ready native session"]
         )
+    }
+
+    private func createSessionOrSkip(
+        controller: SessionController,
+        title: String?,
+        shell: String?,
+        command: String?,
+        cwd: String?,
+        env: [String: String]? = nil,
+        rows: UInt16,
+        cols: UInt16
+    ) async throws -> SessionInfo {
+        do {
+            return try await controller.createSession(
+                title: title,
+                shell: shell,
+                command: command,
+                cwd: cwd,
+                env: env,
+                rows: rows,
+                cols: cols
+            )
+        } catch SessionControllerError.rpcError(_, let message) where message.contains("OpenPtyFailed") {
+            throw XCTSkip("Native PTY allocation is unavailable in this environment: \(message)")
+        }
     }
 
     private func waitForUnavailableNativeSession(

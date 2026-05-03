@@ -38,20 +38,14 @@ final class ScrubberDebounceTests: XCTestCase {
         let lock = NSLock()
         var fireCount = 0
 
-        let producerDone = expectation(description: "producer done")
-        DispatchQueue.global().async {
-            for value in 0..<100 {
-                debouncer.schedule(frameNo: value) { _ in
-                    lock.lock()
-                    fireCount += 1
-                    lock.unlock()
-                }
-                Thread.sleep(forTimeInterval: 0.01)
+        for value in 0..<100 {
+            debouncer.schedule(frameNo: value) { _ in
+                lock.lock()
+                fireCount += 1
+                lock.unlock()
             }
-            producerDone.fulfill()
+            Thread.sleep(forTimeInterval: 0.01)
         }
-
-        wait(for: [producerDone], timeout: 3.0)
 
         let settle = expectation(description: "settle")
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {

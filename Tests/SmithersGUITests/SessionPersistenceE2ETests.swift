@@ -50,7 +50,8 @@ final class SessionPersistenceE2ETests: XCTestCase {
         let controller = SessionController(socketPathOverride: socketPath)
 
         // 1. Create a real PTY session running a shell loop so it stays alive.
-        let created = try await controller.createSession(
+        let created = try await createSessionOrSkip(
+            controller: controller,
             title: "persistence-probe",
             shell: "/bin/sh",
             command: "while :; do sleep 1; done",
@@ -143,7 +144,8 @@ final class SessionPersistenceE2ETests: XCTestCase {
         }
 
         let controller = SessionController(socketPathOverride: socketPath)
-        let created = try await controller.createSession(
+        let created = try await createSessionOrSkip(
+            controller: controller,
             title: "reattach-probe",
             shell: "/bin/sh",
             command: "printf 'REATTACH_READY\\n'; exec cat",
@@ -340,6 +342,31 @@ final class SessionPersistenceE2ETests: XCTestCase {
             code: 3,
             userInfo: [NSLocalizedDescriptionKey: "timed out waiting for state \(expectedState)"]
         )
+    }
+
+    private func createSessionOrSkip(
+        controller: SessionController,
+        title: String?,
+        shell: String?,
+        command: String?,
+        cwd: String?,
+        env: [String: String]? = nil,
+        rows: UInt16,
+        cols: UInt16
+    ) async throws -> SessionInfo {
+        do {
+            return try await controller.createSession(
+                title: title,
+                shell: shell,
+                command: command,
+                cwd: cwd,
+                env: env,
+                rows: rows,
+                cols: cols
+            )
+        } catch SessionControllerError.rpcError(_, let message) where message.contains("OpenPtyFailed") {
+            throw XCTSkip("Native PTY allocation is unavailable in this environment: \(message)")
+        }
     }
 }
 
