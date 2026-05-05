@@ -79,6 +79,7 @@ final class AppPreferenceKeysTests: XCTestCase {
             AppPreferenceKeys.externalAgentUnsafeFlagsEnabled,
             AppPreferenceKeys.browserSearchEngine,
             AppPreferenceKeys.shortcutCheatSheetFooterEnabled,
+            AppPreferenceKeys.defaultShellPath,
         ]
 
         XCTAssertEqual(Set(keys).count, keys.count)
@@ -169,6 +170,28 @@ final class ContentViewRoutingSourceTests: XCTestCase {
         )
     }
 
+    func testDefaultShellSettingIsExposedInSettings() throws {
+        let contentSource = try contentViewSource()
+        let sessionStoreSource = try sessionStoreSource()
+
+        XCTAssertTrue(
+            contentSource.contains("AppPreferenceKeys.defaultShellPath"),
+            "Expected Settings to read the default shell preference."
+        )
+        XCTAssertTrue(
+            contentSource.contains("settings.defaultShell.picker"),
+            "Expected Settings to expose a stable default shell picker."
+        )
+        XCTAssertTrue(
+            contentSource.contains("settings.defaultShell.customPath"),
+            "Expected Settings to expose a custom shell path field."
+        )
+        XCTAssertTrue(
+            sessionStoreSource.contains("TerminalShellPreference.resolvedShellPath(userDefaults: userDefaults)"),
+            "Expected new native sessions to use the configured default shell."
+        )
+    }
+
     private func detailRouterSource() throws -> String {
         let path = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -204,5 +227,21 @@ final class ContentViewRoutingSourceTests: XCTestCase {
             "Missing expected source file at \(shellURL.path)"
         )
         return try String(contentsOf: shellURL, encoding: .utf8)
+    }
+
+    private func sessionStoreSource() throws -> String {
+        let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let repoRoot = testsDir.deletingLastPathComponent().deletingLastPathComponent()
+        let sessionStoreURL = repoRoot
+            .appendingPathComponent("macos")
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("Smithers")
+            .appendingPathComponent("Smithers.SessionStore.swift")
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: sessionStoreURL.path),
+            "Missing expected source file at \(sessionStoreURL.path)"
+        )
+        return try String(contentsOf: sessionStoreURL, encoding: .utf8)
     }
 }

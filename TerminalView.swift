@@ -628,7 +628,7 @@ class TerminalSurfaceView: NSView {
 
         let launchCommand = command?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? command
-            : Smithers.Terminal.loginShellLaunchCommand()
+            : TerminalShellPreference.loginShellLaunchCommand()
         if let launchCommand {
             commandCString = strdup(launchCommand)
             surfaceCfg.command = UnsafePointer(commandCString!)

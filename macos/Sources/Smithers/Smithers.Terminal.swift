@@ -70,7 +70,10 @@ extension Smithers {
         static func loginShellLaunchCommand(
             environment: [String: String] = ProcessInfo.processInfo.environment
         ) -> String {
-            let shell = userConfiguredShell(environment: environment)
+            let shell = TerminalShellPreference.resolvedShellPath(
+                environment: environment,
+                detectedLoginShellPath: currentPasswdShell()
+            ) ?? userConfiguredShell(environment: environment)
             return "\(shellQuote(shell)) -l"
         }
 
@@ -81,6 +84,10 @@ extension Smithers {
             bundledPathEntries: [String]? = nil
         ) -> [String: String] {
             let shell = normalizedShell(explicitShell)
+                ?? TerminalShellPreference.resolvedShellPath(
+                    environment: baseEnvironment,
+                    detectedLoginShellPath: currentPasswdShell()
+                )
                 ?? userConfiguredShell(environment: baseEnvironment)
             let loginEnv = loginShellEnvironment(
                 shell: shell,

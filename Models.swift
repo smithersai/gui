@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if canImport(Darwin)
+import Darwin
+#endif
 
 enum AppPreferenceKeys {
     static let vimModeEnabled = "settings.vimModeEnabled"
@@ -8,6 +11,150 @@ enum AppPreferenceKeys {
     static let externalAgentUnsafeFlagsEnabled = "settings.externalAgentUnsafeFlagsEnabled"
     static let browserSearchEngine = "settings.browserSearchEngine"
     static let shortcutCheatSheetFooterEnabled = "settings.shortcutCheatSheetFooterEnabled"
+    static let defaultShellPath = "settings.defaultShellPath"
+}
+
+enum TerminalShellPreference {
+    static let systemDefaultValue = ""
+    static let commonShellPaths = [
+        "/bin/zsh",
+        "/bin/bash",
+        "/bin/sh",
+        "/opt/homebrew/bin/fish",
+        "/usr/local/bin/fish",
+        "/opt/homebrew/bin/nu",
+        "/usr/local/bin/nu",
+    ]
+
+    static func resolvedShellPath(
+        userDefaults: UserDefaults = .standard,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        detectedLoginShellPath: String? = loginShellPath()
+    ) -> String? {
+        resolvedShellPath(
+            configuredPath: userDefaults.string(forKey: AppPreferenceKeys.defaultShellPath),
+            environment: environment,
+            fileManager: fileManager,
+            detectedLoginShellPath: detectedLoginShellPath
+        )
+    }
+
+    static func resolvedShellPath(
+        configuredPath: String?,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        detectedLoginShellPath: String? = loginShellPath()
+    ) -> String? {
+        let candidates = [
+            normalizedPath(configuredPath),
+            normalizedPath(detectedLoginShellPath),
+            normalizedPath(environment["SHELL"]),
+        ] + commonShellPaths.map(Optional.some)
+
+        return firstUsablePath(in: candidates, fileManager: fileManager)
+    }
+
+    static func availableShellPaths(
+        userDefaults: UserDefaults = .standard,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        detectedLoginShellPath: String? = loginShellPath()
+    ) -> [String] {
+        let candidates = [
+            normalizedPath(userDefaults.string(forKey: AppPreferenceKeys.defaultShellPath)),
+            normalizedPath(detectedLoginShellPath),
+            normalizedPath(environment["SHELL"]),
+        ] + commonShellPaths.map(Optional.some)
+
+        var seen = Set<String>()
+        return candidates.compactMap { candidate in
+            guard let path = normalizedPath(candidate),
+                  isUsableShellPath(path, fileManager: fileManager),
+                  !seen.contains(path)
+            else {
+                return nil
+            }
+            seen.insert(path)
+            return path
+        }
+    }
+
+    static func isUsableShellPath(_ path: String, fileManager: FileManager = .default) -> Bool {
+        guard let normalized = normalizedPath(path),
+              normalized.hasPrefix("/")
+        else {
+            return false
+        }
+        return fileManager.isExecutableFile(atPath: normalized)
+    }
+
+    static func displayName(for path: String) -> String {
+        let name = shellName(for: path)
+        let displayPath = (path as NSString).abbreviatingWithTildeInPath
+        return "\(name) (\(displayPath))"
+    }
+
+    static func loginShellLaunchCommand(
+        userDefaults: UserDefaults = .standard,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default,
+        detectedLoginShellPath: String? = loginShellPath()
+    ) -> String? {
+        guard let shell = resolvedShellPath(
+            userDefaults: userDefaults,
+            environment: environment,
+            fileManager: fileManager,
+            detectedLoginShellPath: detectedLoginShellPath
+        ) else {
+            return nil
+        }
+        return "\(shellQuote(shell)) -l"
+    }
+
+    static func shellName(for path: String) -> String {
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        return name.isEmpty ? path : name
+    }
+
+    static func normalizedPath(_ path: String?) -> String? {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+        return (trimmed as NSString).expandingTildeInPath
+    }
+
+    private static func firstUsablePath(in candidates: [String?], fileManager: FileManager) -> String? {
+        var seen = Set<String>()
+        for candidate in candidates {
+            guard let path = normalizedPath(candidate),
+                  !seen.contains(path)
+            else {
+                continue
+            }
+            seen.insert(path)
+            if isUsableShellPath(path, fileManager: fileManager) {
+                return path
+            }
+        }
+        return nil
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    private static func loginShellPath() -> String? {
+        #if canImport(Darwin)
+        guard let passwd = getpwuid(getuid()),
+              let shell = passwd.pointee.pw_shell
+        else {
+            return nil
+        }
+        return normalizedPath(String(cString: shell))
+        #else
+        return nil
+        #endif
+    }
 }
 
 enum NeovimDetector {
@@ -17,11 +164,11 @@ enum NeovimDetector {
         "/usr/bin/nvim",
     ]
 
-    static func executablePath(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+    static func executablePath(environment: [String: String]? = nil) -> String? {
         Smithers.Terminal.neovimExecutablePath(environment: environment)
     }
 
-    static func isAvailable(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+    static func isAvailable(environment: [String: String]? = nil) -> Bool {
         Smithers.Terminal.neovimIsAvailable(environment: environment)
     }
 }
@@ -206,11 +353,11 @@ enum TmuxController {
         "/usr/bin/tmux",
     ]
 
-    static func executablePath(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+    static func executablePath(environment: [String: String]? = nil) -> String? {
         Smithers.Terminal.tmuxExecutablePath(environment: environment)
     }
 
-    static func isAvailable(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+    static func isAvailable(environment: [String: String]? = nil) -> Bool {
         Smithers.Terminal.tmuxIsAvailable(environment: environment)
     }
 
@@ -229,7 +376,7 @@ enum TmuxController {
     static func attachCommand(
         socketName: String?,
         sessionName: String?,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String]? = nil
     ) -> String? {
         Smithers.Terminal.tmuxAttachCommand(
             socketName: socketName,
@@ -245,7 +392,7 @@ enum TmuxController {
         workingDirectory: String?,
         command: String?,
         title: String?,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String]? = nil
     ) -> Bool {
         let ok = Smithers.Terminal.tmuxEnsureSession(
             socketName: socketName,
@@ -264,7 +411,7 @@ enum TmuxController {
     static func terminateSession(
         socketName: String?,
         sessionName: String?,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String]? = nil
     ) {
         Smithers.Terminal.tmuxTerminateSession(
             socketName: socketName,

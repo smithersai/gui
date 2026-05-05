@@ -236,7 +236,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         nativeSurfaceOperationsInFlight.insert(key)
         terminalWorkspaces[key.terminalId]?.markNativeTerminalPending(surfaceId: key.surfaceId)
 
-        let shell = Smithers.Terminal.userConfiguredShell()
+        let shell = TerminalShellPreference.resolvedShellPath(userDefaults: userDefaults)
         Task { [weak self] in
             do {
                 try await SessionController.shared.ensureDaemon()
@@ -690,7 +690,9 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         baseEnvironment: [String: String]? = nil,
         shell explicitShell: String? = nil
     ) -> [String: String] {
-        let shell = explicitShell ?? Smithers.Terminal.userConfiguredShell()
+        let shell = explicitShell
+            ?? TerminalShellPreference.resolvedShellPath()
+            ?? Smithers.Terminal.userConfiguredShell()
         var env = baseEnvironment ?? Smithers.Terminal.toolEnvironment(shell: shell)
         env["TERM"] = nativeTerminalTERM
         env["COLORTERM"] = nativeTerminalColorTerm

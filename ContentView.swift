@@ -30,8 +30,11 @@ struct SettingsView: View {
     @AppStorage(AppPreferenceKeys.externalAgentUnsafeFlagsEnabled) private var externalAgentUnsafeFlagsEnabled = false
     @AppStorage(AppPreferenceKeys.browserSearchEngine) private var browserSearchEngine = BrowserSearchEngine.duckDuckGo.rawValue
     @AppStorage(AppPreferenceKeys.shortcutCheatSheetFooterEnabled) private var shortcutCheatSheetFooterEnabled = false
+    @AppStorage(AppPreferenceKeys.defaultShellPath) private var defaultShellPath = TerminalShellPreference.systemDefaultValue
     @StateObject private var shortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
     @State private var neovimPath: String? = NeovimDetector.executablePath()
+    @State private var shellCandidates: [String] = TerminalShellPreference.availableShellPaths()
+    @State private var customShellPath = ""
 
     private var neovimAvailable: Bool {
         neovimPath != nil
@@ -46,6 +49,23 @@ struct SettingsView: View {
         )
     }
 
+    private var visibleShellCandidates: [String] {
+        var paths = shellCandidates
+        if let selected = TerminalShellPreference.normalizedPath(defaultShellPath),
+           !paths.contains(selected) {
+            paths.insert(selected, at: 0)
+        }
+        return paths
+    }
+
+    private var resolvedShellPath: String? {
+        TerminalShellPreference.resolvedShellPath(configuredPath: defaultShellPath)
+    }
+
+    private var customShellPathIsUsable: Bool {
+        TerminalShellPreference.isUsableShellPath(customShellPath)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -56,6 +76,7 @@ struct SettingsView: View {
                     operatorFeatureSection
                     externalAgentSafetySection
                     browserSearchSection
+                    terminalShellSection
                     neovimSection
                     shortcutsSection
                 }
@@ -67,6 +88,7 @@ struct SettingsView: View {
         .background(Theme.surface1)
         .onAppear {
             refreshNeovimPath()
+            refreshShellCandidates()
         }
         .accessibilityIdentifier("settings.root")
     }
@@ -275,6 +297,89 @@ struct SettingsView: View {
         .accessibilityIdentifier("settings.browserSearchEngine.section")
     }
 
+    private var terminalShellSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 18))
+                    .foregroundColor(Theme.accent)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Default shell")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Choose the shell used for new terminal sessions.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+
+                Spacer()
+
+                Picker("Default shell", selection: $defaultShellPath) {
+                    Text("System default").tag(TerminalShellPreference.systemDefaultValue)
+                    ForEach(visibleShellCandidates, id: \.self) { path in
+                        Text(TerminalShellPreference.displayName(for: path)).tag(path)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+                .accessibilityIdentifier("settings.defaultShell.picker")
+            }
+
+            Divider().background(Theme.border)
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(resolvedShellPath == nil ? "Unavailable" : "Active")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(resolvedShellPath == nil ? Theme.warning : Theme.success)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background((resolvedShellPath == nil ? Theme.warning : Theme.success).opacity(0.14))
+                    .cornerRadius(5)
+
+                Text(resolvedShellPath ?? "No executable shell found.")
+                    .font(.system(size: 11, design: resolvedShellPath == nil ? .default : .monospaced))
+                    .foregroundColor(Theme.textTertiary)
+                    .lineLimit(2)
+
+                Spacer()
+
+                Button("Refresh") {
+                    refreshShellCandidates()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Theme.accent)
+                .accessibilityIdentifier("settings.defaultShell.refresh")
+            }
+
+            HStack(alignment: .center, spacing: 10) {
+                TextField("Custom shell path", text: $customShellPath)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11, design: .monospaced))
+                    .accessibilityIdentifier("settings.defaultShell.customPath")
+
+                Button("Use") {
+                    if let path = TerminalShellPreference.normalizedPath(customShellPath) {
+                        defaultShellPath = path
+                        refreshShellCandidates()
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(customShellPathIsUsable ? Theme.accent : Theme.textTertiary)
+                .disabled(!customShellPathIsUsable)
+                .accessibilityIdentifier("settings.defaultShell.useCustom")
+            }
+        }
+        .padding(16)
+        .background(Theme.surface2)
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+        .accessibilityIdentifier("settings.defaultShell.section")
+    }
+
     private var shortcutsSection: some View {
         let _ = shortcutSettingsObserver.revision
         return VStack(alignment: .leading, spacing: 14) {
@@ -348,6 +453,10 @@ struct SettingsView: View {
         if detectedPath == nil {
             vimModeEnabled = false
         }
+    }
+
+    private func refreshShellCandidates() {
+        shellCandidates = TerminalShellPreference.availableShellPaths()
     }
 
     private func openShortcutSettingsFile() {
