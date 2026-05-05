@@ -42,6 +42,7 @@ struct MacOSContentShell<DetailContent: View, PaletteOverlay: View, QuickLaunchO
     let goForward: () -> Void
 
     let onOpenNewTabPicker: () -> Void
+    let onOpenLocalFolderTab: (String) -> Void
     let onAppShortcutCommand: (KeyboardShortcutCommand) -> Void
     let onRequestTerminalClose: (String) -> Void
     let onRequestTerminalRestart: (String) -> Void
@@ -84,6 +85,7 @@ struct MacOSContentShell<DetailContent: View, PaletteOverlay: View, QuickLaunchO
                     developerDebugPanelVisible: $developerDebugPanelVisible,
                     developerDebugAvailable: developerToolsEnabled,
                     onOpenNewTabPicker: onOpenNewTabPicker,
+                    onOpenLocalFolderTab: onOpenLocalFolderTab,
                     versionProvider: versionProvider
                 )
                 .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 360)

@@ -350,17 +350,22 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     @discardableResult
-    func addBrowserTab(title requestedTitle: String? = nil, urlString: String? = nil) -> String {
+    func addBrowserTab(
+        title requestedTitle: String? = nil,
+        urlString: String? = nil,
+        workingDirectory requestedWorkingDirectory: String? = nil
+    ) -> String {
         let workspaceID = WorkspaceID()
         let id = workspaceID.rawValue
         registerWorkspace(workspaceID)
         let rootSurfaceID = SurfaceID()
+        let cwd = normalizedOptionalText(requestedWorkingDirectory) ?? workingDirectory
         let title = normalizedOptionalText(requestedTitle) ?? "Browser \(terminalTabs.filter { $0.title.hasPrefix("Browser") }.count + 1)"
         let workspace = TerminalWorkspace(
             id: workspaceID,
             windowID: windowID,
             title: title,
-            workingDirectory: workingDirectory,
+            workingDirectory: cwd,
             rootSurfaceId: rootSurfaceID,
             rootKind: .browser,
             browserURLString: urlString,
@@ -377,7 +382,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 preview: urlString ?? "Web browser",
                 timestamp: now,
                 createdAt: now,
-                workingDirectory: workingDirectory,
+                workingDirectory: cwd,
                 command: nil,
                 backend: .native,
                 rootSurfaceId: rootSurfaceID.rawValue,
@@ -394,9 +399,13 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     @discardableResult
-    func launchExternalAgentTab(name: String, command: String) -> String {
+    func launchExternalAgentTab(
+        name: String,
+        command: String,
+        workingDirectory requestedWorkingDirectory: String? = nil
+    ) -> String {
         let resolvedCommand = Self.applyDefaultAgentFlags(command, userDefaults: userDefaults)
-        let cwd = workingDirectory
+        let cwd = normalizedOptionalText(requestedWorkingDirectory) ?? workingDirectory
         let kind = ExternalAgentKind.detect(fromCommand: resolvedCommand)
         let excluded: Set<String> = {
             guard let kind else { return [] }
@@ -427,7 +436,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             return nil
         }
         let forked = kind.resumeCommand(sessionId: sessionId, originalCommand: command)
-        return launchExternalAgentTab(name: tab.title, command: forked)
+        return launchExternalAgentTab(name: tab.title, command: forked, workingDirectory: tab.workingDirectory)
     }
 
     func canForkTerminalTab(_ terminalId: String) -> Bool {
@@ -843,7 +852,10 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 isPinned: tab.isPinned,
                 isUnread: SurfaceNotificationStore.shared.workspaceHasIndicator(tab.terminalId),
                 workingDirectory: terminalWorkingDirectory(tab.terminalId),
-                sessionIdentifier: tab.tmuxSessionName ?? tab.terminalId
+                sessionIdentifier: tab.tmuxSessionName ?? tab.terminalId,
+                agentKind: tab.agentKind,
+                agentSessionId: tab.agentSessionId,
+                folderPath: terminalWorkingDirectory(tab.terminalId)
             )
         }
         return (runItems + terminalItems)
@@ -862,6 +874,25 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
 
     func sidebarTabs(matching searchText: String = "") -> [SidebarTab] {
         sidebarWorkspaces(matching: searchText)
+    }
+
+    func sidebarWorkspaceFolders(matching searchText: String = "") -> [SidebarWorkspaceFolder] {
+        let tabs = sidebarWorkspaces(matching: searchText)
+        let terminalTabs = tabs.filter { $0.kind == .terminal }
+        let runTabs = tabs.filter { $0.kind == .run }
+        let root = SidebarWorkspaceTreeBuilder.build(
+            workspaces: terminalTabs,
+            rootPath: workspaceRootPath
+        )
+        guard !runTabs.isEmpty else { return root }
+        let runsFolder = SidebarWorkspaceFolder(
+            id: "runs",
+            name: "Runs",
+            path: "runs",
+            folders: [],
+            workspaces: runTabs
+        )
+        return [runsFolder] + root
     }
 
     func terminalWorkspaceDidChange(_ workspace: TerminalWorkspace) {
@@ -1000,7 +1031,10 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         isArchived: Bool = false,
         isUnread: Bool = false,
         workingDirectory: String? = nil,
-        sessionIdentifier: String? = nil
+        sessionIdentifier: String? = nil,
+        agentKind: ExternalAgentKind? = nil,
+        agentSessionId: String? = nil,
+        folderPath: String? = nil
     ) -> SidebarTab {
         SidebarTab(
             id: id,
@@ -1016,7 +1050,10 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             isArchived: isArchived,
             isUnread: isUnread,
             workingDirectory: workingDirectory,
-            sessionIdentifier: sessionIdentifier
+            sessionIdentifier: sessionIdentifier,
+            agentKind: agentKind,
+            agentSessionId: agentSessionId,
+            folderPath: folderPath
         )
     }
 

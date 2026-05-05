@@ -1,6 +1,72 @@
 import XCTest
 @testable import SmithersGUI
 
+// MARK: - Sidebar Workspace Tree Tests
+
+final class SidebarWorkspaceTreeBuilderTests: XCTestCase {
+    func testBuildNestsWorkspaceFoldersRelativeToRoot() {
+        let now = Date()
+        let tabs = [
+            SidebarWorkspace(
+                id: "terminal:one",
+                kind: .terminal,
+                runId: nil,
+                terminalId: "one",
+                title: "API",
+                preview: "",
+                timestamp: "now",
+                group: "Today",
+                sortDate: now,
+                workingDirectory: "/repo/services/api",
+                folderPath: "/repo/services/api"
+            ),
+            SidebarWorkspace(
+                id: "terminal:two",
+                kind: .terminal,
+                runId: nil,
+                terminalId: "two",
+                title: "Web",
+                preview: "",
+                timestamp: "now",
+                group: "Today",
+                sortDate: now,
+                workingDirectory: "/repo/apps/web",
+                folderPath: "/repo/apps/web"
+            ),
+        ]
+
+        let folders = SidebarWorkspaceTreeBuilder.build(workspaces: tabs, rootPath: "/repo")
+
+        XCTAssertEqual(folders.map(\.name), ["apps", "services"])
+        XCTAssertEqual(folders[0].folders.map(\.name), ["web"])
+        XCTAssertEqual(folders[0].folders[0].workspaces.map(\.title), ["Web"])
+        XCTAssertEqual(folders[1].folders.map(\.name), ["api"])
+        XCTAssertEqual(folders[1].folders[0].workspaces.map(\.title), ["API"])
+    }
+
+    func testBuildGroupsRootWorkspaceUnderRootFolderName() {
+        let tab = SidebarWorkspace(
+            id: "terminal:root",
+            kind: .terminal,
+            runId: nil,
+            terminalId: "root",
+            title: "Repo",
+            preview: "",
+            timestamp: "now",
+            group: "Today",
+            sortDate: Date(),
+            workingDirectory: "/repo",
+            folderPath: "/repo"
+        )
+
+        let folders = SidebarWorkspaceTreeBuilder.build(workspaces: [tab], rootPath: "/repo")
+
+        XCTAssertEqual(folders.count, 1)
+        XCTAssertEqual(folders[0].name, "repo")
+        XCTAssertEqual(folders[0].workspaces.map(\.title), ["Repo"])
+    }
+}
+
 // MARK: - ChatMessage Tests
 
 final class ChatMessageTests: XCTestCase {

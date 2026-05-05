@@ -27,6 +27,7 @@ struct SidebarView: View {
     @State private var terminateTerminalTitle: String = ""
     private let developerDebugAvailable: Bool
     private let onOpenNewTabPicker: () -> Void
+    private let onOpenLocalFolderTab: (String) -> Void
     private let versionProvider: (() async -> String?)?
 
     fileprivate static let guiVersion: String = {
@@ -42,6 +43,7 @@ struct SidebarView: View {
         developerDebugPanelVisible: Binding<Bool> = .constant(false),
         developerDebugAvailable: Bool = DeveloperDebugMode.isEnabled,
         onOpenNewTabPicker: @escaping () -> Void = {},
+        onOpenLocalFolderTab: @escaping (String) -> Void = { _ in },
         versionProvider: (() async -> String?)? = nil
     ) {
         self.store = store
@@ -49,6 +51,7 @@ struct SidebarView: View {
         self._developerDebugPanelVisible = developerDebugPanelVisible
         self.developerDebugAvailable = developerDebugAvailable
         self.onOpenNewTabPicker = onOpenNewTabPicker
+        self.onOpenLocalFolderTab = onOpenLocalFolderTab
         self.versionProvider = versionProvider
         #if os(macOS)
         self._remoteMode = ObservedObject(wrappedValue: remoteMode ?? .shared)
@@ -218,7 +221,7 @@ struct SidebarView: View {
             #if os(macOS)
             if remoteMode.isRemoteFeatureEnabled {
                 Button {
-                    WorkspaceManager.shared.presentOpenFolderPanel()
+                    presentOpenFolderAsTab()
                 } label: {
                     HStack(spacing: 7) {
                         Image(systemName: "folder.badge.plus")
@@ -239,12 +242,11 @@ struct SidebarView: View {
             }
             #endif
 
-            let groups = ["Pinned", "Today", "Yesterday", "Older"]
             let _ = surfaceNotifications.unreadSurfaceIds
             let _ = surfaceNotifications.focusedIndicatorSurfaceIds
-            let allTabs = store.sidebarWorkspaces(matching: "")
+            let folderTree = store.sidebarWorkspaceFolders(matching: "")
 
-            if allTabs.isEmpty {
+            if folderTree.isEmpty {
                 Text("No workspaces yet")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textTertiary)
@@ -252,82 +254,16 @@ struct SidebarView: View {
                     .padding(.vertical, 8)
             }
 
-            ForEach(groups, id: \.self) { group in
-                let tabs = allTabs.filter { $0.group == group }
-                if !tabs.isEmpty {
-                    Text(group)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Theme.textTertiary)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                        .padding(.bottom, 4)
-
-                    ForEach(tabs) { tab in
-                        SidebarWorkspaceRow(
-                            tab: tab,
-                            isSelected: isSelected(tab)
-                        ) {
-                            selectTab(tab)
-                        }
-                        .contextMenu {
-                            if tab.kind == .terminal, let terminalId = tab.terminalId {
-                                Button(tab.isPinned ? "Unpin terminal" : "Pin terminal") {
-                                    store.toggleTerminalPinned(terminalId)
-                                }
-                                Button("Rename terminal") {
-                                    beginRenameTerminal(terminalID: terminalId, currentTitle: tab.title)
-                                }
-                                if store.canRestartTerminalTab(terminalId) {
-                                    Button("Restart") {
-                                        store.restartTerminalTab(terminalId)
-                                        destination = .terminal(id: terminalId)
-                                    }
-                                    .accessibilityIdentifier("sidebar.contextMenu.restart")
-                                }
-                                if tab.agentKind?.supportsResume == true {
-                                    Button("Fork chat") {
-                                        store.forkTerminalTab(terminalId)
-                                    }
-                                    .disabled(!store.canForkTerminalTab(terminalId))
-                                    .accessibilityIdentifier("sidebar.contextMenu.forkChat")
-                                }
-                                Divider()
-                                Button("Copy working directory") {
-                                    copyTextToClipboard(tab.workingDirectory ?? store.terminalWorkingDirectory(terminalId) ?? "")
-                                }
-                                .disabled((tab.workingDirectory ?? store.terminalWorkingDirectory(terminalId)) == nil)
-                                Button("Copy workspace ID") {
-                                    copyTextToClipboard(terminalId)
-                                }
-                                Button("Copy session ID") {
-                                    copyTextToClipboard(tab.agentSessionId ?? "")
-                                }
-                                .disabled(tab.agentSessionId == nil)
-                                Button("Copy tmux attach command") {
-                                    copyTextToClipboard(store.terminalAttachCommand(terminalId) ?? "")
-                                }
-                                .disabled(store.terminalAttachCommand(terminalId) == nil)
-                                Divider()
-                                Button("Terminate terminal", role: .destructive) {
-                                    requestTerminateTerminal(terminalId: terminalId, title: tab.title)
-                                }
-                            }
-                        }
-
-                        if tab.kind == .terminal,
-                           let terminalId = tab.terminalId,
-                           let workspace = store.terminalWorkspaces[terminalId] {
-                            SidebarTerminalPaneChildren(
-                                workspace: workspace,
-                                tabId: tab.id,
-                                isParentSelected: isSelected(tab)
-                            ) { surfaceId in
-                                destination = .terminal(id: terminalId)
-                                workspace.focusSurface(surfaceId)
-                            }
-                        }
-                    }
-                }
+            ForEach(folderTree) { folder in
+                SidebarWorkspaceFolderView(
+                    folder: folder,
+                    level: 0,
+                    store: store,
+                    destination: $destination,
+                    isSelected: isSelected(_:),
+                    selectTab: selectTab(_:),
+                    workspaceContextMenu: workspaceContextMenu(tab:)
+                )
             }
         }
     }
@@ -343,6 +279,66 @@ struct SidebarView: View {
                 destination = .terminal(id: terminalId)
             }
         }
+    }
+
+    private func presentOpenFolderAsTab() {
+        #if os(macOS)
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        if panel.runModal() == .OK, let url = panel.url {
+            onOpenLocalFolderTab(url.standardizedFileURL.path)
+        }
+        #endif
+    }
+
+    private func workspaceContextMenu(tab: SidebarTab) -> AnyView {
+        AnyView(Group {
+            if tab.kind == .terminal, let terminalId = tab.terminalId {
+                Button(tab.isPinned ? "Unpin terminal" : "Pin terminal") {
+                    store.toggleTerminalPinned(terminalId)
+                }
+                Button("Rename terminal") {
+                    beginRenameTerminal(terminalID: terminalId, currentTitle: tab.title)
+                }
+                if store.canRestartTerminalTab(terminalId) {
+                    Button("Restart") {
+                        store.restartTerminalTab(terminalId)
+                        destination = .terminal(id: terminalId)
+                    }
+                    .accessibilityIdentifier("sidebar.contextMenu.restart")
+                }
+                if tab.agentKind?.supportsResume == true {
+                    Button("Fork chat") {
+                        store.forkTerminalTab(terminalId)
+                    }
+                    .disabled(!store.canForkTerminalTab(terminalId))
+                    .accessibilityIdentifier("sidebar.contextMenu.forkChat")
+                }
+                Divider()
+                Button("Copy working directory") {
+                    copyTextToClipboard(tab.workingDirectory ?? store.terminalWorkingDirectory(terminalId) ?? "")
+                }
+                .disabled((tab.workingDirectory ?? store.terminalWorkingDirectory(terminalId)) == nil)
+                Button("Copy workspace ID") {
+                    copyTextToClipboard(terminalId)
+                }
+                Button("Copy session ID") {
+                    copyTextToClipboard(tab.agentSessionId ?? "")
+                }
+                .disabled(tab.agentSessionId == nil)
+                Button("Copy tmux attach command") {
+                    copyTextToClipboard(store.terminalAttachCommand(terminalId) ?? "")
+                }
+                .disabled(store.terminalAttachCommand(terminalId) == nil)
+                Divider()
+                Button("Terminate terminal", role: .destructive) {
+                    requestTerminateTerminal(terminalId: terminalId, title: tab.title)
+                }
+            }
+        })
     }
 
     private func isSelected(_ tab: SidebarTab) -> Bool {
@@ -658,6 +654,7 @@ struct NavRow: View {
 struct SidebarWorkspaceRow: View {
     let tab: SidebarTab
     let isSelected: Bool
+    var indentLevel: Int = 0
     let action: () -> Void
 
     var body: some View {
@@ -697,7 +694,8 @@ struct SidebarWorkspaceRow: View {
                         .lineLimit(1)
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.leading, CGFloat(8 + indentLevel * 12))
+            .padding(.trailing, 8)
             .padding(.vertical, 6)
             .themedSidebarRowBackground(isSelected: isSelected, cornerRadius: 6)
         }
@@ -709,10 +707,94 @@ struct SidebarWorkspaceRow: View {
 
 typealias SidebarTabRow = SidebarWorkspaceRow
 
+struct SidebarWorkspaceFolderView: View {
+    let folder: SidebarWorkspaceFolder
+    let level: Int
+    @ObservedObject var store: SessionStore
+    @Binding var destination: NavDestination
+    let isSelected: (SidebarTab) -> Bool
+    let selectTab: (SidebarTab) -> Void
+    let workspaceContextMenu: (SidebarTab) -> AnyView
+    @State private var isExpanded = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                isExpanded.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(Theme.textTertiary)
+                        .frame(width: 10)
+                    Image(systemName: "folder")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textTertiary)
+                        .frame(width: 12)
+                    Text(folder.name)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Theme.textTertiary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                }
+                .padding(.leading, CGFloat(12 + level * 12))
+                .padding(.trailing, 8)
+                .padding(.top, level == 0 ? 10 : 4)
+                .padding(.bottom, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("workspace.folder.\(folder.id)")
+
+            if isExpanded {
+                ForEach(folder.workspaces) { tab in
+                    SidebarWorkspaceRow(
+                        tab: tab,
+                        isSelected: isSelected(tab),
+                        indentLevel: level + 1
+                    ) {
+                        selectTab(tab)
+                    }
+                    .contextMenu {
+                        workspaceContextMenu(tab)
+                    }
+
+                    if tab.kind == .terminal,
+                       let terminalId = tab.terminalId,
+                       let workspace = store.terminalWorkspaces[terminalId] {
+                        SidebarTerminalPaneChildren(
+                            workspace: workspace,
+                            tabId: tab.id,
+                            isParentSelected: isSelected(tab),
+                            indentLevel: level + 2
+                        ) { surfaceId in
+                            destination = .terminal(id: terminalId)
+                            workspace.focusSurface(surfaceId)
+                        }
+                    }
+                }
+
+                ForEach(folder.folders) { child in
+                    SidebarWorkspaceFolderView(
+                        folder: child,
+                        level: level + 1,
+                        store: store,
+                        destination: $destination,
+                        isSelected: isSelected,
+                        selectTab: selectTab,
+                        workspaceContextMenu: workspaceContextMenu
+                    )
+                }
+            }
+        }
+    }
+}
+
 struct SidebarTerminalPaneChildren: View {
     @ObservedObject var workspace: TerminalWorkspace
     let tabId: String
     let isParentSelected: Bool
+    var indentLevel: Int = 1
     let onSelectPane: (SurfaceID) -> Void
     @State private var renameSurfaceId: SurfaceID?
     @State private var renameSurfaceTitle: String = ""
@@ -768,7 +850,7 @@ struct SidebarTerminalPaneChildren: View {
                 Rectangle()
                     .fill(Theme.border)
                     .frame(width: 1, height: 14)
-                    .padding(.leading, 10)
+                    .padding(.leading, CGFloat(10 + indentLevel * 12))
                 Text(surface.title)
                     .font(.system(size: 11, weight: isHighlighted ? .semibold : .regular))
                     .foregroundColor(Theme.textPrimary)

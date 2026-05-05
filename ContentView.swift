@@ -583,6 +583,7 @@ struct ContentView: View {
             goBack: goBack,
             goForward: goForward,
             onOpenNewTabPicker: { openCommandPalette(prefill: NewTabPaletteCatalog.expandedQuery) },
+            onOpenLocalFolderTab: openLocalFolderTab(path:),
             onAppShortcutCommand: handleKeyboardShortcutCommand,
             onRequestTerminalClose: requestTerminalClose,
             onRequestTerminalRestart: restartTerminalTab,
@@ -681,7 +682,7 @@ struct ContentView: View {
     private func handleShellAppear() {
         syncRemoteProvider()
         installKeyboardShortcutMonitor()
-        fileSearchIndex.updateRootPath(store.workspaceRootPath)
+        fileSearchIndex.updateRootPath(focusedWorkspaceDirectory)
         fileSearchIndex.ensureLoaded()
     }
 
@@ -997,7 +998,7 @@ struct ContentView: View {
     private func openCommandPalette(prefill: String) {
         commandPaletteSeedQuery = prefill
         commandPaletteVisible = true
-        fileSearchIndex.updateRootPath(store.workspaceRootPath)
+        fileSearchIndex.updateRootPath(focusedWorkspaceDirectory)
         fileSearchIndex.ensureLoaded()
         refreshPaletteDataIfNeeded()
     }
@@ -1251,6 +1252,14 @@ struct ContentView: View {
         return store.terminalWorkspaceIfAvailable(terminalId) ?? store.ensureTerminalWorkspace(terminalId)
     }
 
+    private var focusedWorkspaceDirectory: String {
+        if case .terminal(let terminalId) = destination,
+           let cwd = store.terminalWorkingDirectory(terminalId) {
+            return cwd
+        }
+        return store.workspaceRootPath
+    }
+
     @discardableResult
     private func splitFocused(axis: WorkspaceSplitAxis, kind: WorkspaceSurfaceKind) -> Bool {
         guard let workspace = currentTerminalWorkspace() else { return false }
@@ -1322,7 +1331,14 @@ struct ContentView: View {
     }
 
     private func createNewTerminalTab() {
-        let terminalId = store.addTerminalTab()
+        let terminalId = store.addTerminalTab(workingDirectory: focusedWorkspaceDirectory)
+        destination = .terminal(id: terminalId)
+    }
+
+    private func openLocalFolderTab(path: String) {
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        let title = url.lastPathComponent.isEmpty ? path : url.lastPathComponent
+        let terminalId = store.addTerminalTab(title: title, workingDirectory: path)
         destination = .terminal(id: terminalId)
     }
 
@@ -1353,15 +1369,16 @@ struct ContentView: View {
     private func handleNewTabSelection(_ selection: NewTabSelection) {
         switch selection {
         case .terminal:
-            let terminalId = store.addTerminalTab()
+            let terminalId = store.addTerminalTab(workingDirectory: focusedWorkspaceDirectory)
             destination = .terminal(id: terminalId)
         case .browser:
-            let terminalId = store.addBrowserTab()
+            let terminalId = store.addBrowserTab(workingDirectory: focusedWorkspaceDirectory)
             destination = .terminal(id: terminalId)
         case .externalAgent(let target):
             let terminalId = store.launchExternalAgentTab(
                 name: target.name,
-                command: target.binary
+                command: target.binary,
+                workingDirectory: focusedWorkspaceDirectory
             )
             destination = .terminal(id: terminalId)
         }
@@ -1369,7 +1386,7 @@ struct ContentView: View {
 
     private func openMarkdownFilePicker() {
         PlatformAdapters.presentMarkdownOpenPanel(
-            startingAt: store.workspaceRootPath,
+            startingAt: focusedWorkspaceDirectory,
             completion: { url in openMarkdownFile(url) }
         )
     }
@@ -1392,7 +1409,7 @@ struct ContentView: View {
             let rawTitle = url.deletingPathExtension().lastPathComponent
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let title = rawTitle.isEmpty ? "Markdown" : rawTitle
-            terminalId = store.addTerminalTab(title: title, workingDirectory: store.workspaceRootPath)
+            terminalId = store.addTerminalTab(title: title, workingDirectory: focusedWorkspaceDirectory)
         }
 
         let workspace = store.ensureTerminalWorkspace(terminalId)
@@ -1600,7 +1617,7 @@ struct ContentView: View {
         if path.hasPrefix("/") {
             return (path as NSString).standardizingPath
         }
-        return ((store.workspaceRootPath as NSString).appendingPathComponent(path) as NSString).standardizingPath
+        return ((focusedWorkspaceDirectory as NSString).appendingPathComponent(path) as NSString).standardizingPath
     }
 
     private func isMarkdownFile(_ url: URL) -> Bool {

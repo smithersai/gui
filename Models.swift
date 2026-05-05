@@ -332,6 +332,7 @@ struct SidebarWorkspace: Identifiable, Hashable {
     var sessionIdentifier: String? = nil
     var agentKind: ExternalAgentKind? = nil
     var agentSessionId: String? = nil
+    var folderPath: String? = nil
 
     var workspaceID: WorkspaceID {
         if let terminalId {
@@ -345,6 +346,95 @@ struct SidebarWorkspace: Identifiable, Hashable {
 }
 
 typealias SidebarTab = SidebarWorkspace
+
+struct SidebarWorkspaceFolder: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let path: String
+    var folders: [SidebarWorkspaceFolder]
+    var workspaces: [SidebarWorkspace]
+
+    var isEmpty: Bool {
+        folders.isEmpty && workspaces.isEmpty
+    }
+}
+
+enum SidebarWorkspaceTreeBuilder {
+    static func build(workspaces: [SidebarWorkspace], rootPath: String) -> [SidebarWorkspaceFolder] {
+        var root = MutableFolder(name: "", path: normalizedPath(rootPath))
+        for workspace in workspaces {
+            let path = normalizedPath(workspace.folderPath ?? workspace.workingDirectory ?? rootPath)
+            let components = displayComponents(for: path, rootPath: root.path)
+            root.insert(workspace, components: components, absolutePath: path)
+        }
+        return root.children
+            .map { $0.value.materialized() }
+            .sorted(by: sortFolders)
+    }
+
+    private static func displayComponents(for path: String, rootPath: String) -> [String] {
+        if path == rootPath {
+            return [lastPathComponent(path)]
+        }
+        let rootWithSlash = rootPath.hasSuffix("/") ? rootPath : "\(rootPath)/"
+        if path.hasPrefix(rootWithSlash) {
+            let relative = String(path.dropFirst(rootWithSlash.count))
+            let pieces = relative.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+            return pieces.isEmpty ? [lastPathComponent(path)] : pieces
+        }
+        let home = NSHomeDirectory()
+        let homeWithSlash = home.hasSuffix("/") ? home : "\(home)/"
+        if path.hasPrefix(homeWithSlash) {
+            return ["~"] + path.dropFirst(homeWithSlash.count).split(separator: "/").map(String.init)
+        }
+        let pieces = path.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+        return pieces.isEmpty ? [path] : pieces
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        (path as NSString).standardizingPath
+    }
+
+    private static func lastPathComponent(_ path: String) -> String {
+        let name = URL(fileURLWithPath: path, isDirectory: true).lastPathComponent
+        return name.isEmpty ? path : name
+    }
+
+    private static func sortFolders(_ lhs: SidebarWorkspaceFolder, _ rhs: SidebarWorkspaceFolder) -> Bool {
+        lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+    }
+
+    private struct MutableFolder {
+        let name: String
+        let path: String
+        var children: [String: MutableFolder] = [:]
+        var workspaces: [SidebarWorkspace] = []
+
+        mutating func insert(_ workspace: SidebarWorkspace, components: [String], absolutePath: String) {
+            guard let head = components.first else {
+                workspaces.append(workspace)
+                return
+            }
+            let childPath = path.isEmpty || path == "/" ? "/\(head)" : "\(path)/\(head)"
+            var child = children[head] ?? MutableFolder(name: head, path: components.count == 1 ? absolutePath : childPath)
+            child.insert(workspace, components: Array(components.dropFirst()), absolutePath: absolutePath)
+            children[head] = child
+        }
+
+        func materialized() -> SidebarWorkspaceFolder {
+            SidebarWorkspaceFolder(
+                id: path,
+                name: name,
+                path: path,
+                folders: children.values.map { $0.materialized() }.sorted(by: SidebarWorkspaceTreeBuilder.sortFolders),
+                workspaces: workspaces.sorted {
+                    if $0.isPinned != $1.isPinned { return $0.isPinned && !$1.isPinned }
+                    return $0.sortDate > $1.sortDate
+                }
+            )
+        }
+    }
+}
 
 struct ChatMessage: Identifiable {
     let id: String
