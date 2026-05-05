@@ -73,18 +73,18 @@
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
-            key = "PLUE_BASE_URL"
-            value = "$(PLUE_BASE_URL)"
+            key = "SMITHERS_BASE_URL"
+            value = "$(SMITHERS_BASE_URL)"
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
-            key = "PLUE_E2E_MODE"
-            value = "$(PLUE_E2E_MODE)"
+            key = "SMITHERS_E2E_MODE"
+            value = "$(SMITHERS_E2E_MODE)"
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
-            key = "PLUE_REMOTE_SANDBOX_ENABLED"
-            value = "$(PLUE_REMOTE_SANDBOX_ENABLED)"
+            key = "SMITHERS_REMOTE_SANDBOX_ENABLED"
+            value = "$(SMITHERS_REMOTE_SANDBOX_ENABLED)"
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable

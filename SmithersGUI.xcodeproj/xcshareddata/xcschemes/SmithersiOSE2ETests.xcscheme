@@ -73,8 +73,8 @@
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
-            key = "PLUE_BASE_URL"
-            value = "$(PLUE_BASE_URL)"
+            key = "SMITHERS_BASE_URL"
+            value = "$(SMITHERS_BASE_URL)"
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable

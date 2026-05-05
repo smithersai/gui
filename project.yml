@@ -96,6 +96,10 @@ targets:
       - ChatBlockRenderer.swift
       - ChatBlockMerger.swift
       - ChatBlockFilter.swift
+      - ChatContentText.swift
+      - ChatMarkdownSegmenter.swift
+      - ChatPrivacyRedactor.swift
+      - ChatTranscriptSearch.swift
       - PropsTableView.swift
       - PropValueView.swift
       - GhostBanner.swift
