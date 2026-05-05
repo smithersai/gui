@@ -87,6 +87,30 @@ final class WorkspaceLayoutNodeTests: XCTestCase {
         XCTAssertEqual(first, .leaf("new-a"))
         XCTAssertEqual(second, .leaf("b"))
     }
+
+    func testSplitAxisContainingSurfaceUsesNearestParentSplit() {
+        let tree: WorkspaceLayoutNode = .split(
+            id: "root-pane",
+            axis: .horizontal,
+            first: .leaf("root"),
+            second: .split(
+                id: "nested-pane",
+                axis: .vertical,
+                first: .leaf("left"),
+                second: .split(
+                    id: "deep-pane",
+                    axis: .horizontal,
+                    first: .leaf("right"),
+                    second: .leaf("nested")
+                )
+            )
+        )
+
+        XCTAssertEqual(tree.splitAxis(containing: "root"), .horizontal)
+        XCTAssertEqual(tree.splitAxis(containing: "left"), .vertical)
+        XCTAssertEqual(tree.splitAxis(containing: "nested"), .horizontal)
+        XCTAssertNil(tree.splitAxis(containing: "missing"))
+    }
 }
 
 final class BrowserURLResolverTests: XCTestCase {

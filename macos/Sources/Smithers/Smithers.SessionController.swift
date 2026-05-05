@@ -66,11 +66,141 @@ public struct SessionInfo: Codable {
     }
 }
 
+public struct MuxSnapshot: Decodable {
+    public let sessions: [MuxSession]
+    public let clients: [MuxClient]
+    public let keyBindings: [MuxKeyBinding]
+}
+
+public struct MuxSession: Decodable {
+    public let id: String
+    public let name: String
+    public let activeWindowId: String
+    public let windows: [MuxWindow]
+}
+
+public struct MuxWindow: Decodable {
+    public let id: String
+    public let sessionId: String
+    public let index: Int
+    public let name: String
+    public let activePaneId: String
+    public let layout: MuxLayoutNode
+    public let panes: [MuxPane]
+}
+
+public indirect enum MuxLayoutNode: Decodable {
+    case leaf(paneId: String)
+    case split(id: String, axis: String, first: MuxLayoutNode, second: MuxLayoutNode)
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, paneId, id, axis, first, second
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try c.decode(String.self, forKey: .kind)
+        switch kind {
+        case "leaf":
+            self = .leaf(paneId: try c.decode(String.self, forKey: .paneId))
+        case "split":
+            self = .split(
+                id: try c.decode(String.self, forKey: .id),
+                axis: try c.decode(String.self, forKey: .axis),
+                first: try c.decode(MuxLayoutNode.self, forKey: .first),
+                second: try c.decode(MuxLayoutNode.self, forKey: .second)
+            )
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .kind,
+                in: c,
+                debugDescription: "unknown mux layout kind \(kind)"
+            )
+        }
+    }
+}
+
+public struct MuxPane: Decodable {
+    public let id: String
+    public let windowId: String
+    public let sessionId: String
+    public let index: Int
+    public let title: String
+    public let hasCustomTitle: Bool
+    public let state: String
+    public let pid: Int32?
+    public let cwd: String?
+    public let command: String?
+    public let alerts: MuxAlertState
+}
+
+public struct MuxAlertState: Decodable {
+    public let activity: Bool
+    public let bell: Bool
+    public let silence: Bool
+    public let exited: Bool
+    public let lastActivityMs: Int64
+    public let lastBellMs: Int64
+}
+
+public struct MuxClient: Decodable {
+    public let id: String
+    public let sessionId: String
+    public let windowId: String
+    public let paneId: String
+    public let rows: UInt16
+    public let cols: UInt16
+    public let active: Bool
+}
+
+public struct MuxKeyBinding: Decodable {
+    public let table: String
+    public let key: String
+    public let command: String
+    public let `repeat`: Bool
+}
+
+public struct MuxClientAttachmentInfo: Decodable {
+    public let clientId: String
+    public let sessionId: String
+    public let windowId: String
+    public let paneId: String
+    public let rows: UInt16
+    public let cols: UInt16
+}
+
 public enum SessionControllerError: Error {
     case daemonUnavailable
     case rpcError(code: Int, message: String)
     case decodingFailed(String)
-    case attachMissingFd
+}
+
+public final class AttachedMuxClient {
+    public let info: MuxClientAttachmentInfo
+    private let controlFd: Int32
+    private let lock = NSLock()
+    private var closed = false
+
+    fileprivate init(info: MuxClientAttachmentInfo, controlFd: Int32) {
+        self.info = info
+        self.controlFd = controlFd
+    }
+
+    deinit {
+        close()
+    }
+
+    public func close() {
+        lock.lock()
+        if closed {
+            lock.unlock()
+            return
+        }
+        closed = true
+        lock.unlock()
+
+        Darwin.close(controlFd)
+    }
 }
 
 public actor SessionController {
@@ -157,38 +287,6 @@ public actor SessionController {
         return try await call(method: "session.create", params: params)
     }
 
-    public func attach(sessionId: PTYSessionID) async throws -> (info: SessionInfo, ptyFd: Int32) {
-        try await ensureDaemon()
-        let id = nextRequestID()
-        let request = encodeRequest(id: id, method: "session.attach", params: [
-            "sessionId": .string(sessionId.rawValue),
-        ])
-
-        let path = socketPath()
-        let fd = try connectSocket(path: path)
-        defer { Darwin.close(fd) }
-
-        try writeAll(fd: fd, bytes: request)
-        let (payload, ptyFd) = try recvJSONWithFd(fd: fd, maxPayload: 1024 * 1024)
-        guard let ptyFd = ptyFd else {
-            throw SessionControllerError.attachMissingFd
-        }
-
-        do {
-            let info: SessionInfo = try decodeResult(payload)
-            return (info: info, ptyFd: ptyFd)
-        } catch {
-            Darwin.close(ptyFd)
-            throw error
-        }
-    }
-
-    public func detach(sessionId: PTYSessionID) async throws {
-        let _: EmptyResult = try await call(method: "session.detach", params: [
-            "sessionId": .string(sessionId.rawValue),
-        ])
-    }
-
     public func terminate(sessionId: PTYSessionID) async throws {
         let _: EmptyResult = try await call(method: "session.terminate", params: [
             "sessionId": .string(sessionId.rawValue),
@@ -236,6 +334,145 @@ public actor SessionController {
         let _: EmptyResult = try await call(method: "session.sendKey", params: [
             "sessionId": .string(sessionId.rawValue),
             "key": .string(key),
+        ])
+    }
+
+    public func muxSnapshot() async throws -> MuxSnapshot {
+        try await call(method: "mux.snapshot", params: [String: SessionRPCValue]())
+    }
+
+    public func newWindow(
+        sessionId: String,
+        title: String?,
+        shell: String?,
+        command: String?,
+        cwd: String?,
+        env: [String: String]?,
+        rows: UInt16 = 24,
+        cols: UInt16 = 80
+    ) async throws -> MuxSnapshot {
+        var params = muxCreateParams(
+            title: title,
+            shell: shell,
+            command: command,
+            cwd: cwd,
+            env: env,
+            rows: rows,
+            cols: cols
+        )
+        params["sessionId"] = .string(sessionId)
+        return try await call(method: "window.new", params: params)
+    }
+
+    public func splitPane(
+        paneId: String,
+        axis: String,
+        shell: String?,
+        command: String?,
+        cwd: String?,
+        env: [String: String]?,
+        rows: UInt16 = 24,
+        cols: UInt16 = 80
+    ) async throws -> MuxSnapshot {
+        var params = muxCreateParams(
+            title: nil,
+            shell: shell,
+            command: command,
+            cwd: cwd,
+            env: env,
+            rows: rows,
+            cols: cols
+        )
+        params["paneId"] = .string(paneId)
+        params["axis"] = .string(axis)
+        return try await call(method: "pane.split", params: params)
+    }
+
+    public func selectPane(paneId: String) async throws -> MuxSnapshot {
+        try await call(method: "pane.select", params: ["paneId": .string(paneId)])
+    }
+
+    public func selectWindow(windowId: String) async throws -> MuxSnapshot {
+        try await call(method: "window.select", params: ["windowId": .string(windowId)])
+    }
+
+    public func renameSession(sessionId: String, name: String) async throws -> MuxSnapshot {
+        try await call(method: "session.rename", params: [
+            "sessionId": .string(sessionId),
+            "name": .string(name),
+        ])
+    }
+
+    public func renameWindow(windowId: String, name: String) async throws -> MuxSnapshot {
+        try await call(method: "window.rename", params: [
+            "windowId": .string(windowId),
+            "name": .string(name),
+        ])
+    }
+
+    public func renamePane(paneId: String, title: String) async throws -> MuxSnapshot {
+        try await call(method: "pane.rename", params: [
+            "paneId": .string(paneId),
+            "title": .string(title),
+        ])
+    }
+
+    public func respawnPane(paneId: String) async throws -> MuxSnapshot {
+        try await call(method: "pane.respawn", params: ["paneId": .string(paneId)])
+    }
+
+    public func attachClient(paneId: String, rows: UInt16, cols: UInt16) async throws -> AttachedMuxClient {
+        try await ensureDaemon()
+        let id = nextRequestID()
+        let request = encodeRequest(id: id, method: "client.attach", params: [
+            "paneId": .string(paneId),
+            "rows": .int(Int(rows)),
+            "cols": .int(Int(cols)),
+        ])
+
+        let fd = try connectSocket(path: socketPath())
+        do {
+            try writeAll(fd: fd, bytes: request)
+            let line = try readLine(fd: fd, maxLen: 1024 * 1024)
+            let info: MuxClientAttachmentInfo = try decodeResult(line)
+            return AttachedMuxClient(info: info, controlFd: fd)
+        } catch {
+            Darwin.close(fd)
+            throw error
+        }
+    }
+
+    public func detachClient(clientId: String) async throws {
+        let _: EmptyResult = try await call(method: "client.detach", params: [
+            "clientId": .string(clientId),
+        ])
+    }
+
+    public func clients() async throws -> [MuxClient] {
+        try await call(method: "client.list", params: [String: SessionRPCValue]())
+    }
+
+    public func bindKey(table: String = "prefix", key: String, command: String, repeat: Bool = false) async throws -> [MuxKeyBinding] {
+        try await call(method: "key.bind", params: [
+            "table": .string(table),
+            "key": .string(key),
+            "command": .string(command),
+            "repeat": .bool(`repeat`),
+        ])
+    }
+
+    public func dispatchKey(table: String = "prefix", key: String, paneId: String) async throws -> MuxSnapshot {
+        try await call(method: "key.dispatch", params: [
+            "table": .string(table),
+            "key": .string(key),
+            "paneId": .string(paneId),
+        ])
+    }
+
+    public func executeCommand(_ command: String, paneId: String) async throws -> MuxSnapshot {
+        try await call(method: "command.exec", params: [
+            "command": .string(command),
+            "paneId": .string(paneId),
         ])
     }
 
@@ -435,6 +672,31 @@ public actor SessionController {
         }
     }
 
+    private func muxCreateParams(
+        title: String?,
+        shell: String?,
+        command: String?,
+        cwd: String?,
+        env: [String: String]?,
+        rows: UInt16,
+        cols: UInt16
+    ) -> [String: SessionRPCValue] {
+        var params: [String: SessionRPCValue] = [
+            "rows": .int(Int(rows)),
+            "cols": .int(Int(cols)),
+        ]
+        if let title = title { params["title"] = .string(title) }
+        if let shell = shell { params["shell"] = .string(shell) }
+        if let command = command { params["command"] = .string(command) }
+        if let cwd = cwd { params["cwd"] = .string(cwd) }
+        if let env = env {
+            var envObj: [String: SessionRPCValue] = [:]
+            for (k, v) in env { envObj[k] = .string(v) }
+            params["env"] = .object(envObj)
+        }
+        return params
+    }
+
     // MARK: - Socket syscalls
 
     private func connectSocket(path: String) throws -> Int32 {
@@ -505,75 +767,6 @@ public actor SessionController {
         throw SessionControllerError.decodingFailed("response too large")
     }
 
-    // recvmsg with ancillary data to pick up a single SCM_RIGHTS fd.
-    // Layout mirrors libsmithers/src/session/fd_passing.zig sender:
-    //   cmsghdr { cmsg_len: socklen_t, cmsg_level: SOL_SOCKET, cmsg_type: SCM_RIGHTS }
-    //   followed by one Int32 fd, with CMSG_ALIGN padding.
-    // On Darwin SOL_SOCKET == 0xFFFF, SCM_RIGHTS == 0x01, and cmsg_len uses socklen_t.
-    private func recvJSONWithFd(fd: Int32, maxPayload: Int) throws -> (Data, Int32?) {
-        let payloadBuf = UnsafeMutableRawPointer.allocate(byteCount: maxPayload, alignment: 8)
-        defer { payloadBuf.deallocate() }
-
-        var iov = iovec(iov_base: payloadBuf, iov_len: maxPayload)
-
-        // Space for one fd via SCM_RIGHTS. Keep it generous but fixed.
-        let controlLen = 64
-        let control = UnsafeMutableRawPointer.allocate(byteCount: controlLen, alignment: 8)
-        defer { control.deallocate() }
-        memset(control, 0, controlLen)
-
-        return try withUnsafeMutablePointer(to: &iov) { iovPtr -> (Data, Int32?) in
-            var msg = msghdr(
-                msg_name: nil,
-                msg_namelen: 0,
-                msg_iov: iovPtr,
-                msg_iovlen: 1,
-                msg_control: control,
-                msg_controllen: socklen_t(controlLen),
-                msg_flags: 0
-            )
-
-            var n: Int
-            while true {
-                n = Darwin.recvmsg(fd, &msg, 0)
-                if n >= 0 { break }
-                if errno == EINTR { continue }
-                throw SessionControllerError.daemonUnavailable
-            }
-            if n == 0 { throw SessionControllerError.daemonUnavailable }
-
-            // Trim payload to first newline (line-delimited JSON).
-            let data = Data(bytes: payloadBuf, count: n)
-            let line: Data
-            if let nl = data.firstIndex(of: 0x0A) {
-                line = data.prefix(upTo: nl)
-            } else {
-                line = data
-            }
-
-            var extractedFd: Int32? = nil
-            let cmsgLen = Int(msg.msg_controllen)
-            if cmsgLen >= MemoryLayout<cmsghdr>.size {
-                let hdr = control.assumingMemoryBound(to: cmsghdr.self).pointee
-                // SOL_SOCKET on Darwin is 0xFFFF, SCM_RIGHTS is 0x01.
-                if hdr.cmsg_level == SOL_SOCKET && hdr.cmsg_type == SCM_RIGHTS {
-                    // CMSG_DATA: align(sizeof(cmsghdr)) from base.
-                    let dataOffset = cmsgAlign(MemoryLayout<cmsghdr>.size)
-                    if Int(hdr.cmsg_len) >= dataOffset + MemoryLayout<Int32>.size {
-                        let fdPtr = control.advanced(by: dataOffset).assumingMemoryBound(to: Int32.self)
-                        extractedFd = fdPtr.pointee
-                    }
-                }
-            }
-
-            return (Data(line), extractedFd)
-        }
-    }
-
-    private nonisolated func cmsgAlign(_ len: Int) -> Int {
-        let a = MemoryLayout<socklen_t>.size
-        return (len + a - 1) & ~(a - 1)
-    }
 }
 
 // MARK: - SessionRPCValue for request encoding

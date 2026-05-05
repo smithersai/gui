@@ -47,7 +47,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Hashable {
     case cancelCurrentOperation
     case showShortcutCheatSheet
     case linearNavigationPrefix
-    case tmuxPrefix
+    case muxPrefix
 
     var id: String { rawValue }
 
@@ -175,8 +175,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Hashable {
             return String(localized: "shortcut.showShortcutCheatSheet.label", defaultValue: "Shortcut Cheat Sheet")
         case .linearNavigationPrefix:
             return String(localized: "shortcut.linearNavigationPrefix.label", defaultValue: "Navigation Chord Prefix")
-        case .tmuxPrefix:
-            return String(localized: "shortcut.tmuxPrefix.label", defaultValue: "Tmux-Style Chord Prefix")
+        case .muxPrefix:
+            return String(localized: "shortcut.muxPrefix.label", defaultValue: "Zmux Chord Prefix")
         }
     }
 
@@ -270,7 +270,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Hashable {
             return StoredShortcut(key: "/", command: true)
         case .linearNavigationPrefix:
             return StoredShortcut(key: "g")
-        case .tmuxPrefix:
+        case .muxPrefix:
             return StoredShortcut(key: "b", control: true)
         }
     }
@@ -286,7 +286,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Hashable {
 
     var isPrefixOnly: Bool {
         switch self {
-        case .linearNavigationPrefix, .tmuxPrefix:
+        case .linearNavigationPrefix, .muxPrefix:
             return true
         default:
             return false

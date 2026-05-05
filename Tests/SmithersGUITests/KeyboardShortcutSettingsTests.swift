@@ -217,9 +217,9 @@ final class KeyboardShortcutDispatcherTests: XCTestCase {
         )
     }
 
-    func testDispatcherFiresConfiguredTmuxChord() throws {
+    func testDispatcherFiresConfiguredMuxChord() throws {
         var dispatcher = KeyboardShortcutDispatcher { action in
-            action == .tmuxPrefix
+            action == .muxPrefix
                 ? StoredShortcut(key: "x", control: true)
                 : action.defaultShortcut
         }

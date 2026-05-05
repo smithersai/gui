@@ -587,7 +587,7 @@ pub const Application = extern struct {
             .rerun => self.showToast("No run selection"),
             .approve_selected => self.showToast("No approval selection"),
             .deny_selected => self.showToast("No approval selection"),
-            .linear_navigation_prefix, .tmux_prefix => {},
+            .linear_navigation_prefix, .mux_prefix => {},
         }
     }
 

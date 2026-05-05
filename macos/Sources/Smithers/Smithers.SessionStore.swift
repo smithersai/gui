@@ -67,6 +67,11 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         let surfaceId: SurfaceID
     }
 
+    private struct NativeSplitTarget {
+        let paneId: String
+        let axis: WorkspaceSplitAxis
+    }
+
     var workspaceRootPath: String { workingDirectory }
 
     init(
@@ -167,8 +172,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             command: command,
             runId: normalizedRunId,
             rootSurfaceId: rootSurfaceID,
-            backend: .native,
-            tmuxSocketName: nil
+            backend: .native
         )
         attachTerminalWorkspaceChangeHandler(workspace)
         terminalWorkspaces[id] = workspace
@@ -185,8 +189,6 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 command: command,
                 backend: .native,
                 rootSurfaceId: rootSurfaceId,
-                tmuxSocketName: nil,
-                tmuxSessionName: nil,
                 runId: normalizedRunId,
                 hijack: hijack,
                 rootKind: .terminal,
@@ -237,21 +239,44 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         terminalWorkspaces[key.terminalId]?.markNativeTerminalPending(surfaceId: key.surfaceId)
 
         let shell = TerminalShellPreference.resolvedShellPath(userDefaults: userDefaults)
+        let splitTarget = nativeSplitTarget(for: key)
         Task { [weak self] in
             do {
                 try await SessionController.shared.ensureDaemon()
-                let info = try await SessionController.shared.createSession(
-                    title: nil,
-                    shell: shell,
-                    command: command,
-                    cwd: workingDirectory,
-                    env: Self.nativeSessionEnvironment(shell: shell),
-                    rows: 24,
-                    cols: 80
-                )
+                let sessionId: String
+                if let splitTarget {
+                    let snapshot = try await SessionController.shared.splitPane(
+                        paneId: splitTarget.paneId,
+                        axis: splitTarget.axis.rawValue,
+                        shell: shell,
+                        command: command,
+                        cwd: workingDirectory,
+                        env: Self.nativeSessionEnvironment(shell: shell),
+                        rows: 24,
+                        cols: 80
+                    )
+                    guard let createdPaneId = Self.activePaneId(
+                        in: snapshot,
+                        containingPaneId: splitTarget.paneId
+                    ) else {
+                        throw SessionControllerError.decodingFailed("missing split pane in mux snapshot")
+                    }
+                    sessionId = createdPaneId
+                } else {
+                    let info = try await SessionController.shared.createSession(
+                        title: nil,
+                        shell: shell,
+                        command: command,
+                        cwd: workingDirectory,
+                        env: Self.nativeSessionEnvironment(shell: shell),
+                        rows: 24,
+                        cols: 80
+                    )
+                    sessionId = info.id
+                }
                 await MainActor.run {
                     self?.nativeSurfaceOperationsInFlight.remove(key)
-                    self?.applyNativeSessionReady(key: key, sessionId: info.id)
+                    self?.applyNativeSessionReady(key: key, sessionId: sessionId)
                 }
             } catch {
                 await MainActor.run {
@@ -263,6 +288,38 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 }
             }
         }
+    }
+
+    private func nativeSplitTarget(for key: NativeSurfaceKey) -> NativeSplitTarget? {
+        guard let workspace = terminalWorkspaces[key.terminalId],
+              let surface = workspace.surfaces[key.surfaceId],
+              surface.kind == .terminal,
+              surface.terminalBackend == .native
+        else {
+            return nil
+        }
+
+        let axis = workspace.layout.splitAxis(containing: surface.id) ?? .horizontal
+        for candidate in workspace.orderedSurfaces where candidate.id != surface.id {
+            guard candidate.kind == .terminal,
+                  candidate.terminalBackend == .native,
+                  let paneId = normalizedOptionalText(candidate.sessionId),
+                  workspace.nativeTerminalState(surfaceId: candidate.id) == .ready
+            else {
+                continue
+            }
+            return NativeSplitTarget(paneId: paneId, axis: axis)
+        }
+        return nil
+    }
+
+    private nonisolated static func activePaneId(in snapshot: MuxSnapshot, containingPaneId paneId: String) -> String? {
+        for session in snapshot.sessions {
+            for window in session.windows where window.panes.contains(where: { $0.id == paneId }) {
+                return window.activePaneId
+            }
+        }
+        return nil
     }
 
     private func verifyNativeSession(
@@ -369,8 +426,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             rootSurfaceId: rootSurfaceID,
             rootKind: .browser,
             browserURLString: urlString,
-            backend: .native,
-            tmuxSocketName: nil
+            backend: .native
         )
         attachTerminalWorkspaceChangeHandler(workspace)
         terminalWorkspaces[id] = workspace
@@ -386,8 +442,6 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 command: nil,
                 backend: .native,
                 rootSurfaceId: rootSurfaceID.rawValue,
-                tmuxSocketName: nil,
-                tmuxSessionName: nil,
                 rootKind: .browser,
                 browserURLString: urlString,
                 snapshot: workspace.snapshot
@@ -554,7 +608,6 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     @discardableResult
     func ensureTerminalWorkspace(_ terminalId: String) -> TerminalWorkspace {
         if let workspace = terminalWorkspaces[terminalId] {
-            workspace.prepareAllTerminalSessions()
             reconcileNativeTerminalSurfaces(in: workspace)
             return workspace
         }
@@ -565,10 +618,6 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         let rootSurfaceID = tab?.rootSurfaceId.map { SurfaceID($0) } ?? SurfaceID()
         let resolvedBackend = tab?.backend ?? .native
         let rootKind = tab?.rootKind ?? .terminal
-        let socketName: String? = {
-            guard resolvedBackend == .tmux else { return nil }
-            return normalizedOptionalText(tab?.tmuxSocketName) ?? TmuxController.socketName(for: cwd)
-        }()
         let workspace: TerminalWorkspace
         if let snapshot = tab?.snapshot {
             workspace = TerminalWorkspace(
@@ -578,7 +627,6 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 workingDirectory: cwd,
                 runId: tab?.runId,
                 backend: resolvedBackend,
-                tmuxSocketName: socketName,
                 sessionId: tab?.sessionId
             )
         } else {
@@ -593,7 +641,6 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 rootKind: rootKind,
                 browserURLString: tab?.browserURLString,
                 backend: resolvedBackend,
-                tmuxSocketName: socketName,
                 sessionId: tab?.sessionId
             )
         }
@@ -644,17 +691,14 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     func terminalAttachCommand(_ terminalId: String) -> String? {
         if let workspace = terminalWorkspaces[terminalId],
            let surface = workspace.orderedSurfaces.first(where: { $0.kind == .terminal }) {
-            if surface.terminalBackend == .native {
-                guard workspace.nativeTerminalState(surfaceId: surface.id) == .ready else { return nil }
-                return nativeAttachCommand(for: surface.sessionId)
-            }
-            return TmuxController.attachCommand(socketName: surface.tmuxSocketName, sessionName: surface.tmuxSessionName)
+            guard surface.terminalBackend == .native,
+                  workspace.nativeTerminalState(surfaceId: surface.id) == .ready
+            else { return nil }
+            return nativeAttachCommand(for: surface.sessionId)
         }
         guard let tab = terminalTabs.first(where: { $0.terminalId == terminalId }) else { return nil }
-        if tab.backend == .native {
-            return nativeAttachCommand(for: tab.sessionId)
-        }
-        return TmuxController.attachCommand(socketName: tab.tmuxSocketName, sessionName: tab.tmuxSessionName)
+        guard tab.backend == .native else { return nil }
+        return nativeAttachCommand(for: tab.sessionId)
     }
 
     /// Build a `smithers-session-connect <sessionId>` command line, locating
@@ -708,17 +752,12 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
             for surfaceId in workspace.surfaces.keys {
                 SurfaceNotificationStore.shared.unregister(surfaceId: surfaceId.rawValue)
             }
-            terminateTmuxSessions(in: workspace.snapshot)
             terminateNativeSessions(in: workspace.snapshot)
         } else if let tab = terminalTabs.first(where: { $0.terminalId == terminalId }) {
             if let snapshot = tab.snapshot {
-                if tab.backend == .tmux {
-                    terminateTmuxSessions(in: snapshot)
-                } else if tab.backend == .native {
+                if tab.backend == .native {
                     terminateNativeSessions(in: snapshot)
                 }
-            } else if tab.backend == .tmux {
-                TmuxController.terminateSession(socketName: tab.tmuxSocketName, sessionName: tab.tmuxSessionName)
             } else if tab.backend == .native, let sid = tab.sessionId {
                 Task.detached {
                     try? await SessionController.shared.terminate(sessionId: PTYSessionID(sid))
@@ -857,7 +896,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                 isPinned: tab.isPinned,
                 isUnread: SurfaceNotificationStore.shared.workspaceHasIndicator(tab.terminalId),
                 workingDirectory: terminalWorkingDirectory(tab.terminalId),
-                sessionIdentifier: tab.tmuxSessionName ?? tab.terminalId,
+                sessionIdentifier: tab.sessionId ?? tab.terminalId,
                 agentKind: tab.agentKind,
                 agentSessionId: tab.agentSessionId,
                 folderPath: terminalWorkingDirectory(tab.terminalId)
@@ -951,20 +990,12 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         terminalTabs[idx].preview = workspace.displayPreview
         terminalTabs[idx].workingDirectory = firstTerminal?.terminalWorkingDirectory ?? terminalTabs[idx].workingDirectory
         terminalTabs[idx].rootSurfaceId = rootSurface?.id.rawValue ?? terminalTabs[idx].rootSurfaceId
-        terminalTabs[idx].tmuxSocketName = firstTerminal?.tmuxSocketName ?? terminalTabs[idx].tmuxSocketName
-        terminalTabs[idx].tmuxSessionName = firstTerminal?.tmuxSessionName ?? terminalTabs[idx].tmuxSessionName
         terminalTabs[idx].sessionId = firstTerminal?.sessionId ?? terminalTabs[idx].sessionId
         terminalTabs[idx].rootKind = rootSurface?.kind ?? terminalTabs[idx].rootKind
         terminalTabs[idx].browserURLString = rootSurface?.browserURLString ?? terminalTabs[idx].browserURLString
         terminalTabs[idx].snapshot = workspace.snapshot
         terminalTabs[idx].timestamp = Date()
         scheduleSave()
-    }
-
-    private func terminateTmuxSessions(in snapshot: TerminalWorkspaceSnapshot) {
-        for surface in snapshot.surfaces where surface.kind == .terminal {
-            TmuxController.terminateSession(socketName: surface.tmuxSocketName, sessionName: surface.tmuxSessionName)
-        }
     }
 
     nonisolated static func applyDefaultAgentFlags(_ command: String, unsafeFlagsEnabled: Bool? = nil, userDefaults: UserDefaults = .standard) -> String {

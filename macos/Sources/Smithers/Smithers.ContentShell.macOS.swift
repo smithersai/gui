@@ -368,8 +368,8 @@ private struct ShortcutCheatSheetFooter: View {
             return "All Shortcuts"
         case .linearNavigationPrefix:
             return "Navigation Prefix"
-        case .tmuxPrefix:
-            return "Tmux Prefix"
+        case .muxPrefix:
+            return "Zmux Prefix"
         }
     }
 }

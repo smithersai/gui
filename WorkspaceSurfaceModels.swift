@@ -146,6 +146,21 @@ indirect enum WorkspaceLayoutNode: Hashable, Codable {
         }
     }
 
+    func splitAxis(containing surfaceId: SurfaceID) -> WorkspaceSplitAxis? {
+        switch self {
+        case .leaf:
+            return nil
+        case .split(_, let axis, let first, let second):
+            if first.contains(surfaceId: surfaceId) {
+                return first.splitAxis(containing: surfaceId) ?? axis
+            }
+            if second.contains(surfaceId: surfaceId) {
+                return second.splitAxis(containing: surfaceId) ?? axis
+            }
+            return nil
+        }
+    }
+
     static func makeSplit(axis: WorkspaceSplitAxis, first: WorkspaceLayoutNode, second: WorkspaceLayoutNode) -> WorkspaceLayoutNode {
         .split(id: PaneID(), axis: axis, first: first, second: second)
     }
@@ -215,8 +230,6 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
     var terminalCommand: String?
     var runId: String? = nil
     var terminalBackend: TerminalBackend
-    var tmuxSocketName: String?
-    var tmuxSessionName: String?
     var sessionId: String? = nil
     var nativeAttachmentState: NativeTerminalAttachmentState?
     var markdownFilePath: String?
@@ -227,8 +240,6 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
         command: String? = nil,
         runId: String? = nil,
         backend: TerminalBackend = .native,
-        tmuxSocketName: String? = nil,
-        tmuxSessionName: String? = nil,
         sessionId: String? = nil
     ) -> WorkspaceSurface {
         WorkspaceSurface(
@@ -242,8 +253,6 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             terminalCommand: command,
             runId: runId,
             terminalBackend: backend,
-            tmuxSocketName: tmuxSocketName,
-            tmuxSessionName: tmuxSessionName,
             sessionId: sessionId,
             nativeAttachmentState: backend == .native ? (sessionId == nil ? .pending : .ready) : nil,
             markdownFilePath: nil
@@ -266,8 +275,6 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             terminalCommand: nil,
             runId: nil,
             terminalBackend: .ghostty,
-            tmuxSocketName: nil,
-            tmuxSessionName: nil,
             sessionId: sessionId,
             nativeAttachmentState: nil,
             markdownFilePath: nil
@@ -292,8 +299,6 @@ struct WorkspaceSurface: Identifiable, Hashable, Codable {
             terminalCommand: nil,
             runId: nil,
             terminalBackend: .ghostty,
-            tmuxSocketName: nil,
-            tmuxSessionName: nil,
             sessionId: sessionId,
             nativeAttachmentState: nil,
             markdownFilePath: normalizedPath
@@ -369,7 +374,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     @Published var focusedSurfaceId: SurfaceID?
     private let defaultWorkingDirectory: String?
     private let backend: TerminalBackend
-    private let tmuxSocketName: String?
     private let sessionId: String?
     private var nativeTerminalStates: [SurfaceID: NativeTerminalAttachmentState] = [:]
     weak var changeDelegate: TerminalWorkspaceChangeDelegate?
@@ -385,7 +389,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         rootKind: WorkspaceSurfaceKind = .terminal,
         browserURLString: String? = nil,
         backend: TerminalBackend = .native,
-        tmuxSocketName: String? = nil,
         sessionId: String? = nil
     ) {
         self.id = id
@@ -393,44 +396,29 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         self.title = title
         self.defaultWorkingDirectory = workingDirectory
         self.backend = backend
-        self.tmuxSocketName = tmuxSocketName
         self.sessionId = sessionId
 
         let surfaceId = rootSurfaceId ?? SurfaceID()
         var initialSurface: WorkspaceSurface
         switch rootKind {
         case .terminal:
-            let target = backend == .tmux ? Self.tmuxTarget(
-                surfaceId: surfaceId,
-                workingDirectory: workingDirectory,
-                socketName: tmuxSocketName
-            ) : nil
             initialSurface = WorkspaceSurface.terminal(
                 id: surfaceId,
                 workingDirectory: workingDirectory,
                 command: command,
                 runId: runId,
                 backend: backend,
-                tmuxSocketName: target?.socketName,
-                tmuxSessionName: target?.sessionName,
                 sessionId: sessionId
             )
         case .browser:
             initialSurface = WorkspaceSurface.browser(id: surfaceId, urlString: browserURLString, sessionId: nil)
         case .markdown:
-            let target = backend == .tmux ? Self.tmuxTarget(
-                surfaceId: surfaceId,
-                workingDirectory: workingDirectory,
-                socketName: tmuxSocketName
-            ) : nil
             initialSurface = WorkspaceSurface.terminal(
                 id: surfaceId,
                 workingDirectory: workingDirectory,
                 command: command,
                 runId: runId,
                 backend: backend,
-                tmuxSocketName: target?.socketName,
-                tmuxSessionName: target?.sessionName,
                 sessionId: sessionId
             )
         }
@@ -441,9 +429,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         self.focusedSurfaceId = initialSurface.id
         SurfaceNotificationStore.shared.register(surfaceId: initialSurface.id.rawValue, workspaceId: id.rawValue)
         initializeNativeTerminalState(for: initialSurface, restored: false)
-        if initialSurface.kind == .terminal {
-            prepareTerminalSession(initialSurface)
-        }
     }
 
     init(
@@ -453,7 +438,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         workingDirectory: String? = nil,
         runId: String? = nil,
         backend: TerminalBackend = .native,
-        tmuxSocketName: String? = nil,
         sessionId: String? = nil
     ) {
         self.id = id
@@ -462,7 +446,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         self.hasCustomTitle = snapshot.hasCustomTitle ?? false
         self.defaultWorkingDirectory = workingDirectory
         self.backend = backend
-        self.tmuxSocketName = tmuxSocketName
         self.sessionId = sessionId
 
         var nextSurfaces: [SurfaceID: WorkspaceSurface] = [:]
@@ -471,8 +454,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
                 surface = Self.normalizedTerminalSurface(
                     surface,
                     defaultWorkingDirectory: workingDirectory,
-                    backend: backend,
-                    socketName: tmuxSocketName
+                    backend: backend
                 )
             }
             nextSurfaces[surface.id] = surface
@@ -483,18 +465,11 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
 
         if nextSurfaces.isEmpty {
             let fallbackSurfaceId = SurfaceID()
-            let target = backend == .tmux ? Self.tmuxTarget(
-                surfaceId: fallbackSurfaceId,
-                workingDirectory: workingDirectory,
-                socketName: tmuxSocketName
-            ) : nil
             var fallback = WorkspaceSurface.terminal(
                 id: fallbackSurfaceId,
                 workingDirectory: workingDirectory,
                 runId: runId,
                 backend: backend,
-                tmuxSocketName: target?.socketName,
-                tmuxSessionName: target?.sessionName,
                 sessionId: sessionId
             )
             fallback.title = snapshot.title
@@ -513,9 +488,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         for surface in nextSurfaces.values {
             SurfaceNotificationStore.shared.register(surfaceId: surface.id.rawValue, workspaceId: id.rawValue)
             initializeNativeTerminalState(for: surface, restored: true)
-            if surface.kind == .terminal {
-                prepareTerminalSession(surface)
-            }
         }
     }
 
@@ -667,9 +639,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
 
         SurfaceNotificationStore.shared.register(surfaceId: surface.id.rawValue, workspaceId: id.rawValue)
         initializeNativeTerminalState(for: surface, restored: false)
-        if surface.kind == .terminal {
-            prepareTerminalSession(surface)
-        }
         focusSurface(surface.id)
         notifyChanged()
         return .success(
@@ -687,18 +656,10 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         let newSurface: WorkspaceSurface
         switch kind {
         case .terminal:
-            let surfaceId = SurfaceID()
-            let target = backend == .tmux ? Self.tmuxTarget(
-                surfaceId: surfaceId,
-                workingDirectory: defaultWorkingDirectory,
-                socketName: tmuxSocketName
-            ) : nil
             newSurface = .terminal(
-                id: surfaceId,
+                id: SurfaceID(),
                 workingDirectory: defaultWorkingDirectory,
                 backend: backend,
-                tmuxSocketName: target?.socketName,
-                tmuxSessionName: target?.sessionName,
                 sessionId: nil
             )
         case .browser:
@@ -722,9 +683,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         paneIdsBySurfaceId[newSurface.id] = PaneID()
         SurfaceNotificationStore.shared.register(surfaceId: newSurface.id.rawValue, workspaceId: id.rawValue)
         initializeNativeTerminalState(for: newSurface, restored: false)
-        if newSurface.kind == .terminal {
-            prepareTerminalSession(newSurface)
-        }
 
         let targetSurfaceId = focusedSurfaceId ?? layout.firstSurfaceId ?? newSurface.id
         if layout.contains(surfaceId: targetSurfaceId) {
@@ -791,12 +749,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
 
         if removed?.kind == .terminal {
             TerminalSurfaceRegistry.shared.deregister(sessionId: surfaceId.rawValue)
-            if removed?.terminalBackend == .tmux {
-                TmuxController.terminateSession(
-                    socketName: removed?.tmuxSocketName,
-                    sessionName: removed?.tmuxSessionName
-                )
-            } else if removed?.terminalBackend == .native, let sid = removed?.sessionId {
+            if removed?.terminalBackend == .native, let sid = removed?.sessionId {
                 // Fire-and-forget: the controller is an actor, so hop.
                 Task.detached {
                     try? await SessionController.shared.terminate(sessionId: PTYSessionID(sid))
@@ -859,7 +812,6 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         for surface in restartedSurfaces {
             SurfaceNotificationStore.shared.register(surfaceId: surface.id.rawValue, workspaceId: id.rawValue)
             initializeNativeTerminalState(for: surface, restored: false)
-            prepareTerminalSession(surface)
         }
         if let focusedSurfaceId {
             SurfaceNotificationStore.shared.setFocusedSurface(focusedSurfaceId.rawValue, workspaceId: id.rawValue)
@@ -1030,40 +982,11 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
         notifyChanged()
     }
 
-    func prepareAllTerminalSessions() {
-        for surface in surfaces.values where surface.kind == .terminal {
-            prepareTerminalSession(surface)
-        }
-    }
-
-    private func prepareTerminalSession(_ surface: WorkspaceSurface) {
-        guard surface.kind == .terminal,
-              surface.terminalBackend == .tmux,
-              !UITestSupport.isEnabled,
-              !UITestSupport.isRunningUnitTests
-        else {
-            return
-        }
-
-        _ = TmuxController.ensureSession(
-            socketName: surface.tmuxSocketName ?? TmuxController.socketName(for: defaultWorkingDirectory ?? ""),
-            sessionName: surface.tmuxSessionName ?? TmuxController.sessionName(for: surface.id.rawValue),
-            workingDirectory: surface.terminalWorkingDirectory ?? defaultWorkingDirectory,
-            command: surface.terminalCommand,
-            title: surface.title
-        )
-    }
-
     private func cleanUpTerminalSurfaceForRestart(_ surface: WorkspaceSurface) {
         SurfaceNotificationStore.shared.unregister(surfaceId: surface.id.rawValue)
         TerminalSurfaceRegistry.shared.deregister(sessionId: surface.id.rawValue)
 
         switch surface.terminalBackend {
-        case .tmux:
-            TmuxController.terminateSession(
-                socketName: surface.tmuxSocketName,
-                sessionName: surface.tmuxSessionName
-            )
         case .native:
             if let sid = surface.sessionId {
                 Task.detached {
@@ -1076,19 +999,12 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     }
 
     private func restartedTerminalSurface(from surface: WorkspaceSurface, newId: SurfaceID) -> WorkspaceSurface {
-        let target = surface.terminalBackend == .tmux ? Self.tmuxTarget(
-            surfaceId: newId,
-            workingDirectory: surface.terminalWorkingDirectory ?? defaultWorkingDirectory,
-            socketName: surface.tmuxSocketName ?? tmuxSocketName
-        ) : nil
         var restarted = WorkspaceSurface.terminal(
             id: newId,
             workingDirectory: surface.terminalWorkingDirectory ?? defaultWorkingDirectory,
             command: surface.terminalCommand,
             runId: surface.runId,
             backend: surface.terminalBackend,
-            tmuxSocketName: target?.socketName,
-            tmuxSessionName: target?.sessionName,
             sessionId: nil
         )
         restarted.title = surface.title
@@ -1155,35 +1071,13 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     private static func normalizedTerminalSurface(
         _ surface: WorkspaceSurface,
         defaultWorkingDirectory: String?,
-        backend: TerminalBackend,
-        socketName: String?
+        backend: TerminalBackend
     ) -> WorkspaceSurface {
         var surface = surface
         surface.terminalBackend = backend
         if surface.terminalWorkingDirectory == nil {
             surface.terminalWorkingDirectory = defaultWorkingDirectory
         }
-        if backend == .tmux {
-            let target = tmuxTarget(
-                surfaceId: surface.id,
-                workingDirectory: surface.terminalWorkingDirectory ?? defaultWorkingDirectory,
-                socketName: socketName
-            )
-            surface.tmuxSocketName = surface.tmuxSocketName ?? target?.socketName
-            surface.tmuxSessionName = surface.tmuxSessionName ?? target?.sessionName
-        }
         return surface
-    }
-
-    private static func tmuxTarget(
-        surfaceId: SurfaceID,
-        workingDirectory: String?,
-        socketName: String?
-    ) -> TmuxTerminalTarget? {
-        let socket = socketName ?? TmuxController.socketName(for: workingDirectory ?? "")
-        return TmuxTerminalTarget(
-            socketName: socket,
-            sessionName: TmuxController.sessionName(for: surfaceId.rawValue)
-        )
     }
 }

@@ -24,6 +24,7 @@ final class SessionControllerTests: XCTestCase {
         private let handler: (Data) -> FakeDaemonResponse
         private let lock = NSLock()
         private var _capturedRequest: Data?
+        private var _peerClosedAfterHeldResponse = false
 
         /// The LAST request received from a client, without the trailing newline.
         /// The fake daemon serves connections in a loop, so ping probes made by
@@ -31,6 +32,10 @@ final class SessionControllerTests: XCTestCase {
         var capturedRequest: Data? {
             lock.lock(); defer { lock.unlock() }
             return _capturedRequest
+        }
+        var peerClosedAfterHeldResponse: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return _peerClosedAfterHeldResponse
         }
         /// Fulfilled once per accepted connection. The default controller
         /// flow is one request per call, so tests usually wait for exactly
@@ -121,6 +126,12 @@ final class SessionControllerTests: XCTestCase {
 
             let response = self.handler(requestLine)
             writeResponse(fd: client, response: response)
+            if response.holdOpenUntilPeerCloses {
+                waitForPeerClose(fd: client)
+                self.lock.lock()
+                self._peerClosedAfterHeldResponse = true
+                self.lock.unlock()
+            }
         }
 
         private func readLine(fd: Int32) -> Data {
@@ -146,71 +157,36 @@ final class SessionControllerTests: XCTestCase {
                 data.append(0x0A)
             }
 
-            if let ptyFd = response.scmRightsFd {
-                sendWithFd(fd: fd, fdToSend: ptyFd, payload: data)
-            } else {
-                _ = data.withUnsafeBytes { raw -> Int in
-                    var offset = 0
-                    while offset < raw.count {
-                        let n = Darwin.write(fd, raw.baseAddress!.advanced(by: offset), raw.count - offset)
-                        if n > 0 { offset += n; continue }
-                        if n < 0 && errno == EINTR { continue }
-                        return -1
-                    }
-                    return 0
+            _ = data.withUnsafeBytes { raw -> Int in
+                var offset = 0
+                while offset < raw.count {
+                    let n = Darwin.write(fd, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+                    if n > 0 { offset += n; continue }
+                    if n < 0 && errno == EINTR { continue }
+                    return -1
                 }
+                return 0
             }
         }
 
-        /// Send a single fd alongside `payload` using SCM_RIGHTS. Layout
-        /// mirrors libsmithers/src/session/fd_passing.zig.
-        private func sendWithFd(fd: Int32, fdToSend: Int32, payload: Data) {
-            let controlLen = cmsgAlign(MemoryLayout<cmsghdr>.size) + cmsgAlign(MemoryLayout<Int32>.size)
-            let control = UnsafeMutableRawPointer.allocate(byteCount: controlLen, alignment: 8)
-            defer { control.deallocate() }
-            memset(control, 0, controlLen)
-
-            let hdr = control.assumingMemoryBound(to: cmsghdr.self)
-            hdr.pointee.cmsg_len = socklen_t(cmsgAlign(MemoryLayout<cmsghdr>.size) + MemoryLayout<Int32>.size)
-            hdr.pointee.cmsg_level = SOL_SOCKET
-            hdr.pointee.cmsg_type = SCM_RIGHTS
-
-            let dataOffset = cmsgAlign(MemoryLayout<cmsghdr>.size)
-            let fdPtr = control.advanced(by: dataOffset).assumingMemoryBound(to: Int32.self)
-            fdPtr.pointee = fdToSend
-
-            payload.withUnsafeBytes { raw -> Void in
-                guard let base = raw.baseAddress else { return }
-                var iov = iovec(
-                    iov_base: UnsafeMutableRawPointer(mutating: base),
-                    iov_len: raw.count
-                )
-                withUnsafeMutablePointer(to: &iov) { iovPtr in
-                    var msg = msghdr(
-                        msg_name: nil,
-                        msg_namelen: 0,
-                        msg_iov: iovPtr,
-                        msg_iovlen: 1,
-                        msg_control: control,
-                        msg_controllen: socklen_t(controlLen),
-                        msg_flags: 0
-                    )
-                    _ = sendmsg(fd, &msg, 0)
-                }
+        private func waitForPeerClose(fd: Int32) {
+            var byte: UInt8 = 0
+            while true {
+                let n = Darwin.read(fd, &byte, 1)
+                if n == 0 { return }
+                if n < 0 && errno == EINTR { continue }
+                if n < 0 { return }
             }
         }
 
-        private func cmsgAlign(_ len: Int) -> Int {
-            let a = MemoryLayout<socklen_t>.size
-            return (len + a - 1) & ~(a - 1)
-        }
     }
 
     private struct FakeDaemonResponse {
         var jsonLine: Data
-        /// If non-nil, the response is sent via sendmsg + SCM_RIGHTS with
-        /// this extra file descriptor attached.
-        var scmRightsFd: Int32?
+        /// Keep the accepted connection open after responding until the
+        /// client closes its side. This lets attach tests prove the client
+        /// retains the logical zmux control connection for the attachment.
+        var holdOpenUntilPeerCloses: Bool = false
     }
 
     // MARK: - Helpers
@@ -281,6 +257,22 @@ final class SessionControllerTests: XCTestCase {
             domain: "SessionControllerTests",
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "timed out waiting for process \(pid) to exit"]
+        )
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval,
+        predicate: @escaping () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate() { return }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        throw NSError(
+            domain: "SessionControllerTests",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "timed out waiting for condition"]
         )
     }
 
@@ -366,6 +358,74 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertEqual(list[1].rows, 30)
     }
 
+    func testMuxSnapshotDecodesServerOwnedModel() async throws {
+        let daemon = try FakeDaemon { _ in
+            FakeDaemonResponse(
+                jsonLine: Data(#"""
+                {"id":1,"result":{"sessions":[{"id":"sess-1","name":"main","activeWindowId":"win-1","windows":[{"id":"win-1","sessionId":"sess-1","index":0,"name":"editor","activePaneId":"pane-2","layout":{"kind":"split","id":"split-1","axis":"horizontal","first":{"kind":"leaf","paneId":"pane-1"},"second":{"kind":"leaf","paneId":"pane-2"}},"panes":[{"id":"pane-1","windowId":"win-1","sessionId":"sess-1","index":0,"title":"left","hasCustomTitle":false,"state":"detached","pid":123,"cwd":"/tmp","command":"cat","alerts":{"activity":true,"bell":false,"silence":false,"exited":false,"lastActivityMs":10,"lastBellMs":0}},{"id":"pane-2","windowId":"win-1","sessionId":"sess-1","index":1,"title":"right","hasCustomTitle":true,"state":"detached","pid":124,"cwd":null,"command":"","alerts":{"activity":false,"bell":true,"silence":false,"exited":false,"lastActivityMs":0,"lastBellMs":11}}]}]}],"clients":[{"id":"client-1","sessionId":"sess-1","windowId":"win-1","paneId":"pane-1","rows":24,"cols":80,"active":true}],"keyBindings":[{"table":"prefix","key":"%","command":"split-window -h","repeat":false}]}}
+                """#.utf8)
+            )
+        }
+        daemon.start()
+
+        let controller = SessionController(socketPathOverride: daemon.socketPath)
+        let snapshot = try await controller.muxSnapshot()
+
+        await fulfillment(of: [daemon.requestReceived], timeout: 2.0)
+
+        XCTAssertEqual(snapshot.sessions.first?.name, "main")
+        XCTAssertEqual(snapshot.sessions.first?.windows.first?.panes.count, 2)
+        XCTAssertEqual(snapshot.clients.first?.id, "client-1")
+        XCTAssertEqual(snapshot.keyBindings.first?.command, "split-window -h")
+        if case .split(_, let axis, _, _) = snapshot.sessions[0].windows[0].layout {
+            XCTAssertEqual(axis, "horizontal")
+        } else {
+            XCTFail("expected split layout")
+        }
+
+        let req = try decodeRequest(daemon.capturedRequest)
+        XCTAssertEqual(req["method"] as? String, "mux.snapshot")
+    }
+
+    func testSplitPaneSendsMuxRequest() async throws {
+        let daemon = try FakeDaemon { _ in
+            FakeDaemonResponse(
+                jsonLine: Data(#"""
+                {"id":1,"result":{"sessions":[{"id":"sess-1","name":"main","activeWindowId":"win-1","windows":[{"id":"win-1","sessionId":"sess-1","index":0,"name":"editor","activePaneId":"pane-2","layout":{"kind":"split","id":"split-1","axis":"vertical","first":{"kind":"leaf","paneId":"pane-1"},"second":{"kind":"leaf","paneId":"pane-2"}},"panes":[]}]}],"clients":[],"keyBindings":[]}}
+                """#.utf8)
+            )
+        }
+        daemon.start()
+
+        let controller = SessionController(socketPathOverride: daemon.socketPath)
+        _ = try await controller.splitPane(
+            paneId: "pane-1",
+            axis: "vertical",
+            shell: "/bin/sh",
+            command: "cat",
+            cwd: "/tmp",
+            env: ["TERM": "xterm-ghostty"],
+            rows: 30,
+            cols: 100
+        )
+
+        await fulfillment(of: [daemon.requestReceived], timeout: 2.0)
+
+        let req = try decodeRequest(daemon.capturedRequest)
+        XCTAssertEqual(req["method"] as? String, "pane.split")
+        guard let params = req["params"] as? [String: Any] else {
+            return XCTFail("missing params")
+        }
+        XCTAssertEqual(params["paneId"] as? String, "pane-1")
+        XCTAssertEqual(params["axis"] as? String, "vertical")
+        XCTAssertEqual(params["shell"] as? String, "/bin/sh")
+        XCTAssertEqual(params["command"] as? String, "cat")
+        XCTAssertEqual(params["cwd"] as? String, "/tmp")
+        XCTAssertEqual(params["rows"] as? Int, 30)
+        XCTAssertEqual(params["cols"] as? Int, 100)
+        XCTAssertEqual((params["env"] as? [String: Any])?["TERM"] as? String, "xterm-ghostty")
+    }
+
     func testErrorResponseThrowsRpcError() async throws {
         let daemon = try FakeDaemon { _ in
             FakeDaemonResponse(
@@ -389,63 +449,39 @@ final class SessionControllerTests: XCTestCase {
         await fulfillment(of: [daemon.requestReceived], timeout: 2.0)
     }
 
-    func testAttachReceivesFd() async throws {
-        // Create a pipe. The daemon sends the read-end fd to the client via
-        // SCM_RIGHTS. The daemon writes a known payload to the write-end so
-        // the test can verify the client received a usable fd by reading it.
-        var pipeFds: [Int32] = [0, 0]
-        let pipeRc = pipeFds.withUnsafeMutableBufferPointer { buf -> Int32 in
-            pipe(buf.baseAddress)
-        }
-        XCTAssertEqual(pipeRc, 0, "pipe() failed")
-
-        let readEnd = pipeFds[0]
-        let writeEnd = pipeFds[1]
-
-        // Write a sentinel into the pipe so the client can read it from the
-        // received fd.
-        let sentinel = "smt-fd-ok"
-        _ = sentinel.withCString { Darwin.write(writeEnd, $0, strlen($0)) }
-        Darwin.close(writeEnd)
-
+    func testAttachMuxClientKeepsControlSocketOpen() async throws {
         let daemon = try FakeDaemon { request in
-            // Only the attach request gets the fd; the ping done by
-            // ensureDaemon() gets a plain ping response.
-            let isAttach = (try? JSONSerialization.jsonObject(with: request))
-                .flatMap { ($0 as? [String: Any])?["method"] as? String } == "session.attach"
-            if isAttach {
+            let method = (try? JSONSerialization.jsonObject(with: request))
+                .flatMap { ($0 as? [String: Any])?["method"] as? String }
+            if method == "client.attach" {
                 return FakeDaemonResponse(
-                    jsonLine: Data(#"{"id":1,"result":{"id":"sess-1","title":"t","state":"running","rows":24,"cols":80}}"#.utf8),
-                    scmRightsFd: readEnd
+                    jsonLine: Data(#"{"id":2,"result":{"clientId":"client-1","sessionId":"sess-1","windowId":"win-1","paneId":"pane-1","rows":24,"cols":80}}"#.utf8),
+                    holdOpenUntilPeerCloses: true
                 )
             }
             return FakeDaemonResponse(
-                jsonLine: Data(#"{"id":1,"result":{"version":"0.1.0","pid":1,"sessions":0}}"#.utf8)
+                jsonLine: Data(#"{"id":1,"result":{"version":"0.1.0","pid":1,"sessions":1}}"#.utf8)
             )
         }
         daemon.start()
 
         let controller = SessionController(socketPathOverride: daemon.socketPath)
-        let (info, ptyFd) = try await controller.attach(sessionId: PTYSessionID("sess-1"))
+        let attached = try await controller.attachClient(paneId: "pane-1", rows: 24, cols: 80)
 
         await fulfillment(of: [daemon.requestReceived], timeout: 2.0)
 
-        // Close the daemon's copy of the read-end so the client's fd is the
-        // only live reference.
-        Darwin.close(readEnd)
+        XCTAssertEqual(attached.info.clientId, "client-1")
+        XCTAssertEqual(attached.info.paneId, "pane-1")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertFalse(
+            daemon.peerClosedAfterHeldResponse,
+            "logical mux clients must retain the control socket so zmux keeps the client attached"
+        )
 
-        XCTAssertEqual(info.id, "sess-1")
-        XCTAssertGreaterThanOrEqual(ptyFd, 0, "expected a valid fd from attach")
-
-        defer { Darwin.close(ptyFd) }
-
-        var buf = [UInt8](repeating: 0, count: 64)
-        let n = buf.withUnsafeMutableBufferPointer { bp -> Int in
-            Darwin.read(ptyFd, bp.baseAddress, bp.count)
+        attached.close()
+        try await waitUntil(timeout: 2.0) {
+            daemon.peerClosedAfterHeldResponse
         }
-        XCTAssertGreaterThan(n, 0, "expected to read the sentinel from the received fd")
-        let got = String(bytes: buf.prefix(max(n, 0)), encoding: .utf8) ?? ""
-        XCTAssertEqual(got, sentinel)
     }
 
     func testCaptureReturnsScrollback() async throws {

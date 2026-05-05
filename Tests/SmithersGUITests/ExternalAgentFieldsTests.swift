@@ -23,8 +23,6 @@ final class ExternalAgentFieldsTests: XCTestCase {
             command: "claude",
             backend: .native,
             rootSurfaceId: "surface-1",
-            tmuxSocketName: nil,
-            tmuxSessionName: nil,
             sessionId: "pty-xyz",
             runId: nil,
             hijack: nil,
@@ -108,6 +106,7 @@ final class ExternalAgentFieldsTests: XCTestCase {
         let data = try XCTUnwrap(legacyJSON.data(using: .utf8))
         let decoded = try Self.makeDecoder().decode(TerminalWorkspaceRecord.self, from: data)
         XCTAssertEqual(decoded.terminalId, "t-legacy")
+        XCTAssertEqual(decoded.backend, .native)
         XCTAssertNil(decoded.agentKind)
         XCTAssertNil(decoded.agentSessionId)
     }

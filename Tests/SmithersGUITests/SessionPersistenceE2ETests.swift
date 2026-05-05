@@ -109,12 +109,7 @@ final class SessionPersistenceE2ETests: XCTestCase {
         let restoredId = try XCTUnwrap(restoredTab.sessionId)
         let info = try await controller.info(sessionId: PTYSessionID(restoredId))
         XCTAssertEqual(info.id, created.id)
-        // The daemon reports "running" when a client is attached and
-        // "detached" otherwise. Both mean the PTY is alive and reattachable.
-        XCTAssertTrue(
-            info.state == "running" || info.state == "detached",
-            "unexpected state after restart: \(info.state)"
-        )
+        XCTAssertEqual(info.state, "running")
 
         // 4. Negative case: terminate the session and confirm the liveness
         //    check throws, so the GUI would fall through to respawn instead
@@ -178,14 +173,13 @@ final class SessionPersistenceE2ETests: XCTestCase {
         first.process.terminate()
         try await first.waitForExit()
         XCTAssertFalse(
-            first.stderrString.contains("MissingFileDescriptor"),
-            "first helper should not fail to attach: \(first.stderrString)"
+            first.stderrString.contains("zmux-connect:"),
+            "first helper should not report an attach failure: \(first.stderrString)"
         )
 
-        try await waitForSessionState(
+        try await waitForNoAttachedClients(
             controller: controller,
-            sessionId: created.id,
-            expectedState: "detached"
+            paneId: created.id
         )
 
         let second = try SessionConnectProcess(
@@ -202,8 +196,8 @@ final class SessionPersistenceE2ETests: XCTestCase {
         let secondEcho = try await second.waitForStdout(containing: "beta-after-reattach")
         XCTAssertTrue(secondEcho.contains("beta-after-reattach"))
         XCTAssertFalse(
-            second.stderrString.contains("MissingFileDescriptor"),
-            "second helper reported fd passing failure: \(second.stderrString)"
+            second.stderrString.contains("zmux-connect:"),
+            "second helper reported attach failure: \(second.stderrString)"
         )
     }
 
@@ -323,16 +317,15 @@ final class SessionPersistenceE2ETests: XCTestCase {
         )
     }
 
-    private func waitForSessionState(
+    private func waitForNoAttachedClients(
         controller: SessionController,
-        sessionId: String,
-        expectedState: String,
+        paneId: String,
         timeout: TimeInterval = 5
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            let info = try await controller.info(sessionId: PTYSessionID(sessionId))
-            if info.state == expectedState {
+            let activeClients = try await controller.clients().filter { $0.paneId == paneId }
+            if activeClients.isEmpty {
                 return
             }
             try await Task.sleep(nanoseconds: 50_000_000)
@@ -340,7 +333,7 @@ final class SessionPersistenceE2ETests: XCTestCase {
         throw NSError(
             domain: "SessionPersistenceE2ETests",
             code: 3,
-            userInfo: [NSLocalizedDescriptionKey: "timed out waiting for state \(expectedState)"]
+            userInfo: [NSLocalizedDescriptionKey: "timed out waiting for no attached clients on \(paneId)"]
         )
     }
 

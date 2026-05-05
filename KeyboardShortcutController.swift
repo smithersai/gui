@@ -48,7 +48,7 @@ enum KeyboardShortcutDispatchOutcome: Equatable {
 struct KeyboardChordParser {
     private enum PendingPrefix {
         case linearG
-        case tmuxControlB
+        case muxControlB
     }
 
     private var pendingPrefix: PendingPrefix?
@@ -87,7 +87,7 @@ struct KeyboardChordParser {
                 default: return .ignored
                 }
 
-            case .tmuxControlB:
+            case .muxControlB:
                 guard !isTextInputFocused, !isTerminalFocused else {
                     return .ignored
                 }
@@ -132,8 +132,8 @@ struct KeyboardChordParser {
         }
 
         if !isTerminalFocused,
-           shortcutProvider(.tmuxPrefix).firstStroke == stroke {
-            pendingPrefix = .tmuxControlB
+           shortcutProvider(.muxPrefix).firstStroke == stroke {
+            pendingPrefix = .muxControlB
             pendingSince = now
             return .consumed
         }

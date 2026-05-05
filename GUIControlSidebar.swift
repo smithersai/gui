@@ -356,19 +356,28 @@ struct GUIControlSidebar: View {
             ? focused
             : workspace.orderedSurfaces.first { $0.kind == .terminal }
         guard let surface = terminalSurface,
-              let socketName = surface.tmuxSocketName,
-              let sessionName = surface.tmuxSessionName
+              let sessionId = surface.sessionId,
+              workspace.nativeTerminalState(surfaceId: surface.id) == .ready
         else {
-            append(.system, "No tmux-backed terminal surface is available.")
+            append(.system, "No zmux-backed terminal surface is available.")
             return
         }
 
-        do {
-            let captured = try TmuxController.capturePane(socketName: socketName, sessionName: sessionName, lines: 120)
+        Task {
+            do {
+                let captured = try await SessionController.shared.capture(
+                    sessionId: PTYSessionID(sessionId),
+                    lines: 120
+                )
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            append(.agent, captured.isEmpty ? "Focused terminal is empty." : captured)
-        } catch {
-            append(.system, "Terminal capture failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    append(.agent, captured.isEmpty ? "Focused terminal is empty." : captured)
+                }
+            } catch {
+                await MainActor.run {
+                    append(.system, "Terminal capture failed: \(error.localizedDescription)")
+                }
+            }
         }
     }
 

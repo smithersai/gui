@@ -188,8 +188,23 @@ typealias RunTab = RunWorkspace
 
 enum TerminalBackend: String, Hashable, Codable {
     case ghostty
-    case tmux
     case native
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case "ghostty":
+            self = .ghostty
+        case "native", "tmux":
+            self = .native
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unknown terminal backend: \(rawValue)"
+            )
+        }
+    }
 }
 
 struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
@@ -206,10 +221,8 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
     let createdAt: Date
     var workingDirectory: String? = nil
     var command: String? = nil
-    var backend: TerminalBackend = .tmux
+    var backend: TerminalBackend = .native
     var rootSurfaceId: String? = nil
-    var tmuxSocketName: String? = nil
-    var tmuxSessionName: String? = nil
     var sessionId: String? = nil
     var runId: String? = nil
     var hijack: HijackBinding? = nil
@@ -233,8 +246,6 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         case command
         case backend
         case rootSurfaceId
-        case tmuxSocketName
-        case tmuxSessionName
         case sessionId
         case runId
         case hijack
@@ -254,10 +265,8 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         createdAt: Date,
         workingDirectory: String? = nil,
         command: String? = nil,
-        backend: TerminalBackend = .tmux,
+        backend: TerminalBackend = .native,
         rootSurfaceId: String? = nil,
-        tmuxSocketName: String? = nil,
-        tmuxSessionName: String? = nil,
         sessionId: String? = nil,
         runId: String? = nil,
         hijack: HijackBinding? = nil,
@@ -277,8 +286,6 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         self.command = command
         self.backend = backend
         self.rootSurfaceId = rootSurfaceId
-        self.tmuxSocketName = tmuxSocketName
-        self.tmuxSessionName = tmuxSessionName
         self.sessionId = sessionId
         self.runId = runId
         self.hijack = hijack
@@ -299,10 +306,8 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
         command = try container.decodeIfPresent(String.self, forKey: .command)
-        backend = try container.decodeIfPresent(TerminalBackend.self, forKey: .backend) ?? .tmux
+        backend = try container.decodeIfPresent(TerminalBackend.self, forKey: .backend) ?? .native
         rootSurfaceId = try container.decodeIfPresent(String.self, forKey: .rootSurfaceId)
-        tmuxSocketName = try container.decodeIfPresent(String.self, forKey: .tmuxSocketName)
-        tmuxSessionName = try container.decodeIfPresent(String.self, forKey: .tmuxSessionName)
         sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
         runId = try container.decodeIfPresent(String.self, forKey: .runId)
         hijack = try container.decodeIfPresent(HijackBinding.self, forKey: .hijack)
@@ -325,8 +330,6 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
         try container.encodeIfPresent(command, forKey: .command)
         try container.encode(backend, forKey: .backend)
         try container.encodeIfPresent(rootSurfaceId, forKey: .rootSurfaceId)
-        try container.encodeIfPresent(tmuxSocketName, forKey: .tmuxSocketName)
-        try container.encodeIfPresent(tmuxSessionName, forKey: .tmuxSessionName)
         try container.encodeIfPresent(sessionId, forKey: .sessionId)
         try container.encodeIfPresent(runId, forKey: .runId)
         try container.encodeIfPresent(hijack, forKey: .hijack)
@@ -340,113 +343,6 @@ struct TerminalWorkspaceRecord: Identifiable, Hashable, Codable {
 }
 
 typealias TerminalTab = TerminalWorkspaceRecord
-
-struct TmuxTerminalTarget: Hashable {
-    let socketName: String
-    let sessionName: String
-}
-
-enum TmuxController {
-    static let commonExecutablePaths = [
-        "/opt/homebrew/bin/tmux",
-        "/usr/local/bin/tmux",
-        "/usr/bin/tmux",
-    ]
-
-    static func executablePath(environment: [String: String]? = nil) -> String? {
-        Smithers.Terminal.tmuxExecutablePath(environment: environment)
-    }
-
-    static func isAvailable(environment: [String: String]? = nil) -> Bool {
-        Smithers.Terminal.tmuxIsAvailable(environment: environment)
-    }
-
-    static func socketName(for workingDirectory: String) -> String {
-        Smithers.Terminal.tmuxSocketName(for: workingDirectory)
-    }
-
-    static func rootSurfaceId(for terminalId: String) -> String {
-        Smithers.Terminal.tmuxRootSurfaceId(for: terminalId)
-    }
-
-    static func sessionName(for surfaceId: String) -> String {
-        Smithers.Terminal.tmuxSessionName(for: surfaceId)
-    }
-
-    static func attachCommand(
-        socketName: String?,
-        sessionName: String?,
-        environment: [String: String]? = nil
-    ) -> String? {
-        Smithers.Terminal.tmuxAttachCommand(
-            socketName: socketName,
-            sessionName: sessionName,
-            environment: environment
-        )
-    }
-
-    @discardableResult
-    static func ensureSession(
-        socketName: String,
-        sessionName: String,
-        workingDirectory: String?,
-        command: String?,
-        title: String?,
-        environment: [String: String]? = nil
-    ) -> Bool {
-        let ok = Smithers.Terminal.tmuxEnsureSession(
-            socketName: socketName,
-            sessionName: sessionName,
-            workingDirectory: workingDirectory,
-            command: command,
-            title: title,
-            environment: environment
-        )
-        if !ok {
-            AppLogger.terminal.warning("tmux session setup failed", metadata: ["session": sessionName])
-        }
-        return ok
-    }
-
-    static func terminateSession(
-        socketName: String?,
-        sessionName: String?,
-        environment: [String: String]? = nil
-    ) {
-        Smithers.Terminal.tmuxTerminateSession(
-            socketName: socketName,
-            sessionName: sessionName,
-            environment: environment
-        )
-    }
-
-    static func capturePane(socketName: String, sessionName: String, lines: Int = 200) throws -> String {
-        try Smithers.Terminal.tmuxCapturePane(socketName: socketName, sessionName: sessionName, lines: lines)
-    }
-
-    static func sendText(socketName: String, sessionName: String, text: String, enter: Bool = false) throws {
-        try Smithers.Terminal.tmuxSendText(
-            socketName: socketName,
-            sessionName: sessionName,
-            text: text,
-            enter: enter
-        )
-    }
-}
-
-enum TmuxControllerError: LocalizedError {
-    case tmuxUnavailable
-    case commandFailed(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .tmuxUnavailable:
-            return "tmux is not available."
-        case .commandFailed(let message):
-            return message.isEmpty ? "tmux command failed." : message
-        }
-    }
-}
 
 enum SidebarWorkspaceKind: Hashable {
     case run

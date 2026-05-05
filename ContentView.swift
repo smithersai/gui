@@ -1099,7 +1099,7 @@ struct ContentView: View {
             cancelCurrentOperation()
         case .showShortcutCheatSheet:
             openCommandPalette(prefill: ">shortcut")
-        case .linearNavigationPrefix, .tmuxPrefix:
+        case .linearNavigationPrefix, .muxPrefix:
             break
         }
     }

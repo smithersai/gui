@@ -61,8 +61,6 @@ final class SessionStoreHijackTests: XCTestCase {
             command: "smithers hijack --resume",
             backend: .native,
             rootSurfaceId: "surface-1",
-            tmuxSocketName: nil,
-            tmuxSessionName: nil,
             sessionId: "session-1",
             runId: "run-123",
             hijack: makeHijack(),

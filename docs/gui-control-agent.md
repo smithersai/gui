@@ -17,7 +17,7 @@ There are three different agent paths in the app:
 
 2. External agent harnesses
    - Discovered by `SmithersClient.listAgents()`.
-   - Launched as terminal/tmux sessions.
+   - Launched as zmux-backed terminal sessions.
    - Examples: Claude Code, Codex, Gemini, Amp, Forge.
 
 3. Smithers workflow agents
@@ -25,14 +25,14 @@ There are three different agent paths in the app:
    - Can be observed through `smithers chat`, event streams, SQL, timelines, and run inspect.
    - Can be hijacked into a resumable external harness when supported.
 
-The GUI control agent should sit above these paths. It can choose the right tool for a task: use app controls directly, inspect terminal panes through tmux, launch Codex or another harness for implementation, run Smithers workflows for longer jobs, approve/deny gates, or use screenshots when structured state is insufficient.
+The GUI control agent should sit above these paths. It can choose the right tool for a task: use app controls directly, inspect terminal panes through zmux, launch Codex or another harness for implementation, run Smithers workflows for longer jobs, approve/deny gates, or use screenshots when structured state is insufficient.
 
 ## Requirements
 
 - The control chat must remain visible while the app changes screens.
 - The agent must be able to see the app:
   - structured app state for fast reasoning,
-  - terminal pane text through tmux,
+  - terminal pane text through zmux,
   - browser state through the web view registry,
   - Smithers state through CLIs or `SmithersClient`,
   - screenshot fallback for visual ambiguity.
@@ -41,7 +41,7 @@ The GUI control agent should sit above these paths. It can choose the right tool
   - activate buttons and commands,
   - type into chat/composer fields,
   - launch terminal tabs and external harnesses,
-  - send text to tmux panes,
+  - send text to zmux panes,
   - run Smithers workflows/prompts,
   - inspect and act on approvals,
   - open browser surfaces and navigate URLs.
@@ -55,7 +55,7 @@ Use this as the baseline goal for the Smithers GUI control agent:
 ```text
 You are the Smithers GUI control agent. Your job is to solve the user's problem end to end.
 
-You can inspect and control the Smithers GUI. Prefer structured tools when available: app state snapshots, route navigation, Smithers CLIs, tmux pane capture, terminal input, workflow launch, approvals, and run inspection. Use screenshots when the structured state is incomplete or when visual confirmation matters.
+You can inspect and control the Smithers GUI. Prefer structured tools when available: app state snapshots, route navigation, Smithers CLIs, zmux pane capture, terminal input, workflow launch, approvals, and run inspection. Use screenshots when the structured state is incomplete or when visual confirmation matters.
 
 You may launch specialized agent harnesses such as Codex, Claude Code, Gemini, Amp, or Forge when they are the right tool for implementation, review, research, or validation. You may run Smithers workflows for durable multi-step automation. Keep the user informed through the visible right-side control chat.
 
@@ -81,7 +81,7 @@ Observation tools:
 - `app.screenshot`
   - returns a PNG for the main window or active content area.
 - `terminal.capture`
-  - captures a tmux pane by surface id.
+  - captures a zmux pane by surface id.
 - `browser.snapshot`
   - reports URL/title/loading state and optional DOM summary for a browser surface.
 - `smithers.inspect`
@@ -117,8 +117,8 @@ Typed actions should be implemented with app state and existing services first. 
 - Terminal control:
   - `SessionStore.addTerminalTab(...)` launches terminal workspaces.
   - `TerminalWorkspace` stores surfaces and layout.
-  - `TmuxController.capturePane(...)` reads terminal contents.
-  - `TmuxController.sendText(...)` sends input.
+  - `SessionController.capture(...)` reads terminal contents.
+  - `SessionController.send(...)` sends input.
 - Browser control:
   - `BrowserSurfaceRegistry` owns `WKWebView` instances by surface id.
   - `TerminalWorkspace` tracks browser surface URL/title.
@@ -155,7 +155,7 @@ The agent should choose tools in this order:
 
 1. Use structured app state and typed actions.
 2. Use Smithers CLIs or client methods.
-3. Use tmux capture/send for terminal panes.
+3. Use zmux capture/send for terminal panes.
 4. Use browser registry/DOM state for web surfaces.
 5. Use screenshot plus coordinate or accessibility fallback.
 6. Launch a specialized harness or workflow when the task needs implementation, research, validation, or durable execution.
@@ -172,7 +172,7 @@ This keeps the agent fast and reliable while preserving true visual control when
 2. Observation bridge
    - Add structured app snapshot models.
    - Include route, sessions, terminal workspaces, browser surfaces, active runs, and approvals.
-   - Add terminal capture by tmux surface id.
+   - Add terminal capture by zmux surface id.
    - Add screenshot capture for the main window.
 
 3. Typed action bridge
@@ -190,7 +190,7 @@ This keeps the agent fast and reliable while preserving true visual control when
 
 6. Hardening
    - Add selector coverage tests for important buttons.
-   - Add tmux capture/send tests.
+   - Add zmux capture/send tests.
    - Add snapshot schema tests.
    - Add UI tests proving the sidebar remains visible while navigating and launching terminals.
 

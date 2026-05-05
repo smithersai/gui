@@ -329,7 +329,7 @@ struct SidebarView: View {
                     copyTextToClipboard(tab.agentSessionId ?? "")
                 }
                 .disabled(tab.agentSessionId == nil)
-                Button("Copy tmux attach command") {
+                Button("Copy zmux attach command") {
                     copyTextToClipboard(store.terminalAttachCommand(terminalId) ?? "")
                 }
                 .disabled(store.terminalAttachCommand(terminalId) == nil)

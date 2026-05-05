@@ -67,7 +67,7 @@ pub const Action = enum(u8) {
     deny_selected,
     show_shortcut_cheat_sheet,
     linear_navigation_prefix,
-    tmux_prefix,
+    mux_prefix,
     go_back,
     go_forward,
 
@@ -98,7 +98,7 @@ pub const Action = enum(u8) {
     }
 
     pub fn isPrefixOnly(self: Action) bool {
-        return self == .linear_navigation_prefix or self == .tmux_prefix;
+        return self == .linear_navigation_prefix or self == .mux_prefix;
     }
 
     pub fn isNumbered(self: Action) bool {
@@ -165,7 +165,7 @@ pub const actions = [_]Action{
     .deny_selected,
     .show_shortcut_cheat_sheet,
     .linear_navigation_prefix,
-    .tmux_prefix,
+    .mux_prefix,
     .go_back,
     .go_forward,
 };
@@ -237,7 +237,7 @@ const action_meta: [Action.len]Meta = .{
     .{ .action_name = "deny-selected", .detailed_name = "app.deny-selected", .storage_key = "denySelected", .label = "Deny Selected", .swift_default = "Cmd+Backspace" },
     .{ .action_name = "show-shortcut-cheat-sheet", .detailed_name = "app.show-shortcut-cheat-sheet", .storage_key = "showShortcutCheatSheet", .label = "Shortcut Cheat Sheet", .swift_default = "Cmd+/" },
     .{ .action_name = "linear-navigation-prefix", .detailed_name = "app.linear-navigation-prefix", .storage_key = "linearNavigationPrefix", .label = "Navigation Chord Prefix", .swift_default = "G" },
-    .{ .action_name = "tmux-prefix", .detailed_name = "app.tmux-prefix", .storage_key = "tmuxPrefix", .label = "Tmux-Style Chord Prefix", .swift_default = "Ctrl+B" },
+    .{ .action_name = "mux-prefix", .detailed_name = "app.mux-prefix", .storage_key = "muxPrefix", .label = "Zmux Chord Prefix", .swift_default = "Ctrl+B" },
     .{ .action_name = "go-back", .detailed_name = "app.go-back", .storage_key = "goBack", .label = "Go Back", .swift_default = "Cmd+[" },
     .{ .action_name = "go-forward", .detailed_name = "app.go-forward", .storage_key = "goForward", .label = "Go Forward", .swift_default = "Cmd+]" },
 };

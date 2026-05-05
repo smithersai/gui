@@ -357,11 +357,6 @@ private struct WorkspaceSurfaceContainer: View {
 
     private func terminalCommand(for surface: WorkspaceSurface) -> String? {
         switch surface.terminalBackend {
-        case .tmux:
-            return TmuxController.attachCommand(
-                socketName: surface.tmuxSocketName,
-                sessionName: surface.tmuxSessionName
-            ) ?? surface.terminalCommand
         case .native:
             return SessionStore.buildNativeAttachCommand(for: surface.sessionId)
         case .ghostty:
