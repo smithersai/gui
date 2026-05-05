@@ -281,6 +281,49 @@ final class NativeTerminalRestoreTests: XCTestCase {
         XCTAssertTrue(output.contains("xterm-ghostty|truecolor"))
     }
 
+    func testNativeSessionUsesConfiguredLoginShellEnvironmentEndToEnd() async throws {
+        let daemon = try IsolatedSessionDaemon()
+        try daemon.start()
+        defer { daemon.cleanup() }
+
+        let context = try makeStoreContext(name: "login-shell-env")
+        defer { context.cleanup() }
+
+        let fixture = try makeLoginShellFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let defaultsContext = try makeDefaults(name: "login-shell-env")
+        defer { defaultsContext.defaults.removePersistentDomain(forName: defaultsContext.suiteName) }
+        defaultsContext.defaults.set(fixture.shell.path, forKey: AppPreferenceKeys.defaultShellPath)
+
+        let store = context.makeStore(userDefaults: defaultsContext.defaults)
+        let expectedLine = "from-login-shell|\(fixture.markerTool.path)|\(fixture.shell.path)"
+        let command = "printf '%s|%s|%s\\n' \"$SMITHERS_E2E_LOGIN_ENV_MARKER\" \"$(command -v marker-tool)\" \"$SHELL\"; exec sleep 30"
+        let terminalId = store.addTerminalTab(
+            title: "Login Shell Env",
+            workingDirectory: context.workspacePath,
+            command: command
+        )
+        defer { store.removeTerminalTab(terminalId) }
+
+        let workspace = store.ensureTerminalWorkspace(terminalId)
+        let rootId = try XCTUnwrap(workspace.layout.firstSurfaceId)
+        let sessionId = try await waitForReadyNativeSession(in: workspace, surfaceId: rootId)
+        let output = try await waitForCapture(sessionId: sessionId, contains: expectedLine)
+
+        XCTAssertTrue(output.contains(expectedLine))
+
+        let argLog = try String(contentsOf: fixture.argLog, encoding: .utf8)
+        XCTAssertTrue(
+            argLog.contains("-l -i -c env"),
+            "the app should bootstrap tools from the configured login shell"
+        )
+        XCTAssertTrue(
+            argLog.contains("-l -c printf"),
+            "the PTY command should run through the configured login shell as a login shell"
+        )
+    }
+
     func testStoreLeavesMissingRestoredSessionUnavailableInsteadOfRespawning() async throws {
         let daemon = try IsolatedSessionDaemon()
         try daemon.start()
@@ -473,6 +516,66 @@ final class NativeTerminalRestoreTests: XCTestCase {
         )
     }
 
+    private func makeDefaults(name: String) throws -> (suiteName: String, defaults: UserDefaults) {
+        let suiteName = "NativeTerminalRestoreTests-\(name)-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        return (suiteName, defaults)
+    }
+
+    private func makeLoginShellFixture() throws -> LoginShellFixture {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NativeTerminalRestoreTests-shell-\(UUID().uuidString)", isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+
+        let markerTool = bin.appendingPathComponent("marker-tool", isDirectory: false)
+        try Data("#!/bin/sh\nprintf 'marker-tool\\n'\n".utf8).write(to: markerTool)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: markerTool.path)
+
+        let argLog = root.appendingPathComponent("fake-shell-args.log", isDirectory: false)
+        let shell = root.appendingPathComponent("fake-login-shell", isDirectory: false)
+        let script = """
+        #!/bin/sh
+        fake_bin=\(shellSingleQuote(bin.path))
+        arg_log=\(shellSingleQuote(argLog.path))
+
+        printf '%s\\n' "$*" >> "$arg_log"
+
+        if [ "$#" -eq 4 ] && [ "$1" = "-l" ] && [ "$2" = "-i" ] && [ "$3" = "-c" ] && [ "$4" = "env" ]; then
+          printf 'PATH=%s:/usr/bin:/bin\\n' "$fake_bin"
+          printf 'HOME=%s\\n' "$HOME"
+          printf 'SHELL=%s\\n' "$0"
+          printf 'SMITHERS_E2E_LOGIN_ENV_MARKER=from-login-shell\\n'
+          exit 0
+        fi
+
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = "-c" ]; then
+            shift
+            exec /bin/sh -c "$1"
+          fi
+          shift
+        done
+
+        exec /bin/sh
+        """
+        try Data(script.utf8).write(to: shell)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+
+        return LoginShellFixture(
+            root: root,
+            shell: shell,
+            bin: bin,
+            markerTool: markerTool,
+            argLog: argLog
+        )
+    }
+
+    private func shellSingleQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+    }
+
     private func waitForNoSessions(
         controller: SessionController,
         timeout: TimeInterval = 1
@@ -500,9 +603,10 @@ private struct StoreContext {
     let databasePath: String
 
     @MainActor
-    func makeStore() -> SessionStore {
+    func makeStore(userDefaults: UserDefaults = .standard) -> SessionStore {
         SessionStore(
             workingDirectory: workspacePath,
+            userDefaults: userDefaults,
             app: Smithers.App(databasePath: databasePath)
         )
     }
@@ -510,6 +614,14 @@ private struct StoreContext {
     func cleanup() {
         try? FileManager.default.removeItem(at: root)
     }
+}
+
+private struct LoginShellFixture {
+    let root: URL
+    let shell: URL
+    let bin: URL
+    let markerTool: URL
+    let argLog: URL
 }
 
 private final class IsolatedSessionDaemon {
