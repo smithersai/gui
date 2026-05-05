@@ -499,11 +499,13 @@ final class NativeTerminalRestoreTests: XCTestCase {
         timeout: TimeInterval = 5
     ) async throws -> String {
         let deadline = Date().addingTimeInterval(timeout)
+        var lastText = ""
         while Date() < deadline {
             let text = try await SessionController.shared.capture(
                 sessionId: PTYSessionID(sessionId),
                 lines: 200
             )
+            lastText = text
             if text.contains(needle) {
                 return text
             }
@@ -512,7 +514,9 @@ final class NativeTerminalRestoreTests: XCTestCase {
         throw NSError(
             domain: "NativeTerminalRestoreTests",
             code: 3,
-            userInfo: [NSLocalizedDescriptionKey: "timed out waiting for capture containing \(needle)"]
+            userInfo: [
+                NSLocalizedDescriptionKey: "timed out waiting for capture containing \(needle); last capture: \(lastText)"
+            ]
         )
     }
 
