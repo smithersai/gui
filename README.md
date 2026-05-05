@@ -43,11 +43,47 @@ That produces `~/Desktop/smithers-logs.zip` and reveals it in Finder. Attach the
 - the workspace folder you'd opened (path is fine — we don't need its contents)
 - whether you were on the splash/welcome screen or inside a workspace when it broke
 
+## Application data and settings
+
+SmithersGUI keeps local app state in predictable macOS locations:
+
+| Data | Location |
+|---|---|
+| App session database | `~/Library/Application Support/Smithers/app.sqlite` |
+| App preferences | `defaults read com.smithers.SmithersGUI` |
+| Shortcut settings file | `~/.config/smithers/settings.json` |
+| App log | `~/Library/Logs/SmithersGUI/app.log` |
+| Crash reports | `~/Library/Logs/DiagnosticReports/SmithersGUI-*.ips` |
+
+Set `SMITHERS_APP_SUPPORT=/path/to/dir` before launching the app to move the app session database to another directory. Set `SMITHERS_SESSION_PERSISTENCE_DISABLE=1` to disable workspace/session persistence while testing.
+
+### Default shell
+
+Open **Settings -> Default shell** to choose the shell used for new terminal sessions. A custom path is used first when configured. The default "System default" path resolves in this order:
+
+1. the login shell from the current user record
+2. `SHELL` from the app environment
+3. common macOS shells such as `/bin/zsh`, `/bin/bash`, and `/bin/sh`
+
+The setting is stored in UserDefaults under `settings.defaultShellPath`.
+
 ## Dependencies
 
 ### Optional
 
 The app degrades gracefully without these — specific features will be unavailable:
+
+Install the common runtime extras with:
+
+```bash
+./scripts/install-optional-dependencies.sh
+```
+
+For build extras managed by Homebrew, run:
+
+```bash
+./scripts/install-optional-dependencies.sh --build-tools
+```
 
 | Dependency | What breaks without it | Install |
 |---|---|---|
