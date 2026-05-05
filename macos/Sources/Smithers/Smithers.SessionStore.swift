@@ -26,7 +26,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private var nativeSurfaceOperationsInFlight: Set<NativeSurfaceKey> = []
 
     private static let persistenceSaveDebounceNanoseconds: UInt64 = 500_000_000
-    private nonisolated static let nativeTerminalTERM = "xterm-256color"
+    private nonisolated static let nativeTerminalTERM = "xterm-ghostty"
     private nonisolated static let nativeTerminalColorTerm = "truecolor"
     private static let persistenceEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -236,7 +236,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         nativeSurfaceOperationsInFlight.insert(key)
         terminalWorkspaces[key.terminalId]?.markNativeTerminalPending(surfaceId: key.surfaceId)
 
-        let shell = ProcessInfo.processInfo.environment["SHELL"]
+        let shell = Smithers.Terminal.userConfiguredShell()
         Task { [weak self] in
             do {
                 try await SessionController.shared.ensureDaemon()
@@ -245,7 +245,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                     shell: shell,
                     command: command,
                     cwd: workingDirectory,
-                    env: Self.nativeSessionEnvironment(),
+                    env: Self.nativeSessionEnvironment(shell: shell),
                     rows: 24,
                     cols: 80
                 )
@@ -687,11 +687,14 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     }
 
     nonisolated static func nativeSessionEnvironment(
-        baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
+        baseEnvironment: [String: String]? = nil,
+        shell explicitShell: String? = nil
     ) -> [String: String] {
-        var env = baseEnvironment
+        let shell = explicitShell ?? Smithers.Terminal.userConfiguredShell()
+        var env = baseEnvironment ?? Smithers.Terminal.toolEnvironment(shell: shell)
         env["TERM"] = nativeTerminalTERM
         env["COLORTERM"] = nativeTerminalColorTerm
+        env["SHELL"] = shell
         if env["TERM_PROGRAM"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             env["TERM_PROGRAM"] = "Smithers"
         }

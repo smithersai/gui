@@ -100,6 +100,7 @@ public actor SessionController {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         proc.arguments = ["--socket", socketPath()]
+        proc.environment = Smithers.Terminal.toolEnvironment()
         proc.standardInput = FileHandle(forReadingAtPath: "/dev/null")
         proc.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
         proc.standardError = FileHandle(forWritingAtPath: "/dev/null")
@@ -313,7 +314,7 @@ public actor SessionController {
             return executableRelativeBinary
         }
 
-        if let path = currentEnvironmentValue("PATH") {
+        if let path = Smithers.Terminal.toolEnvironment()["PATH"] ?? currentEnvironmentValue("PATH") {
             for dir in path.split(separator: ":") {
                 let candidate = (String(dir) as NSString).appendingPathComponent(binaryName)
                 if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }

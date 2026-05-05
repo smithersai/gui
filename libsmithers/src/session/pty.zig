@@ -75,11 +75,11 @@ pub const Pty = struct {
             try env_ptrs.append(allocator, null);
         }
 
-        const argv_shell = [_:null]?[*:0]const u8{shell_z.ptr};
+        const argv_shell = [_:null]?[*:0]const u8{ shell_z.ptr, "-l" };
         // Keep the sentinel-terminated literal valid in the command == null branch
-        // by pointing the 3rd slot at an empty string; we only take &argv_command
+        // by pointing the 4th slot at an empty string; we only take &argv_command
         // when command_z is non-null, but the initializer is always evaluated.
-        const argv_command = [_:null]?[*:0]const u8{ shell_z.ptr, "-lc", if (command_z) |command| command.ptr else "" };
+        const argv_command = [_:null]?[*:0]const u8{ shell_z.ptr, "-l", "-c", if (command_z) |command| command.ptr else "" };
         const argv = if (command_z != null) &argv_command else &argv_shell;
         const envp: [*:null]const ?[*:0]const u8 = if (opts.env != null)
             @ptrCast(env_ptrs.items.ptr)

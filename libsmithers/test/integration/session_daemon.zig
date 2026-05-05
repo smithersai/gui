@@ -248,9 +248,8 @@ test "native session daemon end-to-end: ping, create, send, capture, terminate, 
         const client = try connectClient(socket_path);
         defer posix.close(client);
 
-        // Pass a shell + command so pty.spawn builds argv = [shell, "-lc", command].
-        // A bare `shell` alone currently trips an internal unreachable in pty.zig
-        // (tracked as part of 0091 wave 2); this exercises the working path.
+        // Pass a shell + command so pty.spawn builds a login-shell command
+        // argv. This exercises RPC wiring plus PTY fd passing.
         try writeAll(
             client,
             "{\"id\":2,\"method\":\"session.create\",\"params\":" ++

@@ -8,6 +8,7 @@ sessions, enabling interactive command execution with stdin/stdout support.
 import asyncio
 import os
 import pty
+import pwd
 import select
 import signal
 import time
@@ -21,6 +22,17 @@ DEFAULT_MAX_SESSIONS = 10
 DEFAULT_SESSION_TIMEOUT = 300  # 5 minutes
 DEFAULT_READ_TIMEOUT_MS = 100
 DEFAULT_MAX_READ_BYTES = 65536
+
+
+def default_user_shell() -> str:
+    """Resolve the user's configured login shell with conservative fallbacks."""
+    try:
+        shell = pwd.getpwuid(os.getuid()).pw_shell
+        if shell:
+            return shell
+    except Exception:
+        pass
+    return os.environ.get("SHELL") or "/bin/zsh"
 
 
 @dataclass
@@ -93,7 +105,7 @@ class PTYManager:
         Args:
             cmd: Command to execute
             workdir: Working directory (defaults to current directory)
-            shell: Shell to use (defaults to SHELL env var or /bin/bash)
+            shell: Shell to use (defaults to user's configured login shell)
             env: Additional environment variables
             login: Use login shell
 
@@ -129,7 +141,7 @@ class PTYManager:
 
                     # Determine shell
                     if shell is None:
-                        shell = os.environ.get("SHELL", "/bin/bash")
+                        shell = default_user_shell()
 
                     # Build shell arguments
                     shell_args = [shell]

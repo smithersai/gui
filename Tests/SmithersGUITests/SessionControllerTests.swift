@@ -538,11 +538,12 @@ final class SessionControllerTests: XCTestCase {
         let env = SessionStore.nativeSessionEnvironment(baseEnvironment: [
             "PATH": "/usr/bin:/bin",
             "HOME": "/tmp/demo",
-        ])
+        ], shell: "/opt/homebrew/bin/fish")
 
-        XCTAssertEqual(env["TERM"], "xterm-256color")
+        XCTAssertEqual(env["TERM"], "xterm-ghostty")
         XCTAssertEqual(env["COLORTERM"], "truecolor")
         XCTAssertEqual(env["TERM_PROGRAM"], "Smithers")
+        XCTAssertEqual(env["SHELL"], "/opt/homebrew/bin/fish")
         XCTAssertEqual(env["PATH"], "/usr/bin:/bin")
         XCTAssertEqual(env["HOME"], "/tmp/demo")
     }

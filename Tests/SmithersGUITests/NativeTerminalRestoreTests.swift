@@ -275,10 +275,10 @@ final class NativeTerminalRestoreTests: XCTestCase {
         let sessionId = try await waitForReadyNativeSession(in: workspace, surfaceId: rootId)
         let output = try await waitForCapture(
             sessionId: sessionId,
-            contains: "xterm-256color|truecolor"
+            contains: "xterm-ghostty|truecolor"
         )
 
-        XCTAssertTrue(output.contains("xterm-256color|truecolor"))
+        XCTAssertTrue(output.contains("xterm-ghostty|truecolor"))
     }
 
     func testStoreLeavesMissingRestoredSessionUnavailableInsteadOfRespawning() async throws {

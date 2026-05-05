@@ -626,8 +626,11 @@ class TerminalSurfaceView: NSView {
         surfaceCfg.scale_factor = Double(effectiveBackingScale)
         surfaceCfg.context = GHOSTTY_SURFACE_CONTEXT_TAB
 
-        if let command {
-            commandCString = strdup(command)
+        let launchCommand = command?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? command
+            : Smithers.Terminal.loginShellLaunchCommand()
+        if let launchCommand {
+            commandCString = strdup(launchCommand)
             surfaceCfg.command = UnsafePointer(commandCString!)
         }
         if let workingDirectory {

@@ -1323,7 +1323,7 @@ class SmithersClient: ObservableObject {
     }
 
     nonisolated static func enrichedProcessEnvironment() -> [String: String] {
-        ProcessInfo.processInfo.environment
+        Smithers.Terminal.toolEnvironment()
     }
 }
 
@@ -1802,7 +1802,7 @@ private extension SmithersClient {
     }
 
     nonisolated static func listAgentsData() throws -> Data {
-        let environment = ProcessInfo.processInfo.environment
+        let environment = enrichedProcessEnvironment()
         let pathEntries = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
         let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 }
         let manifests: [(id: String, name: String, command: String, roles: [String], authDir: String?, apiKeyEnv: String?)] = [
