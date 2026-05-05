@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 const ROOT = import.meta.dir;
 const SCHEME = "SmithersGUI";
+const VOLUME_NAME = "Smithers GUI";
 const BUILD = join(ROOT, "build");
 const ARCHIVE = join(BUILD, `${SCHEME}.xcarchive`);
 const APP = join(BUILD, "export", `${SCHEME}.app`);
@@ -89,15 +90,15 @@ async function build() {
   await $`ln -s /Applications ${staging}/Applications`;
   await $`cp ${bgPng} ${join(staging, ".background", "background.png")}`;
 
-  await $`hdiutil create -volname ${SCHEME} -srcfolder ${staging} -ov -format UDRW -size 120m ${tmpDmg}`;
+  await $`hdiutil create -volname ${VOLUME_NAME} -srcfolder ${staging} -ov -format UDRW -size 120m ${tmpDmg}`;
   rmSync(staging, { recursive: true, force: true });
 
   const attachOut = await $`hdiutil attach -readwrite -noverify -noautoopen ${tmpDmg}`.text();
-  const mountPoint = attachOut.trim().split("\n").at(-1)?.split("\t").at(-1)?.trim() ?? `/Volumes/${SCHEME}`;
+  const mountPoint = attachOut.trim().split("\n").at(-1)?.split("\t").at(-1)?.trim() ?? `/Volumes/${VOLUME_NAME}`;
 
   const appleScript = `
 tell application "Finder"
-  tell disk "${SCHEME}"
+  tell disk "${VOLUME_NAME}"
     open
     set current view of container window to icon view
     set toolbar visible of container window to false
