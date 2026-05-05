@@ -7,6 +7,9 @@ pub const version = "0.1.0";
 
 pub const foreground_changed_method = "foreground_changed";
 pub const session_exited_method = "session_exited";
+pub const pane_output_method = "pane_output";
+pub const pane_activity_method = "pane_activity";
+pub const pane_bell_method = "pane_bell";
 
 pub const ErrorCode = struct {
     pub const parse_error = -32700;
@@ -47,6 +50,21 @@ pub const SessionExitedParams = struct {
     pid: std.posix.pid_t,
     exit_code: ?u32 = null,
     signal: ?u32 = null,
+};
+
+pub const PaneOutputParams = struct {
+    pane_id: []const u8,
+    data_base64: []const u8,
+};
+
+pub const PaneActivityParams = struct {
+    pane_id: []const u8,
+    last_activity_ms: i64,
+};
+
+pub const PaneBellParams = struct {
+    pane_id: []const u8,
+    last_bell_ms: i64,
 };
 
 pub fn parseRequest(allocator: Allocator, line: []const u8) !Request {

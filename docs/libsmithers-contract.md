@@ -33,7 +33,7 @@ JSON method-dispatch exports back to the public header.
 ## Local GUI Helpers
 
 Local-only conveniences such as workflow source editing, slash parsing, command
-palette state, recent workspaces, terminal tmux helpers, devtools transforms, and
+palette state, recent workspaces, terminal helper commands, devtools transforms, and
 workflow frontend discovery are Swift-side helpers or direct CLI calls. They are
 not part of the libsmithers C ABI.
 

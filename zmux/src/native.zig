@@ -8,7 +8,6 @@ const protocol = @import("protocol.zig");
 pub const NativeSessionState = enum {
     creating,
     running,
-    detached,
     terminated,
 
     pub fn label(self: NativeSessionState) []const u8 {
@@ -17,9 +16,8 @@ pub const NativeSessionState = enum {
 
     pub fn canTransition(self: NativeSessionState, next: NativeSessionState) bool {
         return switch (self) {
-            .creating => next == .running or next == .detached or next == .terminated,
-            .running => next == .detached or next == .terminated,
-            .detached => next == .running or next == .terminated,
+            .creating => next == .running or next == .terminated,
+            .running => next == .terminated,
             .terminated => false,
         };
     }
@@ -41,6 +39,24 @@ pub const NativeSessionOptions = struct {
 pub const Event = union(enum) {
     foreground_changed: protocol.ForegroundChangedParams,
     session_exited: protocol.SessionExitedParams,
+    pane_output: PaneOutputEvent,
+    pane_activity: PaneActivityEvent,
+    pane_bell: PaneBellEvent,
+};
+
+pub const PaneOutputEvent = struct {
+    pane_id: []const u8,
+    data: []const u8,
+};
+
+pub const PaneActivityEvent = struct {
+    pane_id: []const u8,
+    last_activity_ms: i64,
+};
+
+pub const PaneBellEvent = struct {
+    pane_id: []const u8,
+    last_bell_ms: i64,
 };
 
 pub const EventSink = struct {
@@ -64,7 +80,6 @@ pub const NativeSession = struct {
     foreground_tracker: foreground.Tracker,
     next_foreground_check_ms: i64 = 0,
     reader_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    reader_paused: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     reader_thread: ?std.Thread = null,
 
     pub fn create(allocator: std.mem.Allocator, opts: NativeSessionOptions) !*NativeSession {
@@ -106,7 +121,7 @@ pub const NativeSession = struct {
             .scrollback = scrollback,
             .event_sink = opts.event_sink,
             .foreground_tracker = foreground.Tracker.init(handle.child_pid),
-            .state_value = .detached,
+            .state_value = .running,
         };
         native.handle.setExitObserver(.{
             .context = native,
@@ -152,58 +167,6 @@ pub const NativeSession = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.state_value;
-    }
-
-    pub const AttachResult = struct {
-        fd: std.posix.fd_t,
-        /// Snapshot of the scrollback at attach time so the client can replay
-        /// prior terminal state (tmux-style reattach). Owned by the caller's
-        /// allocator. Empty on first attach if nothing has been captured yet.
-        scrollback: []u8,
-    };
-
-    pub fn attachFd(self: *NativeSession, allocator: std.mem.Allocator) !AttachResult {
-        self.mutex.lock();
-        switch (self.state_value) {
-            .creating, .detached => {
-                // Snapshot scrollback under the same lock that guards state
-                // so we don't race with the reader thread appending to it.
-                const scrollback = try self.scrollback.snapshot(allocator);
-                errdefer allocator.free(scrollback);
-                self.state_value = .running;
-                self.mutex.unlock();
-
-                // Wait for reader thread to pause and stop reading from the fd
-                // This prevents the race where reader consumes data meant for client
-                var waits: usize = 0;
-                while (!self.reader_paused.load(.seq_cst) and waits < 50) : (waits += 1) {
-                    std.Thread.sleep(10 * std.time.ns_per_ms);
-                }
-                return .{ .fd = self.handle.master_fd, .scrollback = scrollback };
-            },
-            .running => {
-                self.mutex.unlock();
-                return error.AlreadyAttached;
-            },
-            .terminated => {
-                self.mutex.unlock();
-                return error.SessionTerminated;
-            },
-        }
-    }
-
-    pub fn detach(self: *NativeSession) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        switch (self.state_value) {
-            .running => {
-                self.state_value = .detached;
-                // Signal reader thread to resume capturing
-                self.reader_paused.store(false, .seq_cst);
-            },
-            .creating, .detached => {},
-            .terminated => return error.SessionTerminated,
-        }
     }
 
     pub fn terminate(self: *NativeSession) void {
@@ -257,6 +220,16 @@ pub const NativeSession = struct {
         return self.scrollback.captureLastLines(allocator, lines);
     }
 
+    pub fn scrollbackSnapshot(self: *NativeSession, allocator: std.mem.Allocator) ![]u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.scrollback.snapshot(allocator);
+    }
+
+    pub fn writeInput(self: *NativeSession, bytes: []const u8) !void {
+        try self.handle.write(bytes);
+    }
+
     pub fn infoJson(self: *NativeSession, allocator: std.mem.Allocator) ![]u8 {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -299,25 +272,8 @@ pub const NativeSession = struct {
     fn readerLoop(self: *NativeSession) void {
         var read_buf: [8192]u8 = undefined;
         while (!self.reader_stop.load(.seq_cst)) {
-            if (!self.shouldCapture()) {
-                if (self.handle.reapExited()) |status| {
-                    self.markTerminated(status);
-                    return;
-                }
-
-                if (self.state() == .running) {
-                    self.pollForegroundChange() catch {};
-                } else if (self.state() == .terminated) {
-                    return;
-                }
-
-                // Signal that we're paused (not reading from fd)
-                self.reader_paused.store(true, .seq_cst);
-                std.Thread.sleep(50 * std.time.ns_per_ms);
-                continue;
-            }
-            // We're actively reading, not paused
-            self.reader_paused.store(false, .seq_cst);
+            if (self.state() == .terminated) return;
+            self.pollForegroundChange() catch {};
 
             const readable = self.handle.pollReadable(100) catch {
                 self.markTerminated(null);
@@ -328,13 +284,6 @@ pub const NativeSession = struct {
                     self.markTerminated(status);
                     return;
                 }
-                continue;
-            }
-
-            // Double-check we should still capture before reading
-            // This prevents race where state changed after shouldCapture() but before read()
-            if (!self.shouldCapture()) {
-                self.reader_paused.store(true, .seq_cst);
                 continue;
             }
 
@@ -349,13 +298,22 @@ pub const NativeSession = struct {
             self.mutex.lock();
             self.scrollback.append(read_buf[0..n]);
             self.mutex.unlock();
+            self.emitEvent(.{ .pane_output = .{
+                .pane_id = self.id,
+                .data = read_buf[0..n],
+            } });
+            const now_ms = std.time.milliTimestamp();
+            self.emitEvent(.{ .pane_activity = .{
+                .pane_id = self.id,
+                .last_activity_ms = now_ms,
+            } });
+            if (std.mem.indexOfScalar(u8, read_buf[0..n], 0x07) != null) {
+                self.emitEvent(.{ .pane_bell = .{
+                    .pane_id = self.id,
+                    .last_bell_ms = now_ms,
+                } });
+            }
         }
-    }
-
-    fn shouldCapture(self: *NativeSession) bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        return self.state_value == .creating or self.state_value == .detached;
     }
 
     fn pollForegroundChange(self: *NativeSession) !void {
@@ -409,9 +367,8 @@ fn keySequence(key: []const u8) ?[]const u8 {
     return null;
 }
 
-test "native session state machine allows attach and detach" {
-    try std.testing.expect(NativeSessionState.detached.canTransition(.running));
-    try std.testing.expect(NativeSessionState.running.canTransition(.detached));
+test "native session state machine keeps PTY running until termination" {
+    try std.testing.expect(NativeSessionState.creating.canTransition(.running));
     try std.testing.expect(NativeSessionState.running.canTransition(.terminated));
     try std.testing.expect(!NativeSessionState.terminated.canTransition(.running));
 }

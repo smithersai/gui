@@ -205,18 +205,18 @@ fn childExec(
             // terminal buffer and any log scraper capturing PTY output.
             const fd: i32 = 2;
             var buf: [256]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "smithers-pty: chdir(\"{s}\") failed errno={d}\n", .{
+            const msg = std.fmt.bufPrint(&buf, "zmux-pty: chdir(\"{s}\") failed errno={d}\n", .{
                 std.mem.sliceTo(cwd.ptr, 0), errno,
-            }) catch "smithers-pty: chdir failed\n";
+            }) catch "zmux-pty: chdir failed\n";
             _ = std.c.write(fd, msg.ptr, msg.len);
         }
     }
     const err = posix.execvpeZ(shell_path, argv, envp);
     const fd: i32 = 2;
     var buf: [256]u8 = undefined;
-    const msg = std.fmt.bufPrint(&buf, "smithers-pty: execvpe(\"{s}\") failed: {s}\n", .{
+    const msg = std.fmt.bufPrint(&buf, "zmux-pty: execvpe(\"{s}\") failed: {s}\n", .{
         std.mem.sliceTo(shell_path, 0), @errorName(err),
-    }) catch "smithers-pty: execvpe failed\n";
+    }) catch "zmux-pty: execvpe failed\n";
     _ = std.c.write(fd, msg.ptr, msg.len);
     std.c._exit(127);
 }

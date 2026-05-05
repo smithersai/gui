@@ -8,7 +8,7 @@ Usage: scripts/install-optional-dependencies.sh [--runtime] [--build-tools] [--a
 Installs optional SmithersGUI dependencies with Homebrew.
 
 Options:
-  --runtime      Install runtime extras: tmux and neovim. This is the default.
+  --runtime      Install runtime extras: neovim. This is the default.
   --build-tools  Install Homebrew-managed build extras: xcodegen.
   --all          Install runtime and build extras.
   --dry-run      Print the brew command without running it.
@@ -69,7 +69,7 @@ fi
 
 packages=()
 if [[ "$install_runtime" -eq 1 ]]; then
-  packages+=(tmux neovim)
+  packages+=(neovim)
 fi
 if [[ "$install_build" -eq 1 ]]; then
   packages+=(xcodegen)

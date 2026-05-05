@@ -75,6 +75,7 @@ let package = Package(
                 "Tests",
                 "docs",
                 "libsmithers",
+                "zmux",
                 "linux",
                 "ios",
                 "scripts",

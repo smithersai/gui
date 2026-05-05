@@ -30,8 +30,9 @@ The default build produces `zig-out/lib/libsmithers.a` and installs
   and metrics as `smithers_obs_*`.
 - `src/ffi.zig`, `src/ffi_exports.zig`, and `src/apprt/structs.zig` provide the
   shared string/error/bytes allocation helpers used by the ABI.
-- `src/session/` still contains the standalone session daemon binaries used by
-  transitional local terminal paths; it is not exported as the libsmithers C ABI.
+- `../zmux/` owns the standalone tmux-style PTY session daemon used by local
+  terminal paths. `libsmithers` still installs compatibility helper names for
+  the GUI bundle, but those binaries compile from the zmux package.
 
 ## Testing
 

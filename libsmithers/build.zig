@@ -43,7 +43,7 @@ pub fn build(b: *std.Build) void {
     ).step);
 
     const daemon_mod = b.createModule(.{
-        .root_source_file = b.path("src/session/daemon.zig"),
+        .root_source_file = b.path("../zmux/src/daemon.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -59,19 +59,10 @@ pub fn build(b: *std.Build) void {
     // binaries are macOS/Linux-only. Skip their install step for iOS.
     if (target.result.os.tag != .ios) b.installArtifact(daemon);
 
-    const fd_passing_mod = b.createModule(.{
-        .root_source_file = b.path("src/session/fd_passing.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
     const connect_mod = b.createModule(.{
-        .root_source_file = b.path("cli/session-connect.zig"),
+        .root_source_file = b.path("../zmux/src/connect.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{
-            .{ .name = "fd_passing", .module = fd_passing_mod },
-        },
     });
     connect_mod.link_libc = true;
 
@@ -84,12 +75,9 @@ pub fn build(b: *std.Build) void {
 
     const connect_unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("cli/session-connect.zig"),
+            .root_source_file = b.path("../zmux/src/connect.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{
-                .{ .name = "fd_passing", .module = fd_passing_mod },
-            },
         }),
     });
     connect_unit_tests.linkLibC();
@@ -108,7 +96,7 @@ pub fn build(b: *std.Build) void {
 
     const daemon_unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/session/daemon.zig"),
+            .root_source_file = b.path("../zmux/src/daemon.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -154,15 +142,15 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_core_ffi_tests.step);
     test_step.dependOn(&run_core_integration_tests.step);
 
-    // Dedicated integration test for the native session daemon. This test
-    // drives src/session/server.zig directly (spawning the server on a
+    // Dedicated integration test for zmux, the native session daemon package.
+    // This test drives zmux/src/server.zig directly (spawning the server on a
     // background thread and exchanging JSON-RPC over a UNIX socket), which
     // requires a module rooted at the test file with server.zig exposed as
     // an import. It runs as a separate artifact so its module scope does not
     // clash with the shared libsmithers root module.
     test_step.dependOn(&(blk: {
         const session_server_mod = b.createModule(.{
-            .root_source_file = b.path("src/session/server.zig"),
+            .root_source_file = b.path("../zmux/src/server.zig"),
             .target = target,
             .optimize = optimize,
         });
@@ -171,10 +159,10 @@ pub fn build(b: *std.Build) void {
 
         const session_daemon_tests = b.addTest(.{
             .root_module = b.createModule(.{
-                .root_source_file = b.path("test/integration/session_daemon.zig"),
+                .root_source_file = b.path("../zmux/test/integration/session_daemon.zig"),
                 .target = target,
                 .optimize = optimize,
-                .imports = &.{.{ .name = "session_server", .module = session_server_mod }},
+                .imports = &.{.{ .name = "zmux_server", .module = session_server_mod }},
             }),
         });
         session_daemon_tests.linkLibC();

@@ -22,7 +22,7 @@ record product gaps that must be reconciled before a release claim is honest.
 | Great test coverage | Partial | Focused Python suite passes. Full Python, Swift aggregate, Zig, Xcode, iOS, and external/hive tests are not green or not yet verified in this environment. |
 | External tests / hive tests pass | Unverified | No hive test command or green external result was found or run during this pass. |
 | Docs fully document behavior | Partial | README and docs are substantial, but gap/review docs still contain unresolved findings and stale feature-inventory claims. |
-| No stubs, mocks, TODOs, placeholders | Not met as written | First-party scans still find intentional UI-test placeholders and review docs with unresolved issues. Vendored `ghostty`/`tmux` trees contain many TODO/stub hits and should be excluded or tracked separately by policy. |
+| No stubs, mocks, TODOs, placeholders | Not met as written | First-party scans still find intentional UI-test placeholders and review docs with unresolved issues. Vendored `ghostty` and generated/build trees contain many TODO/stub hits and should be excluded or tracked separately by policy. |
 | No backwards-compatibility tech debt | Partially met | Recent changes deliberately removed obsolete safe-file placeholder modules and did not preserve unreleased legacy behavior. Broader review docs still call out transitional paths. |
 | All tests pass | Not met / blocked | Focused tests pass, but full Python and Swift aggregate runs are blocked by `syspolicyd`. |
 
@@ -178,7 +178,7 @@ in this environment.
 4. Work through the unresolved findings in `docs/reviews/*.md`, especially
    slash commands, terminal behavior, workflows/approvals/prompts, navigation,
    landings/issues/workspaces, and dashboard review items.
-5. Decide whether vendored `ghostty`, `tmux`, and generated/build trees are
+5. Decide whether vendored `ghostty` and generated/build trees are
    excluded from the "no TODO/stub" policy. If not excluded, the current
    requirement is not feasible without upstream/vendor cleanup.
 6. Add release-grade observability criteria: structured event taxonomy, log

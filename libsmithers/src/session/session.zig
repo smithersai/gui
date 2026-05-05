@@ -3,7 +3,6 @@ const structs = @import("../apprt/structs.zig");
 const ffi = @import("../ffi.zig");
 const EventStream = @import("event_stream.zig");
 const slash = @import("../commands/slash.zig");
-const native = @import("native.zig");
 
 const App = @import("../App.zig");
 
@@ -366,10 +365,6 @@ fn replayHistory(self: *Session) !void {
 fn nowMillis() i64 {
     return std.time.milliTimestamp();
 }
-
-pub const NativeSessionState = native.NativeSessionState;
-pub const NativeSessionOptions = native.NativeSessionOptions;
-pub const NativeSession = native.NativeSession;
 
 test "session title uses target id" {
     var app = try App.create(std.testing.allocator, .{});

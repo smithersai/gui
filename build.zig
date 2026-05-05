@@ -6,6 +6,8 @@
 //!   zig build swift     build the Swift app only
 //!   zig build xcode     build via xcodebuild (release)
 //!   zig build ghostty   (re)build the Ghostty xcframework (slow)
+//!   zig build zmux      build the tmux-style Zig session package
+//!   zig build zmux-test run zmux package tests
 //!   zig build libsmithers build the libsmithers static archive
 //!   zig build xcodegen  regenerate SmithersGUI.xcodeproj from project.yml
 //!   zig build clean     remove build artifacts
@@ -81,6 +83,17 @@ pub fn build(b: *std.Build) void {
     const check_ghostty = b.step("check-ghostty", "Verify GhosttyKit.xcframework exists");
     check_ghostty.makeFn = ensureGhostty;
     check_ghostty.dependOn(check_submodules);
+
+    // ---- zmux --------------------------------------------------------------
+    const zmux_build = b.addSystemCommand(&.{ "zig", "build" });
+    zmux_build.setCwd(b.path("zmux"));
+    const zmux_step = b.step("zmux", "Build zmux PTY session package");
+    zmux_step.dependOn(&zmux_build.step);
+
+    const zmux_test = b.addSystemCommand(&.{ "zig", "build", "test" });
+    zmux_test.setCwd(b.path("zmux"));
+    const zmux_test_step = b.step("zmux-test", "Run zmux package tests");
+    zmux_test_step.dependOn(&zmux_test.step);
 
     // ---- libsmithers --------------------------------------------------------
     const libsmithers_build = b.addSystemCommand(&.{ "zig", "build" });

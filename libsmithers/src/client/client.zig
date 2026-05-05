@@ -9,7 +9,7 @@ const devtools_stream = @import("../devtools/Stream.zig");
 const devtools_chat_output = @import("../devtools/ChatOutput.zig");
 const devtools_chat_stream = @import("../devtools/ChatStream.zig");
 const models = @import("../models/mod.zig");
-const terminal = @import("../terminal/tmux.zig");
+const terminal = @import("../terminal/tools.zig");
 const agents = @import("agents.zig");
 
 pub const Client = @This();

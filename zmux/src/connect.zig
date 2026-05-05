@@ -3,19 +3,12 @@ const builtin = @import("builtin");
 
 const posix = std.posix;
 
-const fd_passing = @import("fd_passing");
-
 const buffer_size: usize = 32 * 1024;
-// Attach payload now carries a base64-encoded scrollback replay so the
-// client can restore prior terminal state (tmux-style). Size the buffer
-// to fit ~256 KiB of raw scrollback plus base64 overhead and JSON wrapping.
-const attach_payload_max: usize = 512 * 1024;
+const rpc_line_max: usize = 1024 * 1024;
 
 var g_saved_termios: ?posix.termios = null;
 var g_saved_termios_fd: posix.fd_t = 0;
 var g_winch_flag = std.atomic.Value(bool).init(false);
-var g_socket_path_for_signals: ?[]const u8 = null;
-var g_session_id_for_signals: ?[]const u8 = null;
 
 pub fn main() !void {
     var dbg: std.heap.DebugAllocator(.{}) = .init;
@@ -61,23 +54,19 @@ pub fn main() !void {
     const socket_fd = try connectWithRetry(allocator, path, spawn_daemon);
     defer posix.close(socket_fd);
 
-    // Send attach request.
+    const initial_size = terminalSize(0) orelse @as(TerminalSize, .{ .rows = 24, .cols = 80 });
     const attach_req = try std.fmt.allocPrint(
         allocator,
-        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session.attach\",\"params\":{{\"sessionId\":\"{s}\"}}}}\n",
-        .{sid},
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"client.attach\",\"params\":{{\"paneId\":{f},\"rows\":{},\"cols\":{}}}}}\n",
+        .{ std.json.fmt(sid, .{}), initial_size.rows, initial_size.cols },
     );
     defer allocator.free(attach_req);
     try writeAll(socket_fd, attach_req);
 
-    const received = try fd_passing.recvFd(allocator, socket_fd, attach_payload_max);
-    defer received.deinit(allocator);
-    const pty_fd = received.fd;
-    errdefer posix.close(pty_fd);
-
-    if (findJsonField(received.payload, "\"error\"")) |_| {
-        try stderrWrite(received.payload);
-        posix.close(pty_fd);
+    const attach_response = try readLineAlloc(allocator, socket_fd, rpc_line_max);
+    defer allocator.free(attach_response);
+    if (findJsonField(attach_response, "\"error\"")) |_| {
+        try stderrWrite(attach_response);
         std.process.exit(1);
     }
 
@@ -88,64 +77,49 @@ pub fn main() !void {
     if (stdin_is_tty) try enterRawMode(stdin_fd);
     defer restoreTermios();
 
-    // Install signal handlers.
-    g_socket_path_for_signals = path;
-    g_session_id_for_signals = sid;
     installSigwinchHandler();
     installExitRestoreHandlers();
 
-    // Replay any prior scrollback the daemon captured while we were
-    // detached. This is what makes reattach feel tmux-like: the previously
-    // rendered Claude Code / shell output is redrawn instead of disappearing.
-    replayScrollbackFromAttach(allocator, received.payload, stdout_fd) catch {};
+    replayScrollbackFromAttach(allocator, attach_response, stdout_fd) catch {};
 
     // Send an initial resize from our terminal's current size, if known.
-    sendResize(allocator, path, sid, stdout_fd) catch {};
+    sendResize(allocator, socket_fd, sid, stdout_fd) catch {};
 
-    runLoop(stdin_fd, stdout_fd, pty_fd, socket_fd, allocator, path, sid) catch |err| {
+    runLoop(stdin_fd, stdout_fd, socket_fd, allocator, sid) catch |err| {
         restoreTermios();
         var ebuf: [256]u8 = undefined;
         var ew = std.fs.File.stderr().writer(&ebuf);
-        ew.interface.print("session-connect: {s}\n", .{@errorName(err)}) catch {};
+        ew.interface.print("zmux-connect: {s}\n", .{@errorName(err)}) catch {};
         ew.interface.flush() catch {};
         std.process.exit(1);
     };
-
-    posix.close(pty_fd);
 }
 
 fn runLoop(
     stdin_fd: posix.fd_t,
     stdout_fd: posix.fd_t,
-    pty_fd: posix.fd_t,
     socket_fd: posix.fd_t,
     allocator: std.mem.Allocator,
-    socket_path: []const u8,
     session_id: []const u8,
 ) !void {
-    _ = socket_fd;
     var buf: [buffer_size]u8 = undefined;
 
     while (true) {
         if (g_winch_flag.swap(false, .seq_cst)) {
-            sendResize(allocator, socket_path, session_id, stdout_fd) catch {};
+            sendResize(allocator, socket_fd, session_id, stdout_fd) catch {};
         }
 
         var fds = [_]posix.pollfd{
             .{ .fd = stdin_fd, .events = posix.POLL.IN, .revents = 0 },
-            .{ .fd = pty_fd, .events = posix.POLL.IN, .revents = 0 },
+            .{ .fd = socket_fd, .events = posix.POLL.IN, .revents = 0 },
         };
         const ready = try posix.poll(&fds, 1000);
         if (ready == 0) continue;
 
         if ((fds[1].revents & posix.POLL.IN) != 0) {
-            const n = posix.read(pty_fd, &buf) catch |err| switch (err) {
-                error.InputOutput => return, // EIO on master after child exits
-                error.WouldBlock => 0,
-                else => return err,
-            };
-            if (n == 0) return; // EOF
-            try writeAllFd(stdout_fd, buf[0..n]);
+            const line = try readLineAlloc(allocator, socket_fd, rpc_line_max);
+            defer allocator.free(line);
+            if (try handleServerLine(allocator, line, session_id, stdout_fd)) return;
         }
 
         if ((fds[1].revents & (posix.POLL.HUP | posix.POLL.ERR)) != 0) return;
@@ -156,11 +130,9 @@ fn runLoop(
                 else => return err,
             };
             if (n == 0) {
-                // stdin closed: shut down write side of PTY, keep draining output.
-                // Simpler: exit.
                 return;
             }
-            try writeAllFd(pty_fd, buf[0..n]);
+            try sendInput(allocator, socket_fd, session_id, buf[0..n]);
         }
 
         if ((fds[0].revents & (posix.POLL.HUP | posix.POLL.ERR)) != 0) return;
@@ -202,7 +174,7 @@ fn spawnDaemonDetached(allocator: std.mem.Allocator, socket_path: []const u8) !v
     const self_path = std.fs.selfExePathAlloc(allocator) catch |err| return err;
     defer allocator.free(self_path);
     const dir = std.fs.path.dirname(self_path) orelse ".";
-    const daemon_path = try std.fs.path.join(allocator, &.{ dir, "smithers-session-daemon" });
+    const daemon_path = try findDaemonSibling(allocator, dir, std.fs.path.basename(self_path));
     defer allocator.free(daemon_path);
 
     const pid = try posix.fork();
@@ -287,8 +259,8 @@ fn installSigwinchHandler() void {
 
 fn installExitRestoreHandlers() void {
     // HUP/PIPE/QUIT: restore termios before default action takes us down.
-    // We deliberately do NOT handle INT/TERM — the PTY's own signals reach
-    // the child through pty_fd in raw mode.
+    // We deliberately do NOT handle INT/TERM; those bytes are forwarded to
+    // zmux as input.
     var act: posix.Sigaction = undefined;
     @memset(std.mem.asBytes(&act), 0);
     act.handler = .{ .handler = exitRestoreHandler };
@@ -301,32 +273,42 @@ fn installExitRestoreHandlers() void {
 
 fn sendResize(
     allocator: std.mem.Allocator,
-    socket_path: []const u8,
+    socket_fd: posix.fd_t,
     session_id: []const u8,
     tty_fd: posix.fd_t,
 ) !void {
-    var wsz: posix.winsize = undefined;
-    const req = tiocgwinsz();
-    if (std.c.ioctl(tty_fd, @as(c_int, @bitCast(@as(u32, @truncate(req)))), &wsz) != 0) return;
-    if (wsz.col == 0 or wsz.row == 0) return;
-
-    const fd = tryConnect(socket_path) catch return;
-    defer posix.close(fd);
+    const size = terminalSize(tty_fd) orelse return;
 
     const msg = try std.fmt.allocPrint(
         allocator,
-        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session.resize\",\"params\":{{\"sessionId\":\"{s}\",\"cols\":{d},\"rows\":{d}}}}}\n",
-        .{ session_id, wsz.col, wsz.row },
+        "{{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session.resize\",\"params\":{{\"sessionId\":{f},\"cols\":{},\"rows\":{}}}}}\n",
+        .{ std.json.fmt(session_id, .{}), size.cols, size.rows },
     );
     defer allocator.free(msg);
-    writeAll(fd, msg) catch {};
-    // Drain response (best-effort; we don't care about the body).
-    var drain: [256]u8 = undefined;
-    _ = posix.read(fd, &drain) catch {};
+    writeAll(socket_fd, msg) catch {};
+}
+
+const TerminalSize = struct {
+    rows: u16,
+    cols: u16,
+};
+
+fn terminalSize(tty_fd: posix.fd_t) ?TerminalSize {
+    var wsz: posix.winsize = undefined;
+    const req = tiocgwinsz();
+    if (std.c.ioctl(tty_fd, @as(c_int, @bitCast(@as(u32, @truncate(req)))), &wsz) != 0) return null;
+    if (wsz.col == 0 or wsz.row == 0) return null;
+    return .{ .rows = wsz.row, .cols = wsz.col };
 }
 
 // Mirrors daemon.zig::socketPath. Keep in sync.
 fn resolveSocketPath(allocator: std.mem.Allocator) ![]u8 {
+    if (std.posix.getenv("ZMUX_SOCKET")) |value| {
+        if (value.len > 0) return allocator.dupe(u8, value);
+    }
+    if (std.posix.getenv("SMITHERS_SESSION_SOCKET")) |value| {
+        if (value.len > 0) return allocator.dupe(u8, value);
+    }
     if (std.posix.getenv("XDG_RUNTIME_DIR")) |xdg| {
         if (xdg.len > 0) return std.fs.path.join(allocator, &.{ xdg, "smithers-sessions.sock" });
     }
@@ -357,6 +339,107 @@ fn writeAllFd(fd: posix.fd_t, bytes: []const u8) !void {
     return writeAll(fd, bytes);
 }
 
+fn readLineAlloc(allocator: std.mem.Allocator, fd: posix.fd_t, max_len: usize) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    while (out.items.len < max_len) {
+        var byte: [1]u8 = undefined;
+        const n = posix.read(fd, &byte) catch |err| switch (err) {
+            error.WouldBlock => continue,
+            else => return err,
+        };
+        if (n == 0) return error.ConnectionClosed;
+        try out.append(allocator, byte[0]);
+        if (byte[0] == '\n') return out.toOwnedSlice(allocator);
+    }
+    return error.MessageTooLarge;
+}
+
+fn handleServerLine(
+    allocator: std.mem.Allocator,
+    line: []const u8,
+    pane_id: []const u8,
+    stdout_fd: posix.fd_t,
+) !bool {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch return false;
+    defer parsed.deinit();
+    if (parsed.value != .object) return false;
+
+    const method = parsed.value.object.get("method") orelse return false;
+    if (method != .string) return false;
+
+    if (std.mem.eql(u8, method.string, "pane_output")) {
+        const params = parsed.value.object.get("params") orelse return false;
+        if (!jsonAnyStringEquals(params, &.{ "paneId", "pane_id" }, pane_id)) return false;
+        const encoded = jsonAnyObjectString(params, &.{ "dataBase64", "data_base64" }) orelse return false;
+        const decoded = try base64Decode(allocator, encoded);
+        defer allocator.free(decoded);
+        try writeAllFd(stdout_fd, decoded);
+        return false;
+    }
+
+    if (std.mem.eql(u8, method.string, "session_exited")) {
+        const params = parsed.value.object.get("params") orelse return false;
+        return jsonAnyStringEquals(params, &.{ "sessionId", "session_id" }, pane_id);
+    }
+
+    return false;
+}
+
+fn sendInput(
+    allocator: std.mem.Allocator,
+    socket_fd: posix.fd_t,
+    session_id: []const u8,
+    bytes: []const u8,
+) !void {
+    const encoded = try base64Encode(allocator, bytes);
+    defer allocator.free(encoded);
+    const msg = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session.send\",\"params\":{{\"sessionId\":{f},\"dataBase64\":{f}}}}}\n",
+        .{ std.json.fmt(session_id, .{}), std.json.fmt(encoded, .{}) },
+    );
+    defer allocator.free(msg);
+    try writeAll(socket_fd, msg);
+}
+
+fn jsonAnyStringEquals(value: std.json.Value, keys: []const []const u8, expected: []const u8) bool {
+    const actual = jsonAnyObjectString(value, keys) orelse return false;
+    return std.mem.eql(u8, actual, expected);
+}
+
+fn jsonAnyObjectString(value: std.json.Value, keys: []const []const u8) ?[]const u8 {
+    for (keys) |key| {
+        if (jsonObjectString(value, key)) |actual| return actual;
+    }
+    return null;
+}
+
+fn jsonObjectString(value: std.json.Value, key: []const u8) ?[]const u8 {
+    if (value != .object) return null;
+    const field = value.object.get(key) orelse return null;
+    return switch (field) {
+        .string => |text| text,
+        else => null,
+    };
+}
+
+fn base64Encode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    const encoder = std.base64.standard.Encoder;
+    const out = try allocator.alloc(u8, encoder.calcSize(bytes.len));
+    _ = encoder.encode(out, bytes);
+    return out;
+}
+
+fn base64Decode(allocator: std.mem.Allocator, encoded: []const u8) ![]u8 {
+    const decoder = std.base64.standard.Decoder;
+    const decoded_len = try decoder.calcSizeForSlice(encoded);
+    const out = try allocator.alloc(u8, decoded_len);
+    errdefer allocator.free(out);
+    try decoder.decode(out, encoded);
+    return out;
+}
+
 fn findJsonField(haystack: []const u8, needle: []const u8) ?usize {
     return std.mem.indexOf(u8, haystack, needle);
 }
@@ -377,12 +460,9 @@ fn replayScrollbackFromAttach(
     const encoded = payload[value_start..value_end];
     if (encoded.len == 0) return;
 
-    const decoder = std.base64.standard.Decoder;
-    const decoded_len = decoder.calcSizeForSlice(encoded) catch return;
-    if (decoded_len == 0) return;
-    const decoded = try allocator.alloc(u8, decoded_len);
+    const decoded = base64Decode(allocator, encoded) catch return;
     defer allocator.free(decoded);
-    decoder.decode(decoded, encoded) catch return;
+    if (decoded.len == 0) return;
     try writeAllFd(out_fd, decoded);
 }
 
@@ -396,7 +476,7 @@ fn stderrWrite(bytes: []const u8) !void {
 fn fail(comptime fmt: []const u8, args: anytype) error{InvalidArguments} {
     var buf: [1024]u8 = undefined;
     var w = std.fs.File.stderr().writer(&buf);
-    w.interface.print("session-connect: " ++ fmt ++ "\n", args) catch {};
+    w.interface.print("zmux-connect: " ++ fmt ++ "\n", args) catch {};
     w.interface.flush() catch {};
     return error.InvalidArguments;
 }
@@ -405,10 +485,31 @@ fn printUsage() !void {
     var buf: [1024]u8 = undefined;
     var w = std.fs.File.stderr().writer(&buf);
     try w.interface.writeAll(
-        \\Usage: smithers-session-connect <session_id> [--socket PATH] [--spawn-daemon]
+        \\Usage: zmux-connect <session_id> [--socket PATH] [--spawn-daemon]
+        \\       smithers-session-connect <session_id> [--socket PATH] [--spawn-daemon]
         \\
     );
     try w.interface.flush();
+}
+
+fn findDaemonSibling(allocator: std.mem.Allocator, dir: []const u8, self_name: []const u8) ![]u8 {
+    const zmux_order = [_][]const u8{ "zmuxd", "smithers-session-daemon" };
+    const smithers_order = [_][]const u8{ "smithers-session-daemon", "zmuxd" };
+    const candidates: []const []const u8 = if (std.mem.eql(u8, self_name, "zmux-connect"))
+        &zmux_order
+    else
+        &smithers_order;
+
+    for (candidates) |name| {
+        const path = try std.fs.path.join(allocator, &.{ dir, name });
+        if (std.fs.accessAbsolute(path, .{})) |_| {
+            return path;
+        } else |_| {
+            allocator.free(path);
+        }
+    }
+
+    return std.fs.path.join(allocator, &.{ dir, candidates[0] });
 }
 
 test "tiocgwinsz encodes the platform ioctl" {
