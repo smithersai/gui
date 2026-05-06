@@ -8,7 +8,7 @@ Audit date: 2026-04-24
 
 ## Summary
 
-`/Users/williamcory/plue` still contains browser and desktop GUI surfaces that are slated for deletion. Deleting them safely requires a Smithers GUI parity matrix first, because the old apps cover more than the minimal workspace terminal flow.
+`/Users/williamcory/plue` still contains browser and desktop GUI surfaces that are slated for deletion. Deleting them safely requires a Tabmonsters parity matrix first, because the old apps cover more than the minimal workspace terminal flow.
 
 This ticket is the `../gui` blocker for `/Users/williamcory/plue/.smithers/tickets/20-delete-deprecated-browser-gui.md`.
 

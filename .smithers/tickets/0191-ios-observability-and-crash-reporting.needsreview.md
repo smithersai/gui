@@ -15,8 +15,8 @@ macOS has a structured logging facade and file logs, but iOS still mixes `NSLog`
 Primary owner writes:
 
 - `AppLogger.swift` refactor or new shared logger file if needed
-- `ios/Sources/SmithersiOS/Diagnostics/`
-- `ios/Sources/SmithersiOS/Settings/SettingsView.swift` only for diagnostics/telemetry surface
+- `ios/Sources/TabmonstersiOS/Diagnostics/`
+- `ios/Sources/TabmonstersiOS/Settings/SettingsView.swift` only for diagnostics/telemetry surface
 - `TerminalSurface.swift` only for metric emission, not terminal behavior
 - shared/iOS tests for logging and diagnostics
 
@@ -41,7 +41,7 @@ Coordinate with ticket 0190 if both edit Settings.
 ## Verification
 
 ```sh
-xcodebuild -project SmithersGUI.xcodeproj -scheme SmithersiOS -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' -configuration Debug CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project Tabmonsters.xcodeproj -scheme TabmonstersiOS -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' -configuration Debug CODE_SIGNING_ALLOWED=NO test
 swift test
 ```
 

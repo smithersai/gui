@@ -94,7 +94,7 @@ extension Smithers {
                 let expanded = (override as NSString).expandingTildeInPath
                 return prepareDatabasePath(at: URL(fileURLWithPath: expanded))
             }
-            if let supportOverride = environment["SMITHERS_APP_SUPPORT"], !supportOverride.isEmpty {
+            if let supportOverride = environment["TABMONSTERS_APP_SUPPORT"], !supportOverride.isEmpty {
                 let expanded = (supportOverride as NSString).expandingTildeInPath
                 let dir = URL(fileURLWithPath: expanded, isDirectory: true)
                 return prepareDatabasePath(at: dir.appendingPathComponent("app.sqlite"))
@@ -102,7 +102,7 @@ extension Smithers {
             guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                 return nil
             }
-            let dir = base.appendingPathComponent("Smithers", isDirectory: true)
+            let dir = base.appendingPathComponent("Tabmonsters", isDirectory: true)
             return prepareDatabasePath(at: dir.appendingPathComponent("app.sqlite"))
         }
 
@@ -125,7 +125,7 @@ extension Smithers {
             switch action.kind {
             case .toast, .desktopNotification:
                 let content = UNMutableNotificationContent()
-                content.title = action.title ?? "Smithers"
+                content.title = action.title ?? "TABMONSTERS"
                 content.body = action.body ?? ""
                 UNUserNotificationCenter.current().add(
                     UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)

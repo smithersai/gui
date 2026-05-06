@@ -1,6 +1,6 @@
-# Smithers GUI — Agent Instructions
+# TABMONSTERS — Agent Instructions
 
-You are working inside the Smithers GUI macOS app repository. This app provides a native interface for the Smithers workflow orchestrator and JJHub code collaboration platform.
+You are working inside the TABMONSTERS macOS app repository. This app provides a native interface for the Smithers workflow orchestrator and JJHub code collaboration platform.
 
 ## Smithers CLI
 

@@ -1,6 +1,6 @@
 # Slash Commands Review
 
-Review scope: `SLASH_COMMANDS` and `SLASH_COMMAND_SYSTEM`, focused on `SlashCommands.swift`, `Tests/SmithersGUITests/SlashCommandsTests.swift`, and `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift`. I also checked `ChatView.swift` where needed to evaluate command routing and dynamic command execution, and `docs/smithers-gui/features.ts` to compare the feature groups with the registry.
+Review scope: `SLASH_COMMANDS` and `SLASH_COMMAND_SYSTEM`, focused on `SlashCommands.swift`, `Tests/TabmonstersTests/SlashCommandsTests.swift`, and `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift`. I also checked `ChatView.swift` where needed to evaluate command routing and dynamic command execution, and `docs/tabmonsters/features.ts` to compare the feature groups with the registry.
 
 `swift test` was not run.
 
@@ -8,9 +8,9 @@ Review scope: `SLASH_COMMANDS` and `SLASH_COMMAND_SYSTEM`, focused on `SlashComm
 
 ### Medium: Feature group inventory is out of sync with the command registry
 
-`docs/smithers-gui/features.ts:1018` to `docs/smithers-gui/features.ts:1046` lists the commands covered by `SLASH_COMMANDS`, but the registry includes additional built-in commands that are not represented in that feature group: `/agents`, `/changes`, `/triggers`, `/jjhub-workflows`, `/sql`, `/tickets`, and `/debug` in `SlashCommands.swift:247`, `SlashCommands.swift:256`, `SlashCommands.swift:283`, `SlashCommands.swift:292`, `SlashCommands.swift:346`, `SlashCommands.swift:364`, and `SlashCommands.swift:409`.
+`docs/tabmonsters/features.ts:1018` to `docs/tabmonsters/features.ts:1046` lists the commands covered by `SLASH_COMMANDS`, but the registry includes additional built-in commands that are not represented in that feature group: `/agents`, `/changes`, `/triggers`, `/jjhub-workflows`, `/sql`, `/tickets`, and `/debug` in `SlashCommands.swift:247`, `SlashCommands.swift:256`, `SlashCommands.swift:283`, `SlashCommands.swift:292`, `SlashCommands.swift:346`, `SlashCommands.swift:364`, and `SlashCommands.swift:409`.
 
-The tests know about several of these untracked commands. For example, `Tests/SmithersGUITests/SlashCommandsTests.swift:101`, `Tests/SmithersGUITests/SlashCommandsTests.swift:107`, `Tests/SmithersGUITests/SlashCommandsTests.swift:125`, `Tests/SmithersGUITests/SlashCommandsTests.swift:131`, `Tests/SmithersGUITests/SlashCommandsTests.swift:167`, `Tests/SmithersGUITests/SlashCommandsTests.swift:179`, and `Tests/SmithersGUITests/SlashCommandsTests.swift:267` assert them. The action category also has `/debug`, while the feature enum only calls out clear/help at `docs/smithers-gui/features.ts:237` to `docs/smithers-gui/features.ts:239`.
+The tests know about several of these untracked commands. For example, `Tests/TabmonstersTests/SlashCommandsTests.swift:101`, `Tests/TabmonstersTests/SlashCommandsTests.swift:107`, `Tests/TabmonstersTests/SlashCommandsTests.swift:125`, `Tests/TabmonstersTests/SlashCommandsTests.swift:131`, `Tests/TabmonstersTests/SlashCommandsTests.swift:167`, `Tests/TabmonstersTests/SlashCommandsTests.swift:179`, and `Tests/TabmonstersTests/SlashCommandsTests.swift:267` assert them. The action category also has `/debug`, while the feature enum only calls out clear/help at `docs/tabmonsters/features.ts:237` to `docs/tabmonsters/features.ts:239`.
 
 Impact: feature coverage can look complete while several shipped commands are not tracked by the feature map. Future reviewers may miss regressions because the feature group does not describe the actual command surface.
 
@@ -22,7 +22,7 @@ Recommendation: either add feature IDs for the missing commands or remove them f
 
 This is not just parser polish. `ChatView.swift:1066` passes parsed key-value args into workflow runs, and `ChatView.swift:1087` passes them into prompt rendering. Workflow and prompt inputs commonly need values with spaces.
 
-The current tests cover quote stripping only for values without spaces, such as `Tests/SmithersGUITests/SlashCommandsTests.swift:671` to `Tests/SmithersGUITests/SlashCommandsTests.swift:675` and `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:176` to `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:180`. They do not cover single-quoted spans, escaped quotes, empty quoted values, or malformed quotes.
+The current tests cover quote stripping only for values without spaces, such as `Tests/TabmonstersTests/SlashCommandsTests.swift:671` to `Tests/TabmonstersTests/SlashCommandsTests.swift:675` and `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:176` to `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:180`. They do not cover single-quoted spans, escaped quotes, empty quoted values, or malformed quotes.
 
 Recommendation: either document that only double quotes group values, or replace the tokenizer with a small shell-style lexer that supports single quotes, double quotes, and escapes. Add tests for `name="release notes"`, `name='release notes'`, `name=""`, `path="a \"quoted\" value"`, duplicate keys, and malformed input.
 
@@ -36,7 +36,7 @@ That creates several edge cases:
 - Duplicate workflow/prompt IDs produce duplicate `SlashCommandItem.id` values, which can destabilize the SwiftUI palette `ForEach` keyed by item ID at `ChatView.swift:1924`.
 - Bare aliases can conflict with built-ins. `exactMatch` checks aliases at `SlashCommands.swift:502` to `SlashCommands.swift:507`, after sorting by score/category/name at `SlashCommands.swift:489` to `SlashCommands.swift:499`, so a dynamic ID like `permissions`, `review`, `tickets`, or `status` may be shadowed by a built-in command or alias. The prefixed form still works, but the bare alias behavior is ambiguous.
 
-The dynamic command tests only cover simple happy-path IDs like `deploy`, `test`, `greet`, and `p1` in `Tests/SmithersGUITests/SlashCommandsTests.swift:295` to `Tests/SmithersGUITests/SlashCommandsTests.swift:318` and `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:226` to `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:246`.
+The dynamic command tests only cover simple happy-path IDs like `deploy`, `test`, `greet`, and `p1` in `Tests/TabmonstersTests/SlashCommandsTests.swift:295` to `Tests/TabmonstersTests/SlashCommandsTests.swift:318` and `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:226` to `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:246`.
 
 Recommendation: define a command-ID contract. Either reject/hide non-command-safe IDs, slug them, or require only the prefixed form for dynamic commands. Add conflict tests for dynamic IDs that match built-in names and aliases, duplicate dynamic IDs, empty IDs, and IDs with whitespace.
 
@@ -46,7 +46,7 @@ Recommendation: define a command-ID contract. Either reject/hide non-command-saf
 
 That supports case-insensitive substring search, not fuzzy matching in the usual sense. It does not handle typos, subsequences, token initials, or generalized separator normalization. If `SLASH_COMMAND_FUZZY_MATCHING` is meant literally, inputs like `mdl` for `/model` or `cwflow` for `/codex-approvals` will not match.
 
-The tests encode the current substring behavior rather than the feature name. Examples include `Tests/SmithersGUITests/SlashCommandsTests.swift:322` to `Tests/SmithersGUITests/SlashCommandsTests.swift:356` and `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:17` to `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:44`.
+The tests encode the current substring behavior rather than the feature name. Examples include `Tests/TabmonstersTests/SlashCommandsTests.swift:322` to `Tests/TabmonstersTests/SlashCommandsTests.swift:356` and `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:17` to `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:44`.
 
 Recommendation: either rename the feature/expectation to substring filtering, or implement a real fuzzy scorer with explicit ranking rules. If real fuzzy matching is intended, add tests for subsequence matches, typo rejection thresholds, separator-insensitive matching, and deterministic ordering among equal fuzzy scores.
 
@@ -54,7 +54,7 @@ Recommendation: either rename the feature/expectation to substring filtering, or
 
 The actual routing switch lives in `ChatView.executeSlashCommand` at `ChatView.swift:969` to `ChatView.swift:1002`, with Codex command effects at `ChatView.swift:1005` to `ChatView.swift:1055`, workflow execution at `ChatView.swift:1058` to `ChatView.swift:1077`, and prompt rendering at `ChatView.swift:1079` to `ChatView.swift:1095`.
 
-The specified tests mainly assert that the enum payloads are present. For example, `Tests/SmithersGUITests/SlashCommandsTests.swift:608` to `Tests/SmithersGUITests/SlashCommandsTests.swift:660` verifies action cases, but not that they invoke the right callbacks, sheets, status messages, Smithers calls, prompt dispatch, or navigation destinations. `SlashCommandsAdditionalTests.swift` does not add routing coverage.
+The specified tests mainly assert that the enum payloads are present. For example, `Tests/TabmonstersTests/SlashCommandsTests.swift:608` to `Tests/TabmonstersTests/SlashCommandsTests.swift:660` verifies action cases, but not that they invoke the right callbacks, sheets, status messages, Smithers calls, prompt dispatch, or navigation destinations. `SlashCommandsAdditionalTests.swift` does not add routing coverage.
 
 Impact: regressions in `/new`, `/model`, `/codex-approvals`, `/mcp`, `/logout`, `/diff`, `/mention`, dynamic workflow runs, dynamic prompt rendering, and navigation commands can pass these registry tests as long as the enum case remains unchanged.
 
@@ -62,11 +62,11 @@ Recommendation: extract the slash command executor into a small testable coordin
 
 ### Low: Ranking and category tests do not fully prove the ordering contract
 
-`Tests/SmithersGUITests/SlashCommandsTests.swift:421` to `Tests/SmithersGUITests/SlashCommandsTests.swift:439` says it verifies category ranking, but it only checks that there is at least one category transition, the first result is Codex, and the last result is Action. It would still pass if categories were interleaved in the middle.
+`Tests/TabmonstersTests/SlashCommandsTests.swift:421` to `Tests/TabmonstersTests/SlashCommandsTests.swift:439` says it verifies category ranking, but it only checks that there is at least one category transition, the first result is Codex, and the last result is Action. It would still pass if categories were interleaved in the middle.
 
-The count assertions at `Tests/SmithersGUITests/SlashCommandsTests.swift:280` to `Tests/SmithersGUITests/SlashCommandsTests.swift:292` also make ordinary command additions break category tests, while not explaining whether the count itself is a product requirement. `SlashCommandsAdditionalTests.swift` duplicates much of the same parse/match/score/help coverage, such as `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:49`, `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:94`, and `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:202`, without adding many new edge cases.
+The count assertions at `Tests/TabmonstersTests/SlashCommandsTests.swift:280` to `Tests/TabmonstersTests/SlashCommandsTests.swift:292` also make ordinary command additions break category tests, while not explaining whether the count itself is a product requirement. `SlashCommandsAdditionalTests.swift` duplicates much of the same parse/match/score/help coverage, such as `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:49`, `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:94`, and `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:202`, without adding many new edge cases.
 
-There are also a few misleading test comments. `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:69` to `Tests/SmithersGUITests/SlashCommandsAdditionalTests.swift:72` says `witch` matches the description, but it actually matches the title `Switch Model`.
+There are also a few misleading test comments. `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:69` to `Tests/TabmonstersTests/SlashCommandsAdditionalTests.swift:72` says `witch` matches the description, but it actually matches the title `Switch Model`.
 
 Recommendation: replace broad count tests with table-driven inventory tests. For ranking, assert monotonic category rank across the entire result list and add focused tie-breaker cases for score, category, and name ordering. Deduplicate the additional tests or turn them into edge-case coverage.
 

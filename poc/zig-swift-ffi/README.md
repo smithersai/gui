@@ -10,7 +10,7 @@ lives at `../ios-harness/`.
 
 ## Zig version
 
-Pinned: **0.15.2**. Matches `/Users/williamcory/gui/.zigversion` at the repo root.
+Pinned: **0.15.2**. Matches `/Users/williamcory/tabmonsters/.zigversion` at the repo root.
 
 ## Build
 

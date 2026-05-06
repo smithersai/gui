@@ -135,7 +135,7 @@ xcrun devicectl device install app --device <YOUR-DEVICE-UDID> \
     ~/Library/Developer/Xcode/DerivedData/LibGhosttyIOS-*/Build/Products/Debug-iphoneos/PoC.app
 
 xcrun devicectl device process launch --device <YOUR-DEVICE-UDID> \
-    com.smithers.libghostty-ios-poc.app
+    com.tabmonsters.libghostty-ios-poc.app
 ```
 
 Alternatively: open `LibGhosttyIOS.xcodeproj` in Xcode, pick your device as

@@ -6,10 +6,10 @@ Standalone zbench suite for libsmithers hot paths. The executable links
 ## Setup
 
 ```sh
-cd /Users/williamcory/gui/libsmithers
+cd /Users/williamcory/tabmonsters/libsmithers
 zig build
 
-cd /Users/williamcory/gui/libsmithers/bench
+cd /Users/williamcory/tabmonsters/libsmithers/bench
 zig build
 ./zig-out/bin/smithers-bench
 ./zig-out/bin/smithers-bench --group palette

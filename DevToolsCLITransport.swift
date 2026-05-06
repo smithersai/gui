@@ -239,7 +239,7 @@ func devToolsRolledUpState(childStates: [String]) -> String? {
 // MARK: - XML → DevToolsNode conversion
 
 enum DevToolsTreeBuilder {
-    /// Convert a decoded frame tree + task index into a `DevToolsNode` tree suitable for the gui.
+    /// Convert a decoded frame tree + task index into a `DevToolsNode` tree suitable for the app.
     /// Integer ids are assigned depth-first so they're stable within a single snapshot.
     ///
     /// - Parameter nodeStates: optional dictionary keyed by `task.nodeId`. When provided,
@@ -287,7 +287,7 @@ enum DevToolsNodeStateQuery {
 /// A single row from `_smithers_attempts` with enough data to decide what state a
 /// node was in at a given wall-clock timestamp.
 ///
-/// DB schema (confirmed against `/Users/williamcory/gui/smithers.db`):
+/// DB schema (confirmed against `/Users/williamcory/tabmonsters/smithers.db`):
 ///   `_smithers_attempts(run_id, node_id, iteration, attempt, state, started_at_ms,
 ///    finished_at_ms, heartbeat_at_ms, heartbeat_data_json, error_json, ...)`.
 ///

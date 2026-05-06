@@ -24,13 +24,13 @@ JSON method-dispatch exports back to the public header.
    `smithers_core_t`, `smithers_core_session_t`, subscription ids, write future
    ids, and PTY handles.
 3. Authentication is host-provided through `smithers_credentials_fn`; the core
-   does not read GUI tokens from disk.
+   does not read app tokens from disk.
 4. Shape data is read through `smithers_core_cache_query`; mutations go through
    `smithers_core_write` and are confirmed by runtime events/cache echo.
 5. Returned strings, errors, and byte buffers are owned by libsmithers until the
    matching free function is called exactly once.
 
-## Local GUI Helpers
+## Local App Helpers
 
 Local-only conveniences such as workflow source editing, slash parsing, command
 palette state, recent workspaces, terminal helper commands, devtools transforms, and

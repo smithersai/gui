@@ -143,7 +143,7 @@ private final class KeyboardShortcutSettingsFileWatcher {
     private let path: String
     private let fileManager: FileManager
     private let onChange: () -> Void
-    private let queue = DispatchQueue(label: "com.smithers.gui.keyboard-shortcut-settings-file-watch")
+    private let queue = DispatchQueue(label: "com.tabmonsters.app.keyboard-shortcut-settings-file-watch")
     private var source: DispatchSourceFileSystemObject?
 
     init(path: String, fileManager: FileManager, onChange: @escaping () -> Void) {

@@ -1,6 +1,6 @@
 # Smithers GTK
 
-GTK4/libadwaita Linux shell for SmithersGUI, written in Zig and consuming the
+GTK4/libadwaita Linux shell for Tabmonsters, written in Zig and consuming the
 `libsmithers/include/smithers.h` ABI.
 
 ## Dependencies
@@ -58,7 +58,7 @@ GTK embed ABI from `linux/src/features/ghostty.zig`.
 ## Build
 
 ```sh
-cd /Users/williamcory/gui/linux
+cd /Users/williamcory/tabmonsters/linux
 zig build
 ```
 

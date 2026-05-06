@@ -21,7 +21,7 @@ pub const Application = extern struct {
     parent_instance: Parent,
     pub const Parent = adw.Application;
     pub const getGObjectType = gobject.ext.defineClass(Self, .{
-        .name = "SmithersApplication",
+        .name = "TabmonstersApplication",
         .classInit = &Class.init,
         .parent_class = &Class.parent,
         .private = .{ .Type = Private, .offset = &Private.offset },
@@ -47,7 +47,7 @@ pub const Application = extern struct {
         adw.init();
 
         const self = gobject.ext.newInstance(Self, .{
-            .application_id = "sh.smithers.GUI",
+            .application_id = "sh.tabmonsters",
             .flags = gio.ApplicationFlags.flags_default_flags,
         });
         errdefer self.unref();

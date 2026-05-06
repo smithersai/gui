@@ -1,1 +1,1 @@
-../gui/libsmithers
+../tabmonsters/libsmithers

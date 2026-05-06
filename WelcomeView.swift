@@ -13,7 +13,7 @@ struct WelcomeView: View {
     @State private var showSignInSheet = false
     #endif
 
-    private static let githubURL = URL(string: "https://github.com/smithersai/gui")!
+    private static let githubURL = URL(string: "https://github.com/smithersai/tabmonsters")!
 
     var body: some View {
         ZStack {
@@ -50,10 +50,10 @@ struct WelcomeView: View {
             Image(systemName: "hammer.fill")
                 .font(.system(size: 56, weight: .light))
                 .foregroundColor(Theme.accent)
-            Text("Smithers")
+            Text("TABMONSTERS")
                 .font(.system(size: 34, weight: .semibold))
                 .foregroundColor(Theme.textPrimary)
-            Text("The workspace-native IDE for AI-driven development")
+            Text("Agent browser multiplexer for Smithers terminal sessions")
                 .font(.system(size: 14))
                 .foregroundColor(Theme.textSecondary)
         }

@@ -2,7 +2,7 @@
 //
 // Ticket 0122 decomposed this file. Compared to pre-refactor, ContentView
 // no longer owns:
-//   - the app entry point (`@main SmithersApp`) → `macos/Sources/Smithers/Smithers.AppDelegate.swift`
+//   - the app entry point (`@main TabmonstersApp`) → `macos/Sources/Smithers/Smithers.AppDelegate.swift`
 //   - the app delegate (`AppDelegate`)          → `macos/Sources/Smithers/Smithers.AppDelegate.swift`
 //   - the route/state model (`NavDestination`)  → `SharedNavigation.swift`
 //   - the detail route switch (`detailContent`) → `DetailRouter.swift`
@@ -14,7 +14,7 @@
 // What stays here is the composition root: `ContentView` wires the shared
 // navigation store, palette state, keyboard shortcut controller, and
 // per-destination callbacks into the macOS shell via `MacOSContentShell`.
-// The iOS shell is a separate composition in `ios/Sources/SmithersiOS/`.
+// The iOS shell is a separate composition in `ios/Sources/TabmonstersiOS/`.
 
 import SwiftUI
 import WebKit
@@ -26,7 +26,7 @@ import AppKit
 struct SettingsView: View {
     @AppStorage(AppPreferenceKeys.vimModeEnabled) private var vimModeEnabled = false
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
-    @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
+    @AppStorage(AppPreferenceKeys.tabmonstersControlSidebarEnabled) private var tabmonstersControlSidebarEnabled = false
     @AppStorage(AppPreferenceKeys.externalAgentUnsafeFlagsEnabled) private var externalAgentUnsafeFlagsEnabled = false
     @AppStorage(AppPreferenceKeys.browserSearchEngine) private var browserSearchEngine = BrowserSearchEngine.duckDuckGo.rawValue
     @AppStorage(AppPreferenceKeys.shortcutCheatSheetFooterEnabled) private var shortcutCheatSheetFooterEnabled = false
@@ -146,27 +146,27 @@ struct SettingsView: View {
                     .frame(width: 28)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Smithers operator")
+                    Text("TABMONSTERS operator")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Theme.textPrimary)
-                    Text("Work in progress: let an agent control the Smithers UI itself for you.")
+                    Text("Work in progress: let an agent control TABMONSTERS itself for you.")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textTertiary)
                 }
 
                 Spacer()
 
-                Toggle("", isOn: $guiControlSidebarEnabled)
+                Toggle("", isOn: $tabmonstersControlSidebarEnabled)
                     .labelsHidden()
                     .toggleStyle(.switch)
-                    .accessibilityIdentifier("settings.guiControlSidebar.toggle")
+                    .accessibilityIdentifier("settings.tabmonstersControlSidebar.toggle")
             }
         }
         .padding(16)
         .background(Theme.surface2)
         .cornerRadius(8)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
-        .accessibilityIdentifier("settings.guiControlSidebar.section")
+        .accessibilityIdentifier("settings.tabmonstersControlSidebar.section")
     }
 
     private var neovimSection: some View {
@@ -540,7 +540,7 @@ private struct ShortcutSettingsRow: View {
 
 /// macOS composition root. ContentView wires the shared navigation store,
 /// the palette state, and per-destination callbacks into `MacOSContentShell`.
-/// The iOS target composes `IOSContentShell` directly from `SmithersApp.swift`.
+/// The iOS target composes `IOSContentShell` directly from `TabmonstersApp.swift`.
 struct ContentView: View {
     @StateObject private var store: SessionStore
     @StateObject private var smithers: SmithersClient
@@ -570,7 +570,7 @@ struct ContentView: View {
     }
 
     @AppStorage(AppPreferenceKeys.developerToolsEnabled) private var developerToolsEnabled = false
-    @AppStorage(AppPreferenceKeys.guiControlSidebarEnabled) private var guiControlSidebarEnabled = false
+    @AppStorage(AppPreferenceKeys.tabmonstersControlSidebarEnabled) private var tabmonstersControlSidebarEnabled = false
     @AppStorage(AppPreferenceKeys.shortcutCheatSheetFooterEnabled) private var shortcutCheatSheetFooterEnabled = false
     @State private var destination: NavDestination
     @State private var navHistory: [NavDestination] = [.home]
@@ -583,7 +583,7 @@ struct ContentView: View {
     @State private var workflowsInitialID: String?
     @State private var changesInitialID: String?
     @State private var developerDebugPanelVisible = false
-    @State private var guiControlSidebarExpanded = false
+    @State private var tabmonstersControlSidebarExpanded = false
     @State private var pendingTerminalCloseId: String?
     @State private var pendingTerminalCloseTitle: String = ""
     @State private var commandPaletteVisible = false
@@ -665,7 +665,7 @@ struct ContentView: View {
         }
         #else
         // On iOS, ContentView is not used; the iOS target composes
-        // `IOSContentShell` directly from `SmithersApp.swift`.
+        // `IOSContentShell` directly from `TabmonstersApp.swift`.
         EmptyView()
         #endif
     }
@@ -681,9 +681,9 @@ struct ContentView: View {
             runSnapshotsSelection: $runSnapshotsSelection,
             developerDebugPanelVisible: $developerDebugPanelVisible,
             developerToolsEnabled: developerToolsEnabled,
-            guiControlSidebarEnabled: guiControlSidebarEnabled,
+            tabmonstersControlSidebarEnabled: tabmonstersControlSidebarEnabled,
             shortcutCheatSheetFooterEnabled: shortcutCheatSheetFooterEnabled,
-            guiControlSidebarExpanded: $guiControlSidebarExpanded,
+            tabmonstersControlSidebarExpanded: $tabmonstersControlSidebarExpanded,
             activeTerminalId: activeTerminalId,
             shouldShowSmithersVersionWarning: shouldShowSmithersVersionWarning,
             detailRefreshNonce: detailRefreshNonce,
@@ -783,7 +783,7 @@ struct ContentView: View {
     private func handleBootstrapReady() {
         let environment = ProcessInfo.processInfo.environment
         if UITestSupport.isEnabled,
-           environment["SMITHERS_GUI_UITEST_OPEN_TREE_ON_LAUNCH"] == "1" {
+           environment["TABMONSTERS_UITEST_OPEN_TREE_ON_LAUNCH"] == "1" {
             destination = .liveRun(runId: "ui-run-active-001", nodeId: nil)
         }
     }

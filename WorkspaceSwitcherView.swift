@@ -4,7 +4,7 @@
 // Only the rows list + its empty/signed-out/offline states live here.
 // Platform presentation (full-screen modal on iOS, section-in-sidebar
 // on macOS) is decided by the platform-specific wrappers in
-// `ios/Sources/SmithersiOS/WorkspaceSwitcher/…` and
+// `ios/Sources/TabmonstersiOS/WorkspaceSwitcher/…` and
 // `macos/Sources/Smithers/Smithers.WorkspaceSwitcherSection.macOS.swift`.
 
 import SwiftUI

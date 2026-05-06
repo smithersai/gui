@@ -1,4 +1,4 @@
-# ios-e2e.yml — full-stack XCUITest harness for the SmithersiOS app.
+# ios-e2e.yml — full-stack XCUITest harness for the TabmonstersiOS app.
 #
 # Ticket: ios-e2e-harness. Runs on macos-14 hosted runners which, since
 # 2026, ship with a working Colima/Lima stack so `docker compose up` works
@@ -36,12 +36,12 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - name: Checkout gui
+      - name: Checkout Tabmonsters
         uses: actions/checkout@v4
         with:
-          path: gui
+          path: tabmonsters
 
-      # The E2E harness needs the Smithers backend checkout side-by-side with gui/.
+      # The E2E harness needs the Smithers backend checkout side-by-side with tabmonsters/.
       # CI clones the public mirror of smithers-orchestrator into a backend checkout.
       # Production keeps the two repos siblings on developer laptops
       # (see .smithers/specs/ios-and-remote-sandboxes.md).
@@ -86,7 +86,7 @@ jobs:
         run: bun install || true
 
       - name: Run iOS E2E harness
-        working-directory: gui
+        working-directory: tabmonsters
         env:
           SMITHERS_CHECKOUT: ${{ github.workspace }}/smithers-backend
           SMITHERS_BASE_URL: http://localhost:4000
@@ -102,7 +102,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-e2e-xcresult
-          path: gui/build/e2e-results-*.xcresult
+          path: tabmonsters/build/e2e-results-*.xcresult
           if-no-files-found: warn
           retention-days: 14
 
@@ -111,6 +111,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-e2e-xcodebuild-log
-          path: gui/build/e2e-xcodebuild.log
+          path: tabmonsters/build/e2e-xcodebuild.log
           if-no-files-found: warn
           retention-days: 14

@@ -1111,7 +1111,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private static func isSessionPersistenceDisabled(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
-        environment["SMITHERS_SESSION_PERSISTENCE_DISABLE"] == "1"
+        environment["TABMONSTERS_SESSION_PERSISTENCE_DISABLE"] == "1"
     }
 
     private func restorePersistedSessions() {

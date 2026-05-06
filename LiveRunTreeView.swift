@@ -454,15 +454,15 @@ struct LiveRunTreeUITestHarnessView: View {
         self.onClose = onClose
 
         let environment = ProcessInfo.processInfo.environment
-        let finishedRun = environment["SMITHERS_GUI_UITEST_TREE_FINISHED"] == "1"
+        let finishedRun = environment["TABMONSTERS_UITEST_TREE_FINISHED"] == "1"
         let snapshots = Self.makeFixtureSnapshots(runId: runId, finishedRun: finishedRun)
         let streamEnabled: Bool
-        if let streamOverride = environment["SMITHERS_GUI_UITEST_TREE_STREAM"]?.lowercased() {
+        if let streamOverride = environment["TABMONSTERS_UITEST_TREE_STREAM"]?.lowercased() {
             streamEnabled = streamOverride != "0" && streamOverride != "false"
         } else {
             streamEnabled = !finishedRun
         }
-        let rewindErrorMode = ProcessInfo.processInfo.environment["SMITHERS_GUI_UITEST_REWIND_ERROR"]
+        let rewindErrorMode = ProcessInfo.processInfo.environment["TABMONSTERS_UITEST_REWIND_ERROR"]
         let provider = LiveRunFixtureDevToolsProvider(
             runId: runId,
             snapshots: snapshots,

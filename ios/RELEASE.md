@@ -1,6 +1,6 @@
 # iOS release & TestFlight runbook (ticket 0125)
 
-This file is the single source of truth for turning the `SmithersiOS`
+This file is the single source of truth for turning the `TabmonstersiOS`
 target into a signed `.ipa` and shipping it to TestFlight.
 
 Ticket 0121 created the iOS target. Ticket 0125 (this doc) makes it
@@ -14,7 +14,7 @@ You need to populate **three secrets** in the repo and register the bundle
 id with Apple once. After that, every push to `main` produces a signed
 TestFlight build automatically.
 
-1. Register the bundle id in App Store Connect: `com.smithers.ios`.
+1. Register the bundle id in App Store Connect: `com.tabmonsters.ios`.
 2. Create an App Store Connect API key (Admin / App Manager role).
 3. Export your distribution certificate + provisioning profile.
 4. Paste six values into GitHub repo secrets (table below).
@@ -40,17 +40,17 @@ it tedious — not because this runbook is underspecified.
 
 ### 2. Register the bundle identifier in App Store Connect
 
-- The bundle id is pinned in `project.yml` to **`com.smithers.ios`**.
+- The bundle id is pinned in `project.yml` to **`com.tabmonsters.ios`**.
   If you register a different id in App Store Connect, upload will fail
   with a confusing "No matching apps" error; change `project.yml` to
   match ASC, not the other way around.
 - Steps: App Store Connect → Apps → `+` → New App →
-  iOS → bundle id = `com.smithers.ios`, SKU = `smithers-ios`.
+  iOS → bundle id = `com.tabmonsters.ios`, SKU = `tabmonsters-ios`.
 
 ### 3. Create a TestFlight group
 
 - App Store Connect → your app → TestFlight → Internal Testing →
-  `+` → create a group (for example "Smithers internal").
+  `+` → create a group (for example "Tabmonsters internal").
 - Invite testers by Apple ID email. Internal testers see builds
   ~5 minutes after the workflow's upload step completes; external
   testers require Beta App Review on the first build only.
@@ -86,13 +86,13 @@ You need the private key + certificate as a single `.p12`:
 
 1. <https://developer.apple.com/account/resources/profiles/list>
    → `+` → iOS → Distribution → **App Store** → pick bundle id
-   `com.smithers.ios` → pick the Apple Distribution certificate from
-   step 5 → name it (e.g. "Smithers iOS App Store").
+   `com.tabmonsters.ios` → pick the Apple Distribution certificate from
+   step 5 → name it (e.g. "Tabmonsters iOS App Store").
 2. Download the `.mobileprovision` file.
-3. Base64-encode it: `base64 -i Smithers_iOS_App_Store.mobileprovision | pbcopy`.
+3. Base64-encode it: `base64 -i Tabmonsters_iOS_App_Store.mobileprovision | pbcopy`.
 4. Put the encoded blob in `IOS_PROVISIONING_PROFILE_BASE64` and the
    human-readable profile name (the one you typed in step 1) in
-   `SMITHERS_IOS_PROVISIONING_PROFILE_NAME`.
+   `TABMONSTERS_IOS_PROVISIONING_PROFILE_NAME`.
 
 ---
 
@@ -104,7 +104,7 @@ in the `ios-release` environment.
 | Secret name | Source | Example shape |
 |---|---|---|
 | `APPLE_TEAM_ID` | developer.apple.com membership page | `ABCDE12345` |
-| `SMITHERS_IOS_PROVISIONING_PROFILE_NAME` | the human-readable name you typed when creating the profile | `Smithers iOS App Store` |
+| `TABMONSTERS_IOS_PROVISIONING_PROFILE_NAME` | the human-readable name you typed when creating the profile | `Tabmonsters iOS App Store` |
 | `APP_STORE_CONNECT_KEY_ID` | ASC → Users and Access → Integrations → Keys | `AB12CD34EF` |
 | `APP_STORE_CONNECT_ISSUER_ID` | same page, top of screen | `69a6de7f-...-a4c6` |
 | `APP_STORE_CONNECT_API_KEY_P8` | the `.p8` file contents (paste literally, including `-----BEGIN PRIVATE KEY-----` markers) | multi-line PEM |
@@ -118,7 +118,7 @@ The **minimum three** values the owner typically has to plug in fresh
 1. `APPLE_TEAM_ID`
 2. `APP_STORE_CONNECT_KEY_ID` + `APP_STORE_CONNECT_ISSUER_ID` +
    `APP_STORE_CONNECT_API_KEY_P8` (one API key, three fields).
-3. `SMITHERS_IOS_PROVISIONING_PROFILE_NAME`.
+3. `TABMONSTERS_IOS_PROVISIONING_PROFILE_NAME`.
 
 The certificate and profile secrets (`IOS_SIGNING_P12_*` and
 `IOS_PROVISIONING_PROFILE_BASE64`) are derived from your local
@@ -128,7 +128,7 @@ Keychain / developer portal and only change when a cert rotates.
 
 ## Versioning rules
 
-`project.yml` carries two values for the `SmithersiOS` target:
+`project.yml` carries two values for the `TabmonstersiOS` target:
 
 - `MARKETING_VERSION` — the user-visible version string, mapped to
   `CFBundleShortVersionString`. Example: `0.1.0`. Bump this manually,
@@ -154,7 +154,7 @@ monotonic workflow run counter. This means:
 
 ### How to cut a release
 
-1. Edit `project.yml` → `targets.SmithersiOS.settings.base.MARKETING_VERSION`.
+1. Edit `project.yml` → `targets.TabmonstersiOS.settings.base.MARKETING_VERSION`.
 2. Commit and push to `main`.
 3. The `iOS TestFlight` workflow picks up the push, archives, and
    uploads. Watch the Actions tab for completion (~8 minutes).
@@ -189,7 +189,7 @@ CI upload is failing and you need to bisect signing vs. code issues.
 # hand — but if you invoke xcodebuild directly (see the one-liner
 # below), you MUST scrub those three variables first.
 export DEVELOPMENT_TEAM="ABCDE12345"                       # your Team ID
-export PROVISIONING_PROFILE_SPECIFIER="Smithers iOS App Store"
+export PROVISIONING_PROFILE_SPECIFIER="Tabmonsters iOS App Store"
 export APP_STORE_CONNECT_API_KEY_ID="AB12CD34EF"
 export APP_STORE_CONNECT_ISSUER_ID="69a6de7f-....-a4c6"
 export APP_STORE_CONNECT_API_KEY_P8="$(cat ~/.appstoreconnect/private_keys/AuthKey_AB12CD34EF.p8)"
@@ -207,15 +207,15 @@ existing `build/` rule).
 ```sh
 env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS \
     xcodebuild \
-        -project SmithersGUI.xcodeproj \
-        -scheme SmithersiOS \
+        -project Tabmonsters.xcodeproj \
+        -scheme TabmonstersiOS \
         -destination 'generic/platform=iOS' \
         -configuration Release \
-        -archivePath build/ios-archive/SmithersiOS.xcarchive \
+        -archivePath build/ios-archive/TabmonstersiOS.xcarchive \
         MARKETING_VERSION="0.1.0" \
         CURRENT_PROJECT_VERSION="1" \
         DEVELOPMENT_TEAM="ABCDE12345" \
-        PROVISIONING_PROFILE_SPECIFIER="Smithers iOS App Store" \
+        PROVISIONING_PROFILE_SPECIFIER="Tabmonsters iOS App Store" \
         CODE_SIGN_STYLE=Manual \
         CODE_SIGN_IDENTITY="Apple Distribution" \
         CODE_SIGNING_REQUIRED=YES \
@@ -241,8 +241,8 @@ These still work exactly as before; signing is only enforced in the
 # Simulator build (no signing).
 env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS \
     xcodebuild \
-        -project SmithersGUI.xcodeproj \
-        -scheme SmithersiOS \
+        -project Tabmonsters.xcodeproj \
+        -scheme TabmonstersiOS \
         -destination 'platform=iOS Simulator,name=iPhone 15' \
         -configuration Debug \
         CODE_SIGNING_ALLOWED=NO \
@@ -252,8 +252,8 @@ env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS \
 # job runs.
 env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS \
     xcodebuild \
-        -project SmithersGUI.xcodeproj \
-        -scheme SmithersiOS \
+        -project Tabmonsters.xcodeproj \
+        -scheme TabmonstersiOS \
         -destination 'generic/platform=iOS' \
         -configuration Debug \
         CODE_SIGNING_ALLOWED=NO \
@@ -268,7 +268,7 @@ env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS \
 The archive step fails at build-graph planning with:
 
 ```
-error: "SmithersiOS" requires a provisioning profile. Select a
+error: "TabmonstersiOS" requires a provisioning profile. Select a
 provisioning profile in the Signing & Capabilities editor.
 ```
 
@@ -284,7 +284,7 @@ Things go wrong. Order of escalation:
 
 1. **"no matching provisioning profile found"** — the profile name
    secret does not match what is in the developer portal. Fix:
-   update `SMITHERS_IOS_PROVISIONING_PROFILE_NAME` to the exact name
+   update `TABMONSTERS_IOS_PROVISIONING_PROFILE_NAME` to the exact name
    shown at <https://developer.apple.com/account/resources/profiles/list>.
 2. **"no signing certificate … found"** — the `.p12` blob expired or
    is for the wrong team. Fix: rotate per step 5 above, re-export,
@@ -325,15 +325,15 @@ Required only when upload is enabled:
 
 Profile preflight before archive/export:
 
-- App profile must exist at `~/Library/MobileDevice/Provisioning Profiles/smithers-ios-appstore.mobileprovision` and match `com.smithers.ios`.
-- Share-extension profile must exist at `~/Library/MobileDevice/Provisioning Profiles/smithers-ios-shareext-appstore.mobileprovision` and match `com.smithers.ios.ShareExtension`.
+- App profile must exist at `~/Library/MobileDevice/Provisioning Profiles/tabmonsters-ios-appstore.mobileprovision` and match `com.tabmonsters.ios`.
+- Share-extension profile must exist at `~/Library/MobileDevice/Provisioning Profiles/tabmonsters-ios-shareext-appstore.mobileprovision` and match `com.tabmonsters.ios.ShareExtension`.
 
 Local dry-run command:
 
 ```sh
 export DEVELOPMENT_TEAM="ABCDE12345"
-export PROVISIONING_PROFILE_SPECIFIER="Smithers iOS App Store"
-export SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER="Smithers iOS Share   Extension App Store"
+export PROVISIONING_PROFILE_SPECIFIER="Tabmonsters iOS App Store"
+export SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER="Tabmonsters iOS Share   Extension App Store"
 SKIP_UPLOAD=1 ./ios/scripts/build-and-upload-testflight.sh
 ```
 

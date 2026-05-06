@@ -18,7 +18,7 @@ pub const ApprovalsView = extern struct {
     parent_instance: Parent,
     pub const Parent = gtk.Box;
     pub const getGObjectType = gobject.ext.defineClass(Self, .{
-        .name = "SmithersApprovalsView",
+        .name = "TabmonstersApprovalsView",
         .classInit = &Class.init,
         .parent_class = &Class.parent,
         .private = .{ .Type = Private, .offset = &Private.offset },

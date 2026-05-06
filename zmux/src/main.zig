@@ -1,7 +1,7 @@
-//! Feature-minimal tmux-style PTY session server for SmithersGUI.
+//! Feature-minimal tmux-style PTY session server for Tabmonsters.
 //!
-//! `zmux` deliberately implements only the GUI-facing contract: a durable
-//! local daemon owns PTY child processes, GUI/client processes attach and
+//! `zmux` deliberately implements only the app-facing contract: a durable
+//! local daemon owns PTY child processes, app/client processes attach and
 //! detach over a UNIX socket, and server-owned PTYs keep running with
 //! bounded scrollback capture for replay on reattach.
 

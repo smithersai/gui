@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "smithers-gui-infra",
+      "name": "tabmonsters-infra",
       "dependencies": {
         "alchemy": "latest",
       },

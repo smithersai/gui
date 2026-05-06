@@ -1,18 +1,18 @@
 // Smithers.AppDelegate.swift
 //
-// macOS app entry point + AppDelegate + SmithersRootView, extracted from
+// macOS app entry point + AppDelegate + TabmonstersRootView, extracted from
 // ContentView.swift in ticket 0122. Lives in the macOS support layer so
 // the shared shell code does not own `@main`, does not import AppKit,
 // and does not reference `NSApplication`, `NSScreen`, or `NSApp`.
 //
-// The iOS target has its own `@main` in `ios/Sources/SmithersiOS/SmithersApp.swift`.
+// The iOS target has its own `@main` in `ios/Sources/TabmonstersiOS/TabmonstersApp.swift`.
 
 #if os(macOS)
 import SwiftUI
 import AppKit
 
 @main
-struct SmithersApp: App {
+struct TabmonstersApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var workspaceManager = WorkspaceManager.shared
     // 0126: remote-mode controller lives for the app process lifetime.
@@ -20,10 +20,10 @@ struct SmithersApp: App {
 
     var body: some Scene {
         WindowGroup {
-            SmithersRootView(manager: workspaceManager, remoteMode: remoteMode)
+            TabmonstersRootView(manager: workspaceManager, remoteMode: remoteMode)
                 .preferredColorScheme(.dark)
                 .onOpenURL { url in
-                    SmithersApp.handleOpenedURL(url, manager: workspaceManager)
+                    TabmonstersApp.handleOpenedURL(url, manager: workspaceManager)
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -35,7 +35,7 @@ struct SmithersApp: App {
             manager.openWorkspace(at: url)
             return
         }
-        guard url.scheme == "smithers-gui" else { return }
+        guard url.scheme == "tabmonsters" else { return }
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
         if let path = components.queryItems?.first(where: { $0.name == "path" })?.value {
             manager.openWorkspace(at: URL(fileURLWithPath: path, isDirectory: true))
@@ -43,7 +43,7 @@ struct SmithersApp: App {
     }
 }
 
-struct SmithersRootView: View {
+struct TabmonstersRootView: View {
     @ObservedObject var manager: WorkspaceManager
     // 0126: The root view consults the remote-mode controller so it can
     // decide whether to show a remote-only slow-boot overlay over the shell.
@@ -127,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         Task { @MainActor in
             for url in urls {
-                SmithersApp.handleOpenedURL(url, manager: WorkspaceManager.shared)
+                TabmonstersApp.handleOpenedURL(url, manager: WorkspaceManager.shared)
             }
         }
     }

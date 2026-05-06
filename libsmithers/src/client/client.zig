@@ -242,7 +242,7 @@ fn streamImpl(self: *Client, method: []const u8, args_json: []const u8) !*EventS
 
     // Methods with a dedicated producer must not fall through to the
     // `{"method":..., "args":...}` passthrough below — that payload has no
-    // `type` key and surfaces in the GUI as
+    // `type` key and surfaces in the app as
     // `Malformed event: keyNotFound("type")`, which is exactly what you see
     // when the app is linked against a stale libsmithers.a that predates the
     // dedicated handler. Fail fast so the error is visible at connect time.
@@ -340,7 +340,7 @@ fn cliFallback(self: *Client, method: []const u8, args: std.json.Value) !?[]u8 {
 
 // Map a failing smithers CLI invocation's stderr to a descriptive zig error.
 // smithers prints lines like `error: <Code>: <message>` when a request fails.
-// Surfacing the code as the error name lets the GUI map it back to a typed
+// Surfacing the code as the error name lets the app map it back to a typed
 // DevToolsClientError instead of showing a generic `CliInvocationFailed`.
 fn cliStderrToError(stderr: []const u8) anyerror {
     const code = extractCliErrorCode(stderr) orelse return error.CliInvocationFailed;

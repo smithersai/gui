@@ -7,8 +7,8 @@
 #   2. Wait for Postgres + the api to accept traffic on localhost:4000.
 #   3. Seed the E2E user / token / workspace by REUSING
 #      `ios/scripts/seed-e2e-data.sh` verbatim (do NOT fork).
-#   4. Regenerate `SmithersGUI.xcodeproj` via XcodeGen.
-#   5. Run `xcodebuild test` for the `SmithersMacOSE2ETests` scheme
+#   4. Regenerate `Tabmonsters.xcodeproj` via XcodeGen.
+#   5. Run `xcodebuild test` for the `TabmonstersMacOSE2ETests` scheme
 #      against the macOS destination, threading the E2E env vars.
 #   6. Tear down (conditional on E2E_KEEP_STACK).
 #
@@ -24,7 +24,7 @@
 #                       ../plue for CI).
 #   SMITHERS_BASE_URL   override base URL (default: http://localhost:4000)
 #   E2E_KEEP_STACK      if "1", do NOT tear down on exit.
-#   E2E_SCHEME          default "SmithersMacOSE2ETests"
+#   E2E_SCHEME          default "TabmonstersMacOSE2ETests"
 
 set -euo pipefail
 
@@ -40,8 +40,8 @@ SMITHERS_CHECKOUT="${SMITHERS_CHECKOUT:-${PLUE_CHECKOUT:-}}"
 
 SMITHERS_BASE_URL="${SMITHERS_BASE_URL:-${PLUE_BASE_URL:-http://localhost:4000}}"
 E2E_KEEP_STACK="${E2E_KEEP_STACK:-0}"
-E2E_SCHEME="${E2E_SCHEME:-SmithersMacOSE2ETests}"
-E2E_ONLY_TESTING="${E2E_ONLY_TESTING:-SmithersMacOSE2ETests/SmithersMacOSE2EHappyPathTests}"
+E2E_SCHEME="${E2E_SCHEME:-TabmonstersMacOSE2ETests}"
+E2E_ONLY_TESTING="${E2E_ONLY_TESTING:-TabmonstersMacOSE2ETests/TabmonstersMacOSE2EHappyPathTests}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -138,7 +138,7 @@ log "seeded token: ${SMITHERS_E2E_BEARER:0:16}… (workspace_id=$PLUE_E2E_WORKSP
 if ! command -v xcodegen >/dev/null 2>&1; then
     die "xcodegen not installed — run 'brew install xcodegen'"
 fi
-log "regenerating SmithersGUI.xcodeproj"
+log "regenerating Tabmonsters.xcodeproj"
 (cd "$REPO_ROOT" && xcodegen >/dev/null)
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ export SMITHERS_E2E_REFRESH="${SMITHERS_E2E_REFRESH:-}"
 # resolve correctly.
 set +e
 xcodebuild \
-    -project "$REPO_ROOT/SmithersGUI.xcodeproj" \
+    -project "$REPO_ROOT/Tabmonsters.xcodeproj" \
     -scheme "$E2E_SCHEME" \
     -destination "platform=macOS" \
     -resultBundlePath "$XCRESULT" \

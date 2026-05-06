@@ -8,7 +8,7 @@ Review scope: `WORKFLOWS`, `APPROVALS`, and `PROMPTS` feature groups, focused on
 
 `PromptsView.swift:496` captures the current editor source before rendering, but `PromptsView.swift:513` calls `smithers.previewPrompt(id, input: selectedValues)` and never passes that captured source. The only source-aware overload in `SmithersClient.swift:2890` discards its `source` parameter and delegates back to the saved-prompt path at `SmithersClient.swift:2891`.
 
-That means Preview can render the saved file or backend prompt while the editor contains unsaved changes. This breaks the prompt editing/preview loop: a user can edit `{props.name}` text, see a preview, and get output from stale source. The current test locks in the wrong behavior: `Tests/SmithersGUITests/PromptsViewTests.swift:428` expects the id/input overload to be called and `Tests/SmithersGUITests/PromptsViewTests.swift:430` expects the source overload not to be called.
+That means Preview can render the saved file or backend prompt while the editor contains unsaved changes. This breaks the prompt editing/preview loop: a user can edit `{props.name}` text, see a preview, and get output from stale source. The current test locks in the wrong behavior: `Tests/TabmonstersTests/PromptsViewTests.swift:428` expects the id/input overload to be called and `Tests/TabmonstersTests/PromptsViewTests.swift:430` expects the source overload not to be called.
 
 Recommendation: make preview rendering accept the editor source and use it for local rendering or transport requests. Then update the test to assert `previewPromptSourceCalledWith?.source == "Unsaved {props.name}"` and add a regression that saved source and editor source differ.
 
@@ -24,7 +24,7 @@ Recommendation: add `iteration: Int?` to `Approval` and `ApprovalDecision`, deco
 
 All three feature views hand-roll split layout with fixed list widths: `WorkflowsView.swift:153` and `WorkflowsView.swift:155` use a `HStack` plus a 280 pt list, `ApprovalsView.swift:35` and `ApprovalsView.swift:37` use a 300 pt list, and `PromptsView.swift:104` and `PromptsView.swift:106` use a 240 pt list. None of the three uses `NavigationSplitView` or adapts for compact widths.
 
-This is serviceable on a wide macOS window, but it means the list always consumes fixed horizontal space and the detail pane can become cramped instead of collapsing, resizing, or using native selection/sidebar behavior. The tests mostly assert the magic widths, for example `Tests/SmithersGUITests/WorkflowsViewTests.swift:88` and `Tests/SmithersGUITests/PromptsViewTests.swift:126`, so they preserve the current rigidity instead of protecting usability.
+This is serviceable on a wide macOS window, but it means the list always consumes fixed horizontal space and the detail pane can become cramped instead of collapsing, resizing, or using native selection/sidebar behavior. The tests mostly assert the magic widths, for example `Tests/TabmonstersTests/WorkflowsViewTests.swift:88` and `Tests/TabmonstersTests/PromptsViewTests.swift:126`, so they preserve the current rigidity instead of protecting usability.
 
 Recommendation: either move these to `NavigationSplitView` or extract named width constants with min/max/adaptive rules. Add UI coverage at a narrow window size that selects a row and verifies the detail remains usable.
 
@@ -62,16 +62,16 @@ Recommendation: use `defer { isSaving = false }`, or track saving by prompt id s
 
 ## Coverage Review
 
-The feature areas have useful model and transport coverage, especially typed workflow input serialization in `Tests/SmithersGUITests/SmithersClientTests.swift:712`, approval decision decoding/transport coverage around `Tests/SmithersGUITests/SmithersClientTests.swift:1001`, and prompt filesystem/render transport coverage around `Tests/SmithersGUITests/SmithersClientTests.swift:1941`.
+The feature areas have useful model and transport coverage, especially typed workflow input serialization in `Tests/TabmonstersTests/SmithersClientTests.swift:712`, approval decision decoding/transport coverage around `Tests/TabmonstersTests/SmithersClientTests.swift:1001`, and prompt filesystem/render transport coverage around `Tests/TabmonstersTests/SmithersClientTests.swift:1941`.
 
 The view-level coverage is much weaker:
 
-- Many tests are documentation-style assertions (`XCTAssertTrue(true)`) or copied logic rather than behavior. Examples include `Tests/SmithersGUITests/WorkflowsViewTests.swift:431`, `Tests/SmithersGUITests/ApprovalsViewTests.swift:301`, and `Tests/SmithersGUITests/PromptsViewTests.swift:475`.
-- Several tests are stale relative to the current implementation. `Tests/SmithersGUITests/PromptsViewTests.swift:505` says switching prompts silently discards changes, but `PromptsView.swift:404` now gates selection with an unsaved-changes alert. `Tests/SmithersGUITests/ApprovalsViewTests.swift:311` says history mode fetches pending approvals first, but `ApprovalsView.swift:414` branches directly to `listRecentDecisions()`. `Tests/SmithersGUITests/WorkflowsViewTests.swift:460` says the run button is usable before DAG load, but `WorkflowsView.swift:639` disables it and `WorkflowsView.swift:1345` returns while the DAG is loading.
-- Some E2E expectations no longer match the Workflows UI. `Tests/SmithersGUIUITests/DashboardWorkflowsE2ETests.swift:45` expects `workflows.launchForm` and `Tests/SmithersGUIUITests/DashboardWorkflowsE2ETests.swift:49` expects `workflows.launchButton`, but the current `WorkflowsView` renders launch fields inline and only exposes `workflows.runButton`.
+- Many tests are documentation-style assertions (`XCTAssertTrue(true)`) or copied logic rather than behavior. Examples include `Tests/TabmonstersTests/WorkflowsViewTests.swift:431`, `Tests/TabmonstersTests/ApprovalsViewTests.swift:301`, and `Tests/TabmonstersTests/PromptsViewTests.swift:475`.
+- Several tests are stale relative to the current implementation. `Tests/TabmonstersTests/PromptsViewTests.swift:505` says switching prompts silently discards changes, but `PromptsView.swift:404` now gates selection with an unsaved-changes alert. `Tests/TabmonstersTests/ApprovalsViewTests.swift:311` says history mode fetches pending approvals first, but `ApprovalsView.swift:414` branches directly to `listRecentDecisions()`. `Tests/TabmonstersTests/WorkflowsViewTests.swift:460` says the run button is usable before DAG load, but `WorkflowsView.swift:639` disables it and `WorkflowsView.swift:1345` returns while the DAG is loading.
+- Some E2E expectations no longer match the Workflows UI. `Tests/TabmonstersUITests/DashboardWorkflowsE2ETests.swift:45` expects `workflows.launchForm` and `Tests/TabmonstersUITests/DashboardWorkflowsE2ETests.swift:49` expects `workflows.launchButton`, but the current `WorkflowsView` renders launch fields inline and only exposes `workflows.runButton`.
 - Workflows view tests do not exercise `buildLaunchInputs()` behavior for invalid numbers, invalid JSON, object/array type enforcement, default booleans, or the "validation failure is not a backend failed run" distinction.
-- Approvals tests duplicate private wait-color logic at `Tests/SmithersGUITests/ApprovalsViewTests.swift:495` instead of testing production code through an injectable clock or internal helper.
-- Prompt tests currently assert that source-aware preview is not used at `Tests/SmithersGUITests/PromptsViewTests.swift:430`, which hides the most important prompt preview bug.
+- Approvals tests duplicate private wait-color logic at `Tests/TabmonstersTests/ApprovalsViewTests.swift:495` instead of testing production code through an injectable clock or internal helper.
+- Prompt tests currently assert that source-aware preview is not used at `Tests/TabmonstersTests/PromptsViewTests.swift:430`, which hides the most important prompt preview bug.
 - Prompt E2E coverage has trouble selecting rows because `PromptsView` does not expose row, list, tab, or root accessibility identifiers beyond the source editor. `PromptsLandingsSQLE2ETests.swift:18` searches for an icon-like identifier that the prompt rows do not set.
 
 ## Feature Coverage Summary

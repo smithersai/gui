@@ -2,7 +2,7 @@
 
 Companion to `ios-and-remote-sandboxes.md`. That spec says *what* we're building. This doc says *how it gets broken up into work*.
 
-Every item below is a task. Each becomes a ticket in `.smithers/tickets/` (gui-side) or `plue/.smithers/tickets/` (plue-side). Tickets get implemented via the `ticket-implement` smithers workflow. Nothing implementation-heavy starts until its task's PoC is green.
+Every item below is a task. Each becomes a ticket in `.smithers/tickets/` (tabmonsters-side) or `plue/.smithers/tickets/` (plue-side). Tickets get implemented via the `ticket-implement` smithers workflow. Nothing implementation-heavy starts until its task's PoC is green.
 
 ## Conventions
 
@@ -119,7 +119,7 @@ Each is its own ticket. Ordered within groups, but groups can progress in parall
 - How today's `libsmithers/src/` tree evolves into `libsmithers-core` + deprecated engine bits. Per-commit ordering so the current desktop app keeps working at every step.
 - Which current features get deleted, which move, which rewrite; dependencies between migrations.
 - *Done when:* doc lives at `.smithers/specs/ios-and-remote-sandboxes-migration.md`, reviewed.
-- *Status:* landed. The gui-tree-only migration plan is at `.smithers/specs/ios-and-remote-sandboxes-migration.md`; it carries a file-by-file inventory of `libsmithers/src/`, a 12-step commit sequence, per-stage rollback, desktop-app compatibility gates, and a prerequisites appendix for cross-repo blockers.
+- *Status:* landed. The tabmonsters-tree-only migration plan is at `.smithers/specs/ios-and-remote-sandboxes-migration.md`; it carries a file-by-file inventory of `libsmithers/src/`, a 12-step commit sequence, per-stage rollback, desktop-app compatibility gates, and a prerequisites appendix for cross-repo blockers.
 
 **D5: Rollout plan.**
 - What ships in what order to real users: desktop-remote-only first? iOS private build second?

@@ -5,7 +5,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/install-optional-dependencies.sh [--runtime] [--build-tools] [--all] [--dry-run]
 
-Installs optional SmithersGUI dependencies with Homebrew.
+Installs optional Tabmonsters dependencies with Homebrew.
 
 Options:
   --runtime      Install runtime extras: neovim. This is the default.

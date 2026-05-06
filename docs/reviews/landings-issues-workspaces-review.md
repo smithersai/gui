@@ -18,7 +18,7 @@ Impact:
 
 Recommended fix: keep event dispatch sequential. For example, from the detached task call `await MainActor.run { self.handleEvent(event) }` for each parsed event, then process `finish()` events the same way, and only then call `finishDetachedTurn`. If chunk callbacks cannot be async, push events into a serial async queue owned by the service.
 
-Coverage gap: existing tests call `handleEvent` directly and synchronously (`Tests/SmithersGUITests/AgentServiceTests.swift:340-415`), and background tests only assert initial state/cancel behavior (`Tests/SmithersGUITests/AgentServiceTests.swift:734-773`). There is no test that drives the bridge callback path and asserts event order relative to turn completion.
+Coverage gap: existing tests call `handleEvent` directly and synchronously (`Tests/TabmonstersTests/AgentServiceTests.swift:340-415`), and background tests only assert initial state/cancel behavior (`Tests/TabmonstersTests/AgentServiceTests.swift:734-773`). There is no test that drives the bridge callback path and asserts event order relative to turn completion.
 
 ### 2. High: Codex event parsing drops whole events when tool payload fields are JSON objects or arrays
 
@@ -32,21 +32,21 @@ Impact:
 
 Recommended fix: introduce a small `JSONValue` type or lossy field decoder for dynamic fields. Preserve strings as-is, stringify objects/arrays for display, and keep decoding the rest of the item even when an optional display field has an unexpected shape.
 
-Coverage gap: parser tests cover string fields, partial lines, invalid JSON, command events, MCP basics, and file changes (`Tests/SmithersGUITests/AgentProtocolTests.swift:118-150`, `Tests/SmithersGUITests/AgentProtocolAdditionalTests.swift:96-170`), but not object-valued `arguments`, object-valued `input`, array-valued `output`, or a malformed optional field that should not drop the event.
+Coverage gap: parser tests cover string fields, partial lines, invalid JSON, command events, MCP basics, and file changes (`Tests/TabmonstersTests/AgentProtocolTests.swift:118-150`, `Tests/TabmonstersTests/AgentProtocolAdditionalTests.swift:96-170`), but not object-valued `arguments`, object-valued `input`, array-valued `output`, or a malformed optional field that should not drop the event.
 
 ### 3. Medium: Landings state filtering can hide valid JJHub states
 
-The client normalizes JJHub landing filters so `ready` and `open` map to `open`, while `landed` and `merged` map to `merged` (`SmithersClient.swift:3909-3922`). The view then applies a second exact client-side filter: `landings.filter { $0.state == filter }` (`LandingsView.swift:99-103`). The menu uses `Open`, `Draft`, and `Merged` (`LandingsView.swift:132-137`), while model/tests still accept `ready` and `landed` as landing states (`Tests/SmithersGUITests/SmithersModelsTests.swift:723-730`).
+The client normalizes JJHub landing filters so `ready` and `open` map to `open`, while `landed` and `merged` map to `merged` (`SmithersClient.swift:3909-3922`). The view then applies a second exact client-side filter: `landings.filter { $0.state == filter }` (`LandingsView.swift:99-103`). The menu uses `Open`, `Draft`, and `Merged` (`LandingsView.swift:132-137`), while model/tests still accept `ready` and `landed` as landing states (`Tests/TabmonstersTests/SmithersModelsTests.swift:723-730`).
 
 Impact:
 
 - If JJHub returns `ready` for an open/ready landing, selecting `Open` can hide it after the server already returned it.
 - If JJHub returns `landed`, selecting `Merged` can hide it.
-- This is especially easy to miss because fixture/stub paths currently return `open` in the client test (`Tests/SmithersGUITests/SmithersClientTests.swift:1541-1544`).
+- This is especially easy to miss because fixture/stub paths currently return `open` in the client test (`Tests/TabmonstersTests/SmithersClientTests.swift:1541-1544`).
 
 Recommended fix: use the same normalized state helper for view filtering, or remove the second client-side filter and trust the server response for filtered loads.
 
-Test note: `LandingsViewTests` contains stale documentation saying filter changes do not refetch (`Tests/SmithersGUITests/LandingsViewTests.swift:169-184`), but the current view uses `.task(id: stateFilter)` (`LandingsView.swift:117`).
+Test note: `LandingsViewTests` contains stale documentation saying filter changes do not refetch (`Tests/TabmonstersTests/LandingsViewTests.swift:169-184`), but the current view uses `.task(id: stateFilter)` (`LandingsView.swift:117`).
 
 ### 4. Medium: Landings diff output does not use the unified diff renderer
 
@@ -59,7 +59,7 @@ Impact:
 
 Recommended fix: either feed each landing change diff into `UnifiedDiffView` separately with a small change header, or teach `UnifiedDiffView` to preserve non-diff section headers before each parsed diff section.
 
-Coverage gap: parser tests cover basic unified diff parsing well (`Tests/SmithersGUITests/DiffParserTests.swift:18-177`), and `UnifiedDiffViewTests` has a render smoke test (`Tests/SmithersGUITests/UnifiedDiffViewTests.swift:9-33`). There is no test for landing multi-change diff text, `Change <id>` headers, or JJHub-specific diff output.
+Coverage gap: parser tests cover basic unified diff parsing well (`Tests/TabmonstersTests/DiffParserTests.swift:18-177`), and `UnifiedDiffViewTests` has a render smoke test (`Tests/TabmonstersTests/UnifiedDiffViewTests.swift:9-33`). There is no test for landing multi-change diff text, `Change <id>` headers, or JJHub-specific diff output.
 
 ### 5. Medium: Issue CRUD is incomplete and can produce confusing state after create/close
 
@@ -75,7 +75,7 @@ Impact:
 
 Recommended fix: add `SmithersClient.reopenIssue` if JJHub supports it, or hide Reopen until available. Add a close-confirm sheet with an optional comment. After creating, switch to Open/All before reload or insert the created issue optimistically if it does not match the current filter.
 
-Coverage gap: issue tests document parts of this as comments/source assertions (`Tests/SmithersGUITests/IssuesViewTests.swift:453-482`) rather than exercising the view state transitions. Client tests verify `issue close -c` can be constructed (`Tests/SmithersGUITests/SmithersClientTests.swift:1740-1748`), but the UI path never supplies a comment.
+Coverage gap: issue tests document parts of this as comments/source assertions (`Tests/TabmonstersTests/IssuesViewTests.swift:453-482`) rather than exercising the view state transitions. Client tests verify `issue close -c` can be constructed (`Tests/TabmonstersTests/SmithersClientTests.swift:1740-1748`), but the UI path never supplies a comment.
 
 ### 6. Medium: Workspace restore-from-snapshot does not name or select the restored workspace
 
@@ -83,12 +83,12 @@ Coverage gap: issue tests document parts of this as comments/source assertions (
 
 Impact:
 
-- Restored workspaces depend on backend default naming, even though tests and user-facing expectations imply a deterministic name derived from the snapshot (`Tests/SmithersGUITests/WorkspacesViewTests.swift:486-500`).
+- Restored workspaces depend on backend default naming, even though tests and user-facing expectations imply a deterministic name derived from the snapshot (`Tests/TabmonstersTests/WorkspacesViewTests.swift:486-500`).
 - After opening/restoring from a snapshot, users land on the Workspaces tab without a clear indication of which workspace was affected.
 
 Recommended fix: generate a stable restore name in the view, such as `(snap.name ?? snap.id)-from-snapshot`, pass it to `createWorkspace`, and track/select the returned workspace id. If selection is not part of the current Workspaces UI, at least post a success banner with the new or opened workspace name/id.
 
-Test note: `WorkspacesViewTests` contains stale bug documentation saying create-from-snapshot has no in-flight indicator (`Tests/SmithersGUITests/WorkspacesViewTests.swift:511-519`), but the current view does use `actionInFlight` (`WorkspacesView.swift:514-523`).
+Test note: `WorkspacesViewTests` contains stale bug documentation saying create-from-snapshot has no in-flight indicator (`Tests/TabmonstersTests/WorkspacesViewTests.swift:511-519`), but the current view does use `actionInFlight` (`WorkspacesView.swift:514-523`).
 
 ### 7. Medium: Run snapshots ignore child timelines and fork/replay only accepts frame-style snapshot ids
 
@@ -104,7 +104,7 @@ Impact:
 
 Recommended fix: decide whether the sheet is a frame timeline browser or a general snapshot manager. If it is general, recursively flatten `children`, preserve snapshot refs/action metadata, and make Fork/Replay call APIs that accept real snapshot ids. If it is frame-only, name it accordingly and disable/hide unsupported snapshot kinds.
 
-Coverage gap: the model test only covers a timeline with empty `children` (`Tests/SmithersGUITests/SmithersModelsTests.swift:569-600`). There are no tests for recursive child timelines, explicit non-frame snapshot ids, failed parse behavior, or the sheet's Fork/Replay buttons.
+Coverage gap: the model test only covers a timeline with empty `children` (`Tests/TabmonstersTests/SmithersModelsTests.swift:569-600`). There are no tests for recursive child timelines, explicit non-frame snapshot ids, failed parse behavior, or the sheet's Fork/Replay buttons.
 
 ### 8. Low: Workspace snapshot decoding silently accepts missing workspace ids
 
@@ -117,16 +117,16 @@ Impact:
 
 Recommended fix: either make `workspaceId` optional and render a disabled action with an explanation, or require a non-empty id during decoding and fail fast.
 
-Coverage gap: tests cover camelCase and snake_case positive paths (`Tests/SmithersGUITests/SmithersModelsTests.swift:798-814`), but not the missing-id case.
+Coverage gap: tests cover camelCase and snake_case positive paths (`Tests/TabmonstersTests/SmithersModelsTests.swift:798-814`), but not the missing-id case.
 
 ## JJHub Integration Notes
 
-The command-shape coverage for JJHub is useful: `SmithersClientJJHubStubTests` verifies landings, issues, workspaces, workspace snapshots, and change diffs against a temporary `jjhub` stub (`Tests/SmithersGUITests/SmithersClientTests.swift:1431-1893`). The client also handles common JJHub model differences, including issue numeric ids and name-ref labels/assignees (`SmithersModels.swift:1690-1755`), landing author objects and `target_bookmark` (`SmithersModels.swift:1600-1629`), and workspace/snapshot snake-case timestamps (`SmithersModels.swift:1794-1801`, `SmithersModels.swift:1832-1841`).
+The command-shape coverage for JJHub is useful: `SmithersClientJJHubStubTests` verifies landings, issues, workspaces, workspace snapshots, and change diffs against a temporary `jjhub` stub (`Tests/TabmonstersTests/SmithersClientTests.swift:1431-1893`). The client also handles common JJHub model differences, including issue numeric ids and name-ref labels/assignees (`SmithersModels.swift:1690-1755`), landing author objects and `target_bookmark` (`SmithersModels.swift:1600-1629`), and workspace/snapshot snake-case timestamps (`SmithersModels.swift:1794-1801`, `SmithersModels.swift:1832-1841`).
 
 Remaining integration risks:
 
 - Error envelope and failure-path coverage is thin for JJHub commands. Most stub commands return happy-path JSON.
-- Workspace models intentionally discard many JJHub fields from the stub, such as VM id, persistence, fork status, parent workspace id, updated timestamp, and snapshot id (`Tests/SmithersGUITests/SmithersClientTests.swift:1472-1495`). That may be fine for this UI, but lifecycle screens cannot explain fork lineage or VM state with the current model.
+- Workspace models intentionally discard many JJHub fields from the stub, such as VM id, persistence, fork status, parent workspace id, updated timestamp, and snapshot id (`Tests/TabmonstersTests/SmithersClientTests.swift:1472-1495`). That may be fine for this UI, but lifecycle screens cannot explain fork lineage or VM state with the current model.
 - UI tests run fixture mode rather than real JJHub flows, so they validate navigation and presence more than actual CLI lifecycle behavior.
 
 ## Test Coverage Gaps
@@ -142,7 +142,7 @@ Recommended tests to add or update:
 - Workspace restore tests asserting generated name, returned workspace visibility/selection, and malformed snapshot `workspaceId` behavior.
 - Timeline snapshot tests with non-empty `children`, explicit non-frame snapshot ids, and Fork/Replay disabled/error behavior.
 
-Several existing tests are stale or mostly source-inspection documentation. Examples include the Landings filter refetch comment (`Tests/SmithersGUITests/LandingsViewTests.swift:169-184`), workspace snapshot auto-name expectations (`Tests/SmithersGUITests/WorkspacesViewTests.swift:415-433` versus `WorkspacesView.swift:502-507`), create-from-snapshot in-flight comments (`Tests/SmithersGUITests/WorkspacesViewTests.swift:511-519`), and the old weak-capture syntax note in `AgentServiceTests` (`Tests/SmithersGUITests/AgentServiceTests.swift:700-705` versus current weak capture in `AgentService.swift:303-315`).
+Several existing tests are stale or mostly source-inspection documentation. Examples include the Landings filter refetch comment (`Tests/TabmonstersTests/LandingsViewTests.swift:169-184`), workspace snapshot auto-name expectations (`Tests/TabmonstersTests/WorkspacesViewTests.swift:415-433` versus `WorkspacesView.swift:502-507`), create-from-snapshot in-flight comments (`Tests/TabmonstersTests/WorkspacesViewTests.swift:511-519`), and the old weak-capture syntax note in `AgentServiceTests` (`Tests/TabmonstersTests/AgentServiceTests.swift:700-705` versus current weak capture in `AgentService.swift:303-315`).
 
 ## Summary
 

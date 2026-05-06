@@ -249,7 +249,7 @@ enum DevToolsClientError: Error, Equatable {
     }
 
     // libsmithers formats anyerror via `{}` as `error.<Name>`, wrapped by the
-    // ffi layer as `client call: error.<Name>`. Parse the suffix so GUI
+    // ffi layer as `client call: error.<Name>`. Parse the suffix so the app
     // surfaces map known codes (e.g. AttemptNotFinished) to typed errors
     // instead of the opaque `.unknown("api(\"…\")")` fallback.
     static func from(libsmithersMessage message: String) -> DevToolsClientError? {

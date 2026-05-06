@@ -138,7 +138,7 @@ extension ExternalAgentKind {
 
     /// Convert a filesystem path into the slug Claude Code uses to partition
     /// sessions. Empirically Claude replaces each `/` with `-`, so
-    /// `/Users/will/gui` becomes `-Users-will-gui`. Trailing slashes are
+    /// `/Users/will/tabmonsters` becomes `-Users-will-tabmonsters`. Trailing slashes are
     /// discarded; embedded dots and spaces are preserved verbatim.
     static func claudeSlug(forWorkingDirectory cwd: String) -> String {
         let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)

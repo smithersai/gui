@@ -6,9 +6,9 @@
 #   1. Start the Smithers stack (`make docker-up` in the backend checkout).
 #   2. Wait for Postgres + the api to accept traffic on localhost:4000.
 #   3. Seed the E2E user / token / workspace via `seed-e2e-data.sh`.
-#   4. Regenerate `SmithersGUI.xcodeproj` via XcodeGen.
+#   4. Regenerate `Tabmonsters.xcodeproj` via XcodeGen.
 #   5. Boot the simulator + run `xcodebuild test` for the
-#      `SmithersiOSE2ETests` scheme, threading the E2E env vars.
+#      `TabmonstersiOSE2ETests` scheme, threading the E2E env vars.
 #   6. Tear down (conditional on E2E_KEEP_STACK).
 #
 # The script is idempotent: re-running will reuse the already-running
@@ -28,7 +28,7 @@
 #                       + api running so you can re-run tests cheaply).
 #   E2E_SIMULATOR_NAME  default "iPhone 16"
 #   E2E_SIMULATOR_OS    default "18.6"
-#   E2E_SCHEME          default "SmithersiOSE2ETests"
+#   E2E_SCHEME          default "TabmonstersiOSE2ETests"
 
 set -euo pipefail
 
@@ -38,8 +38,8 @@ SMITHERS_REMOTE_SANDBOX_ENABLED="${SMITHERS_REMOTE_SANDBOX_ENABLED:-${PLUE_REMOT
 E2E_KEEP_STACK="${E2E_KEEP_STACK:-0}"
 E2E_SIMULATOR_NAME="${E2E_SIMULATOR_NAME:-iPhone 16}"
 E2E_SIMULATOR_OS="${E2E_SIMULATOR_OS:-18.6}"
-E2E_SCHEME="${E2E_SCHEME:-SmithersiOSE2ETests}"
-E2E_ONLY_TESTING="${E2E_ONLY_TESTING:-SmithersiOSE2ETests/SmithersiOSE2EHappyPathTests}"
+E2E_SCHEME="${E2E_SCHEME:-TabmonstersiOSE2ETests}"
+E2E_ONLY_TESTING="${E2E_ONLY_TESTING:-TabmonstersiOSE2ETests/TabmonstersiOSE2EHappyPathTests}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -161,7 +161,7 @@ log "seeded token: ${SMITHERS_E2E_BEARER:0:16}… (workspace_id=$PLUE_E2E_WORKSP
 if ! command -v xcodegen >/dev/null 2>&1; then
     die "xcodegen not installed — run 'brew install xcodegen'"
 fi
-log "regenerating SmithersGUI.xcodeproj"
+log "regenerating Tabmonsters.xcodeproj"
 (cd "$REPO_ROOT" && xcodegen >/dev/null)
 
 # ---------------------------------------------------------------------------
@@ -258,7 +258,7 @@ DERIVED_DATA="$REPO_ROOT/build/DerivedData-ios-e2e"
 mkdir -p "$DERIVED_DATA"
 
 xcodebuild \
-    -project "$REPO_ROOT/SmithersGUI.xcodeproj" \
+    -project "$REPO_ROOT/Tabmonsters.xcodeproj" \
     -scheme "$E2E_SCHEME" \
     -destination "platform=iOS Simulator,id=$DEVICE_UDID,arch=arm64" \
     -resultBundlePath "$XCRESULT" \

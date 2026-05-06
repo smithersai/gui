@@ -14,11 +14,11 @@ The iOS workspace detail currently mounts useful surfaces, but the beta happy pa
 
 Primary owner writes:
 
-- `ios/Sources/SmithersiOS/Chat/AgentChatView.swift`
-- `ios/Sources/SmithersiOS/WorkflowRuns/WorkflowRunsListView.swift`
-- `ios/Sources/SmithersiOS/WorkspaceSwitcher/WorkspaceDetailActions.swift`
-- small additions to `ios/Sources/SmithersiOS/ContentShell.iOS.swift` only for routing/session handoff
-- tests under `ios/Tests/SmithersiOSTests` and `ios/Tests/SmithersiOSE2ETests`
+- `ios/Sources/TabmonstersiOS/Chat/AgentChatView.swift`
+- `ios/Sources/TabmonstersiOS/WorkflowRuns/WorkflowRunsListView.swift`
+- `ios/Sources/TabmonstersiOS/WorkspaceSwitcher/WorkspaceDetailActions.swift`
+- small additions to `ios/Sources/TabmonstersiOS/ContentShell.iOS.swift` only for routing/session handoff
+- tests under `ios/Tests/TabmonstersiOSTests` and `ios/Tests/TabmonstersiOSE2ETests`
 
 Avoid terminal attach internals; ticket 0188 owns terminal.
 
@@ -41,7 +41,7 @@ Avoid terminal attach internals; ticket 0188 owns terminal.
 ## Verification
 
 ```sh
-xcodebuild -project SmithersGUI.xcodeproj -scheme SmithersiOS -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' -configuration Debug CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project Tabmonsters.xcodeproj -scheme TabmonstersiOS -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' -configuration Debug CODE_SIGNING_ALLOWED=NO test
 ```
 
 ## Related

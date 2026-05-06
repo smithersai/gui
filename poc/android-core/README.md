@@ -74,7 +74,7 @@ object CoreBridge {
 }
 ```
 
-Zig side — `src/jni_bindings.zig` emits matching `Java_com_smithers_androidcore_CoreBridge_<method>`
+Zig side — `src/jni_bindings.zig` emits matching `Java_com_tabmonsters_androidcore_CoreBridge_<method>`
 exports. JVM resolves them by name on first call; no `RegisterNatives`.
 
 All handles (`session`, `observer`) are 64-bit pointers packed into
@@ -99,7 +99,7 @@ All handles (`session`, `observer`) are 64-bit pointers packed into
 
 When you add `ffi_foo` to `poc/zig-swift-ffi/src/ffi_poc.zig`:
 
-1. Add a `Java_com_smithers_androidcore_CoreBridge_nativeFoo` export to
+1. Add a `Java_com_tabmonsters_androidcore_CoreBridge_nativeFoo` export to
    `poc/android-core/src/jni_bindings.zig`.
 2. Add a matching `external fun nativeFoo(...)` to `CoreBridge.kt`.
 3. CI will refuse to merge if either side is missing — the Zig build
@@ -179,7 +179,7 @@ sdkmanager "system-images;android-29;google_apis;arm64-v8a"
 avdmanager create avd -n canary -k "system-images;android-29;google_apis;arm64-v8a"
 emulator -avd canary -no-window -no-audio &
 ./gradlew installDebug
-adb shell am start -n com.smithers.androidcore/.MainActivity
+adb shell am start -n com.tabmonsters.androidcore/.MainActivity
 ```
 
 Press "Tick"; the counter label should advance. This is NOT part of

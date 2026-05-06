@@ -101,7 +101,7 @@ final class WorkspaceManager: ObservableObject {
     }
 
     static func workspaceFromLaunch(arguments: [String], environment: [String: String]) -> String? {
-        if let env = environment["SMITHERS_OPEN_WORKSPACE"], !env.isEmpty {
+        if let env = environment["TABMONSTERS_OPEN_WORKSPACE"], !env.isEmpty {
             return (env as NSString).expandingTildeInPath
         }
         var iterator = arguments.dropFirst().makeIterator()

@@ -8,7 +8,7 @@ Companion to `ios-and-remote-sandboxes.md` and `ios-and-remote-sandboxes-executi
 
 Applied to every ticket in this initiative, regardless of category.
 
-1. **Reference integrity.** Every file path, line reference, route path, function/method name, Postgres table, Postgres column, SQL query name, migration filename, or external symbol cited in the ticket's Context / Problem / References / Scope sections must actually exist and say what the ticket claims. A simple grep (or `Read` at the cited line) against the current tree (`/Users/williamcory/gui/` for gui tickets, `/Users/williamcory/plue/` for plue tickets) must succeed for each. This check was missed in an early pass; 0095 originally cited the wrong header location. If a referenced line has since moved, the ticket must be updated, not the check waived.
+1. **Reference integrity.** Every file path, line reference, route path, function/method name, Postgres table, Postgres column, SQL query name, migration filename, or external symbol cited in the ticket's Context / Problem / References / Scope sections must actually exist and say what the ticket claims. A simple grep (or `Read` at the cited line) against the current tree (`/Users/williamcory/tabmonsters/` for Tabmonsters tickets, `/Users/williamcory/plue/` for plue tickets) must succeed for each. This check was missed in an early pass; 0095 originally cited the wrong header location. If a referenced line has since moved, the ticket must be updated, not the check waived.
 2. **Scope match.** The diff matches the ticket's stated Scope. No new files outside the declared scope, no Scope bullet left unimplemented. Scope creep and scope cut are both rejections.
 3. **RPC / wire-format documentation.** Any new RPC, HTTP route, SSE event kind, WebSocket control message, guest-agent method, or Electric shape is documented in the spec it touches — either the main spec (`ios-and-remote-sandboxes.md`), the production-shapes note (`ios-and-remote-sandboxes-production-shapes.md`), or a named sibling doc. Code-only additions with no spec entry are rejected.
 4. **Error-taxonomy presence.** Any new structured error class is listed in the observability doc produced by [0098](../tickets/0098-design-observability.md) (`ios-and-remote-sandboxes-observability.md`). If that doc does not yet exist, the ticket declares the new error class(es) in its own body, and the reviewer opens a tracking note so 0098 picks them up.
@@ -42,7 +42,7 @@ A PoC exists to make an architectural claim cheap to falsify. A PoC without a sh
   - **What this proves.** One paragraph, plain English, match the ticket's Goal.
   - **How to run.** Exact commands. CI job name if any.
   - **Prerequisites.** Tool versions, backend services, env vars.
-- **Lives in the right repo.** `plue/poc/<name>/` if it proves a plue surface; `gui/poc/<name>/` otherwise. No cross-repo symlinks.
+- **Lives in the right repo.** `plue/poc/<name>/` if it proves a plue surface; `tabmonsters/poc/<name>/` otherwise. No cross-repo symlinks.
 - **Test runs in CI or has a written exception.** On-device iOS runs may be developer-local (documented in README). Everything else runs in CI.
 
 ### 2.2 Design tickets

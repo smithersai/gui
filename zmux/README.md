@@ -1,8 +1,8 @@
 # zmux
 
-`zmux` is the tmux-style PTY session package used by SmithersGUI. It is written
+`zmux` is the tmux-style PTY session package used by Tabmonsters. It is written
 in Zig and follows tmux's core architecture: a long-lived server owns the mux
-model and PTY child processes, while GUI/client processes attach and detach
+model and PTY child processes, while app/client processes attach and detach
 through a UNIX-domain socket.
 
 The tmux reference points used for this package are:
@@ -25,7 +25,7 @@ The tmux reference points used for this package are:
 - server-owned session, window, pane, layout, client, key binding, alert, and
   respawn state exposed by `mux.snapshot`
 - session create, info, list, terminate, resize, input, key, and capture RPCs
-  for the current GUI
+  for the current app
 - window new/select/rename
 - pane split/select/rename/respawn
 - multiple logical clients attached to the same pane, with client list, switch,
@@ -37,24 +37,24 @@ The tmux reference points used for this package are:
   for the lifetime of a live attachment, and closing it detaches that client
 - server-side pane output capture with bounded replay on reattach
 - pane output, activity, bell, exit, and foreground process notifications for
-  GUI affordances
+  app affordances
 - client-side raw mode, SIGWINCH resize forwarding, and termios restoration
-- helper binary aliases for existing GUI integration:
+- helper binary aliases for existing app integration:
   `smithers-session-daemon` and `smithers-session-connect`
 
 ## Current Gaps
 
-`zmux` now owns the state that should move out of the GUI, but it is not
+`zmux` now owns the state that should move out of the app, but it is not
 command-line compatible with tmux yet. The current command parser is deliberately
-small and should be expanded behind the same daemon model as the GUI migrates:
+small and should be expanded behind the same daemon model as the app migrates:
 target syntax, options, copy mode, paste buffers, status bars, menus, popups,
 hooks, formats, config files, and layout persistence remain incomplete.
 
-GUI clients use logical `client.attach` plus `pane_output` notifications, so
+App clients use logical `client.attach` plus `pane_output` notifications, so
 multiple native, GTK, or web frontends can observe the same server-owned pane
 without taking exclusive ownership of the PTY fd.
 
-Like tmux, `zmux` keeps sessions alive across client/GUI restarts only while
+Like tmux, `zmux` keeps sessions alive across client/app restarts only while
 the daemon process and its PTY child processes remain alive. It does not keep
 live processes alive across an operating-system reboot.
 

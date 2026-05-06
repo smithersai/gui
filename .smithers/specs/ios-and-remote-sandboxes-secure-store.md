@@ -4,7 +4,7 @@ Companion to [`ios-and-remote-sandboxes.md`](ios-and-remote-sandboxes.md) (Auth 
 
 ## 1. Summary
 
-This doc decides how gui clients defend the OAuth2 access + refresh tokens held in the platform secure store, and what the user's recovery path looks like when something breaks. **v1 scope is (b): app-wide revoke of all Smithers sessions for the signed-in user.** Plue already exposes `DeleteOAuth2AccessTokensByAppAndUser` and `DeleteOAuth2RefreshTokensByAppAndUser` on the service layer (`plue/internal/services/oauth2.go:45, 51`); 0109 calls these on explicit sign-out, and on the "lost device" recovery path. Per-device labeling (option (c)) is a deliberate non-goal for v1 and is tracked as a follow-up only if telemetry shows it is needed.
+This doc decides how Tabmonsters clients defend the OAuth2 access + refresh tokens held in the platform secure store, and what the user's recovery path looks like when something breaks. **v1 scope is (b): app-wide revoke of all Smithers sessions for the signed-in user.** Plue already exposes `DeleteOAuth2AccessTokensByAppAndUser` and `DeleteOAuth2RefreshTokensByAppAndUser` on the service layer (`plue/internal/services/oauth2.go:45, 51`); 0109 calls these on explicit sign-out, and on the "lost device" recovery path. Per-device labeling (option (c)) is a deliberate non-goal for v1 and is tracked as a follow-up only if telemetry shows it is needed.
 
 **Required recovery paths.**
 

@@ -147,7 +147,7 @@ struct LogFileStats {
 struct CategoryLogger {
     let category: LogCategory
     fileprivate let osLogger: os.Logger
-    private static let signposter = OSSignposter(subsystem: "com.smithers.gui", category: "performance")
+    private static let signposter = OSSignposter(subsystem: "com.tabmonsters.app", category: "performance")
 
     func debug(_ message: String, metadata: [String: String]? = nil) {
         log(.debug, message, metadata: metadata)
@@ -184,7 +184,7 @@ struct CategoryLogger {
 // MARK: - App Logger (Static Facade)
 
 enum AppLogger {
-    private static let subsystem = "com.smithers.gui"
+    private static let subsystem = "com.tabmonsters.app"
 
     static let network = CategoryLogger(
         category: .network,
@@ -263,7 +263,7 @@ actor FileLogWriter {
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        logDir = home.appendingPathComponent("Library/Logs/SmithersGUI")
+        logDir = home.appendingPathComponent("Library/Logs/Tabmonsters")
         logFile = logDir.appendingPathComponent("app.log")
 
         encoder = JSONEncoder()

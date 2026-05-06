@@ -73,7 +73,7 @@ public final class KeychainTokenStore: TokenStore {
     public let service: String
     public let account: String
 
-    public init(service: String = "com.smithers.oauth2", account: String = "default") {
+    public init(service: String = "com.tabmonsters.oauth2", account: String = "default") {
         self.service = service
         self.account = account
     }

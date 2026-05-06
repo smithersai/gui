@@ -1,6 +1,6 @@
 # Chat And Codex Review
 
-Review scope: `CHAT_AND_CODEX` feature group, focused on `ChatView.swift`, `LiveRunView.swift`, `AgentService.swift`, `Tests/SmithersGUITests/ChatViewTests.swift`, and `Tests/SmithersGUITests/LiveRunViewTests.swift`.
+Review scope: `CHAT_AND_CODEX` feature group, focused on `ChatView.swift`, `LiveRunView.swift`, `AgentService.swift`, `Tests/TabmonstersTests/ChatViewTests.swift`, and `Tests/TabmonstersTests/LiveRunViewTests.swift`.
 
 Requested features reviewed: `CHAT_MESSAGE_INPUT`, `CHAT_MESSAGE_DISPLAY`, `CHAT_MESSAGE_TYPES`, `CHAT_MULTI_LINE_INPUT`, `CHAT_AUTO_SCROLL`, `CHAT_THINKING_INDICATOR`, `CHAT_WELCOME_EMPTY_STATE`, `CHAT_SEND_STOP_TOGGLE`, `CHAT_BUBBLE_RENDERING`, `CHAT_COMPOSER_TOOLBAR`, `CHAT_PAPERCLIP_ATTACHMENT`, `CHAT_FILE_MENTION`, `CHAT_SLASH_TRIGGER`, `CHAT_KEYBOARD_SHORTCUTS`, `CHAT_COMMAND_OUTPUT`, `CHAT_STREAMING`, `CHAT_GIT_DIFF`, `CHAT_CODEX_COMMANDS`, `CHAT_SLASH_INTEGRATIONS`, and `CHAT_STUB_STATUS_MESSAGES`.
 

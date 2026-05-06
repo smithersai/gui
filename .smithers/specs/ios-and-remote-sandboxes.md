@@ -107,7 +107,7 @@ Three wire protocols, chosen to match plue's incumbent patterns:
 
 ### Protocol schema location
 
-Authoritative JSON schemas live **in plue** alongside the handlers (likely `plue/pkg/wireschema/` or similar). Generated/mirrored type bindings are consumed by Zig (`libsmithers-core`) and any TypeScript clients. The gui repo does not own the schema.
+Authoritative JSON schemas live **in plue** alongside the handlers (likely `plue/pkg/wireschema/` or similar). Generated/mirrored type bindings are consumed by Zig (`libsmithers-core`) and any TypeScript clients. The tabmonsters repo does not own the schema.
 
 ## Changes Needed In Plue
 
@@ -116,7 +116,7 @@ What plue already covers, and what we'd need to add. Gaps were catalogued by rea
 ### Already covered — no plue changes needed
 
 - **Sandbox lifecycle.** `POST/GET/DELETE /api/repos/{owner}/{repo}/workspaces[/{id}]`, plus `/suspend` and `/resume`. Auth-gated. `workspace.go:68–251`.
-- **Authentication primitives.** Bearer-token verification (`Authorization: Bearer jjhub_xxx` via `middleware/auth.go:56`), Auth0 + WorkOS browser flows (`cmd/server/main.go:901`, `internal/routes/auth.go:25`) that today terminate in a **session cookie** for browser users or a **one-off CLI token** for `callback_port` flows (`internal/routes/auth.go:245, 416`), session cookies, and a separate **OAuth2 application + PKCE flow** (`cmd/server/main.go:917, 1244`, `internal/routes/oauth2.go:165`) that does mint refreshable bearer+refresh tokens. **Gap for this spec:** no public OAuth2 client is registered for the gui/iOS apps today, and the Auth0/WorkOS browser flow alone doesn't hand the mobile app a refreshable token pair. Closing that gap is a named prerequisite (ticket 0106).
+- **Authentication primitives.** Bearer-token verification (`Authorization: Bearer jjhub_xxx` via `middleware/auth.go:56`), Auth0 + WorkOS browser flows (`cmd/server/main.go:901`, `internal/routes/auth.go:25`) that today terminate in a **session cookie** for browser users or a **one-off CLI token** for `callback_port` flows (`internal/routes/auth.go:245, 416`), session cookies, and a separate **OAuth2 application + PKCE flow** (`cmd/server/main.go:917, 1244`, `internal/routes/oauth2.go:165`) that does mint refreshable bearer+refresh tokens. **Gap for this spec:** no public OAuth2 client is registered for the tabmonsters/iOS apps today, and the Auth0/WorkOS browser flow alone doesn't hand the mobile app a refreshable token pair. Closing that gap is a named prerequisite (ticket 0106).
 - **Agent sessions (chat).** Create, list, get, delete, append message. `POST /api/repos/{owner}/{repo}/agent/sessions[/{id}/messages]`. `agent_sessions.go`. **Note:** there is no explicit dispatch route on the public repo-scoped API; **run dispatch happens implicitly when a `user`-role message is posted** (`agent_sessions.go:280`). This is the canonical client contract — see [`ios-and-remote-sandboxes-dispatch-run.md`](ios-and-remote-sandboxes-dispatch-run.md) for the decision (ticket 0108).
 - **Event streams (SSE).** Workspace status, session status, agent session events — all with Postgres `LISTEN/NOTIFY` fan-out and Last-Event-ID resume. `workspace.go:642–723` (StreamWorkspace, StreamSession), `agent_session_stream.go`, `internal/sse/`.
 - **Terminal over WebSocket.** Binary frames for stdin/stdout, text JSON `{type:"resize",cols,rows}` for control. Proxies to SSH into the sandbox. `workspace_terminal.go:83–268`.
@@ -207,7 +207,7 @@ Desktop-local is structurally different enough from the iOS-and-remote-sandboxes
 ### Identity
 
 - **JJHub is the identity provider.** Clients authenticate via plue's **OAuth2 application + PKCE flow** (`cmd/server/main.go:917, 1244`, `internal/routes/oauth2.go:165`), with Auth0 or WorkOS as the upstream IdP behind it. This is the flow that returns refreshable bearer + refresh tokens — exactly what a mobile/desktop-remote client needs. The Auth0/WorkOS browser flows alone (`internal/routes/auth.go:25`) terminate in session cookies or one-off CLI tokens and are not sufficient on their own for mobile.
-- **Registration is a prerequisite.** No public OAuth2 client for the gui/iOS apps exists in plue today. Registering that client, wiring PKCE handoff, and implementing the iOS/macOS sign-in shell is ticket 0106 — Stage 0.
+- **Registration is a prerequisite.** No public OAuth2 client for the tabmonsters/iOS apps exists in plue today. Registering that client, wiring PKCE handoff, and implementing the iOS/macOS sign-in shell is ticket 0106 — Stage 0.
 - GitHub is *not* a user sign-in option in v1. The existing `internal/auth/github.go` supports repo access only.
 - **Access is whitelist-gated.** Being whitelisted is expressed through the ability to obtain a plue-issued bearer token (`jjhub_xxx`). An unwhitelisted user may complete OAuth with the upstream IdP but receives no JJHub token; the client treats this as "access not yet granted" and shows a static message. No self-serve onboarding in this pass.
 - **Single account per device.** Multi-account is a non-goal; the client stores exactly one set of credentials.
@@ -281,7 +281,7 @@ Desktop-local is structurally different enough from the iOS-and-remote-sandboxes
 - Production Electric shapes: `ios-and-remote-sandboxes-production-shapes.md`.
 - Independent validation checklist (consumed by the `ticket-implement` review step): `ios-and-remote-sandboxes-validation.md`.
 - Testing strategy (per-component layers, boundary conditions, CI job set): `ios-and-remote-sandboxes-testing.md`.
-- Migration strategy (gui-tree only): `ios-and-remote-sandboxes-migration.md`.
+- Migration strategy (tabmonsters-tree only): `ios-and-remote-sandboxes-migration.md`.
 - Rollout plan (phases, feature flags, canary cohorts, kill switches, acceptance gates): `ios-and-remote-sandboxes-rollout.md`.
 
 ## Open Questions Tracked Elsewhere

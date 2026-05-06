@@ -2,7 +2,7 @@ FROM debian:bookworm-slim
 
 ARG TARGETARCH
 ARG ZIG_VERSION=0.15.2
-ARG GUI_REPO=https://github.com/smithersai/gui.git
+ARG TABMONSTERS_REPO=https://github.com/smithersai/tabmonsters.git
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -26,7 +26,7 @@ RUN set -eux; \
     ln -s "/opt/zig-${zig_arch}-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig; \
     rm /tmp/zig.tar.xz
 
-RUN git clone --depth=1 "${GUI_REPO}" /workspace
+RUN git clone --depth=1 "${TABMONSTERS_REPO}" /workspace
 
 COPY . /workspace/libsmithers/fuzz
 

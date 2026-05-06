@@ -113,7 +113,7 @@ enum SlashCommandRegistry {
             command("terminal", "Terminal", "Open a terminal.", .action, ["term", "shell"], .navigate(.terminal(id: "default"))),
             command("help", "Help", "Show available slash commands.", .action, ["?"], .showHelp),
             command("debug", "Developer Debug", "Toggle developer diagnostics.", .action, ["dev"], .toggleDeveloperDebug),
-            command("quit", "Quit", "Quit SmithersGUI.", .action, ["exit"], .quit),
+            command("quit", "Quit", "Quit Tabmonsters.", .action, ["exit"], .quit),
         ]
     }
 

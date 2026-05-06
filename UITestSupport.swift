@@ -22,7 +22,7 @@ enum UITestSupport {
 
     static func isEnabled(arguments: [String], environment: [String: String]) -> Bool {
         arguments.contains("--uitesting") ||
-            environment["SMITHERS_GUI_UITEST"] == "1"
+            environment["TABMONSTERS_UITEST"] == "1"
     }
 
     static func isRunningUnitTests(processName: String, environment: [String: String]) -> Bool {

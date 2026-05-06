@@ -10,7 +10,7 @@ Review scope: `DATA_MODELS`, `DATA_TRANSPORT`, `FFI`, and `STREAMING` feature gr
 
 This is especially risky because `listRecentDecisionsFromSQLite()` reads from `_smithers_approvals` at `SmithersClient.swift:3534` and then filters decoded decisions for `approved` or `denied` at `SmithersClient.swift:3541`. If a row can take the direct Codable path with no explicit decision field, the model supplies `approved` and the row survives the history filter.
 
-The test suite currently locks in the unsafe behavior with `testDecisionDefaultsToApproved` in `Tests/SmithersGUITests/AdditionalSmithersModelsTests.swift:112`.
+The test suite currently locks in the unsafe behavior with `testDecisionDefaultsToApproved` in `Tests/TabmonstersTests/AdditionalSmithersModelsTests.swift:112`.
 
 Recommendation: make approval decisions require an explicit decision/action/status, or default to a non-terminal value such as `pending`/`unknown` and filter it out of recent decisions. Add a regression for a decision payload that has `id`, `runId`, and `nodeId`, but no action field.
 
@@ -28,7 +28,7 @@ Recommendation: strengthen the C API contract in both headers. Either document t
 
 The dictionary fallback in `SmithersClient.swift:3808` does include `decided_at_ms` and `requested_at_ms`, but that fallback only runs after direct Codable decoding fails. A valid array payload with no object-valued `payload` field can direct-decode successfully and silently lose timestamps, which then affects decision sorting at `SmithersClient.swift:3900` and the history display.
 
-The existing exec transport test uses `decided_at_ms` and `requested_at_ms` at `Tests/SmithersGUITests/SmithersClientTests.swift:1051`, but it also includes an object `payload`, which forces the direct Codable path to fail and hides this alias gap.
+The existing exec transport test uses `decided_at_ms` and `requested_at_ms` at `Tests/TabmonstersTests/SmithersClientTests.swift:1051`, but it also includes an object `payload`, which forces the direct Codable path to fail and hides this alias gap.
 
 Recommendation: add the `_ms` aliases to `ApprovalDecision.CodingKeys` and decode them before falling back to nil. Add a model-level test with `decided_at_ms` and no object payload so it exercises the direct Codable path.
 
@@ -44,7 +44,7 @@ Recommendation: use a resilient status model with an `.unknown(String)` case, or
 
 The SSE parser inside `sseStream` only emits an event when `dataBuffer` is non-empty at `SmithersClient.swift:5476` and `SmithersClient.swift:5497`, so `data:` events with an intentionally empty payload are dropped. It also trims all leading and trailing whitespace from `data:` values at `SmithersClient.swift:5492`; the SSE format only permits stripping one optional leading space after the colon, and trailing spaces are payload data.
 
-The parser also ignores `id:` and `retry:` fields and has no reusable production parser. The tests define a private copy of the parsing logic at `Tests/SmithersGUITests/SmithersClientTests.swift:8`, so they can drift from production and cannot validate the actual `AsyncBytes` path, fallback URL handling, cancellation, or non-200 behavior.
+The parser also ignores `id:` and `retry:` fields and has no reusable production parser. The tests define a private copy of the parsing logic at `Tests/TabmonstersTests/SmithersClientTests.swift:8`, so they can drift from production and cannot validate the actual `AsyncBytes` path, fallback URL handling, cancellation, or non-200 behavior.
 
 Recommendation: extract a small `SSEParser` type that implements the SSE field rules, preserves payload whitespace, handles empty `data:` events intentionally, and can be unit-tested directly. Add stream-level tests with a custom `URLProtocol` or injected session for multi-URL fallback and cancellation.
 

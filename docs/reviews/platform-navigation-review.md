@@ -110,7 +110,7 @@ Most implementation is internally scoped by default, which is normal for a Swift
 
 - Keep public API out of feature internals unless another module needs it. Most view helpers, row models, and persistence helpers can remain `internal` or become `private`/`fileprivate` where tests do not need direct access.
 - `SessionStore` is carrying navigation tab state, chat session state, persistence, model selection, and agent construction. That is workable for now, but the working-directory bug is a symptom of too much construction policy living in one place. A small session/agent factory would make cwd, model selection, approval mode, and persistence restore behavior easier to test.
-- `SessionPersistenceStore` shells out to sqlite synchronously. That implementation is simple but fragile for a GUI app. It is the highest-value cleanup after the functional bugs above.
+- `SessionPersistenceStore` shells out to sqlite synchronously. That implementation is simple but fragile for a desktop app. It is the highest-value cleanup after the functional bugs above.
 - `SessionStore.swift:304` emits a compiler warning because `catch let error as CodexModelSelectionError` is always true for that throwing path. Clean this up as part of warning reduction.
 - `GUINotifications.swift:198` currently warns about referencing a main actor-isolated static property from a nonisolated context. This is outside the requested file list but surfaced during the review runs and should be fixed before Swift 6 mode tightens.
 

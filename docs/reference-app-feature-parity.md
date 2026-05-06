@@ -26,13 +26,13 @@ Relevant capabilities:
 - Public conversation sharing
 - Rules, shortcuts, and prompt enhancement
 
-### T3 Code-style Agent GUI
+### T3 Code-style Agent App
 
 Source: <https://github.com/pingdotgg/t3code>
 
 Relevant capabilities:
 
-- GUI for coding agents with Codex, Claude, and OpenCode provider slots
+- Desktop app for coding agents with Codex, Claude, and OpenCode provider slots
 - Runtime mode switch: full access vs supervised
 - Provider availability and model selection surfaced in the UI
 - WebSocket transport with typed request/response and validated push events
@@ -40,9 +40,9 @@ Relevant capabilities:
 - Git branch/worktree context and PR-oriented actions
 - Deterministic worker drains and transport tests around provider events
 
-## SmithersGUI Parity Snapshot
+## Tabmonsters Parity Snapshot
 
-| Area | SmithersGUI state | Parity status | Next action |
+| Area | Tabmonsters state | Parity status | Next action |
 | --- | --- | --- | --- |
 | Live workflow/run inspection | Native run inspector, task tree, logs, outputs, approvals | Strong | Keep hardening reconnect and snapshot coverage |
 | Agent/provider availability | `AgentsView` lists detected CLIs, auth/API-key hints | Partial | Add provider/model selection per chat/run creation |

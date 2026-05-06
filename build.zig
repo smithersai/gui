@@ -1,7 +1,7 @@
-//! Makefile-style entrypoint for SmithersGUI.
+//! Makefile-style entrypoint for Tabmonsters.
 //!
 //! Common commands:
-//!   zig build           build SmithersGUI (default)
+//!   zig build           build Tabmonsters (default)
 //!   zig build test      run swift tests
 //!   zig build swift     build the Swift app only
 //!   zig build xcode     build via xcodebuild (release)
@@ -9,14 +9,14 @@
 //!   zig build zmux      build the tmux-style Zig session package
 //!   zig build zmux-test run zmux package tests
 //!   zig build libsmithers build the libsmithers static archive
-//!   zig build xcodegen  regenerate SmithersGUI.xcodeproj from project.yml
+//!   zig build xcodegen  regenerate Tabmonsters.xcodeproj from project.yml
 //!   zig build clean     remove build artifacts
-//!   zig build run       build then launch .build/debug/SmithersGUI
+//!   zig build run       build then launch .build/debug/Tabmonsters
 //!   zig build legacy-tui
 //!                       build the legacy Go terminal UI from the old tui branch
 //!   zig build everything-up
 //!                       bring up the full dev stack: Smithers docker-compose
-//!                       backend, seed a test user/token, build SmithersiOS,
+//!                       backend, seed a test user/token, build TabmonstersiOS,
 //!                       boot an iPhone simulator, and launch the app signed
 //!                       in against the local backend.
 //!                       Override backend location with SMITHERS_CHECKOUT=/path.
@@ -102,7 +102,7 @@ pub fn build(b: *std.Build) void {
     libsmithers_step.dependOn(&libsmithers_build.step);
 
     // ---- libsmithers iOS xcframework (ticket 0172) --------------------------
-    // Required so the SmithersiOS target's `canImport(CSmithersKit)` gates
+    // Required so the TabmonstersiOS target's `canImport(CSmithersKit)` gates
     // are true on TestFlight builds. Produces device + sim slices.
     const libsmithers_ios = b.addSystemCommand(&.{
         "bash", "libsmithers/scripts/build-ios-xcframework.sh",
@@ -118,16 +118,16 @@ pub fn build(b: *std.Build) void {
     if (release) swift_build.addArgs(&.{ "-c", "release" });
     swift_build.step.dependOn(check_ghostty);
     swift_build.step.dependOn(libsmithers_step);
-    const swift_step = b.step("swift", "Build SmithersGUI via `swift build`");
+    const swift_step = b.step("swift", "Build Tabmonsters via `swift build`");
     swift_step.dependOn(&swift_build.step);
 
     // ---- xcodebuild ---------------------------------------------------------
     const xcode_build = b.addSystemCommand(&.{
         "xcodebuild",
         "-project",
-        "SmithersGUI.xcodeproj",
+        "Tabmonsters.xcodeproj",
         "-scheme",
-        "SmithersGUI",
+        "Tabmonsters",
         "-configuration",
         if (release) "Release" else "Debug",
         "build",
@@ -139,7 +139,7 @@ pub fn build(b: *std.Build) void {
 
     // ---- xcodegen -----------------------------------------------------------
     const xcodegen = b.addSystemCommand(&.{ "xcodegen", "generate" });
-    const xcodegen_step = b.step("xcodegen", "Regenerate SmithersGUI.xcodeproj from project.yml");
+    const xcodegen_step = b.step("xcodegen", "Regenerate Tabmonsters.xcodeproj from project.yml");
     xcodegen_step.dependOn(&xcodegen.step);
 
     // ---- tests --------------------------------------------------------------
@@ -168,9 +168,9 @@ pub fn build(b: *std.Build) void {
     ghostty_step.dependOn(&ghostty_build.step);
 
     // ---- run ----------------------------------------------------------------
-    const run_cmd = b.addSystemCommand(&.{".build/debug/SmithersGUI"});
+    const run_cmd = b.addSystemCommand(&.{".build/debug/Tabmonsters"});
     run_cmd.step.dependOn(&swift_build.step);
-    const run_step = b.step("run", "Build and run SmithersGUI (debug)");
+    const run_step = b.step("run", "Build and run Tabmonsters (debug)");
     run_step.dependOn(&run_cmd.step);
 
     // ---- gtk (Linux shell) --------------------------------------------------
@@ -224,7 +224,7 @@ pub fn build(b: *std.Build) void {
 
     // ---- everything-up ------------------------------------------------------
     // One-shot dev loop: Smithers backend via docker compose → health check →
-    // seed token → xcodebuild SmithersiOS → boot simulator → launch app with
+    // seed token → xcodebuild TabmonstersiOS → boot simulator → launch app with
     // E2E bypass env vars so the app is signed-in against the local stack.
     const everything_up = b.step("everything-up", "Bring up Smithers backend + run iOS sim signed-in against it");
     everything_up.makeFn = everythingUp;
@@ -278,16 +278,16 @@ fn everythingUp(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!v
     defer ally.free(bearer);
     log("    bearer={s}…", .{bearer[0..@min(bearer.len, 16)]});
 
-    // 4. xcodebuild SmithersiOS for simulator. The iOS target injects the
+    // 4. xcodebuild TabmonstersiOS for simulator. The iOS target injects the
     //    active SDK's usr/lib into LIBRARY_SEARCH_PATHS, so this build is
     //    robust even when a developer shell exports macOS SDK paths.
-    log("==> building SmithersiOS", .{});
+    log("==> building TabmonstersiOS", .{});
     try runStream(step, &.{
         "xcodebuild",
         "-project",
-        "SmithersGUI.xcodeproj",
+        "Tabmonsters.xcodeproj",
         "-scheme",
-        "SmithersiOS",
+        "TabmonstersiOS",
         "-configuration",
         "Debug",
         "-destination",
@@ -303,12 +303,12 @@ fn everythingUp(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!v
     try runAllowFail(step, &.{ "open", "-a", "Simulator" });
 
     // 6. Install + relaunch. `booted` resolves to the one booted device.
-    const app_path = "build/DerivedData-everything-up/Build/Products/Debug-iphonesimulator/SmithersiOS.app";
+    const app_path = "build/DerivedData-everything-up/Build/Products/Debug-iphonesimulator/TabmonstersiOS.app";
     log("==> installing app on simulator", .{});
     try runStream(step, &.{ "xcrun", "simctl", "install", "booted", app_path }, null, null);
-    try runAllowFail(step, &.{ "xcrun", "simctl", "terminate", "booted", "com.smithers.ios" });
+    try runAllowFail(step, &.{ "xcrun", "simctl", "terminate", "booted", "com.tabmonsters.ios" });
 
-    log("==> launching SmithersiOS with e2e bypass", .{});
+    log("==> launching TabmonstersiOS with e2e bypass", .{});
     var launch_env = try std.process.getEnvMap(ally);
     defer launch_env.deinit();
     try launch_env.put("SIMCTL_CHILD_SMITHERS_E2E_MODE", "1");
@@ -316,7 +316,7 @@ fn everythingUp(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!v
     try launch_env.put("SIMCTL_CHILD_SMITHERS_BASE_URL", "http://localhost:4000");
     try runStream(
         step,
-        &.{ "xcrun", "simctl", "launch", "booted", "com.smithers.ios" },
+        &.{ "xcrun", "simctl", "launch", "booted", "com.tabmonsters.ios" },
         null,
         &launch_env,
     );

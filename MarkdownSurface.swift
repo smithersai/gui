@@ -36,7 +36,7 @@ final class MarkdownFileWatcher {
     private let retryPolicy: MarkdownFileWatcherRetryPolicy
     private let onEvent: (MarkdownFileWatcherEvent) -> Void
     private let onStateChange: (MarkdownFileWatcherState) -> Void
-    private let queue = DispatchQueue(label: "com.smithers.gui.markdown-file-watch")
+    private let queue = DispatchQueue(label: "com.tabmonsters.app.markdown-file-watch")
     private let queueKey = DispatchSpecificKey<Bool>()
 
     private var source: DispatchSourceFileSystemObject?

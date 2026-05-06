@@ -99,21 +99,21 @@ git status --short
 nl -ba ScoresView.swift
 nl -ba MemoryView.swift
 nl -ba SearchView.swift
-nl -ba Tests/SmithersGUITests/ScoresViewTests.swift
-nl -ba Tests/SmithersGUITests/MemoryViewTests.swift
-nl -ba Tests/SmithersGUITests/SearchViewTests.swift
+nl -ba Tests/TabmonstersTests/ScoresViewTests.swift
+nl -ba Tests/TabmonstersTests/MemoryViewTests.swift
+nl -ba Tests/TabmonstersTests/SearchViewTests.swift
 rg -n 'aggregateScores|listRecentScores|searchCode|searchIssues|searchRepos|recallMemory|listAllMemoryFacts|getTokenUsageMetrics|getLatencyMetrics|getCostTracking' SmithersClient.swift AgentService.swift SmithersModels.swift Models.swift
 nl -ba SmithersClient.swift | sed -n '1800,2075p'
 nl -ba SmithersClient.swift | sed -n '4460,4745p'
 nl -ba SmithersModels.swift | sed -n '820,1265p'
 nl -ba SmithersModels.swift | sed -n '2730,2765p'
-nl -ba Tests/SmithersGUIUITests/RunsScoresMemoryE2ETests.swift
-nl -ba Tests/SmithersGUIUITests/SearchIssuesE2ETests.swift
-nl -ba Tests/SmithersGUITests/SmithersModelsTests.swift | sed -n '360,455p'
-nl -ba Tests/SmithersGUITests/SmithersClientTests.swift | sed -n '490,640p'
-nl -ba Tests/SmithersGUITests/SmithersClientTests.swift | sed -n '735,805p'
-nl -ba Tests/SmithersGUITests/SmithersClientTests.swift | sed -n '1370,1435p'
-nl -ba Tests/SmithersGUITests/SmithersClientTests.swift | sed -n '1880,1945p'
+nl -ba Tests/TabmonstersUITests/RunsScoresMemoryE2ETests.swift
+nl -ba Tests/TabmonstersUITests/SearchIssuesE2ETests.swift
+nl -ba Tests/TabmonstersTests/SmithersModelsTests.swift | sed -n '360,455p'
+nl -ba Tests/TabmonstersTests/SmithersClientTests.swift | sed -n '490,640p'
+nl -ba Tests/TabmonstersTests/SmithersClientTests.swift | sed -n '735,805p'
+nl -ba Tests/TabmonstersTests/SmithersClientTests.swift | sed -n '1370,1435p'
+nl -ba Tests/TabmonstersTests/SmithersClientTests.swift | sed -n '1880,1945p'
 ```
 
 No build or test command was run.

@@ -10,11 +10,11 @@ const narrative =
     "JSON serde round-trips representative RunSummary, Workflow, ChatBlock, Ticket, and SearchResult payloads through libsmithers model descriptors.";
 
 const run_summary_json =
-    \\{"runId":"run-2026-04-21-0001","workflowName":"Ship GUI","status":"running","workspacePath":"/Users/williamcory/gui","startedAt":"2026-04-21T10:15:30Z","currentNode":"task:test","agents":[{"id":"codex","name":"Codex","status":"working"}],"cost":{"usd":0.42,"tokens":12345}}
+    \\{"runId":"run-2026-04-21-0001","workflowName":"Ship Tabmonsters","status":"running","workspacePath":"/Users/williamcory/tabmonsters","startedAt":"2026-04-21T10:15:30Z","currentNode":"task:test","agents":[{"id":"codex","name":"Codex","status":"working"}],"cost":{"usd":0.42,"tokens":12345}}
 ;
 
 const workflow_json =
-    \\{"id":"workflow:ship-gui","name":"Ship GUI","relativePath":".smithers/workflows/ship-gui.tsx","status":"available","description":"Build, test, and land the Smithers GUI app.","launchFields":[{"name":"target","type":"string","required":true},{"name":"dryRun","type":"boolean","required":false}],"dag":{"tasks":[{"id":"task:build","label":"Build"},{"id":"task:test","label":"Test"},{"id":"task:land","label":"Land"}],"edges":[{"id":"build-test","source":"task:build","target":"task:test"},{"id":"test-land","source":"task:test","target":"task:land"}]}}
+    \\{"id":"workflow:ship-tabmonsters","name":"Ship Tabmonsters","relativePath":".smithers/workflows/ship-tabmonsters.tsx","status":"available","description":"Build, test, and land the TABMONSTERS app.","launchFields":[{"name":"target","type":"string","required":true},{"name":"dryRun","type":"boolean","required":false}],"dag":{"tasks":[{"id":"task:build","label":"Build"},{"id":"task:test","label":"Test"},{"id":"task:land","label":"Land"}],"edges":[{"id":"build-test","source":"task:build","target":"task:test"},{"id":"test-land","source":"task:test","target":"task:land"}]}}
 ;
 
 const chat_block_json =
@@ -22,11 +22,11 @@ const chat_block_json =
 ;
 
 const ticket_json =
-    \\{"id":"T-123","title":"Benchmark palette query performance","content":"Add zbench coverage for command palette scoring with large synthetic backing stores so regressions are visible before UI latency changes.","status":"open","priority":"high","labels":["bench","libsmithers","gui"],"assignee":{"name":"Bench Agent E6","email":"bench@example.com"},"createdAt":"2026-04-21T10:16:00Z","updatedAt":"2026-04-21T10:20:00Z","links":[{"title":"contract","url":"docs/libsmithers-contract.md"}]}
+    \\{"id":"T-123","title":"Benchmark palette query performance","content":"Add zbench coverage for command palette scoring with large synthetic backing stores so regressions are visible before UI latency changes.","status":"open","priority":"high","labels":["bench","libsmithers","tabmonsters"],"assignee":{"name":"Bench Agent E6","email":"bench@example.com"},"createdAt":"2026-04-21T10:16:00Z","updatedAt":"2026-04-21T10:20:00Z","links":[{"title":"contract","url":"docs/libsmithers-contract.md"}]}
 ;
 
 const search_result_json =
-    \\{"id":"result-1","title":"libsmithers benchmark request","kind":"code","path":"libsmithers/bench/src/main.zig","score":0.982,"snippets":[{"line":42,"text":"smithers_palette_set_query plus smithers_palette_items_json","ranges":[{"start":0,"end":52}]},{"line":87,"text":"smithers_event_stream_next drains fixture streams","ranges":[{"start":0,"end":43}]}],"repository":{"name":"gui","owner":"williamcory"},"metadata":{"query":"palette stream persistence","elapsedMs":12.4,"totalResults":18}}
+    \\{"id":"result-1","title":"libsmithers benchmark request","kind":"code","path":"libsmithers/bench/src/main.zig","score":0.982,"snippets":[{"line":42,"text":"smithers_palette_set_query plus smithers_palette_items_json","ranges":[{"start":0,"end":52}]},{"line":87,"text":"smithers_event_stream_next drains fixture streams","ranges":[{"start":0,"end":43}]}],"repository":{"name":"tabmonsters","owner":"williamcory"},"metadata":{"query":"palette stream persistence","elapsedMs":12.4,"totalResults":18}}
 ;
 
 pub fn add(bench: *zbench.Benchmark, registry: *common.Registry) !void {

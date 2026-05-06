@@ -2,7 +2,7 @@
 
 ## Summary
 
-This proposes a Smithers-native workflow frontend feature that lets a workflow ship its own HTML/JS app, typically React, and have Smithers serve it directly. Smithers GUI then becomes one consumer of that feature: it embeds the served app in `WKWebView` instead of owning the UI contract.
+This proposes a Smithers-native workflow frontend feature that lets a workflow ship its own HTML/JS app, typically React, and have Smithers serve it directly. TABMONSTERS then becomes one consumer of that feature: it embeds the served app in `WKWebView` instead of owning the UI contract.
 
 The POC in this repo uses the existing `ticket-kanban` workflow and demonstrates the shape with:
 
@@ -16,13 +16,13 @@ The POC is intentionally implemented in the workspace, not in Smithers core, but
 
 - Let a workflow define a custom frontend in HTML/JS.
 - Make the frontend portable across Smithers clients.
-- Keep Smithers GUI thin: it should host the app, not define its API.
+- Keep TABMONSTERS thin: it should host the app, not define its API.
 - Reuse Smithers as the source of truth for workflow state, runs, approvals, outputs, and launch actions.
 - Support React cleanly.
 
 ## Non-goals
 
-- Replacing the existing generic GUI for all workflows.
+- Replacing the existing generic app surface for all workflows.
 - Exposing arbitrary local filesystem access to frontend code.
 - Designing a full plugin marketplace, auth model, or remote multi-user deployment in this pass.
 
@@ -30,9 +30,9 @@ The POC is intentionally implemented in the workspace, not in Smithers core, but
 
 If the frontend contract lives in Smithers:
 
-- the same workflow app can run in Smithers GUI, a browser, or a future Smithers surface
+- the same workflow app can run in TABMONSTERS, a browser, or a future Smithers surface
 - workflow authors only target one API/runtime contract
-- the GUI does not need workflow-specific Swift code
+- the app does not need workflow-specific Swift code
 - the lifecycle is correct: when Smithers can inspect a run, it can also serve the UI for that run
 
 The current Smithers package already has HTTP serving primitives:
@@ -40,7 +40,7 @@ The current Smithers package already has HTTP serving primitives:
 - single-run `createServeApp(...)`
 - generic server routes like `/v1/runs`, `/v1/runs/:runId`, `/v1/runs/:runId/events`
 
-That means the right long-term direction is to extend Smithers' existing HTTP server with workflow-owned static assets and a small frontend manifest, not build a separate GUI-only protocol.
+That means the right long-term direction is to extend Smithers' existing HTTP server with workflow-owned static assets and a small frontend manifest, not build a separate app-only protocol.
 
 ## Proposed Contract
 
@@ -205,7 +205,7 @@ Those differences are acceptable for a POC because they validate:
 - hosting
 - the frontend manifest shape
 - a React-based workflow app
-- the GUI embedding model
+- the app embedding model
 
 ## Kanban-Specific API In The POC
 
@@ -231,9 +231,9 @@ Routes:
 
 This is enough to render a useful Kanban board without changing Smithers itself.
 
-## GUI Integration
+## App Integration
 
-The GUI should:
+The app should:
 
 - detect the frontend manifest next to the workflow
 - show an `App` tab when present
@@ -257,6 +257,6 @@ Build the feature into Smithers as:
 1. frontend discovery by adjacent manifest
 2. static asset serving from the existing HTTP server
 3. a tiny frontend SDK for React/browser apps
-4. host embedding in GUI as a thin webview shell
+4. host embedding in the app as a thin webview shell
 
 The POC in this repo validates that this model is workable with the `ticket-kanban` workflow right now.

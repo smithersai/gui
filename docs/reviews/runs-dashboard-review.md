@@ -8,8 +8,8 @@ Scope:
 - `RunInspectView.swift`
 - `ContentView.swift` dashboard wiring
 - `DashboardView.swift`, included because `ContentView.swift` delegates the dashboard section there
-- `Tests/SmithersGUITests/ScoresViewTests.swift`
-- `Tests/SmithersGUIUITests/RunInspectorE2ETests.swift`
+- `Tests/TabmonstersTests/ScoresViewTests.swift`
+- `Tests/TabmonstersUITests/RunInspectorE2ETests.swift`
 
 `swift test` was not run, per request.
 
@@ -151,22 +151,22 @@ Recommendation: use calendar week semantics or rename the preset to `Last 7 Days
 
 `RunInspectorE2ETests.swift` covers two happy paths:
 
-- `Tests/SmithersGUIUITests/RunInspectorE2ETests.swift:4` verifies hijack opens a terminal resume command.
-- `Tests/SmithersGUIUITests/RunInspectorE2ETests.swift:18` verifies inspector navigation, node detail, DAG mode, snapshots, and close.
+- `Tests/TabmonstersUITests/RunInspectorE2ETests.swift:4` verifies hijack opens a terminal resume command.
+- `Tests/TabmonstersUITests/RunInspectorE2ETests.swift:18` verifies inspector navigation, node detail, DAG mode, snapshots, and close.
 
 It does not cover status filtering, progress bars, elapsed time behavior, inline approve/deny, deny confirmation, cancel, approval-gated progress, dashboard stat cards, or dashboard loading failures.
 
 `ScoresViewTests.swift` does not cover the dashboard or run inspector. The `SCORES_PARALLEL_DATA_LOADING` section is not a useful proxy for `DASHBOARD_PARALLEL_DATA_LOADING`:
 
-- `Tests/SmithersGUITests/ScoresViewTests.swift:286` names parallel loading.
-- `Tests/SmithersGUITests/ScoresViewTests.swift:292` only asserts a documentation-style statement.
-- `Tests/SmithersGUITests/ScoresViewTests.swift:300` manually replicates aggregation math.
+- `Tests/TabmonstersTests/ScoresViewTests.swift:286` names parallel loading.
+- `Tests/TabmonstersTests/ScoresViewTests.swift:292` only asserts a documentation-style statement.
+- `Tests/TabmonstersTests/ScoresViewTests.swift:300` manually replicates aggregation math.
 
 Several `ScoresViewTests` bug comments are stale against current source:
 
-- `Tests/SmithersGUITests/ScoresViewTests.swift:275` says `ScoresView` creates a `DateFormatter` per call, but `ScoresView.swift:583` uses a static formatter.
-- `Tests/SmithersGUITests/ScoresViewTests.swift:313` says even-count P50 is wrong, but `SmithersModels.swift:872` averages the two middle values.
-- `Tests/SmithersGUITests/ScoresViewTests.swift:392` says fallback names differ, but `SmithersModels.swift:843` uses `scorerDisplayName` for both display and aggregation.
+- `Tests/TabmonstersTests/ScoresViewTests.swift:275` says `ScoresView` creates a `DateFormatter` per call, but `ScoresView.swift:583` uses a static formatter.
+- `Tests/TabmonstersTests/ScoresViewTests.swift:313` says even-count P50 is wrong, but `SmithersModels.swift:872` averages the two middle values.
+- `Tests/TabmonstersTests/ScoresViewTests.swift:392` says fallback names differ, but `SmithersModels.swift:843` uses `scorerDisplayName` for both display and aggregation.
 
 Existing nearby run/dashboard tests have the same maintenance problem: some tests replicate private logic or document bugs that are already fixed, instead of exercising the actual view behavior. Examples include waiting-approval node icon handling, singular run count display, rounded progress percentage, and dashboard active-run counting.
 

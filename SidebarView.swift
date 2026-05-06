@@ -30,7 +30,7 @@ struct SidebarView: View {
     private let onOpenLocalFolderTab: (String) -> Void
     private let versionProvider: (() async -> String?)?
 
-    fileprivate static let guiVersion: String = {
+    fileprivate static let appVersion: String = {
         let info = Bundle.main.infoDictionary
         return (info?["CFBundleShortVersionString"] as? String) ?? "0.0.1"
     }()
@@ -206,12 +206,12 @@ struct SidebarView: View {
                         .accessibilityIdentifier("sidebar.smithersVersionWarning")
                 }
             }
-            Text("GUI \(Self.guiVersion)")
+            Text("App \(Self.appVersion)")
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundColor(Theme.textTertiary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-                .accessibilityIdentifier("sidebar.guiVersion")
+                .accessibilityIdentifier("sidebar.appVersion")
         }
         .frame(maxWidth: 128, alignment: .trailing)
     }

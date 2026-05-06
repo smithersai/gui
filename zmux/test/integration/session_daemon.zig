@@ -302,10 +302,10 @@ test "native session daemon end-to-end: ping, create, send, capture, terminate, 
     try std.testing.expect(ctx.run_error == null);
 }
 
-// Regression: reopening a GUI terminal used to drop the prior terminal state;
+// Regression: reopening an app terminal used to drop the prior terminal state;
 // Claude Code could appear as a fresh chat instead of showing the previous
 // conversation. The daemon owns scrollback, and logical client attachment must
-// replay it so thin GUI clients can redraw prior state.
+// replay it so thin app clients can redraw prior state.
 test "client.attach replays scrollback on reattach so reopened sessions keep their state" {
     if (!(builtin.os.tag == .linux or builtin.os.tag.isDarwin())) return error.SkipZigTest;
 

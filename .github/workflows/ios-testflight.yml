@@ -7,9 +7,9 @@
 #   - It is allowed to fail loudly without blocking the default-branch CI.
 #
 # Prereqs (see ios/RELEASE.md for the full checklist):
-#   1. The bundle id `com.smithers.ios` is registered in App Store Connect.
+#   1. The bundle id `com.tabmonsters.ios` is registered in App Store Connect.
 #   2. An App Store distribution provisioning profile exists and its name
-#      is stored in the repo secret SMITHERS_IOS_PROVISIONING_PROFILE_NAME.
+#      is stored in the repo secret TABMONSTERS_IOS_PROVISIONING_PROFILE_NAME.
 #   3. The Apple Team ID is stored in the repo secret APPLE_TEAM_ID.
 #   4. An App Store Connect API key (Admin or App Manager role) exists and
 #      the three parts are stored in repo secrets:
@@ -23,9 +23,9 @@
 #   6. The App Store distribution provisioning profile, stored
 #      (base64-encoded) in IOS_PROVISIONING_PROFILE_BASE64.
 #   7. A second App Store profile for the share extension
-#      (com.smithers.ios.ShareExtension), stored (base64-encoded) in
+#      (com.tabmonsters.ios.ShareExtension), stored (base64-encoded) in
 #      IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64, with its profile
-#      name in SMITHERS_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_NAME.
+#      name in TABMONSTERS_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_NAME.
 #
 # Build-number rule (documented again in ios/RELEASE.md): the build number
 # is the GitHub Actions run number, which is strictly monotonic per branch
@@ -189,9 +189,9 @@ jobs:
           PROFILE_DIR="${HOME}/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "${PROFILE_DIR}"
           printf '%s' "${PROFILE_BASE64}" | base64 --decode \
-            > "${PROFILE_DIR}/smithers-ios-appstore.mobileprovision"
+            > "${PROFILE_DIR}/tabmonsters-ios-appstore.mobileprovision"
           printf '%s' "${SHARE_EXT_PROFILE_BASE64}" | base64 --decode \
-            > "${PROFILE_DIR}/smithers-ios-shareext-appstore.mobileprovision"
+            > "${PROFILE_DIR}/tabmonsters-ios-shareext-appstore.mobileprovision"
 
       - name: Resolve build metadata
         id: meta
@@ -216,11 +216,11 @@ jobs:
         env:
           # Signing inputs consumed by the script.
           DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
-          PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.SMITHERS_IOS_PROVISIONING_PROFILE_NAME }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.TABMONSTERS_IOS_PROVISIONING_PROFILE_NAME }}
           # The share-ext profile name on Apple has a literal three-space
           # gap between "Share" and "Extension"; pass it as a secret so the
           # exact string survives without the workflow having to embed it.
-          SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.SMITHERS_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_NAME }}
+          SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.TABMONSTERS_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_NAME }}
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
@@ -237,7 +237,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SmithersiOS-${{ steps.meta.outputs.marketing_version }}-${{ steps.meta.outputs.build_number }}
+          name: TabmonstersiOS-${{ steps.meta.outputs.marketing_version }}-${{ steps.meta.outputs.build_number }}
           path: |
             build/ios-archive/*.ipa
             build/ios-archive/ExportOptions.plist
@@ -248,7 +248,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SmithersiOS-dsym-${{ steps.meta.outputs.marketing_version }}-${{ steps.meta.outputs.build_number }}
+          name: TabmonstersiOS-dsym-${{ steps.meta.outputs.marketing_version }}-${{ steps.meta.outputs.build_number }}
           path: |
             build/ios-archive/*.xcarchive/dSYMs/**/*.dSYM
             build/ios-archive/*.xcarchive/BCSymbolMaps/*

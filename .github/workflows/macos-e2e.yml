@@ -1,4 +1,4 @@
-# macos-e2e.yml — full-stack XCUITest harness for the SmithersGUI macOS app.
+# macos-e2e.yml — full-stack XCUITest harness for the Tabmonsters macOS app.
 #
 # Ticket: macos-e2e-harness. Mirrors `ios-e2e.yml` but runs against the
 # native macOS destination instead of the iOS Simulator. Runs on macos-14
@@ -27,10 +27,10 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     steps:
-      - name: Checkout gui
+      - name: Checkout Tabmonsters
         uses: actions/checkout@v4
         with:
-          path: gui
+          path: tabmonsters
 
       - name: Checkout Smithers backend
         uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
         run: bun install || true
 
       - name: Run macOS E2E harness
-        working-directory: gui
+        working-directory: tabmonsters
         env:
           SMITHERS_CHECKOUT: ${{ github.workspace }}/smithers-backend
           SMITHERS_BASE_URL: http://localhost:4000
@@ -78,7 +78,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-e2e-xcresult
-          path: gui/build/macos-e2e-results-*.xcresult
+          path: tabmonsters/build/macos-e2e-results-*.xcresult
           if-no-files-found: warn
           retention-days: 14
 
@@ -87,6 +87,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-e2e-xcodebuild-log
-          path: gui/build/macos-e2e-xcodebuild.log
+          path: tabmonsters/build/macos-e2e-xcodebuild.log
           if-no-files-found: warn
           retention-days: 14

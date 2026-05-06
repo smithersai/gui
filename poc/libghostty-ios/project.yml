@@ -22,7 +22,7 @@
 
 name: LibGhosttyIOS
 options:
-  bundleIdPrefix: com.smithers.libghostty-ios-poc
+  bundleIdPrefix: com.tabmonsters.libghostty-ios-poc
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "15.0"
@@ -49,7 +49,7 @@ targets:
         embed: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.libghostty-ios-poc.wrapper
+        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.libghostty-ios-poc.wrapper
         DEFINES_MODULE: YES
         BUILD_LIBRARY_FOR_DISTRIBUTION: NO
         ENABLE_MODULE_VERIFIER: NO
@@ -85,7 +85,7 @@ targets:
         CFBundleDisplayName: LibGhosttyIOS PoC
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.libghostty-ios-poc.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.libghostty-ios-poc.app
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: NO
 
@@ -102,7 +102,7 @@ targets:
       - target: PoC
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.smithers.libghostty-ios-poc.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.libghostty-ios-poc.tests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/PoC.app/PoC"
         BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES

@@ -1,12 +1,12 @@
 // SharedNavigation.swift
 //
-// Shared navigation/state owner for the Smithers app shell. Extracted from
+// Shared navigation/state owner for the Tabmonsters app shell. Extracted from
 // ContentView.swift and SidebarView.swift as part of ticket 0122. Both the
 // macOS and iOS app shells observe this store so destination and history
 // state stay platform-neutral.
 //
-// IMPORTANT: This file is compiled into BOTH the macOS (`SmithersGUI`) and
-// iOS (`SmithersiOS`) targets. It must not pull in AppKit (or UIKit) and
+// IMPORTANT: This file is compiled into BOTH the macOS (`Tabmonsters`) and
+// iOS (`TabmonstersiOS`) targets. It must not pull in AppKit (or UIKit) and
 // must not reference any AppKit-only symbols (open-panel, workspace-open,
 // app-terminate, pasteboard, key-window, screen geometry).
 
@@ -15,7 +15,7 @@ import SwiftUI
 
 // MARK: - Navigation Destination
 
-/// The cross-platform route vocabulary for the Smithers app shell.
+/// The cross-platform route vocabulary for the Tabmonsters app shell.
 ///
 /// The macOS `NavigationSplitView` shell and the iOS `NavigationStack`
 /// shell both drive navigation off of this single enum. Destinations that

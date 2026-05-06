@@ -159,7 +159,7 @@ struct RemoteWorkspaceTab: Identifiable, Equatable, Hashable {
     var id: String { workspaceId }
 }
 
-/// Singleton shared by `SmithersRootView`, `WelcomeView`, and `SidebarView`.
+/// Singleton shared by `TabmonstersRootView`, `WelcomeView`, and `SidebarView`.
 /// The instance is created eagerly (it is cheap) but the sign-in / lifecycle
 /// work is strictly on-demand.
 @MainActor

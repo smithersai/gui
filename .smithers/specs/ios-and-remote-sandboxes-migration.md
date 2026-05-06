@@ -1,8 +1,8 @@
-# iOS And Remote Sandboxes — Migration Strategy (gui-tree only)
+# iOS And Remote Sandboxes — Migration Strategy (tabmonsters-tree only)
 
 Companion to `ios-and-remote-sandboxes.md` (see "Cut against the current `libsmithers/src/` tree") and `ios-and-remote-sandboxes-execution.md` (D4). Produced by ticket [0100](../tickets/0100-design-migration-strategy.md).
 
-This doc describes **how the current `libsmithers/src/` tree evolves into `libsmithers-core` + deprecated engine bits, per commit, keeping the macOS desktop app building and running at every step.** It is gui-tree-only: cross-repo work (plue shape definitions, Electric docker-compose, desktop-local spec, production FFI landing in 0120) is a prerequisite not a step in the sequence. See Appendix A.
+This doc describes **how the current `libsmithers/src/` tree evolves into `libsmithers-core` + deprecated engine bits, per commit, keeping the macOS desktop app building and running at every step.** It is tabmonsters-tree-only: cross-repo work (plue shape definitions, Electric docker-compose, desktop-local spec, production FFI landing in 0120) is a prerequisite not a step in the sequence. See Appendix A.
 
 Data migration — specifically "where the existing local SQLite (`recent_workspaces`, `workspace_sessions`, `workspace_chat_sessions`) goes" — is **not** locked here. See §5.
 
@@ -68,7 +68,7 @@ Grep-verifiable against `find libsmithers/src -type f` (37 files total).
 
 Sum: 13 + 16 + 3 + 4 = 36 rows; `apprt/embedded.zig` is split but listed once, so the inventory table has exactly 37 rows — one per file.
 
-## 2. Dependency graph (gui-internal)
+## 2. Dependency graph (tabmonsters-internal)
 
 Nodes are individual files or coherent groups. Edges `A → B` read as "B depends on A — A must move/repurpose/delete first or in the same commit." External dependencies (plue shapes, 0120 FFI, desktop-local spec) are prerequisites (§Appendix A), not graph nodes.
 
@@ -118,7 +118,7 @@ Nodes are individual files or coherent groups. Edges `A → B` read as "B depend
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Ordering rules enforced by this graph (gui-internal):**
+**Ordering rules enforced by this graph (tabmonsters-internal):**
 
 1. **Pure move-to-core nodes first** — they have no engine dependencies and can be physically relocated (or namespace-aliased) into the emerging `libsmithers-core` module without touching callers.
 2. **SQLite schema swap** waits on the devtools query re-point, because `devtools/ChatOutput.zig` + `devtools/Snapshot.zig` read SQLite directly; they must accept the new cache schema before the schema changes under them.
@@ -127,7 +127,7 @@ Nodes are individual files or coherent groups. Edges `A → B` read as "B depend
 
 Nothing in this graph moves until the prerequisites in Appendix A are green.
 
-## 3. Sequenced commit plan (gui-side)
+## 3. Sequenced commit plan (tabmonsters-side)
 
 Each commit leaves the desktop app **building + running** against the same existing macOS smoke flow (open a local workspace, launch a terminal, run `ls`, send one chat message). "Building" means `zig build && swift build` (the macOS app) green. "Running" means the macOS smoke gate in §7 passes.
 
@@ -311,7 +311,7 @@ Before entering the dual-path window for a given step:
 
 The steps in §3 assume the following have landed. The migration sequence does **not** wait on them during planning (this doc can be reviewed and approved now), but no step from §3 proceeds until its named prerequisite is green.
 
-**(a) Plue shape definitions for the tables gui reads.**
+**(a) Plue shape definitions for the tables Tabmonsters reads.**
 Covered by tickets **0114** (`agent_sessions`), **0115** (`agent_messages`), **0116** (`workspaces`), **0117** (`workspace_sessions`), **0118** (`agent_parts`). Step 6 is the first commit here that opens a shape end-to-end; blocks until at least one of these has landed on plue's main.
 
 **(b) Plue Electric docker-compose wiring.**
