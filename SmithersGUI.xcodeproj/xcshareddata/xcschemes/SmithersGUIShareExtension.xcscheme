@@ -16,7 +16,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "E24B3FD2E3FA128630989D42"
+               BlueprintIdentifier = "B785FF0D82A542F8CDC84C37"
                BuildableName = "SmithersGUIShareExtension.appex"
                BlueprintName = "SmithersGUIShareExtension"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -30,7 +30,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "2BA66B6A9826A78A807E93CF"
+               BlueprintIdentifier = "2AC49A7459A0A403F96C7AAA"
                BuildableName = "SmithersGUIiOS.app"
                BlueprintName = "SmithersGUIiOS"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -47,7 +47,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E24B3FD2E3FA128630989D42"
+            BlueprintIdentifier = "B785FF0D82A542F8CDC84C37"
             BuildableName = "SmithersGUIShareExtension.appex"
             BlueprintName = "SmithersGUIShareExtension"
             ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -71,7 +71,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E24B3FD2E3FA128630989D42"
+            BlueprintIdentifier = "B785FF0D82A542F8CDC84C37"
             BuildableName = "SmithersGUIShareExtension.appex"
             BlueprintName = "SmithersGUIShareExtension"
             ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -88,7 +88,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E24B3FD2E3FA128630989D42"
+            BlueprintIdentifier = "B785FF0D82A542F8CDC84C37"
             BuildableName = "SmithersGUIShareExtension.appex"
             BlueprintName = "SmithersGUIShareExtension"
             ReferencedContainer = "container:SmithersGUI.xcodeproj">

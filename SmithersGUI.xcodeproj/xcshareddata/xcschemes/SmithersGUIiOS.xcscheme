@@ -16,7 +16,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "E24B3FD2E3FA128630989D42"
+               BlueprintIdentifier = "B785FF0D82A542F8CDC84C37"
                BuildableName = "SmithersGUIShareExtension.appex"
                BlueprintName = "SmithersGUIShareExtension"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -30,7 +30,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "2BA66B6A9826A78A807E93CF"
+               BlueprintIdentifier = "2AC49A7459A0A403F96C7AAA"
                BuildableName = "SmithersGUIiOS.app"
                BlueprintName = "SmithersGUIiOS"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -44,7 +44,7 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "5DD5F1D75D9414FEB157C3C4"
+               BlueprintIdentifier = "F706C38DE772C8B0B8A0D02D"
                BuildableName = "SmithersGUIiOSTests.xctest"
                BlueprintName = "SmithersGUIiOSTests"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -58,7 +58,7 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "AD62CD53302A8FB6E7B3A4C6"
+               BlueprintIdentifier = "5C6A03DDE7E501722BC3AEDB"
                BuildableName = "SmithersGUIiOSUITests.xctest"
                BlueprintName = "SmithersGUIiOSUITests"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -75,7 +75,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E24B3FD2E3FA128630989D42"
+            BlueprintIdentifier = "B785FF0D82A542F8CDC84C37"
             BuildableName = "SmithersGUIShareExtension.appex"
             BlueprintName = "SmithersGUIShareExtension"
             ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -86,7 +86,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "5DD5F1D75D9414FEB157C3C4"
+               BlueprintIdentifier = "F706C38DE772C8B0B8A0D02D"
                BuildableName = "SmithersGUIiOSTests.xctest"
                BlueprintName = "SmithersGUIiOSTests"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -96,7 +96,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "AD62CD53302A8FB6E7B3A4C6"
+               BlueprintIdentifier = "5C6A03DDE7E501722BC3AEDB"
                BuildableName = "SmithersGUIiOSUITests.xctest"
                BlueprintName = "SmithersGUIiOSUITests"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -121,7 +121,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E24B3FD2E3FA128630989D42"
+            BlueprintIdentifier = "B785FF0D82A542F8CDC84C37"
             BuildableName = "SmithersGUIShareExtension.appex"
             BlueprintName = "SmithersGUIShareExtension"
             ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -138,7 +138,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E24B3FD2E3FA128630989D42"
+            BlueprintIdentifier = "B785FF0D82A542F8CDC84C37"
             BuildableName = "SmithersGUIShareExtension.appex"
             BlueprintName = "SmithersGUIShareExtension"
             ReferencedContainer = "container:SmithersGUI.xcodeproj">

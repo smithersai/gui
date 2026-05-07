@@ -15,7 +15,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "6587E686555A255DE29DFF15"
+               BlueprintIdentifier = "69F5907E894FBC315BA26239"
                BuildableName = "SmithersGUI.app"
                BlueprintName = "SmithersGUI"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -29,7 +29,7 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "406DF56E9BE962E19DA81C89"
+               BlueprintIdentifier = "3F3C9DEE64BDCF8BCC6C3876"
                BuildableName = "SmithersGUIMacOSE2ETests.xctest"
                BlueprintName = "SmithersGUIMacOSE2ETests"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -46,7 +46,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "6587E686555A255DE29DFF15"
+            BlueprintIdentifier = "69F5907E894FBC315BA26239"
             BuildableName = "SmithersGUI.app"
             BlueprintName = "SmithersGUI"
             ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -57,7 +57,7 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "406DF56E9BE962E19DA81C89"
+               BlueprintIdentifier = "3F3C9DEE64BDCF8BCC6C3876"
                BuildableName = "SmithersGUIMacOSE2ETests.xctest"
                BlueprintName = "SmithersGUIMacOSE2ETests"
                ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -123,7 +123,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "6587E686555A255DE29DFF15"
+            BlueprintIdentifier = "69F5907E894FBC315BA26239"
             BuildableName = "SmithersGUI.app"
             BlueprintName = "SmithersGUI"
             ReferencedContainer = "container:SmithersGUI.xcodeproj">
@@ -140,7 +140,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "6587E686555A255DE29DFF15"
+            BlueprintIdentifier = "69F5907E894FBC315BA26239"
             BuildableName = "SmithersGUI.app"
             BlueprintName = "SmithersGUI"
             ReferencedContainer = "container:SmithersGUI.xcodeproj">
