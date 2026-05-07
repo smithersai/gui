@@ -26,6 +26,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private var nativeSurfaceOperationsInFlight: Set<NativeSurfaceKey> = []
 
     private static let persistenceSaveDebounceNanoseconds: UInt64 = 500_000_000
+    private static let dynamicAgentDetectionLookback: TimeInterval = 5.0
     private nonisolated static let nativeTerminalTERM = "xterm-ghostty"
     private nonisolated static let nativeTerminalColorTerm = "truecolor"
     private static let persistenceEncoder: JSONEncoder = {
@@ -105,6 +106,10 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     deinit {
         pendingSaveWorkItem?.cancel()
         pendingSaveWorkItem = nil
+        for watcher in externalAgentWatchers.values {
+            watcher.cancel()
+        }
+        externalAgentWatchers.removeAll()
         sessions.removeAll()
         if let stateChangedObserver {
             NotificationCenter.default.removeObserver(stateChangedObserver)
@@ -239,36 +244,61 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         terminalWorkspaces[key.terminalId]?.markNativeTerminalPending(surfaceId: key.surfaceId)
 
         let shell = TerminalShellPreference.resolvedShellPath(userDefaults: userDefaults)
+        let env = Self.nativeSessionEnvironment(shell: shell)
         let splitTarget = nativeSplitTarget(for: key)
         Task { [weak self] in
             do {
                 try await SessionController.shared.ensureDaemon()
                 let sessionId: String
                 if let splitTarget {
-                    let snapshot = try await SessionController.shared.splitPane(
-                        paneId: splitTarget.paneId,
-                        axis: splitTarget.axis.rawValue,
-                        shell: shell,
-                        command: command,
-                        cwd: workingDirectory,
-                        env: Self.nativeSessionEnvironment(shell: shell),
-                        rows: 24,
-                        cols: 80
-                    )
-                    guard let createdPaneId = Self.activePaneId(
-                        in: snapshot,
-                        containingPaneId: splitTarget.paneId
-                    ) else {
-                        throw SessionControllerError.decodingFailed("missing split pane in mux snapshot")
+                    do {
+                        let snapshot = try await SessionController.shared.splitPane(
+                            paneId: splitTarget.paneId,
+                            axis: splitTarget.axis.rawValue,
+                            shell: shell,
+                            command: command,
+                            cwd: workingDirectory,
+                            env: env,
+                            rows: 24,
+                            cols: 80
+                        )
+                        guard let createdPaneId = Self.activePaneId(
+                            in: snapshot,
+                            containingPaneId: splitTarget.paneId
+                        ) else {
+                            throw SessionControllerError.decodingFailed("missing split pane in mux snapshot")
+                        }
+                        sessionId = createdPaneId
+                    } catch {
+                        AppLogger.terminal.warning(
+                            "native pane split failed; falling back to new session",
+                            metadata: [
+                                "terminalId": key.terminalId,
+                                "surfaceId": key.surfaceId.rawValue,
+                                "targetPaneId": splitTarget.paneId,
+                                "axis": splitTarget.axis.rawValue,
+                                "error": "\(error)",
+                            ]
+                        )
+                        try await SessionController.shared.ensureDaemon()
+                        let info = try await SessionController.shared.createSession(
+                            title: nil,
+                            shell: shell,
+                            command: command,
+                            cwd: workingDirectory,
+                            env: env,
+                            rows: 24,
+                            cols: 80
+                        )
+                        sessionId = info.id
                     }
-                    sessionId = createdPaneId
                 } else {
                     let info = try await SessionController.shared.createSession(
                         title: nil,
                         shell: shell,
                         command: command,
                         cwd: workingDirectory,
-                        env: Self.nativeSessionEnvironment(shell: shell),
+                        env: env,
                         rows: 24,
                         cols: 80
                     )
@@ -279,6 +309,14 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                     self?.applyNativeSessionReady(key: key, sessionId: sessionId)
                 }
             } catch {
+                AppLogger.terminal.error(
+                    "failed to start native terminal session",
+                    metadata: [
+                        "terminalId": key.terminalId,
+                        "surfaceId": key.surfaceId.rawValue,
+                        "error": "\(error)",
+                    ]
+                )
                 await MainActor.run {
                     self?.nativeSurfaceOperationsInFlight.remove(key)
                     self?.applyNativeSessionUnavailable(
@@ -355,12 +393,34 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
                     ? "Saved terminal session could not be verified because the session daemon is unavailable."
                     : "Saved terminal session is no longer available."
                 await MainActor.run {
-                    self?.nativeSurfaceOperationsInFlight.remove(key)
-                    self?.applyNativeSessionUnavailable(
-                        key: key,
-                        message: message,
-                        preservingSessionId: preservingSessionId
-                    )
+                    guard let self else { return }
+                    self.nativeSurfaceOperationsInFlight.remove(key)
+                    if !preservingSessionId,
+                       let resumeCommand = self.resumeCommandForUnavailableNativeAgentSession(
+                           terminalId: key.terminalId,
+                           surfaceId: key.surfaceId
+                       ) {
+                        let cwd = self.terminalWorkspaces[key.terminalId]?
+                            .surfaces[key.surfaceId]?
+                            .terminalWorkingDirectory
+                            ?? self.terminalWorkingDirectory(key.terminalId)
+                            ?? self.workingDirectory
+                        self.terminalWorkspaces[key.terminalId]?.setSurfaceSessionId(
+                            surfaceId: key.surfaceId,
+                            sessionId: nil
+                        )
+                        self.createNativeSession(
+                            key: key,
+                            workingDirectory: cwd,
+                            command: resumeCommand
+                        )
+                    } else {
+                        self.applyNativeSessionUnavailable(
+                            key: key,
+                            message: message,
+                            preservingSessionId: preservingSessionId
+                        )
+                    }
                 }
             }
         }
@@ -468,6 +528,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         let terminalId = addTerminalTab(title: name, workingDirectory: cwd, command: resolvedCommand)
         if let idx = terminalTabs.firstIndex(where: { $0.terminalId == terminalId }) {
             terminalTabs[idx].agentKind = kind
+            scheduleSave()
         }
         if let kind, kind.sessionDirectory(forWorkingDirectory: cwd) != nil {
             startAgentSessionWatcher(
@@ -563,13 +624,14 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         terminalId: String,
         kind: ExternalAgentKind,
         workingDirectory: String,
-        excludedSessionIds: Set<String>
+        excludedSessionIds: Set<String>,
+        launchTime: Date = Date()
     ) {
         externalAgentWatchers[terminalId]?.cancel()
         let configuration = ExternalAgentSessionWatcher.Configuration(
             kind: kind,
             workingDirectory: workingDirectory,
-            launchTime: Date(),
+            launchTime: launchTime,
             excludedSessionIds: excludedSessionIds,
             timeout: 30,
             pollInterval: 0.5
@@ -699,6 +761,40 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         guard let tab = terminalTabs.first(where: { $0.terminalId == terminalId }) else { return nil }
         guard tab.backend == .native else { return nil }
         return nativeAttachCommand(for: tab.sessionId)
+    }
+
+    func resumeCommandForUnavailableNativeAgentSession(
+        terminalId: String,
+        surfaceId: SurfaceID
+    ) -> String? {
+        guard let tab = terminalTabs.first(where: { $0.terminalId == terminalId }),
+              let kind = tab.agentKind,
+              kind.supportsResume,
+              let agentSessionId = normalizedOptionalText(tab.agentSessionId)
+        else {
+            return nil
+        }
+
+        if let workspace = terminalWorkspaces[terminalId] {
+            guard workspace.orderedSurfaces.first(where: { $0.kind == .terminal })?.id == surfaceId else {
+                return nil
+            }
+        } else if let snapshot = tab.snapshot {
+            let surfacesById = Dictionary(uniqueKeysWithValues: snapshot.surfaces.map { ($0.id, $0) })
+            let firstTerminalId = snapshot.layout.surfaceIds.first { id in
+                surfacesById[id]?.kind == .terminal
+            }
+            guard firstTerminalId == surfaceId else {
+                return nil
+            }
+        } else if let rootSurfaceId = tab.rootSurfaceId, SurfaceID(rootSurfaceId) != surfaceId {
+            return nil
+        }
+
+        let originalCommand = normalizedOptionalText(tab.command)
+            ?? normalizedOptionalText(tab.snapshot?.surfaces.first(where: { $0.id == surfaceId })?.terminalCommand)
+            ?? kind.rawValue
+        return kind.resumeCommand(sessionId: agentSessionId, originalCommand: originalCommand)
     }
 
     /// Build a `smithers-session-connect <sessionId>` command line, locating
@@ -944,6 +1040,53 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
         reconcileNativeTerminalSurfaces(in: workspace)
     }
 
+    func terminalWorkspace(
+        _ workspace: TerminalWorkspace,
+        didResolveRunningProcessName name: String?,
+        surfaceId: SurfaceID
+    ) {
+        guard let kind = ExternalAgentKind.detect(fromProcessName: name) else { return }
+        guard let idx = terminalTabs.firstIndex(where: { $0.workspaceID == workspace.id }) else { return }
+
+        let terminalId = terminalTabs[idx].terminalId
+        let cwd = terminalWorkingDirectory(terminalId)
+            ?? workspace.surfaces[surfaceId]?.terminalWorkingDirectory
+            ?? workingDirectory
+
+        var didMutate = false
+        if terminalTabs[idx].agentKind != kind {
+            terminalTabs[idx].agentKind = kind
+            didMutate = true
+        }
+
+        let commandAlreadyIdentifiesAgent = normalizedOptionalText(terminalTabs[idx].command)
+            .flatMap(ExternalAgentKind.detect(fromCommand:)) != nil
+        if !commandAlreadyIdentifiesAgent {
+            terminalTabs[idx].command = kind.rawValue
+            didMutate = true
+        }
+
+        if didMutate {
+            terminalTabs[idx].timestamp = Date()
+            scheduleSave()
+        }
+
+        guard terminalTabs[idx].agentSessionId == nil,
+              externalAgentWatchers[terminalId] == nil,
+              kind.sessionDirectory(forWorkingDirectory: cwd) != nil
+        else {
+            return
+        }
+
+        startAgentSessionWatcher(
+            terminalId: terminalId,
+            kind: kind,
+            workingDirectory: cwd,
+            excludedSessionIds: [],
+            launchTime: Date().addingTimeInterval(-Self.dynamicAgentDetectionLookback)
+        )
+    }
+
     private func refreshFromCore() {
         for session in sessions.values {
             session.refresh()
@@ -1111,7 +1254,7 @@ class SessionStore: ObservableObject, TerminalWorkspaceChangeDelegate {
     private static func isSessionPersistenceDisabled(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
-        environment["TABMONSTERS_SESSION_PERSISTENCE_DISABLE"] == "1"
+        environment["SMITHERS_APP_SESSION_PERSISTENCE_DISABLE"] == "1"
     }
 
     private func restorePersistedSessions() {

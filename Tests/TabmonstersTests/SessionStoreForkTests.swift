@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 @MainActor
 final class SessionStoreForkTests: XCTestCase {
@@ -222,6 +222,102 @@ final class SessionStoreForkTests: XCTestCase {
         let forkedId = try XCTUnwrap(store.forkTerminalTab(originalId))
         let forkedTab = try XCTUnwrap(store.terminalTabs.first { $0.terminalId == forkedId })
         XCTAssertEqual(forkedTab.title, "My Claude")
+    }
+
+    func testNormalTerminalPromotesToAgentWhenForegroundProcessIsDetected() throws {
+        let context = try makeStoreContext()
+        defer { context.cleanup() }
+
+        let store = context.makeStore()
+        let workspaceID = WorkspaceID()
+        let surfaceID = SurfaceID()
+        let workspace = TerminalWorkspace(
+            id: workspaceID,
+            title: "Terminal",
+            workingDirectory: context.workspacePath,
+            rootSurfaceId: surfaceID,
+            backend: .native,
+            sessionId: "live-pane"
+        )
+        workspace.changeDelegate = store
+        store.terminalWorkspaces[workspaceID.rawValue] = workspace
+        store.terminalTabs = [
+            TerminalWorkspaceRecord(
+                terminalId: workspaceID.rawValue,
+                title: "Terminal",
+                preview: "Shell session",
+                timestamp: Date(),
+                createdAt: Date(),
+                workingDirectory: context.workspacePath,
+                command: nil,
+                backend: .native,
+                rootSurfaceId: surfaceID.rawValue,
+                sessionId: "live-pane",
+                rootKind: .terminal,
+                snapshot: workspace.snapshot
+            )
+        ]
+
+        workspace.updateRunningProcessName(surfaceId: surfaceID, name: "gemini")
+
+        let tab = try XCTUnwrap(store.terminalTabs.first { $0.terminalId == workspaceID.rawValue })
+        XCTAssertEqual(tab.agentKind, .gemini)
+        XCTAssertEqual(tab.command, "gemini")
+
+        let sidebar = try XCTUnwrap(store.sidebarWorkspaces().first { $0.terminalId == workspaceID.rawValue })
+        XCTAssertEqual(sidebar.agentKind, .gemini)
+    }
+
+    func testPersistedDetectedCodexTabBuildsResumeCommandAfterReload() throws {
+        let context = try makeStoreContext()
+        defer { context.cleanup() }
+
+        let firstStore = context.makeStore()
+        let terminalId = WorkspaceID().rawValue
+        let surfaceId = SurfaceID()
+        let agentSessionId = "11111111-2222-3333-4444-555555555555"
+        let snapshot = TerminalWorkspaceSnapshot(
+            title: "Codex",
+            surfaces: [
+                .terminal(
+                    id: surfaceId,
+                    workingDirectory: context.workspacePath,
+                    command: nil,
+                    backend: .native,
+                    sessionId: "stale-native-pane"
+                )
+            ],
+            layout: .leaf(surfaceId),
+            focusedSurfaceId: surfaceId,
+            hasCustomTitle: false
+        )
+        firstStore.terminalTabs = [
+            TerminalWorkspaceRecord(
+                terminalId: terminalId,
+                title: "Codex",
+                preview: "codex",
+                timestamp: Date(),
+                createdAt: Date(),
+                workingDirectory: context.workspacePath,
+                command: "codex",
+                backend: .native,
+                rootSurfaceId: surfaceId.rawValue,
+                sessionId: "stale-native-pane",
+                rootKind: .terminal,
+                agentKind: .codex,
+                agentSessionId: agentSessionId,
+                snapshot: snapshot
+            )
+        ]
+        firstStore.flushSessionPersistence()
+
+        let reloadedStore = context.makeStore()
+        let resumeCommand = reloadedStore.resumeCommandForUnavailableNativeAgentSession(
+            terminalId: terminalId,
+            surfaceId: surfaceId
+        )
+
+        XCTAssertEqual(resumeCommand, "codex resume \(agentSessionId)")
     }
 
     func testRunTabPinningTracksLifecycleForBackgroundDevToolsStreams() throws {

@@ -666,6 +666,16 @@ struct SidebarWorkspaceRow: View {
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
 
+                    if let agentKind = tab.agentKind {
+                        Text(agentKind.displayName)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundColor(Theme.accent)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                            .accessibilityIdentifier("workspace.agentTag.\(tab.id)")
+                    }
+
                     Spacer()
 
                     if tab.isPinned {

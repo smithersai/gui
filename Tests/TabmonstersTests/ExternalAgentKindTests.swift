@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 // MARK: - detect(fromCommand:) Tests
 
@@ -119,6 +119,22 @@ final class ExternalAgentKindDetectTests: XCTestCase {
         // `claude-code` is not a recognized executable name.
         XCTAssertNil(ExternalAgentKind.detect(fromCommand: "claude-code --resume 1"))
     }
+
+    func testDetectFromProcessNameCodex() {
+        XCTAssertEqual(ExternalAgentKind.detect(fromProcessName: "codex"), .codex)
+    }
+
+    func testDetectFromProcessNameClaudeWithPath() {
+        XCTAssertEqual(ExternalAgentKind.detect(fromProcessName: "/opt/homebrew/bin/claude"), .claude)
+    }
+
+    func testDetectFromProcessNameGemini() {
+        XCTAssertEqual(ExternalAgentKind.detect(fromProcessName: "gemini"), .gemini)
+    }
+
+    func testDetectFromProcessNameUnknown() {
+        XCTAssertNil(ExternalAgentKind.detect(fromProcessName: "zsh"))
+    }
 }
 
 // MARK: - sessionDirectory Tests
@@ -147,15 +163,15 @@ final class ExternalAgentKindSessionDirectoryTests: XCTestCase {
 
     func testClaudeSlugBasic() {
         XCTAssertEqual(
-            ExternalAgentKind.claudeSlug(forWorkingDirectory: "/Users/will/tabmonsters"),
-            "-Users-will-tabmonsters"
+            ExternalAgentKind.claudeSlug(forWorkingDirectory: "/Users/will/smithers-app"),
+            "-Users-will-smithers-app"
         )
     }
 
     func testClaudeSlugTrailingSlash() {
         XCTAssertEqual(
-            ExternalAgentKind.claudeSlug(forWorkingDirectory: "/Users/will/tabmonsters/"),
-            "-Users-will-tabmonsters"
+            ExternalAgentKind.claudeSlug(forWorkingDirectory: "/Users/will/smithers-app/"),
+            "-Users-will-smithers-app"
         )
     }
 
@@ -186,9 +202,9 @@ final class ExternalAgentKindSessionDirectoryTests: XCTestCase {
     }
 
     func testClaudeSessionDirectoryForWorkingDirectory() {
-        let url = ExternalAgentKind.claude.sessionDirectory(forWorkingDirectory: "/Users/will/tabmonsters")
+        let url = ExternalAgentKind.claude.sessionDirectory(forWorkingDirectory: "/Users/will/smithers-app")
         XCTAssertNotNil(url)
-        XCTAssertTrue(url!.path.hasSuffix("/.claude/projects/-Users-will-tabmonsters"), "got \(url!.path)")
+        XCTAssertTrue(url!.path.hasSuffix("/.claude/projects/-Users-will-smithers-app"), "got \(url!.path)")
     }
 
     func testCodexSessionDirectoryForWorkingDirectoryNotPartitioned() {

@@ -359,6 +359,11 @@ enum NativeTerminalAttachmentState: Equatable, Hashable, Codable {
 @MainActor
 protocol TerminalWorkspaceChangeDelegate: AnyObject {
     func terminalWorkspaceDidChange(_ workspace: TerminalWorkspace)
+    func terminalWorkspace(
+        _ workspace: TerminalWorkspace,
+        didResolveRunningProcessName name: String?,
+        surfaceId: SurfaceID
+    )
 }
 
 @MainActor
@@ -887,6 +892,7 @@ final class TerminalWorkspace: ObservableObject, Identifiable {
     func updateRunningProcessName(surfaceId: SurfaceID, name: String?) {
         let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolved = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        changeDelegate?.terminalWorkspace(self, didResolveRunningProcessName: resolved, surfaceId: surfaceId)
         guard layout.firstSurfaceId == surfaceId else { return }
         guard runningProcessName != resolved else { return }
         runningProcessName = resolved

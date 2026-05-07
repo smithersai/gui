@@ -17,6 +17,14 @@ enum ExternalAgentKind: String, Codable, Hashable, CaseIterable {
 // MARK: - Detection
 
 extension ExternalAgentKind {
+    var displayName: String {
+        switch self {
+        case .claude: return "Claude"
+        case .codex: return "Codex"
+        case .gemini: return "Gemini"
+        case .kimi: return "Kimi"
+        }
+    }
 
     /// Parse a launch command like "claude --dangerously-skip-permissions" or
     /// "/usr/local/bin/codex -c foo=bar --yolo" and extract the agent kind.
@@ -41,6 +49,16 @@ extension ExternalAgentKind {
 
         let candidate = basename(of: tokens[index])
         return ExternalAgentKind(rawValue: candidate)
+    }
+
+    /// Detect from the executable basename reported by the terminal process
+    /// tracker. This is intentionally narrower than `detect(fromCommand:)`
+    /// because process names are not shell command lines.
+    static func detect(fromProcessName name: String?) -> ExternalAgentKind? {
+        guard let name else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return ExternalAgentKind(rawValue: basename(of: trimmed))
     }
 
     // MARK: Parsing helpers
@@ -138,7 +156,7 @@ extension ExternalAgentKind {
 
     /// Convert a filesystem path into the slug Claude Code uses to partition
     /// sessions. Empirically Claude replaces each `/` with `-`, so
-    /// `/Users/will/tabmonsters` becomes `-Users-will-tabmonsters`. Trailing slashes are
+    /// `/Users/will/smithers-app` becomes `-Users-will-smithers-app`. Trailing slashes are
     /// discarded; embedded dots and spaces are preserved verbatim.
     static func claudeSlug(forWorkingDirectory cwd: String) -> String {
         let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
