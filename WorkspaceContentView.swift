@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct TerminalTabsLayer: View {
     @ObservedObject var store: SessionStore
@@ -122,53 +125,192 @@ private struct WorkspaceSplitNodeView: View {
             } else {
                 EmptyView()
             }
-        case .split(_, let axis, let first, let second):
-            if axis == .horizontal {
-                HSplitView {
-                    WorkspaceSplitNodeView(
-                        workspace: workspace,
-                        node: first,
-                        onCloseWorkspace: onCloseWorkspace,
-                        onRestartWorkspace: onRestartWorkspace,
-                        onWorkspaceProcessExited: onWorkspaceProcessExited,
-                        onAppShortcutCommand: onAppShortcutCommand
-                    )
-                        .frame(minWidth: 280, minHeight: 180)
-                    WorkspaceSplitNodeView(
-                        workspace: workspace,
-                        node: second,
-                        onCloseWorkspace: onCloseWorkspace,
-                        onRestartWorkspace: onRestartWorkspace,
-                        onWorkspaceProcessExited: onWorkspaceProcessExited,
-                        onAppShortcutCommand: onAppShortcutCommand
-                    )
-                        .frame(minWidth: 280, minHeight: 180)
-                }
-            } else {
-                VSplitView {
-                    WorkspaceSplitNodeView(
-                        workspace: workspace,
-                        node: first,
-                        onCloseWorkspace: onCloseWorkspace,
-                        onRestartWorkspace: onRestartWorkspace,
-                        onWorkspaceProcessExited: onWorkspaceProcessExited,
-                        onAppShortcutCommand: onAppShortcutCommand
-                    )
-                        .frame(minWidth: 280, minHeight: 180)
-                    WorkspaceSplitNodeView(
-                        workspace: workspace,
-                        node: second,
-                        onCloseWorkspace: onCloseWorkspace,
-                        onRestartWorkspace: onRestartWorkspace,
-                        onWorkspaceProcessExited: onWorkspaceProcessExited,
-                        onAppShortcutCommand: onAppShortcutCommand
-                    )
-                        .frame(minWidth: 280, minHeight: 180)
-                }
+        case .split(let splitID, let axis, let first, let second):
+            BalancedWorkspaceSplitView(splitID: splitID, axis: axis) {
+                WorkspaceSplitNodeView(
+                    workspace: workspace,
+                    node: first,
+                    onCloseWorkspace: onCloseWorkspace,
+                    onRestartWorkspace: onRestartWorkspace,
+                    onWorkspaceProcessExited: onWorkspaceProcessExited,
+                    onAppShortcutCommand: onAppShortcutCommand
+                )
+                .frame(
+                    minWidth: WorkspaceSplitMetrics.minimumPaneWidth,
+                    maxWidth: .infinity,
+                    minHeight: WorkspaceSplitMetrics.minimumPaneHeight,
+                    maxHeight: .infinity
+                )
+            } second: {
+                WorkspaceSplitNodeView(
+                    workspace: workspace,
+                    node: second,
+                    onCloseWorkspace: onCloseWorkspace,
+                    onRestartWorkspace: onRestartWorkspace,
+                    onWorkspaceProcessExited: onWorkspaceProcessExited,
+                    onAppShortcutCommand: onAppShortcutCommand
+                )
+                .frame(
+                    minWidth: WorkspaceSplitMetrics.minimumPaneWidth,
+                    maxWidth: .infinity,
+                    minHeight: WorkspaceSplitMetrics.minimumPaneHeight,
+                    maxHeight: .infinity
+                )
             }
         }
     }
 }
+
+private enum WorkspaceSplitMetrics {
+    static let minimumPaneWidth: CGFloat = 280
+    static let minimumPaneHeight: CGFloat = 180
+    static let initialDividerFraction: CGFloat = 0.5
+}
+
+#if os(macOS)
+private struct BalancedWorkspaceSplitView<First: View, Second: View>: NSViewRepresentable {
+    let splitID: PaneID
+    let axis: WorkspaceSplitAxis
+    let first: First
+    let second: Second
+
+    init(
+        splitID: PaneID,
+        axis: WorkspaceSplitAxis,
+        @ViewBuilder first: () -> First,
+        @ViewBuilder second: () -> Second
+    ) {
+        self.splitID = splitID
+        self.axis = axis
+        self.first = first()
+        self.second = second()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(splitID: splitID, axis: axis)
+    }
+
+    func makeNSView(context: Context) -> InitialBalancedNSSplitView {
+        let splitView = InitialBalancedNSSplitView()
+        splitView.dividerStyle = .thin
+        splitView.isVertical = axis == .horizontal
+        splitView.initialDividerFraction = WorkspaceSplitMetrics.initialDividerFraction
+        splitView.delegate = context.coordinator
+
+        let firstHost = makeHostingView(rootView: first)
+        let secondHost = makeHostingView(rootView: second)
+        splitView.addArrangedSubview(firstHost)
+        splitView.addArrangedSubview(secondHost)
+
+        context.coordinator.firstHost = firstHost
+        context.coordinator.secondHost = secondHost
+        context.coordinator.configure(splitID: splitID, axis: axis)
+        splitView.resetInitialDividerLayout()
+
+        return splitView
+    }
+
+    func updateNSView(_ splitView: InitialBalancedNSSplitView, context: Context) {
+        context.coordinator.firstHost?.rootView = first
+        context.coordinator.secondHost?.rootView = second
+
+        let isVertical = axis == .horizontal
+        let splitChanged = context.coordinator.splitID != splitID || context.coordinator.axis != axis
+        if splitView.isVertical != isVertical {
+            splitView.isVertical = isVertical
+        }
+        context.coordinator.configure(splitID: splitID, axis: axis)
+
+        if splitChanged {
+            splitView.resetInitialDividerLayout()
+        }
+    }
+
+    private func makeHostingView<Content: View>(rootView: Content) -> NSHostingView<Content> {
+        let host = NSHostingView(rootView: rootView)
+        host.translatesAutoresizingMaskIntoConstraints = false
+        host.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        host.setContentHuggingPriority(.defaultLow, for: .vertical)
+        host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        host.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        return host
+    }
+
+    final class Coordinator: NSObject, NSSplitViewDelegate {
+        var splitID: PaneID
+        var axis: WorkspaceSplitAxis
+        var firstHost: NSHostingView<First>?
+        var secondHost: NSHostingView<Second>?
+
+        init(splitID: PaneID, axis: WorkspaceSplitAxis) {
+            self.splitID = splitID
+            self.axis = axis
+        }
+
+        func configure(splitID: PaneID, axis: WorkspaceSplitAxis) {
+            self.splitID = splitID
+            self.axis = axis
+        }
+
+        func splitView(
+            _ splitView: NSSplitView,
+            constrainMinCoordinate proposedMinimumPosition: CGFloat,
+            ofSubviewAt dividerIndex: Int
+        ) -> CGFloat {
+            minimumPrimaryLength
+        }
+
+        func splitView(
+            _ splitView: NSSplitView,
+            constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+            ofSubviewAt dividerIndex: Int
+        ) -> CGFloat {
+            let length = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+            let maximum = length - splitView.dividerThickness - minimumSecondaryLength
+            return max(minimumPrimaryLength, maximum)
+        }
+
+        private var minimumPrimaryLength: CGFloat {
+            axis == .horizontal ? WorkspaceSplitMetrics.minimumPaneWidth : WorkspaceSplitMetrics.minimumPaneHeight
+        }
+
+        private var minimumSecondaryLength: CGFloat {
+            axis == .horizontal ? WorkspaceSplitMetrics.minimumPaneWidth : WorkspaceSplitMetrics.minimumPaneHeight
+        }
+    }
+}
+
+private final class InitialBalancedNSSplitView: NSSplitView {
+    var initialDividerFraction: CGFloat = 0.5
+    private var didApplyInitialDividerLayout = false
+
+    func resetInitialDividerLayout() {
+        didApplyInitialDividerLayout = false
+        needsLayout = true
+        DispatchQueue.main.async { [weak self] in
+            self?.applyInitialDividerLayoutIfNeeded()
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        applyInitialDividerLayoutIfNeeded()
+    }
+
+    private func applyInitialDividerLayoutIfNeeded() {
+        guard !didApplyInitialDividerLayout, arrangedSubviews.count == 2 else { return }
+
+        let length = isVertical ? bounds.width : bounds.height
+        guard length.isFinite, length > dividerThickness + 32 else { return }
+
+        let availableLength = max(0, length - dividerThickness)
+        let proposedPosition = availableLength * initialDividerFraction
+        let position = proposedPosition.rounded(.toNearestOrAwayFromZero)
+        didApplyInitialDividerLayout = true
+        setPosition(position, ofDividerAt: 0)
+    }
+}
+#endif
 
 private struct WorkspaceSurfaceContainer: View {
     @ObservedObject var workspace: TerminalWorkspace
