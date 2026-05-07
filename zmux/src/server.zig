@@ -115,6 +115,7 @@ pub const Server = struct {
     allocator: Allocator,
     mutex: std.Thread.Mutex = .{},
     socket_path: []u8,
+    socket_stat: posix.Stat,
     listener_fd: posix.fd_t,
     manager: mux.Manager,
     connections: std.ArrayList(*ClientConnection) = .empty,
@@ -141,10 +142,12 @@ pub const Server = struct {
         try setSocketPermissions(allocator, socket_path);
 
         try posix.listen(listener, 64);
+        const socket_stat = try socketPathStat(socket_path);
 
         return .{
             .allocator = allocator,
             .socket_path = try allocator.dupe(u8, socket_path),
+            .socket_stat = socket_stat,
             .listener_fd = listener,
             .manager = mux.Manager.init(allocator, null),
             .last_activity_seconds = std.atomic.Value(i64).init(std.time.timestamp()),
@@ -154,15 +157,22 @@ pub const Server = struct {
 
     pub fn deinit(self: *Server) void {
         self.running.store(false, .seq_cst);
+        self.unlinkSocketPathIfOwned();
         posix.close(self.listener_fd);
         self.closeConnections();
-        std.fs.deleteFileAbsolute(self.socket_path) catch {};
         self.manager.event_sink = null;
         self.manager.deinit();
         self.freePendingEvents();
         self.connections.deinit(self.allocator);
         self.pending_events.deinit(self.allocator);
         self.allocator.free(self.socket_path);
+    }
+
+    fn unlinkSocketPathIfOwned(self: *Server) void {
+        const path_stat = socketPathStat(self.socket_path) catch return;
+        if (self.socket_stat.dev == path_stat.dev and self.socket_stat.ino == path_stat.ino) {
+            std.fs.deleteFileAbsolute(self.socket_path) catch {};
+        }
     }
 
     pub fn run(self: *Server) !void {
@@ -1092,11 +1102,63 @@ test "new socket parent is private" {
     try std.testing.expectEqual(@as(u32, 0o700), try dirMode(parent));
 }
 
+test "server deinit does not unlink a replacement socket" {
+    if (!(builtin.os.tag == .linux or builtin.os.tag.isDarwin())) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const socket_path = try tempPath(allocator, "zmx-replaced-socket");
+    defer allocator.free(socket_path);
+    defer std.fs.deleteFileAbsolute(socket_path) catch {};
+
+    var server = try Server.init(allocator, socket_path, 0);
+    try std.testing.expect(socketExists(socket_path));
+
+    try std.fs.deleteFileAbsolute(socket_path);
+    const replacement = try bindRawUnixListener(socket_path);
+    defer posix.close(replacement);
+
+    server.deinit();
+    try std.testing.expect(socketExists(socket_path));
+}
+
+test "server deinit unlinks its owned socket" {
+    if (!(builtin.os.tag == .linux or builtin.os.tag.isDarwin())) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const socket_path = try tempPath(allocator, "zmx-owned-socket");
+    defer allocator.free(socket_path);
+    defer std.fs.deleteFileAbsolute(socket_path) catch {};
+
+    var server = try Server.init(allocator, socket_path, 0);
+    try std.testing.expect(socketExists(socket_path));
+
+    server.deinit();
+    try std.testing.expect(!socketExists(socket_path));
+}
+
 fn tempPath(allocator: Allocator, prefix: []const u8) ![]u8 {
     var seed: [8]u8 = undefined;
     std.crypto.random.bytes(&seed);
     const nonce = std.mem.readInt(u64, &seed, .little);
     return std.fmt.allocPrint(allocator, "/tmp/{s}-{x:0>16}", .{ prefix, nonce });
+}
+
+fn bindRawUnixListener(path: []const u8) !posix.fd_t {
+    const address = try std.net.Address.initUnix(path);
+    const listener = try posix.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+    errdefer posix.close(listener);
+    try posix.bind(listener, &address.any, address.getOsSockLen());
+    try posix.listen(listener, 1);
+    return listener;
+}
+
+fn socketExists(path: []const u8) bool {
+    _ = socketPathStat(path) catch return false;
+    return true;
+}
+
+fn socketPathStat(path: []const u8) !posix.Stat {
+    return posix.fstatat(posix.AT.FDCWD, path, posix.AT.SYMLINK_NOFOLLOW);
 }
 
 fn chmodAbsolute(allocator: Allocator, path: []const u8, mode: std.c.mode_t) !void {
