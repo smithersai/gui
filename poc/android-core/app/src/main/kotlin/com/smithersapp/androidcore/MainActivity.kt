@@ -1,4 +1,4 @@
-package com.tabmonsters.androidcore
+package com.smithersapp.androidcore
 
 import android.app.Activity
 import android.os.Bundle

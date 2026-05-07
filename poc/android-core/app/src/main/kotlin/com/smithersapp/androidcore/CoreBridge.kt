@@ -1,10 +1,10 @@
-package com.tabmonsters.androidcore
+package com.smithersapp.androidcore
 
 /**
  * JNI bridge to `libsmithers_core.so` (Zig).
  *
  * Canary contract (ticket 0104): every `external fun` here MUST line up 1:1
- * with an `export fn Java_com_tabmonsters_androidcore_CoreBridge_<name>` in
+ * with an `export fn Java_com_smithersapp_androidcore_CoreBridge_<name>` in
  * `poc/android-core/src/jni_bindings.zig`. If those drift, the JVM's
  * lazy resolver throws `UnsatisfiedLinkError` on first call and
  * CoreBridgeSmokeTest fails CI.

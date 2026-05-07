@@ -20,11 +20,11 @@ plugins {
 }
 
 android {
-    namespace = "com.tabmonsters.androidcore"
+    namespace = "com.smithersapp.androidcore"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.tabmonsters.androidcore"
+        applicationId = "com.smithersapp.androidcore"
         // API 29 matches the `android_api` constant in ../build.zig. Both
         // sides MUST move together — the NDK sysroot is level-gated.
         minSdk = 29
