@@ -1,6 +1,6 @@
 import XCTest
 import ViewInspector
-@testable import Tabmonsters
+@testable import SmithersGUI
 #if canImport(SmithersAuth)
 import SmithersAuth
 #endif
@@ -268,7 +268,7 @@ final class FeatureFlagsGatingTests: XCTestCase {
         let source = try sourceFile("macos/Sources/Smithers/Smithers.AppDelegate.swift")
         XCTAssertFalse(
             source.contains("remoteMode.phase.allowsRemoteSurface"),
-            "TabmonstersRootView should allow entering the remote shell before the first snapshot is ready"
+            "SmithersGUIRootView should allow entering the remote shell before the first snapshot is ready"
         )
     }
 

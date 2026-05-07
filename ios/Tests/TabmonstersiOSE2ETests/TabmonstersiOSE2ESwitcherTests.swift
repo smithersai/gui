@@ -1,7 +1,7 @@
 #if os(iOS)
 import XCTest
 
-final class TabmonstersiOSE2ESwitcherTests: XCTestCase {
+final class SmithersGUIiOSE2ESwitcherTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

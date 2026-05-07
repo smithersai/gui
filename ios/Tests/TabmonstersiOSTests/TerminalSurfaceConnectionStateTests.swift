@@ -1,7 +1,7 @@
 #if os(iOS)
 import XCTest
 import Combine
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 @MainActor
 final class TerminalSurfaceConnectionStateTests: XCTestCase {

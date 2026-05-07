@@ -2,7 +2,7 @@
 //
 // Standalone SwiftPM package for the shared OAuth2/PKCE/Keychain module
 // (ticket 0109). Keeps the test loop fast and hermetic — `swift test` here
-// does NOT pull in CGhosttyKit / libsmithers / the rest of the Tabmonsters
+// does NOT pull in CGhosttyKit / libsmithers / the rest of the SmithersGUI
 // target graph, so tests can run in any environment.
 //
 // The top-level Package.swift also exposes `SmithersAuth` as a library

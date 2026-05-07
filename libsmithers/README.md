@@ -1,6 +1,6 @@
 # libsmithers
 
-`libsmithers` is the Zig runtime core for Tabmonsters. Its public C ABI is the
+`libsmithers` is the Zig runtime core for SmithersGUI. Its public C ABI is the
 modern `smithers_core_*` connection runtime plus the process-wide
 `smithers_obs_*` observability API declared in `include/smithers.h`.
 

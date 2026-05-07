@@ -2,7 +2,7 @@
 import Foundation
 import XCTest
 
-final class TabmonstersiOSE2EWorkflowRunsTests: XCTestCase {
+final class SmithersGUIiOSE2EWorkflowRunsTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

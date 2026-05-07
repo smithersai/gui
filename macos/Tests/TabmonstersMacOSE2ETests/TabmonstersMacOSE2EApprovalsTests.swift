@@ -55,7 +55,7 @@ private struct MacE2EApprovalRow {
     }
 }
 
-final class TabmonstersMacOSE2EApprovalsTests: XCTestCase {
+final class SmithersGUIMacOSE2EApprovalsTests: XCTestCase {
     private let http = MacE2EHTTPClient()
     private static let repoRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()

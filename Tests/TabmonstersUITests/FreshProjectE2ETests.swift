@@ -1,6 +1,6 @@
 import XCTest
 
-final class FreshProjectE2ETests: TabmonstersUITestCase {
+final class FreshProjectE2ETests: SmithersGUIUITestCase {
 
     // MARK: - Dashboard
 

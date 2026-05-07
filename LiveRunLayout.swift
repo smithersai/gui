@@ -82,7 +82,7 @@ struct LiveRunLayout<TreePane: View, InspectorPane: View>: View {
 
     private var forcedMode: LiveRunLayoutMode? {
         guard UITestSupport.isEnabled else { return nil }
-        guard let raw = ProcessInfo.processInfo.environment["TABMONSTERS_UITEST_FORCE_LIVERUN_LAYOUT"]?.lowercased() else {
+        guard let raw = ProcessInfo.processInfo.environment["SMITHERS_APP_UITEST_FORCE_LIVERUN_LAYOUT"]?.lowercased() else {
             return nil
         }
 

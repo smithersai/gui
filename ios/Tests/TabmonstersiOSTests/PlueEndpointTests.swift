@@ -2,7 +2,7 @@
 
 #if os(iOS)
 import XCTest
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 final class SmithersEndpointTests: XCTestCase {
     func testEnvironmentSmithersBaseURLWinsAndTrimsAPIPath() {

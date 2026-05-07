@@ -5,7 +5,7 @@
 2026-05-02: The audit deliverable exists, but the ticket states App Store/GDPR/CCPA answers are blocked until high findings are resolved or accepted with legal/product sign-off. This needs legal/product review before it can be closed as safe.
 
 Date: 2026-04-24
-Scope: `/Users/williamcory/tabmonsters` and `/Users/williamcory/plue`
+Scope: `/Users/williamcory/smithers-app` and `/Users/williamcory/plue`
 Status: App Store / GDPR / CCPA responses are blocked until the High findings below are resolved or explicitly accepted with legal/product sign-off.
 
 Apple reference used for the App Store draft: https://developer.apple.com/app-store/app-privacy-details/. Apple defines collected data as data transmitted off-device and retained by the developer or third-party partners beyond real-time request handling, and requires declaration even when data is only used for app functionality.
@@ -38,7 +38,7 @@ Impact:
 
 Current state:
 
-- `tabmonsters/ios/Sources/TabmonstersiOS/PrivacyInfo.xcprivacy` declares only `EmailAddress` and `UserID`.
+- `smithers-app/ios/Sources/SmithersGUIiOS/PrivacyInfo.xcprivacy` declares only `EmailAddress` and `UserID`.
 - Actual repo evidence shows collection or retention of account names, GitHub identity, avatar URLs, OAuth/integration tokens, app/API tokens, billing/subscription data, IP addresses, user-agent/device/OS diagnostics, workflow/user content, repo/workspace metadata, audit events, telemetry, logs, webhook payloads, and possibly search/browser data depending on shipped browser-surface behavior.
 
 Impact:
@@ -53,7 +53,7 @@ Current state:
 - `audit_log` stores `actor_name`, `target_name`, `metadata`, and `ip_address` for 90 days. `actor_id` is `ON DELETE SET NULL`, but names/IP/metadata remain.
 - `internal/services/email.go` logs raw email addresses in multiple success/failure paths.
 - `internal/routes/telemetry.go` accepts client error reports and logs `error_message`, `stack`, `url`, `user_agent`, `user_id`, `username`, `command`, `os`, and `arch`.
-- `tabmonsters/Shared/Sources/SmithersLogging/AppLogger.swift` redacts sensitive metadata keys such as token/secret/password, but the free-form log message string and non-sensitive metadata keys such as `email`, `workspace`, and `path` are not generally value-redacted.
+- `smithers-app/Shared/Sources/SmithersLogging/AppLogger.swift` redacts sensitive metadata keys such as token/secret/password, but the free-form log message string and non-sensitive metadata keys such as `email`, `workspace`, and `path` are not generally value-redacted.
 - Workflow runner logs redact known repository secrets and the agent token before insertion, but this is exact-value secret redaction only; arbitrary PII in prompts, command output, error text, URLs, or payloads is not generally removed.
 
 Impact:
@@ -97,7 +97,7 @@ Current state:
 - OAuth2 access/refresh tokens are stored in Keychain using `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and non-synchronizable storage.
 - UserDefaults/AppStorage usage reviewed is preferences only: vim mode, developer tools, sidebar, search engine, shortcut settings, onboarding state, remote sandbox flag, layout/log UI preferences.
 - Local SQLite at Application Support stores recent workspace paths/display names, workspace sessions, chat session JSON, run IDs, terminal tab metadata, titles/previews/snapshots, and working directories. No SQLite encryption was found.
-- Local file logs live under `~/Library/Logs/Tabmonsters/app.log`, rotate at 5 MB, and prune after 7 days.
+- Local file logs live under `~/Library/Logs/SmithersGUI/app.log`, rotate at 5 MB, and prune after 7 days.
 
 Impact:
 

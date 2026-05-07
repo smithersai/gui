@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 private func makeFilterBlock(role: String, content: String) -> ChatBlock {
     ChatBlock(

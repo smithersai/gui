@@ -1,6 +1,6 @@
 import XCTest
 
-final class JJHubWorkflowsE2ETests: TabmonstersUITestCase {
+final class JJHubWorkflowsE2ETests: SmithersGUIUITestCase {
 
     // MARK: - Happy Path
 

@@ -1,11 +1,11 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 final class UITestSupportTests: XCTestCase {
     func testIsEnabledWithUITestingArgument() {
         XCTAssertTrue(
             UITestSupport.isEnabled(
-                arguments: ["/Applications/Tabmonsters", "--uitesting"],
+                arguments: ["/Applications/SmithersGUI", "--uitesting"],
                 environment: [:]
             )
         )
@@ -14,8 +14,8 @@ final class UITestSupportTests: XCTestCase {
     func testIsEnabledWithEnvironmentFlag() {
         XCTAssertTrue(
             UITestSupport.isEnabled(
-                arguments: ["/Applications/Tabmonsters"],
-                environment: ["TABMONSTERS_UITEST": "1"]
+                arguments: ["/Applications/SmithersGUI"],
+                environment: ["SMITHERS_APP_UITEST": "1"]
             )
         )
     }
@@ -23,8 +23,8 @@ final class UITestSupportTests: XCTestCase {
     func testIsEnabledIsFalseWithoutFlag() {
         XCTAssertFalse(
             UITestSupport.isEnabled(
-                arguments: ["/Applications/Tabmonsters"],
-                environment: ["TABMONSTERS_UITEST": "true"]
+                arguments: ["/Applications/SmithersGUI"],
+                environment: ["SMITHERS_APP_UITEST": "true"]
             )
         )
     }
@@ -32,7 +32,7 @@ final class UITestSupportTests: XCTestCase {
     func testIsRunningUnitTestsWithXCTestConfigurationPath() {
         XCTAssertTrue(
             UITestSupport.isRunningUnitTests(
-                processName: "Tabmonsters",
+                processName: "SmithersGUI",
                 environment: ["XCTestConfigurationFilePath": "/tmp/test.xctestconfiguration"]
             )
         )
@@ -50,7 +50,7 @@ final class UITestSupportTests: XCTestCase {
     func testIsRunningUnitTestsWithSwiftPMTestBundleProcessName() {
         XCTAssertTrue(
             UITestSupport.isRunningUnitTests(
-                processName: "TabmonstersTests",
+                processName: "SmithersGUITests",
                 environment: [:]
             )
         )
@@ -60,7 +60,7 @@ final class UITestSupportTests: XCTestCase {
         XCTAssertTrue(
             UITestSupport.isRunningUnitTests(
                 processName: "swift",
-                arguments: ["/tmp/TabmonstersTests.xctest/Contents/MacOS/TabmonstersTests"],
+                arguments: ["/tmp/SmithersGUITests.xctest/Contents/MacOS/SmithersGUITests"],
                 environment: [:]
             )
         )
@@ -69,7 +69,7 @@ final class UITestSupportTests: XCTestCase {
     func testIsRunningUnitTestsIsFalseForNormalAppProcess() {
         XCTAssertFalse(
             UITestSupport.isRunningUnitTests(
-                processName: "Tabmonsters",
+                processName: "SmithersGUI",
                 environment: [:]
             )
         )

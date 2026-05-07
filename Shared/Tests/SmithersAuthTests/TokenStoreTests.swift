@@ -50,7 +50,7 @@ final class TokenStoreTests: XCTestCase {
     func test_keychain_roundtrip_or_skips_when_unavailable() throws {
         // Use a unique service per test run to avoid pollution between
         // local runs / parallel test bundles.
-        let service = "com.tabmonsters.oauth2.tests.\(UUID().uuidString)"
+        let service = "com.smithers-app.oauth2.tests.\(UUID().uuidString)"
         let store = KeychainTokenStore(service: service, account: "roundtrip")
 
         let t = OAuth2Tokens(accessToken: "ka1", refreshToken: "kr1", expiresAt: Date(timeIntervalSince1970: 42), scope: "read write")

@@ -1,16 +1,16 @@
 # Contributing
 
-This repository contains the SwiftUI macOS app for TABMONSTERS. The `codex/`
+This repository contains the SwiftUI macOS app for Smithers App. The `codex/`
 and `ghostty/` directories are vendored trees; avoid changing them unless the
 task is explicitly about those integrations.
 
 ## Build And Test
 
 - Build the app with `swift build`.
-- Run the debug build with `.build/debug/Tabmonsters`.
+- Run the debug build with `.build/debug/SmithersGUI`.
 - Run focused tests with `swift test --filter <TestName>`.
 - If you add an app source file, make sure it is included in both SwiftPM and
-  `Tabmonsters.xcodeproj` when the Xcode project is part of the workflow.
+  `SmithersGUI.xcodeproj` when the Xcode project is part of the workflow.
 
 ## Developer Debug Mode
 
@@ -19,9 +19,9 @@ leaving the current screen. It is enabled automatically in debug builds. It can
 also be controlled explicitly at launch:
 
 ```sh
-TABMONSTERS_DEBUG=1 .build/debug/Tabmonsters
-.build/debug/Tabmonsters --developer-debug
-.build/debug/Tabmonsters --no-developer-debug
+SMITHERS_APP_DEBUG=1 .build/debug/SmithersGUI
+.build/debug/SmithersGUI --developer-debug
+.build/debug/SmithersGUI --no-developer-debug
 ```
 
 Truthy environment values are `1`, `true`, `yes`, `on`, and `enabled`.
@@ -55,5 +55,5 @@ When adding a new debug surface:
 
 - Keep it read-only unless the task explicitly needs a mutation.
 - Prefer compact summaries over dumping entire model objects.
-- Add focused tests in `Tests/TabmonstersTests/DeveloperDebugTests.swift`.
+- Add focused tests in `Tests/SmithersGUITests/DeveloperDebugTests.swift`.
 - Keep the normal app usable while the panel is open.

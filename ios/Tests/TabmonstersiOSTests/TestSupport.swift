@@ -13,7 +13,7 @@ final class URLProtocolStub: URLProtocol {
             client?.urlProtocol(
                 self,
                 didFailWithError: NSError(
-                    domain: "TabmonstersiOSTests.URLProtocolStub",
+                    domain: "SmithersGUIiOSTests.URLProtocolStub",
                     code: -1,
                     userInfo: [NSLocalizedDescriptionKey: "URLProtocolStub.handler not configured"]
                 )
@@ -56,7 +56,7 @@ private extension Data {
             let count = stream.read(&buffer, maxLength: bufferSize)
             if count < 0 {
                 throw stream.streamError ?? NSError(
-                    domain: "TabmonstersiOSTests.URLProtocolStub",
+                    domain: "SmithersGUIiOSTests.URLProtocolStub",
                     code: -2,
                     userInfo: [NSLocalizedDescriptionKey: "Failed to read request body stream"]
                 )

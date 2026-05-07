@@ -1,8 +1,8 @@
-// TabmonstersiOSE2ETerminalExtendedTests.swift — extended terminal / PTY E2E
+// SmithersGUIiOSE2ETerminalExtendedTests.swift — extended terminal / PTY E2E
 // scenarios against the real plue backend.
 //
 // Scope:
-//   - Keep the existing TabmonstersiOSE2ETerminalTests.swift untouched.
+//   - Keep the existing SmithersGUIiOSE2ETerminalTests.swift untouched.
 //   - Add 10 complementary scenarios covering mount, write, resize,
 //     detach/reattach, reconnect, websocket validation, rate limiting,
 //     and session tombstoning.
@@ -22,7 +22,7 @@ import XCTest
 import Foundation
 import Darwin
 
-final class TabmonstersiOSE2ETerminalExtendedTests: XCTestCase {
+final class SmithersGUIiOSE2ETerminalExtendedTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

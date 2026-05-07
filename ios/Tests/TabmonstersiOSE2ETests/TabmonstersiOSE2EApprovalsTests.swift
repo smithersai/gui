@@ -1,4 +1,4 @@
-// TabmonstersiOSE2EApprovalsTests.swift — approvals scenario group (ticket
+// SmithersGUIiOSE2EApprovalsTests.swift — approvals scenario group (ticket
 // ios-e2e-harness, scenario group B).
 //
 // v1 SCOPE: assert the approvals data plane is wired end-to-end against
@@ -24,7 +24,7 @@
 #if os(iOS)
 import XCTest
 
-final class TabmonstersiOSE2EApprovalsTests: XCTestCase {
+final class SmithersGUIiOSE2EApprovalsTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

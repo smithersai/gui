@@ -1,4 +1,4 @@
-// TabmonstersApp.swift — iOS entry point (ticket 0121, expanded by 0109/0122).
+// SmithersGUIApp.swift — iOS entry point (ticket 0121, expanded by 0109/0122).
 //
 // The app starts at the sign-in shell. Once the user completes OAuth2
 // (0106 + 0109) the `IOSContentShell` takes over. The iOS shell hosts a
@@ -75,8 +75,8 @@ enum SmithersBackendEndpoint {
 }
 
 @main
-struct TabmonstersiOSApp: App {
-    @UIApplicationDelegateAdaptor(TabmonstersiOSAppDelegate.self) private var appDelegate
+struct SmithersGUIiOSApp: App {
+    @UIApplicationDelegateAdaptor(SmithersGUIiOSAppDelegate.self) private var appDelegate
     @StateObject private var authModel: AuthViewModel
     @StateObject private var featureFlags: FeatureFlagsClient
     // The E2E config is captured at `init` so every child view
@@ -158,7 +158,7 @@ struct TabmonstersiOSApp: App {
             let initial = E2EEnvironment.syntheticTokens(from: e2e)
             store = InMemoryTokenStore(initial: initial)
         } else {
-            store = KeychainTokenStore(service: "com.tabmonsters.oauth2.ios", account: "default")
+            store = KeychainTokenStore(service: "com.smithers-app.oauth2.ios", account: "default")
         }
 
         let manager = TokenManager(client: client, store: store, wipeHandler: IOSSessionWipeCoordinator.shared)
@@ -269,7 +269,7 @@ private struct StartupValidationView: View {
     }
 }
 
-final class TabmonstersiOSAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+final class SmithersGUIiOSAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil

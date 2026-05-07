@@ -46,7 +46,7 @@ test "client call golden mock responses round-trip unchanged for common methods"
         },
         .{
             .method = "getCurrentRepo",
-            .expected = "{\"name\":\"tabmonsters\",\"owner\":null,\"root\":\"/tmp/repo\"}",
+            .expected = "{\"name\":\"smithers-app\",\"owner\":null,\"root\":\"/tmp/repo\"}",
         },
     };
 

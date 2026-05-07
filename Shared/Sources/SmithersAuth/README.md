@@ -1,6 +1,6 @@
 # SmithersAuth
 
-OAuth2 PKCE sign-in module shared between the macOS and iOS Tabmonsters apps
+OAuth2 PKCE sign-in module shared between the macOS and iOS SmithersGUI apps
 (ticket 0109). Sibling of Smithers ticket 0106 (the server-side authorize flow
 that this module talks to).
 
@@ -34,7 +34,7 @@ that this module talks to).
 ### iOS
 
 `smithers://oauth2/callback` — registered via `CFBundleURLTypes` in
-`ios/Sources/TabmonstersiOS/Info.plist`. Defense-in-depth against scheme
+`ios/Sources/SmithersGUIiOS/Info.plist`. Defense-in-depth against scheme
 hijacking: every callback URL is validated against the `state` parameter
 we generated for that authorize attempt.
 
@@ -55,8 +55,8 @@ custom scheme, the macOS custom scheme, and the macOS loopback route.
 Nuke the service item from the command line:
 
 ```sh
-security delete-generic-password -s "com.tabmonsters.oauth2.ios"    || true
-security delete-generic-password -s "com.tabmonsters.oauth2.macos"  || true
+security delete-generic-password -s "com.smithers-app.oauth2.ios"    || true
+security delete-generic-password -s "com.smithers-app.oauth2.macos"  || true
 ```
 
 The in-app `Sign out` button revokes + wipes via
@@ -87,12 +87,12 @@ cd Shared && env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS swift test
 
 # iOS simulator suite (includes UI launch test):
 env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS xcodebuild \
-  -project Tabmonsters.xcodeproj -scheme TabmonstersiOS \
+  -project SmithersGUI.xcodeproj -scheme SmithersGUIiOS \
   -destination 'platform=iOS Simulator,name=iPhone 16' test
 
 # macOS app suite:
 env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS xcodebuild \
-  -project Tabmonsters.xcodeproj -scheme Tabmonsters \
+  -project SmithersGUI.xcodeproj -scheme SmithersGUI \
   -destination 'platform=macOS' test
 ```
 

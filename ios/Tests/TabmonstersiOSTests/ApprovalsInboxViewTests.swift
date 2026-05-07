@@ -2,7 +2,7 @@
 import Foundation
 import XCTest
 import ViewInspector
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 extension ApprovalsInboxView: Inspectable {}
 

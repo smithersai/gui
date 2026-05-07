@@ -1,6 +1,6 @@
 import XCTest
 
-final class NavigationE2ETests: TabmonstersUITestCase {
+final class NavigationE2ETests: SmithersGUIUITestCase {
     func testTopLevelDashboardsAreAvailableViaPalette() {
         let dashboards: [(query: String, view: String)] = [
             ("dashboard", "view.dashboard"),

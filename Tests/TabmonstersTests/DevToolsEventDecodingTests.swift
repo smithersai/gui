@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 /// Reproduces and guards against the "Malformed event" regression where the
 /// libsmithers stream fallback path emits `{"method":..., "args":...}` for

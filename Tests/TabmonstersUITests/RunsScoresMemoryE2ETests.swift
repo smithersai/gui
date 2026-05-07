@@ -2,7 +2,7 @@ import XCTest
 
 // MARK: - Runs E2E Tests
 
-final class RunsE2ETests: TabmonstersUITestCase {
+final class RunsE2ETests: SmithersGUIUITestCase {
 
     func testRunsListLoadsWithSections() {
         navigate(to: "Runs", expectedViewIdentifier: "view.runs")
@@ -70,7 +70,7 @@ final class RunsE2ETests: TabmonstersUITestCase {
 
 // MARK: - Scores E2E Tests
 
-final class ScoresE2ETests: TabmonstersUITestCase {
+final class ScoresE2ETests: SmithersGUIUITestCase {
 
     func testScoresViewLoadsWithSummaryTab() {
         navigate(to: "Scores", expectedViewIdentifier: "view.scores")
@@ -135,7 +135,7 @@ final class ScoresE2ETests: TabmonstersUITestCase {
 
 // MARK: - Memory E2E Tests
 
-final class MemoryE2ETests: TabmonstersUITestCase {
+final class MemoryE2ETests: SmithersGUIUITestCase {
 
     func testMemoryViewLoadsFactsList() {
         navigate(to: "Memory", expectedViewIdentifier: "view.memory")

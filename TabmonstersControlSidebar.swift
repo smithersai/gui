@@ -5,7 +5,7 @@ import AppKit
 import UniformTypeIdentifiers
 #endif
 
-private struct TabmonstersControlSidebarMessage: Identifiable, Equatable {
+private struct SmithersGUIControlSidebarMessage: Identifiable, Equatable {
     enum Role {
         case user
         case agent
@@ -18,7 +18,7 @@ private struct TabmonstersControlSidebarMessage: Identifiable, Equatable {
     let timestamp: Date
 }
 
-struct TabmonstersControlSidebar: View {
+struct SmithersGUIControlSidebar: View {
     @Binding var isExpanded: Bool
     @ObservedObject var store: SessionStore
     @ObservedObject var smithers: SmithersClient
@@ -27,8 +27,8 @@ struct TabmonstersControlSidebar: View {
 
     @State private var inputText = ""
     @State private var showScreenshotCaptureConfirmation = false
-    @State private var messages: [TabmonstersControlSidebarMessage] = [
-        TabmonstersControlSidebarMessage(
+    @State private var messages: [SmithersGUIControlSidebarMessage] = [
+        SmithersGUIControlSidebarMessage(
             role: .system,
             text: "Ready for app control. Start a Smithers run to inspect the app and act.",
             timestamp: Date()
@@ -44,7 +44,7 @@ struct TabmonstersControlSidebar: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: isExpanded)
-        .accessibilityIdentifier(isExpanded ? "tabmonstersControl.sidebar.expanded" : "tabmonstersControl.sidebar.collapsed")
+        .accessibilityIdentifier(isExpanded ? "smithersGUIControl.sidebar.expanded" : "smithersGUIControl.sidebar.collapsed")
         .confirmationDialog(
             "Capture app screenshot?",
             isPresented: $showScreenshotCaptureConfirmation,
@@ -78,7 +78,7 @@ struct TabmonstersControlSidebar: View {
             .border(Theme.border, edges: [.leading])
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("tabmonstersControl.sidebar.open")
+        .accessibilityIdentifier("smithersGUIControl.sidebar.open")
     }
 
     private var expandedPanel: some View {
@@ -101,7 +101,7 @@ struct TabmonstersControlSidebar: View {
                 .foregroundColor(Theme.accent)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("TABMONSTERS Operator")
+                Text("Smithers App Operator")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(Theme.textPrimary)
                 Text("Route: \(destination.label)")
@@ -123,7 +123,7 @@ struct TabmonstersControlSidebar: View {
                     .cornerRadius(6)
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("tabmonstersControl.sidebar.close")
+            .accessibilityIdentifier("smithersGUIControl.sidebar.close")
         }
         .padding(.horizontal, 12)
         .frame(height: 48)
@@ -134,11 +134,11 @@ struct TabmonstersControlSidebar: View {
     private var statusStrip: some View {
         HStack(spacing: 8) {
             statusPill("CLI", active: smithers.cliAvailable)
-                .accessibilityIdentifier("tabmonstersControl.status.cli")
+                .accessibilityIdentifier("smithersGUIControl.status.cli")
             statusPill("Server", active: smithers.isConnected)
-                .accessibilityIdentifier("tabmonstersControl.status.server")
+                .accessibilityIdentifier("smithersGUIControl.status.server")
             statusPill("\(store.terminalTabs.count) terminals", active: !store.terminalTabs.isEmpty)
-                .accessibilityIdentifier("tabmonstersControl.status.terminals")
+                .accessibilityIdentifier("smithersGUIControl.status.terminals")
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
@@ -173,10 +173,10 @@ struct TabmonstersControlSidebar: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.base.opacity(0.55))
-        .accessibilityIdentifier("tabmonstersControl.messages")
+        .accessibilityIdentifier("smithersGUIControl.messages")
     }
 
-    private func messageBubble(_ message: TabmonstersControlSidebarMessage) -> some View {
+    private func messageBubble(_ message: SmithersGUIControlSidebarMessage) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Text(label(for: message.role))
@@ -199,7 +199,7 @@ struct TabmonstersControlSidebar: View {
         .cornerRadius(8)
     }
 
-    private func label(for role: TabmonstersControlSidebarMessage.Role) -> String {
+    private func label(for role: SmithersGUIControlSidebarMessage.Role) -> String {
         switch role {
         case .user: return "USER"
         case .agent: return "AGENT"
@@ -207,7 +207,7 @@ struct TabmonstersControlSidebar: View {
         }
     }
 
-    private func color(for role: TabmonstersControlSidebarMessage.Role) -> Color {
+    private func color(for role: SmithersGUIControlSidebarMessage.Role) -> Color {
         switch role {
         case .user: return Theme.accent
         case .agent: return Theme.success
@@ -215,7 +215,7 @@ struct TabmonstersControlSidebar: View {
         }
     }
 
-    private func fill(for role: TabmonstersControlSidebarMessage.Role) -> Color {
+    private func fill(for role: SmithersGUIControlSidebarMessage.Role) -> Color {
         switch role {
         case .user: return Theme.bubbleUser
         case .agent: return Theme.bubbleAssistant
@@ -226,25 +226,25 @@ struct TabmonstersControlSidebar: View {
     private var quickActions: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                quickAction("Snapshot", identifier: "tabmonstersControl.action.snapshot") {
+                quickAction("Snapshot", identifier: "smithersGUIControl.action.snapshot") {
                     append(.agent, buildSnapshot())
                 }
-                quickAction("Screenshot", identifier: "tabmonstersControl.action.screenshot") {
+                quickAction("Screenshot", identifier: "smithersGUIControl.action.screenshot") {
                     showScreenshotCaptureConfirmation = true
                 }
             }
 
             HStack(spacing: 8) {
-                quickAction("Terminal", identifier: "tabmonstersControl.action.terminal") {
+                quickAction("Terminal", identifier: "smithersGUIControl.action.terminal") {
                     captureFocusedTerminal()
                 }
-                quickAction("Smithers TUI", identifier: "tabmonstersControl.action.smithersTUI") {
+                quickAction("Smithers TUI", identifier: "smithersGUIControl.action.smithersTUI") {
                     openCommand("smithers tui", title: "Smithers TUI")
                 }
             }
 
             HStack(spacing: 8) {
-                quickAction("Codex", identifier: "tabmonstersControl.action.codex") {
+                quickAction("Codex", identifier: "smithersGUIControl.action.codex") {
                     openCommand("codex", title: "Codex")
                 }
                 Spacer(minLength: 0)
@@ -266,7 +266,7 @@ struct TabmonstersControlSidebar: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier(identifier ?? "tabmonstersControl.action.\(title)")
+        .accessibilityIdentifier(identifier ?? "smithersGUIControl.action.\(title)")
     }
 
     private var composer: some View {
@@ -280,7 +280,7 @@ struct TabmonstersControlSidebar: View {
                 .background(Theme.inputBg)
                 .cornerRadius(6)
                 .onSubmit(sendComposerMessage)
-                .accessibilityIdentifier("tabmonstersControl.input")
+                .accessibilityIdentifier("smithersGUIControl.input")
 
             Button {
                 sendComposerMessage()
@@ -293,7 +293,7 @@ struct TabmonstersControlSidebar: View {
                     .cornerRadius(6)
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("tabmonstersControl.send")
+            .accessibilityIdentifier("smithersGUIControl.send")
         }
         .padding(12)
     }
@@ -407,7 +407,7 @@ struct TabmonstersControlSidebar: View {
         panel.canCreateDirectories = true
         panel.isExtensionHidden = false
         panel.nameFieldStringValue = defaultScreenshotFileName()
-        panel.title = "Save TABMONSTERS screenshot"
+        panel.title = "Save Smithers App screenshot"
         panel.message = "Review screenshot contents before sharing."
 
         guard panel.runModal() == .OK, let url = panel.url else {
@@ -433,7 +433,7 @@ struct TabmonstersControlSidebar: View {
         let timestamp = formatter.string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
         let suffix = String(UUID().uuidString.prefix(8)).lowercased()
-        return "tabmonsters-screenshot-\(timestamp)-\(suffix).png"
+        return "smithers-app-screenshot-\(timestamp)-\(suffix).png"
     }
 
     private func openCommand(_ command: String, title: String) {
@@ -443,8 +443,8 @@ struct TabmonstersControlSidebar: View {
         append(.system, "Opened \(title) in a terminal.")
     }
 
-    private func append(_ role: TabmonstersControlSidebarMessage.Role, _ text: String) {
-        messages.append(TabmonstersControlSidebarMessage(role: role, text: text, timestamp: Date()))
+    private func append(_ role: SmithersGUIControlSidebarMessage.Role, _ text: String) {
+        messages.append(SmithersGUIControlSidebarMessage(role: role, text: text, timestamp: Date()))
     }
 
     private static func timeString(for date: Date) -> String {

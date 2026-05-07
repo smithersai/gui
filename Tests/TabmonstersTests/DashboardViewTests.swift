@@ -1,7 +1,7 @@
 import SwiftUI
 import XCTest
 import ViewInspector
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 // MARK: - Test Helpers
 

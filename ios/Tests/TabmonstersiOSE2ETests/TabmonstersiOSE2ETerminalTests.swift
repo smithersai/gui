@@ -1,10 +1,10 @@
-// TabmonstersiOSE2ETerminalTests.swift — terminal PTY scenario group (ticket
+// SmithersGUIiOSE2ETerminalTests.swift — terminal PTY scenario group (ticket
 // ios-e2e-harness, scenario group A).
 //
 // These tests open the seeded workspace and assert that the iOS terminal
 // surface mounts with its stable accessibility identifier
 // `terminal.ios.surface` (see `TerminalIOSRendererBridge` in
-// `ios/Sources/TabmonstersiOS/Terminal/TerminalIOSRenderer.swift`).
+// `ios/Sources/SmithersGUIiOS/Terminal/TerminalIOSRenderer.swift`).
 //
 // Real PTY byte flow requires a live Freestyle sandbox SSH connection,
 // which is explicitly out of scope for v1 e2e (no sandbox provider is
@@ -22,7 +22,7 @@
 #if os(iOS)
 import XCTest
 
-final class TabmonstersiOSE2ETerminalTests: XCTestCase {
+final class SmithersGUIiOSE2ETerminalTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

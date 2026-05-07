@@ -205,8 +205,8 @@ final class TokenStoreErrorPathsTests: XCTestCase {
     }
 
     func test_keychain_service_isolation_or_skips() throws {
-        let serviceA = "com.tabmonsters.oauth2.tests.iso.A.\(UUID().uuidString)"
-        let serviceB = "com.tabmonsters.oauth2.tests.iso.B.\(UUID().uuidString)"
+        let serviceA = "com.smithers-app.oauth2.tests.iso.A.\(UUID().uuidString)"
+        let serviceB = "com.smithers-app.oauth2.tests.iso.B.\(UUID().uuidString)"
         let storeA = KeychainTokenStore(service: serviceA, account: "iso")
         let storeB = KeychainTokenStore(service: serviceB, account: "iso")
 
@@ -232,7 +232,7 @@ final class TokenStoreErrorPathsTests: XCTestCase {
 
     func test_corrupt_blob_in_keychain_returns_decode_error_or_skips() throws {
         #if canImport(Security)
-        let service = "com.tabmonsters.oauth2.tests.corrupt.\(UUID().uuidString)"
+        let service = "com.smithers-app.oauth2.tests.corrupt.\(UUID().uuidString)"
         let account = "corrupt"
         let store = KeychainTokenStore(service: service, account: account)
 
@@ -269,7 +269,7 @@ final class TokenStoreErrorPathsTests: XCTestCase {
 
     func test_corrupt_blob_wrong_shape_returns_decode_error_or_skips() throws {
         #if canImport(Security)
-        let service = "com.tabmonsters.oauth2.tests.corrupt2.\(UUID().uuidString)"
+        let service = "com.smithers-app.oauth2.tests.corrupt2.\(UUID().uuidString)"
         let account = "corrupt2"
         let store = KeychainTokenStore(service: service, account: account)
 
@@ -340,7 +340,7 @@ final class TokenStoreErrorPathsTests: XCTestCase {
         // The in-memory store keeps the struct verbatim and never goes
         // through the JSON codec. Exercise the real Keychain path so
         // unicode is actually JSON-encoded and decoded.
-        let service = "com.tabmonsters.oauth2.tests.unicode.\(UUID().uuidString)"
+        let service = "com.smithers-app.oauth2.tests.unicode.\(UUID().uuidString)"
         let store = KeychainTokenStore(service: service, account: "unicode")
         let t = OAuth2Tokens(
             accessToken: "\u{1F510}-tok",
@@ -373,7 +373,7 @@ final class TokenStoreErrorPathsTests: XCTestCase {
     }
 
     func test_expired_token_roundtrips_through_keychain_json_or_skips() throws {
-        let service = "com.tabmonsters.oauth2.tests.expired.\(UUID().uuidString)"
+        let service = "com.smithers-app.oauth2.tests.expired.\(UUID().uuidString)"
         let store = KeychainTokenStore(service: service, account: "expired")
         let past = Date(timeIntervalSince1970: 42)
         let t = OAuth2Tokens(accessToken: "old", refreshToken: "old-r", expiresAt: past, scope: "read")
@@ -405,7 +405,7 @@ final class TokenStoreErrorPathsTests: XCTestCase {
     }
 
     func test_clear_nonexistent_keychain_does_not_throw_or_skips() throws {
-        let service = "com.tabmonsters.oauth2.tests.idem.\(UUID().uuidString)"
+        let service = "com.smithers-app.oauth2.tests.idem.\(UUID().uuidString)"
         let store = KeychainTokenStore(service: service, account: "idem")
         // Never saved anything — `clear()` must swallow `errSecItemNotFound`.
         do {
@@ -440,7 +440,7 @@ final class TokenStoreErrorPathsTests: XCTestCase {
         // through to `SecItemAdd` only on `errSecItemNotFound`. Two saves
         // back-to-back exercise both branches: first save adds, second
         // save updates. After both, only the second token is observable.
-        let service = "com.tabmonsters.oauth2.tests.rotate.\(UUID().uuidString)"
+        let service = "com.smithers-app.oauth2.tests.rotate.\(UUID().uuidString)"
         let store = KeychainTokenStore(service: service, account: "rotate")
         let old = OAuth2Tokens(accessToken: "old", refreshToken: "old-r")
         let new = OAuth2Tokens(accessToken: "new", refreshToken: "new-r")

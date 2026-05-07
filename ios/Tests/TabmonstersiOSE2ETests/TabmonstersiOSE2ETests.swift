@@ -1,6 +1,6 @@
-// TabmonstersiOSE2ETests.swift — full-stack XCUITest suite for the iOS app.
+// SmithersGUIiOSE2ETests.swift — full-stack XCUITest suite for the iOS app.
 //
-// Ticket: ios-e2e-harness. Distinct from `TabmonstersiOSUITests` (the launch
+// Ticket: ios-e2e-harness. Distinct from `SmithersGUIiOSUITests` (the launch
 // smoke test bundle from 0121) — this bundle expects a real plue backend
 // on `PLUE_BASE_URL` and a seeded bearer token in `SMITHERS_E2E_BEARER`.
 // See `ios/scripts/run-e2e.sh` for the orchestration, and
@@ -15,7 +15,7 @@
 #if os(iOS)
 import XCTest
 
-final class TabmonstersiOSE2ETests: XCTestCase {
+final class SmithersGUIiOSE2ETests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 // MARK: - Sidebar Workspace Tree Tests
 

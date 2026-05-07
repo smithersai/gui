@@ -2,7 +2,7 @@ import XCTest
 
 // MARK: - Agents E2E Tests
 
-final class AgentsE2ETests: TabmonstersUITestCase {
+final class AgentsE2ETests: SmithersGUIUITestCase {
 
     func testAgentsViewLoads() {
         navigate(to: "Agents", expectedViewIdentifier: "view.agents")
@@ -52,7 +52,7 @@ final class AgentsE2ETests: TabmonstersUITestCase {
 
 // MARK: - Changes E2E Tests
 
-final class ChangesE2ETests: TabmonstersUITestCase {
+final class ChangesE2ETests: SmithersGUIUITestCase {
 
     func testChangesViewLoads() {
         navigate(to: "Changes", expectedViewIdentifier: "view.changes")
@@ -129,7 +129,7 @@ final class ChangesE2ETests: TabmonstersUITestCase {
 
 // MARK: - Terminal E2E Tests
 
-final class TerminalE2ETests: TabmonstersUITestCase {
+final class TerminalE2ETests: SmithersGUIUITestCase {
     private func terminalTabCount() -> Int {
         let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "workspace.terminal:")
         return app.buttons.matching(predicate).count

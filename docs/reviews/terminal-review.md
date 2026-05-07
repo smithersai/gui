@@ -1,6 +1,6 @@
 # Terminal Feature Review
 
-Review scope: `TERMINAL` feature group, focused on `TerminalView.swift`, Ghostty bridge behavior, `NSViewRepresentable` lifecycle, keyboard and mouse forwarding, clipboard operations, surface lifecycle/free behavior, callback safety, and terminal-related tests under `Tests/TabmonstersTests` and `Tests/TabmonstersUITests`.
+Review scope: `TERMINAL` feature group, focused on `TerminalView.swift`, Ghostty bridge behavior, `NSViewRepresentable` lifecycle, keyboard and mouse forwarding, clipboard operations, surface lifecycle/free behavior, callback safety, and terminal-related tests under `Tests/SmithersGUITests` and `Tests/SmithersGUIUITests`.
 
 Static review only. Per request, I did not run `swift test`.
 
@@ -84,11 +84,11 @@ Recommendation: if hijack/watch terminals are meant to survive navigation, give 
 
 ## Coverage Review
 
-`Tests/TabmonstersTests/TerminalViewTests.swift` covers the SwiftUI fallback/error state and a few pure helper policies such as `TerminalKeyForwardingPolicy`. Most of the Ghostty-specific tests are documentation comments or constant/math assertions, for example lifecycle/free notes at `Tests/TabmonstersTests/TerminalViewTests.swift:324`, keyboard notes at `Tests/TabmonstersTests/TerminalViewTests.swift:369`, and mouse notes at `Tests/TabmonstersTests/TerminalViewTests.swift:458`. They do not instantiate a live `TerminalSurfaceView`, do not call the C callbacks, and do not assert arguments passed to Ghostty.
+`Tests/SmithersGUITests/TerminalViewTests.swift` covers the SwiftUI fallback/error state and a few pure helper policies such as `TerminalKeyForwardingPolicy`. Most of the Ghostty-specific tests are documentation comments or constant/math assertions, for example lifecycle/free notes at `Tests/SmithersGUITests/TerminalViewTests.swift:324`, keyboard notes at `Tests/SmithersGUITests/TerminalViewTests.swift:369`, and mouse notes at `Tests/SmithersGUITests/TerminalViewTests.swift:458`. They do not instantiate a live `TerminalSurfaceView`, do not call the C callbacks, and do not assert arguments passed to Ghostty.
 
-`Tests/TabmonstersUITests/AgentsChangesTerminalE2ETests.swift:173` through `Tests/TabmonstersUITests/AgentsChangesTerminalE2ETests.swift:218` run in UI-test placeholder mode. They validate navigation, placeholder presence, and multiple terminal tab labels, but not native Ghostty rendering, pty startup, input, resize, clipboard, close, or deallocation behavior.
+`Tests/SmithersGUIUITests/AgentsChangesTerminalE2ETests.swift:173` through `Tests/SmithersGUIUITests/AgentsChangesTerminalE2ETests.swift:218` run in UI-test placeholder mode. They validate navigation, placeholder presence, and multiple terminal tab labels, but not native Ghostty rendering, pty startup, input, resize, clipboard, close, or deallocation behavior.
 
-`Tests/TabmonstersUITests/RunInspectorE2ETests.swift:4` checks that a hijack action opens a terminal command placeholder and displays the shell command. It does not verify the command actually launches in a Ghostty surface outside UI-test mode.
+`Tests/SmithersGUIUITests/RunInspectorE2ETests.swift:4` checks that a hijack action opens a terminal command placeholder and displays the shell command. It does not verify the command actually launches in a Ghostty surface outside UI-test mode.
 
 `ContentViewTests` and `SidebarViewTests` provide route, label, icon, and menu coverage for terminal destinations. They do not cover the native surface registry, tab close/removal, or per-session surface preservation.
 

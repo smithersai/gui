@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 /// End-to-end test for native terminal session persistence across "app
 /// restarts". Boots the real `smithers-session-daemon` on an isolated

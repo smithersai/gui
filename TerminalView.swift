@@ -32,7 +32,7 @@ private enum TerminalClipboard {
         let data: String
     }
 
-    private static let selectionPasteboard = NSPasteboard(name: .init("com.tabmonsters.terminal.selection"))
+    private static let selectionPasteboard = NSPasteboard(name: .init("com.smithers-app.terminal.selection"))
     private static let plainTextType = NSPasteboard.PasteboardType("public.utf8-plain-text")
 
     fileprivate static func isSelectionClipboard(_ location: ghostty_clipboard_e) -> Bool {

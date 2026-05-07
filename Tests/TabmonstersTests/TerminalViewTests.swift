@@ -2,7 +2,7 @@ import XCTest
 import SwiftUI
 import AppKit
 import ViewInspector
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 // MARK: - TerminalView SwiftUI Tests
 

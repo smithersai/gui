@@ -1,6 +1,6 @@
 import XCTest
 import SwiftUI
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 @MainActor
 final class TicketsViewSmokeTests: XCTestCase {

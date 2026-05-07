@@ -150,7 +150,7 @@ private struct MacE2EAgentChatContext {
     }
 }
 
-final class TabmonstersMacOSE2EChatTests: XCTestCase {
+final class SmithersGUIMacOSE2EChatTests: XCTestCase {
     private let http = MacE2EHTTPClient()
 
     override func setUp() {

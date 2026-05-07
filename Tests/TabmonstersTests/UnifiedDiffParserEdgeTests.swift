@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 /// Edge-case + randomized-fuzzer coverage for ``UnifiedDiffParser``.
 ///

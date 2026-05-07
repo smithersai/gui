@@ -1,6 +1,6 @@
 # Theme UI Build Review
 
-Review scope: `THEME_COLORS`, `UI_COMPONENTS`, `DATE_FORMATTING`, `NUMERIC_CONSTANTS`, and `BUILD_SYSTEM`, focused on `Theme.swift`, `Package.swift`, `project.yml`, and `Tests/TabmonstersTests/ThemeTests.swift`. Static review only; `swift test` was intentionally not run.
+Review scope: `THEME_COLORS`, `UI_COMPONENTS`, `DATE_FORMATTING`, `NUMERIC_CONSTANTS`, and `BUILD_SYSTEM`, focused on `Theme.swift`, `Package.swift`, `project.yml`, and `Tests/SmithersGUITests/ThemeTests.swift`. Static review only; `swift test` was intentionally not run.
 
 ## Findings
 
@@ -8,17 +8,17 @@ Review scope: `THEME_COLORS`, `UI_COMPONENTS`, `DATE_FORMATTING`, `NUMERIC_CONST
 
 `Theme.swift:1169` trims non-alphanumeric characters from the ends of the input, then `Theme.swift:1172` accepts `Scanner.scanHexInt64` success without verifying the scanner consumed the entire string. `Scanner` can parse a valid prefix and stop before invalid characters, so malformed values such as `12GGGG`, `12345Z`, or `abcxyz` can be accepted and converted based on only the prefix. `0xFFFFFF` is also surprising: the scanner accepts the `0x` prefix, but `hex.count` is still 8, so the value is interpreted as ARGB with alpha `0`.
 
-The tests at `Tests/TabmonstersTests/ThemeTests.swift:176` through `Tests/TabmonstersTests/ThemeTests.swift:205` do not catch this. They assert only fallback alpha, and the comments incorrectly say `"XXXXX"` and `""` hit the default length switch. They actually fail the scanner guard; only `"#A"` reaches the unsupported-length default branch.
+The tests at `Tests/SmithersGUITests/ThemeTests.swift:176` through `Tests/SmithersGUITests/ThemeTests.swift:205` do not catch this. They assert only fallback alpha, and the comments incorrectly say `"XXXXX"` and `""` hit the default length switch. They actually fail the scanner guard; only `"#A"` reaches the unsupported-length default branch.
 
 Recommendation: normalize by removing only an optional leading `#`, require the remaining string to be exactly 3, 6, or 8 hex digits, and require full-string parsing. Add regression cases for invalid suffixes, embedded invalid characters, `0x` prefixes, empty strings, and unsupported lengths with RGB and alpha assertions.
 
 ### Medium: XcodeGen does not build or run `ThemeTests`
 
-`Package.swift:62` through `Package.swift:68` defines the `TabmonstersTests` unit test target that contains `ThemeTests.swift`. `project.yml:82` through `project.yml:103` defines only `TabmonstersUITests` and includes only that UI test bundle in the `Tabmonsters` scheme.
+`Package.swift:62` through `Package.swift:68` defines the `SmithersGUITests` unit test target that contains `ThemeTests.swift`. `project.yml:82` through `project.yml:103` defines only `SmithersGUIUITests` and includes only that UI test bundle in the `SmithersGUI` scheme.
 
 If developers use the generated Xcode project, the theme tests are invisible to that build path. That weakens both `BUILD_SYSTEM` correctness and the coverage for `THEME_COLORS`, `UI_COMPONENTS`, and `Color(hex:)`.
 
-Recommendation: add a `TabmonstersTests` unit-test target to `project.yml`, include `Tests/TabmonstersTests`, wire the app target and `ViewInspector` if XcodeGen supports the dependency path used here, and add the target to the scheme test list. If SwiftPM is the only supported unit-test runner, document that explicitly near the project generation instructions.
+Recommendation: add a `SmithersGUITests` unit-test target to `project.yml`, include `Tests/SmithersGUITests`, wire the app target and `ViewInspector` if XcodeGen supports the dependency path used here, and add the target to the scheme test list. If SwiftPM is the only supported unit-test runner, document that explicitly near the project generation instructions.
 
 ### Medium: Build settings hard-code the Apple Silicon Ghostty slice
 

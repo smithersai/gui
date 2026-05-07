@@ -2,7 +2,7 @@
 import Combine
 import Foundation
 import XCTest
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 @MainActor
 final class RuntimePTYTransportTests: XCTestCase {

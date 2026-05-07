@@ -2,7 +2,7 @@ import XCTest
 
 // MARK: - Prompts E2E Tests
 
-final class PromptsE2ETests: TabmonstersUITestCase {
+final class PromptsE2ETests: SmithersGUIUITestCase {
 
     func testPromptsListLoadsAndShowsPlaceholder() {
         navigate(to: "Prompts", expectedViewIdentifier: "view.prompts")
@@ -105,7 +105,7 @@ final class PromptsE2ETests: TabmonstersUITestCase {
 
 // MARK: - Landings E2E Tests
 
-final class LandingsE2ETests: TabmonstersUITestCase {
+final class LandingsE2ETests: SmithersGUIUITestCase {
 
     func testLandingsListLoadsAndShowsPlaceholder() {
         navigate(to: "Landings", expectedViewIdentifier: "view.landings")
@@ -186,7 +186,7 @@ final class LandingsE2ETests: TabmonstersUITestCase {
 
 // MARK: - SQL Browser E2E Tests
 
-final class SQLBrowserE2ETests: TabmonstersUITestCase {
+final class SQLBrowserE2ETests: SmithersGUIUITestCase {
 
     func testSQLBrowserLoadsTablesSidebar() {
         navigate(to: "SQL Browser", expectedViewIdentifier: "view.sql")

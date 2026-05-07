@@ -2,7 +2,7 @@
 import Foundation
 import XCTest
 
-/// TabmonstersiOSE2EFeatureFlagsTests.swift
+/// SmithersGUIiOSE2EFeatureFlagsTests.swift
 ///
 /// Real-backend feature-flag coverage for the iOS XCUITest bundle.
 ///
@@ -13,7 +13,7 @@ import XCTest
 /// - Where the requested behaviour is not observable from XCUITest yet,
 ///   explicitly `XCTSkip` with a concrete reason instead of pretending
 ///   the scenario is covered.
-final class TabmonstersiOSE2EFeatureFlagsTests: XCTestCase {
+final class SmithersGUIiOSE2EFeatureFlagsTests: XCTestCase {
     private enum FlagName: String {
         case remoteSandboxEnabled = "remote_sandbox_enabled"
         case electricClientEnabled = "electric_client_enabled"

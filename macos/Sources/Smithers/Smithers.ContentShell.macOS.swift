@@ -2,7 +2,7 @@
 //
 // The macOS platform shell extracted from ContentView.swift in ticket
 // 0122. Owns the `NavigationSplitView`, the macOS-specific toolbar, the
-// terminal tabs layer, the `TabmonstersControlSidebar`, the developer debug
+// terminal tabs layer, the `SmithersGUIControlSidebar`, the developer debug
 // panel, the command palette overlay, and the quick-launch overlay.
 //
 // ContentView.swift composes this shell on top of the shared navigation
@@ -28,9 +28,9 @@ struct MacOSContentShell<DetailContent: View, PaletteOverlay: View, QuickLaunchO
     @Binding var developerDebugPanelVisible: Bool
 
     let developerToolsEnabled: Bool
-    let tabmonstersControlSidebarEnabled: Bool
+    let smithersGUIControlSidebarEnabled: Bool
     let shortcutCheatSheetFooterEnabled: Bool
-    @Binding var tabmonstersControlSidebarExpanded: Bool
+    @Binding var smithersGUIControlSidebarExpanded: Bool
 
     let activeTerminalId: String?
     let shouldShowSmithersVersionWarning: Bool
@@ -183,9 +183,9 @@ struct MacOSContentShell<DetailContent: View, PaletteOverlay: View, QuickLaunchO
                 onSmithersActionNotification(notification)
             }
 
-            if tabmonstersControlSidebarEnabled {
-                TabmonstersControlSidebar(
-                    isExpanded: $tabmonstersControlSidebarExpanded,
+            if smithersGUIControlSidebarEnabled {
+                SmithersGUIControlSidebar(
+                    isExpanded: $smithersGUIControlSidebarExpanded,
                     store: store,
                     smithers: smithers,
                     destination: destination,

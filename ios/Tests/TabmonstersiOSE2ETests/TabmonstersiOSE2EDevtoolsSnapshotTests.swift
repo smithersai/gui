@@ -670,7 +670,7 @@ private struct FeatureFlagsEnvelope: Decodable {
     let flags: [String: Bool]
 }
 
-final class TabmonstersiOSE2EDevtoolsSnapshotTests: XCTestCase {
+final class SmithersGUIiOSE2EDevtoolsSnapshotTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

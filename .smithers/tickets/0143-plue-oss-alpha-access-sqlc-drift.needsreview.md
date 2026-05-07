@@ -2,7 +2,7 @@
 
 ## Needs Review
 
-2026-05-02: This ticket cannot be completed safely from the current Tabmonsters workspace. The current `/Users/williamcory/plue` checkout does not have the `oss/` working tree this ticket targets, and the task asks for schema reconciliation/regeneration across a separate repository. Please confirm the current oss checkout/remote and whether this stale ticket should be retired or re-scoped.
+2026-05-02: This ticket cannot be completed safely from the current SmithersGUI workspace. The current `/Users/williamcory/plue` checkout does not have the `oss/` working tree this ticket targets, and the task asks for schema reconciliation/regeneration across a separate repository. Please confirm the current oss checkout/remote and whether this stale ticket should be retired or re-scoped.
 
 ## Context
 

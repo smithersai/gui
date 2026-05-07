@@ -25,7 +25,7 @@
 
   App Group
   ---------
-  `group.com.tabmonsters.ios` is shared with TabmonstersShareExtension so the
+  `group.com.smithers-app.ios` is shared with SmithersGUIShareExtension so the
   app and extension are provisioned for the same iOS group container.
 
   Associated Domains (universal links)
@@ -46,13 +46,13 @@
 <dict>
     <key>keychain-access-groups</key>
     <array>
-        <string>$(AppIdentifierPrefix)com.tabmonsters.ios</string>
+        <string>$(AppIdentifierPrefix)com.smithers-app.ios</string>
     </array>
     <key>aps-environment</key>
     <string>$(APS_ENVIRONMENT)</string>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.com.tabmonsters.ios</string>
+        <string>group.com.smithers-app.ios</string>
     </array>
     <key>com.apple.developer.associated-domains</key>
     <array>

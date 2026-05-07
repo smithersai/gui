@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build TabmonstersiOS with a device-reachable Smithers backend URL baked into
+# Build SmithersGUIiOS with a device-reachable Smithers backend URL baked into
 # Info.plist. Defaults to LAN testing; source build/preview-tunnel/*.env first
 # to use an ngrok preview URL instead.
 
@@ -7,11 +7,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUI_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-SOURCE_PLIST="$GUI_ROOT/ios/Sources/TabmonstersiOS/Info.plist"
+SOURCE_PLIST="$GUI_ROOT/ios/Sources/SmithersGUIiOS/Info.plist"
 STATE_DIR="${IOS_DEVICE_BUILD_STATE_DIR:-$GUI_ROOT/build/ios-device}"
 GENERATED_PLIST="$STATE_DIR/Info.device.plist"
 DERIVED_DATA_PATH="${IOS_DERIVED_DATA_PATH:-$STATE_DIR/DerivedData}"
-SCHEME="${IOS_SCHEME:-TabmonstersiOS}"
+SCHEME="${IOS_SCHEME:-SmithersGUIiOS}"
 CONFIGURATION="${IOS_CONFIGURATION:-Debug}"
 if [[ -n "${IOS_DESTINATION:-}" ]]; then
     DESTINATION="$IOS_DESTINATION"
@@ -232,7 +232,7 @@ main() {
 
     log "building $SCHEME ($CONFIGURATION) for destination: $DESTINATION"
     xcodebuild \
-        -project "$GUI_ROOT/Tabmonsters.xcodeproj" \
+        -project "$GUI_ROOT/SmithersGUI.xcodeproj" \
         -scheme "$SCHEME" \
         -configuration "$CONFIGURATION" \
         -destination "$DESTINATION" \

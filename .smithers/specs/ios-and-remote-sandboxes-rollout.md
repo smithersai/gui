@@ -254,7 +254,7 @@ Every gate references metrics from [`ios-and-remote-sandboxes-observability.md` 
 
 ## 9. Deprecation of today's features
 
-Aligned with migration [D4's Step 10–12 deletions](ios-and-remote-sandboxes-migration.md#3-sequenced-commit-plan-tabmonsters-side).
+Aligned with migration [D4's Step 10–12 deletions](ios-and-remote-sandboxes-migration.md#3-sequenced-commit-plan-smithers-app-side).
 
 ### What goes away, and when the user is told
 

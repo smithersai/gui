@@ -1,9 +1,9 @@
-// TabmonstersMacOSE2ELaunchEnvironment.swift — XCUITest helper that stamps
+// SmithersGUIMacOSE2ELaunchEnvironment.swift — XCUITest helper that stamps
 // the process launch environment used by `Shared/Sources/SmithersE2ESupport/`
 // on the macOS test runner side.
 //
 // Ticket: macos-e2e-harness. Mirrors
-// `ios/Tests/TabmonstersiOSE2ETests/TabmonstersiOSE2ELaunchEnvironment.swift`.
+// `ios/Tests/SmithersGUIiOSE2ETests/SmithersGUIiOSE2ELaunchEnvironment.swift`.
 // Every test in this bundle is expected to call
 // `applyE2ELaunchEnvironment(to:)` on its `XCUIApplication` BEFORE
 // `app.launch()` so the app boots directly into the signed-in, flag-on
@@ -39,11 +39,11 @@ enum MacE2ELaunchKey {
     /// auto-opens that folder at process start via its existing
     /// `workspaceFromLaunch` hook. Lets the XCUITest bundle mount the
     /// content shell without driving a NSOpenPanel.
-    static let autoOpenPath = "TABMONSTERS_OPEN_WORKSPACE"
+    static let autoOpenPath = "SMITHERS_APP_OPEN_WORKSPACE"
     /// macOS-only: toggles internal UI-test affordances (disables some
     /// animations, shortens timers). Mirrors the env var the existing
-    /// `TabmonstersUITests` bundle sets.
-    static let uiTestMode = "TABMONSTERS_UITEST"
+    /// `SmithersGUIUITests` bundle sets.
+    static let uiTestMode = "SMITHERS_APP_UITEST"
 }
 
 /// Shape of the per-test launch environment. The harness script passes
@@ -84,7 +84,7 @@ struct MacE2ELaunchEnvironment {
     func apply(to app: XCUIApplication, bypassAuth: Bool = true, remoteFlag: Bool = true, autoOpen: Bool = false) {
         // Always set the UI-test affordance knob so the shell picks up
         // the same "disable animations / shorten timers" behaviour the
-        // existing `TabmonstersUITests` bundle relies on.
+        // existing `SmithersGUIUITests` bundle relies on.
         app.launchEnvironment[MacE2ELaunchKey.uiTestMode] = "1"
         app.launchArguments = ["--uitesting"]
         if bypassAuth {

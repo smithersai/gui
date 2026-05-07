@@ -2,7 +2,7 @@
 import Foundation
 import XCTest
 
-final class TabmonstersiOSE2EWorkspaceLifecycleTests: XCTestCase {
+final class SmithersGUIiOSE2EWorkspaceLifecycleTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
@@ -393,7 +393,7 @@ private struct WorkspaceLifecycleHTTPClient {
             path: "api/user/repos",
             jsonBody: [
                 "name": name,
-                "description": "created by TabmonstersiOSE2EWorkspaceLifecycleTests",
+                "description": "created by SmithersGUIiOSE2EWorkspaceLifecycleTests",
                 "private": true,
                 "auto_init": true,
                 "default_bookmark": "main",

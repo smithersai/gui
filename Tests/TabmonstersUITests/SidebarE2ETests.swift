@@ -3,7 +3,7 @@ import XCTest
 // NOTE: `testSidebarSessionTabsVisibleAfterChat` was removed along with the
 // built-in chat feature (sidebar.newChat / view.chat no longer exist).
 
-final class SidebarE2ETests: TabmonstersUITestCase {
+final class SidebarE2ETests: SmithersGUIUITestCase {
 
     func testSidebarHidesSmithersAndVCSButtons() {
         XCTAssertFalse(app.buttons["nav.Smithers"].exists)

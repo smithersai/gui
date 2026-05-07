@@ -1,6 +1,6 @@
 import XCTest
 
-final class ApprovalsE2ETests: TabmonstersUITestCase {
+final class ApprovalsE2ETests: SmithersGUIUITestCase {
     func testPendingQueueApproveDenyAndHistoryToggle() {
         navigate(to: "Approvals", expectedViewIdentifier: "view.approvals")
 

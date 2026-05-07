@@ -14,12 +14,12 @@ External testers need more than a sign-in button. The iOS app needs first-run fr
 
 Primary owner writes:
 
-- `ios/Sources/TabmonstersiOS/Onboarding/OnboardingCoordinator.swift`
-- `ios/Sources/TabmonstersiOS/Settings/SettingsView.swift`
+- `ios/Sources/SmithersGUIiOS/Onboarding/OnboardingCoordinator.swift`
+- `ios/Sources/SmithersGUIiOS/Settings/SettingsView.swift`
 - `Shared/Sources/SmithersAuth/SignInView.swift` only for copy/link integration
-- `ios/Sources/TabmonstersiOS/Diagnostics/DiagnosticsBundle.swift`
-- `ios/Sources/TabmonstersiOS/Info.plist` only for product/privacy strings if needed
-- tests under `ios/Tests/TabmonstersiOSTests`
+- `ios/Sources/SmithersGUIiOS/Diagnostics/DiagnosticsBundle.swift`
+- `ios/Sources/SmithersGUIiOS/Info.plist` only for product/privacy strings if needed
+- tests under `ios/Tests/SmithersGUIiOSTests`
 
 Avoid auth-token mechanics; ticket 0184/0187 own token behavior.
 
@@ -42,7 +42,7 @@ Avoid auth-token mechanics; ticket 0184/0187 own token behavior.
 ## Verification
 
 ```sh
-xcodebuild -project Tabmonsters.xcodeproj -scheme TabmonstersiOS -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' -configuration Debug CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project SmithersGUI.xcodeproj -scheme SmithersGUIiOS -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' -configuration Debug CODE_SIGNING_ALLOWED=NO test
 ```
 
 ## Product Inputs Needed

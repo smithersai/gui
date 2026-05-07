@@ -13,7 +13,7 @@ enum MacE2ESeedKey {
 enum MacE2ETestSupport {
     static func clearSavedApplicationState() {
         let savedStateDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Saved Application State/com.tabmonsters.Tabmonsters.savedState")
+            .appendingPathComponent("Library/Saved Application State/com.smithers-app.SmithersGUI.savedState")
         try? FileManager.default.removeItem(at: savedStateDir)
     }
 
@@ -54,7 +54,7 @@ enum MacE2ETestSupport {
         if autoOpen {
             XCTAssertTrue(
                 element("app.root", in: app).waitForExistence(timeout: 45),
-                "content shell should mount when TABMONSTERS_OPEN_WORKSPACE is set",
+                "content shell should mount when SMITHERS_APP_OPEN_WORKSPACE is set",
                 file: file,
                 line: line
             )
@@ -135,7 +135,7 @@ enum MacE2ETestSupport {
     }
 }
 
-final class TabmonstersMacOSE2EAuthTests: XCTestCase {
+final class SmithersGUIMacOSE2EAuthTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

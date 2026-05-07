@@ -1,6 +1,6 @@
 import XCTest
 
-final class HighImpactMissingE2ETests: TabmonstersUITestCase {
+final class HighImpactMissingE2ETests: SmithersGUIUITestCase {
 
     func testTriggersShowsFixtureRowsAndMetadata() {
         navigate(to: "Triggers", expectedViewIdentifier: "view.triggers")

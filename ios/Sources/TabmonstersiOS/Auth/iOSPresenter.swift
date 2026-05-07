@@ -3,7 +3,7 @@
 //
 // Ticket 0109. Thin shim — all cross-platform logic lives in
 // Shared/Sources/SmithersAuth. The custom URL scheme `smithers://oauth2/callback`
-// is declared in `ios/Sources/TabmonstersiOS/Info.plist`.
+// is declared in `ios/Sources/SmithersGUIiOS/Info.plist`.
 
 #if os(iOS)
 import UIKit

@@ -1,8 +1,8 @@
 import XCTest
 
-final class LiveRunTreeAccessibilityTests: TabmonstersUITestCase {
+final class LiveRunTreeAccessibilityTests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
-        ["TABMONSTERS_UITEST_TREE": "1"]
+        ["SMITHERS_APP_UITEST_TREE": "1"]
     }
 
     func testRowAccessibilityAnnouncementIsPresent() {

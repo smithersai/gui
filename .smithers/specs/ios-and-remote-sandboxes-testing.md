@@ -264,7 +264,7 @@ Per the spec's non-goals, Android is build-only in this pass. The canary is one 
 - **Job name:** `android-canary` (added to `.github/workflows/ci.yml` or equivalent).
 - **Runs on:** every PR to `main`, plus `main` itself post-merge. No `paths:` filter — a change to anything that breaks `aarch64-linux-android` must fail the job, not be quietly excluded.
 - **Steps:**
-  1. Check out tabmonsters repo including submodules.
+  1. Check out smithers-app repo including submodules.
   2. Install pinned NDK version (documented in `poc/android-core/README.md`, pinned in `.android-ndk-version`).
   3. Install pinned Zig version (from `.zig-version`).
   4. `zig build -Dtarget=aarch64-linux-android` produces `libsmithers-core.so`.
@@ -284,7 +284,7 @@ One harness. Every PoC plugs into it. No PoC invents its own docker-compose inca
 
 ### 8.1 The harness
 
-Layout (lives under `test-harness/` at the tabmonsters repo root; plue has a symmetric `plue/test-harness/`):
+Layout (lives under `test-harness/` at the smithers-app repo root; plue has a symmetric `plue/test-harness/`):
 
 ```
 test-harness/

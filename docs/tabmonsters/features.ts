@@ -1,5 +1,5 @@
 /**
- * TABMONSTERS (macOS SwiftUI) feature inventory.
+ * Smithers App (macOS SwiftUI) feature inventory.
  *
  * Grounded in the actual Swift source files in this repository.
  * Focus: native desktop app features built on top of Codex FFI and
@@ -814,7 +814,7 @@ export enum SmithersFeature {
 
   PACKAGE_SWIFT_TOOLS_VERSION_5_9 = "PACKAGE_SWIFT_TOOLS_VERSION_5_9",
   PACKAGE_MACOS_V14_TARGET = "PACKAGE_MACOS_V14_TARGET",
-  PACKAGE_NAME_TABMONSTERS = "PACKAGE_NAME_TABMONSTERS",
+  PACKAGE_NAME_Smithers App = "PACKAGE_NAME_Smithers App",
   PACKAGE_SYSTEM_LIBRARY_CCODEX_FFI = "PACKAGE_SYSTEM_LIBRARY_CCODEX_FFI",
   PACKAGE_SYSTEM_LIBRARY_CGHOSTTY_KIT = "PACKAGE_SYSTEM_LIBRARY_CGHOSTTY_KIT",
   PACKAGE_LINKED_LIBRARY_CPP = "PACKAGE_LINKED_LIBRARY_CPP",
@@ -1548,7 +1548,7 @@ export const SmithersFeatureGroups = {
   BUILD_SYSTEM: [
     SmithersFeature.PACKAGE_SWIFT_TOOLS_VERSION_5_9,
     SmithersFeature.PACKAGE_MACOS_V14_TARGET,
-    SmithersFeature.PACKAGE_NAME_TABMONSTERS,
+    SmithersFeature.PACKAGE_NAME_Smithers App,
     SmithersFeature.PACKAGE_SYSTEM_LIBRARY_CCODEX_FFI,
     SmithersFeature.PACKAGE_SYSTEM_LIBRARY_CGHOSTTY_KIT,
     SmithersFeature.PACKAGE_LINKED_LIBRARY_CPP,

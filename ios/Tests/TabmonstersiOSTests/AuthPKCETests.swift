@@ -8,7 +8,7 @@
 
 #if os(iOS)
 import XCTest
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 final class AuthPKCETests: XCTestCase {
     func test_RFC7636_vector_matches_on_iOS() {
@@ -26,7 +26,7 @@ final class AuthPKCETests: XCTestCase {
     }
 
     func test_keychain_store_roundtrip_on_simulator() throws {
-        let service = "com.tabmonsters.ios.tests.\(UUID().uuidString)"
+        let service = "com.smithers-app.ios.tests.\(UUID().uuidString)"
         let store = KeychainTokenStore(service: service, account: "roundtrip")
         let t = OAuth2Tokens(accessToken: "i_a", refreshToken: "i_r")
 

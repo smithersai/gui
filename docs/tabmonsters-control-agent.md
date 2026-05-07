@@ -1,8 +1,8 @@
-# TABMONSTERS Control Agent
+# Smithers App Control Agent
 
 ## Goal
 
-TABMONSTERS should be controllable by a Smithers-run agent that can solve product and development problems end to end. The agent must be able to inspect the current app, decide what to do, and act through the same surfaces a user can use: navigation, buttons, chat, terminals, browsers, workflow runs, approvals, and external agent harnesses.
+Smithers App should be controllable by a Smithers-run agent that can solve product and development problems end to end. The agent must be able to inspect the current app, decide what to do, and act through the same surfaces a user can use: navigation, buttons, chat, terminals, browsers, workflow runs, approvals, and external agent harnesses.
 
 The app should keep the controlling conversation visible while the agent works. The UI pattern is a thin right-side rail that expands into a chat sidebar. The rail stays present across all app routes. When expanded, it shows the control-agent chat without replacing the current screen.
 
@@ -25,7 +25,7 @@ There are three different agent paths in the app:
    - Can be observed through `smithers chat`, event streams, SQL, timelines, and run inspect.
    - Can be hijacked into a resumable external harness when supported.
 
-The Tabmonsters control agent should sit above these paths. It can choose the right tool for a task: use app controls directly, inspect terminal panes through zmux, launch Codex or another harness for implementation, run Smithers workflows for longer jobs, approve/deny gates, or use screenshots when structured state is insufficient.
+The SmithersGUI control agent should sit above these paths. It can choose the right tool for a task: use app controls directly, inspect terminal panes through zmux, launch Codex or another harness for implementation, run Smithers workflows for longer jobs, approve/deny gates, or use screenshots when structured state is insufficient.
 
 ## Requirements
 
@@ -50,12 +50,12 @@ The Tabmonsters control agent should sit above these paths. It can choose the ri
 
 ## Agent Goal Prompt
 
-Use this as the baseline goal for the TABMONSTERS control agent:
+Use this as the baseline goal for the Smithers App control agent:
 
 ```text
-You are the TABMONSTERS control agent. Your job is to solve the user's problem end to end.
+You are the Smithers App control agent. Your job is to solve the user's problem end to end.
 
-You can inspect and control TABMONSTERS. Prefer structured tools when available: app state snapshots, route navigation, Smithers CLIs, zmux pane capture, terminal input, workflow launch, approvals, and run inspection. Use screenshots when the structured state is incomplete or when visual confirmation matters.
+You can inspect and control Smithers App. Prefer structured tools when available: app state snapshots, route navigation, Smithers CLIs, zmux pane capture, terminal input, workflow launch, approvals, and run inspection. Use screenshots when the structured state is incomplete or when visual confirmation matters.
 
 You may launch specialized agent harnesses such as Codex, Claude Code, Gemini, Amp, or Forge when they are the right tool for implementation, review, research, or validation. You may run Smithers workflows for durable multi-step automation. Keep the user informed through the visible right-side control chat.
 
@@ -64,7 +64,7 @@ Act like an operator, not a passive assistant. Build a plan, execute it, inspect
 
 ## App Bridge
 
-Add a first-class `TabmonstersControlBridge` inside the macOS app. It should expose two groups of capabilities: observation and action.
+Add a first-class `SmithersGUIControlBridge` inside the macOS app. It should expose two groups of capabilities: observation and action.
 
 Observation tools:
 

@@ -1,16 +1,16 @@
 import XCTest
 
-final class LiveRunDevToolsResponsiveLayoutTests: TabmonstersUITestCase {
+final class LiveRunDevToolsResponsiveLayoutTests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
         var env: [String: String] = [
-            "TABMONSTERS_UITEST_TREE": "1",
-            "TABMONSTERS_UITEST_OPEN_TREE_ON_LAUNCH": "1",
+            "SMITHERS_APP_UITEST_TREE": "1",
+            "SMITHERS_APP_UITEST_OPEN_TREE_ON_LAUNCH": "1",
         ]
 
         if name.contains("Narrow") {
-            env["TABMONSTERS_UITEST_FORCE_LIVERUN_LAYOUT"] = "narrow"
+            env["SMITHERS_APP_UITEST_FORCE_LIVERUN_LAYOUT"] = "narrow"
         } else {
-            env["TABMONSTERS_UITEST_FORCE_LIVERUN_LAYOUT"] = "wide"
+            env["SMITHERS_APP_UITEST_FORCE_LIVERUN_LAYOUT"] = "wide"
         }
 
         return env

@@ -1,7 +1,7 @@
 import XCTest
 import SwiftUI
 import ViewInspector
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 // MARK: - Mock SmithersClient subclass
 

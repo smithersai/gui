@@ -1,6 +1,6 @@
 import XCTest
 
-final class DashboardWorkflowsE2ETests: TabmonstersUITestCase {
+final class DashboardWorkflowsE2ETests: SmithersGUIUITestCase {
     func testDashboardStatsAndTabs() {
         navigate(to: "Dashboard", expectedViewIdentifier: "view.dashboard")
 

@@ -3,8 +3,8 @@
 
 set -euo pipefail
 
-if [ -z "${TABMONSTERS_SKIP_ENV_SCRUB:-}" ]; then
-    exec env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS TABMONSTERS_SKIP_ENV_SCRUB=1 "$0" "$@"
+if [ -z "${SMITHERS_APP_SKIP_ENV_SCRUB:-}" ]; then
+    exec env -u SDKROOT -u LIBRARY_PATH -u RUSTFLAGS SMITHERS_APP_SKIP_ENV_SCRUB=1 "$0" "$@"
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,7 +58,7 @@ CURRENT_PROJECT_VERSION="${CURRENT_PROJECT_VERSION:-${GITHUB_RUN_NUMBER:-1}}"
 EXPORT_METHOD="${EXPORT_METHOD:-app-store}"
 
 BUILD_DIR="build/ios-archive"
-ARCHIVE_PATH="${BUILD_DIR}/TabmonstersiOS.xcarchive"
+ARCHIVE_PATH="${BUILD_DIR}/SmithersGUIiOS.xcarchive"
 EXPORT_PATH="${BUILD_DIR}"
 EXPORT_OPTIONS="${BUILD_DIR}/ExportOptions.plist"
 
@@ -73,8 +73,8 @@ if ! command -v security >/dev/null 2>&1; then
     exit 1
 fi
 
-APP_PROFILE_PATH="${HOME}/Library/MobileDevice/Provisioning Profiles/tabmonsters-ios-appstore.mobileprovision"
-SHARE_PROFILE_PATH="${HOME}/Library/MobileDevice/Provisioning Profiles/tabmonsters-ios-shareext-appstore.mobileprovision"
+APP_PROFILE_PATH="${HOME}/Library/MobileDevice/Provisioning Profiles/smithers-app-ios-appstore.mobileprovision"
+SHARE_PROFILE_PATH="${HOME}/Library/MobileDevice/Provisioning Profiles/smithers-app-ios-shareext-appstore.mobileprovision"
 mkdir -p "libsmithers/zig-out/bin/smithers-session-daemon"
 mkdir -p "libsmithers/zig-out/bin/smithers-session-connect"
 
@@ -111,8 +111,8 @@ validate_profile() {
     fi
 }
 
-validate_profile "${APP_PROFILE_PATH}" "com.tabmonsters.ios" "App"
-validate_profile "${SHARE_PROFILE_PATH}" "com.tabmonsters.ios.ShareExtension" "Share extension"
+validate_profile "${APP_PROFILE_PATH}" "com.smithers-app.ios" "App"
+validate_profile "${SHARE_PROFILE_PATH}" "com.smithers-app.ios.ShareExtension" "Share extension"
 
 echo "→ Ticket 0125 iOS release build"
 echo "  MARKETING_VERSION       = ${MARKETING_VERSION}"
@@ -127,11 +127,11 @@ fi
 
 xcodegen generate
 
-echo "→ Archiving TabmonstersiOS..."
+echo "→ Archiving SmithersGUIiOS..."
 set +e
 xcodebuild \
-    -project Tabmonsters.xcodeproj \
-    -scheme TabmonstersiOS \
+    -project SmithersGUI.xcodeproj \
+    -scheme SmithersGUIiOS \
     -destination 'generic/platform=iOS' \
     -configuration Release \
     -archivePath "${ARCHIVE_PATH}" \
@@ -174,9 +174,9 @@ cat > "${EXPORT_OPTIONS}" <<EOF
     <true/>
     <key>provisioningProfiles</key>
     <dict>
-        <key>com.tabmonsters.ios</key>
+        <key>com.smithers-app.ios</key>
         <string>${PROVISIONING_PROFILE_SPECIFIER}</string>
-        <key>com.tabmonsters.ios.ShareExtension</key>
+        <key>com.smithers-app.ios.ShareExtension</key>
         <string>${SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER}</string>
     </dict>
 </dict>

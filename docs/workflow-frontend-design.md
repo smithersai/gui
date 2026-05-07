@@ -2,7 +2,7 @@
 
 ## Summary
 
-This proposes a Smithers-native workflow frontend feature that lets a workflow ship its own HTML/JS app, typically React, and have Smithers serve it directly. TABMONSTERS then becomes one consumer of that feature: it embeds the served app in `WKWebView` instead of owning the UI contract.
+This proposes a Smithers-native workflow frontend feature that lets a workflow ship its own HTML/JS app, typically React, and have Smithers serve it directly. Smithers App then becomes one consumer of that feature: it embeds the served app in `WKWebView` instead of owning the UI contract.
 
 The POC in this repo uses the existing `ticket-kanban` workflow and demonstrates the shape with:
 
@@ -16,7 +16,7 @@ The POC is intentionally implemented in the workspace, not in Smithers core, but
 
 - Let a workflow define a custom frontend in HTML/JS.
 - Make the frontend portable across Smithers clients.
-- Keep TABMONSTERS thin: it should host the app, not define its API.
+- Keep Smithers App thin: it should host the app, not define its API.
 - Reuse Smithers as the source of truth for workflow state, runs, approvals, outputs, and launch actions.
 - Support React cleanly.
 
@@ -30,7 +30,7 @@ The POC is intentionally implemented in the workspace, not in Smithers core, but
 
 If the frontend contract lives in Smithers:
 
-- the same workflow app can run in TABMONSTERS, a browser, or a future Smithers surface
+- the same workflow app can run in Smithers App, a browser, or a future Smithers surface
 - workflow authors only target one API/runtime contract
 - the app does not need workflow-specific Swift code
 - the lifecycle is correct: when Smithers can inspect a run, it can also serve the UI for that run

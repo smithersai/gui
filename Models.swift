@@ -7,7 +7,7 @@ import Darwin
 enum AppPreferenceKeys {
     static let vimModeEnabled = "settings.vimModeEnabled"
     static let developerToolsEnabled = "settings.developerToolsEnabled"
-    static let tabmonstersControlSidebarEnabled = "settings.tabmonstersControlSidebarEnabled"
+    static let smithersGUIControlSidebarEnabled = "settings.smithersGUIControlSidebarEnabled"
     static let externalAgentUnsafeFlagsEnabled = "settings.externalAgentUnsafeFlagsEnabled"
     static let browserSearchEngine = "settings.browserSearchEngine"
     static let shortcutCheatSheetFooterEnabled = "settings.shortcutCheatSheetFooterEnabled"

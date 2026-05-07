@@ -4,12 +4,12 @@ Date: 2026-05-02
 
 Scope reviewed for ticket 0192:
 
-- `Tests/TabmonstersTests/ApprovalsViewTests.swift`
-- `Tests/TabmonstersTests/WorkspacesViewTests.swift`
-- `Tests/TabmonstersTests/RunsViewTests.swift`
-- `Tests/TabmonstersTests/MemoryViewTests.swift`
-- `Tests/TabmonstersTests/ScoresViewTests.swift`
-- `Tests/TabmonstersTests/SearchViewTests.swift`
+- `Tests/SmithersGUITests/ApprovalsViewTests.swift`
+- `Tests/SmithersGUITests/WorkspacesViewTests.swift`
+- `Tests/SmithersGUITests/RunsViewTests.swift`
+- `Tests/SmithersGUITests/MemoryViewTests.swift`
+- `Tests/SmithersGUITests/ScoresViewTests.swift`
+- `Tests/SmithersGUITests/SearchViewTests.swift`
 
 Outcome:
 
@@ -21,10 +21,10 @@ Verification command:
 
 ```sh
 rg -n "XCTAssertTrue\\(true|_BUG|testBug|BUG DOCUMENTED|documentation" \
-  Tests/TabmonstersTests/ApprovalsViewTests.swift \
-  Tests/TabmonstersTests/WorkspacesViewTests.swift \
-  Tests/TabmonstersTests/RunsViewTests.swift \
-  Tests/TabmonstersTests/MemoryViewTests.swift \
-  Tests/TabmonstersTests/ScoresViewTests.swift \
-  Tests/TabmonstersTests/SearchViewTests.swift
+  Tests/SmithersGUITests/ApprovalsViewTests.swift \
+  Tests/SmithersGUITests/WorkspacesViewTests.swift \
+  Tests/SmithersGUITests/RunsViewTests.swift \
+  Tests/SmithersGUITests/MemoryViewTests.swift \
+  Tests/SmithersGUITests/ScoresViewTests.swift \
+  Tests/SmithersGUITests/SearchViewTests.swift
 ```

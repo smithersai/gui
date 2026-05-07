@@ -9,10 +9,10 @@ to the Smithers daemon or JJHub directly; every command goes through the
 Build `libsmithers.a` first, then build the CLI:
 
 ```sh
-cd /Users/williamcory/tabmonsters/libsmithers
+cd /Users/williamcory/smithers-app/libsmithers
 zig build
 
-cd /Users/williamcory/tabmonsters/libsmithers/cli
+cd /Users/williamcory/smithers-app/libsmithers/cli
 zig build
 zig build test
 ```
@@ -20,7 +20,7 @@ zig build test
 The binary is installed at:
 
 ```sh
-/Users/williamcory/tabmonsters/libsmithers/cli/zig-out/bin/smithers-cli
+/Users/williamcory/smithers-app/libsmithers/cli/zig-out/bin/smithers-cli
 ```
 
 ## Global Flags

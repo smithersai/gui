@@ -1,6 +1,6 @@
 import XCTest
 import AppKit
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 #if os(macOS)
 @MainActor

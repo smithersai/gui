@@ -40,9 +40,9 @@ Relevant capabilities:
 - Git branch/worktree context and PR-oriented actions
 - Deterministic worker drains and transport tests around provider events
 
-## Tabmonsters Parity Snapshot
+## SmithersGUI Parity Snapshot
 
-| Area | Tabmonsters state | Parity status | Next action |
+| Area | SmithersGUI state | Parity status | Next action |
 | --- | --- | --- | --- |
 | Live workflow/run inspection | Native run inspector, task tree, logs, outputs, approvals | Strong | Keep hardening reconnect and snapshot coverage |
 | Agent/provider availability | `AgentsView` lists detected CLIs, auth/API-key hints | Partial | Add provider/model selection per chat/run creation |

@@ -1,6 +1,6 @@
 import XCTest
 
-final class SearchIssuesE2ETests: TabmonstersUITestCase {
+final class SearchIssuesE2ETests: SmithersGUIUITestCase {
     func testSearchTabsAndSubmission() {
         navigate(to: "Search", expectedViewIdentifier: "view.search")
 

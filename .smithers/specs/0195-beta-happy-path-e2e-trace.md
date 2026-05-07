@@ -5,7 +5,7 @@ Updated: 2026-05-01
 ## Scope Decision
 - iOS: in scope and required gate.
 - macOS remote mode: in scope in this repository; include matching happy-path coverage.
-- Terminal: ticket 0188 is shipped in this repo (`ios/Tests/TabmonstersiOSE2ETests/TabmonstersiOSE2ETerminalTests.swift` and production terminal identifiers), so the happy path asserts terminal presence instead of gated-copy fallback.
+- Terminal: ticket 0188 is shipped in this repo (`ios/Tests/SmithersGUIiOSE2ETests/SmithersGUIiOSE2ETerminalTests.swift` and production terminal identifiers), so the happy path asserts terminal presence instead of gated-copy fallback.
 
 ## End-to-End Trace
 1. Sign in or restored-auth bypass succeeds.
@@ -27,9 +27,9 @@ Updated: 2026-05-01
 - User step: navigate to run/approval/output surfaces in the same signed-in session.
 - UI assertion: run, approval, and output/log related surfaces are visible in the existing E2E suites.
 - Backend assertion: existing HTTP-backed E2E groups validate run dispatch/discovery, approval decide transitions, and output/log availability:
-  - `TabmonstersiOSE2EWorkflowRunsTests`
-  - `TabmonstersiOSE2EApprovalsFlowTests`
-  - `TabmonstersiOSE2EAgentChatTests`
+  - `SmithersGUIiOSE2EWorkflowRunsTests`
+  - `SmithersGUIiOSE2EApprovalsFlowTests`
+  - `SmithersGUIiOSE2EAgentChatTests`
 
 5. Terminal access.
 - User step: open workspace detail terminal area.

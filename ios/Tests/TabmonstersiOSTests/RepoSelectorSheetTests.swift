@@ -1,7 +1,7 @@
 #if os(iOS)
 import Foundation
 import XCTest
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 @MainActor
 final class RepoSelectorSheetTests: XCTestCase {

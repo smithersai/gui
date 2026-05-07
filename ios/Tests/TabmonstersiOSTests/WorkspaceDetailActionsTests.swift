@@ -1,7 +1,7 @@
 #if os(iOS)
 import Foundation
 import XCTest
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 @MainActor
 final class WorkspaceDetailActionsTests: XCTestCase {
@@ -179,7 +179,7 @@ final class WorkspaceDetailActionsTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("ios/Sources/TabmonstersiOS/ContentShell.iOS.swift")
+            .appendingPathComponent("ios/Sources/SmithersGUIiOS/ContentShell.iOS.swift")
     }
 
     private func requestBodyData(from request: URLRequest) throws -> Data {

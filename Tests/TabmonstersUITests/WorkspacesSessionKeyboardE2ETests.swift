@@ -4,7 +4,7 @@ import XCTest
 // `testCommandNCreatesNewChat` were removed along with the built-in chat
 // feature (sidebar.newChat / workspace.chat: session tabs no longer exist).
 
-final class WorkspacesSessionKeyboardE2ETests: TabmonstersUITestCase {
+final class WorkspacesSessionKeyboardE2ETests: SmithersGUIUITestCase {
     func testWorkspacesTabsAndCreateWorkspaceForm() {
         navigate(to: "Workspaces", expectedViewIdentifier: "view.workspaces")
 

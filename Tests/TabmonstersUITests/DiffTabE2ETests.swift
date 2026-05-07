@@ -1,10 +1,10 @@
 import XCTest
 
-final class DiffTabE2ETests: TabmonstersUITestCase {
+final class DiffTabE2ETests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
         [
-            "TABMONSTERS_UITEST_TREE": "1",
-            "TABMONSTERS_UITEST_OPEN_TREE_ON_LAUNCH": "1",
+            "SMITHERS_APP_UITEST_TREE": "1",
+            "SMITHERS_APP_UITEST_OPEN_TREE_ON_LAUNCH": "1",
         ]
     }
 

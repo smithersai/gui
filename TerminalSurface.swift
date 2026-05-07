@@ -5,7 +5,7 @@
 // avoids any AppKit/UIKit imports at the top level; platform-specific
 // rendering is delegated to macOS (`TerminalSurfaceRepresentable` in
 // TerminalView.swift) or iOS (`TerminalSurfaceUIView` in
-// ios/Sources/TabmonstersiOS/Terminal/).
+// ios/Sources/SmithersGUIiOS/Terminal/).
 //
 // The shared surface is driven by a byte-stream model fed from
 // `libsmithers-core` (see Shared/Sources/SmithersRuntime). The model is
@@ -352,7 +352,7 @@ public final class RuntimePTYTransport: TerminalPTYTransport {
     private var started = false
     private var isStopping = false
 
-    private static let logger = Logger(subsystem: "com.tabmonsters.app", category: "terminal")
+    private static let logger = Logger(subsystem: "com.smithers-app.app", category: "terminal")
     private static let maxReconnectAttempts = 5
 
     private struct PTYDataEnvelope: Decodable {

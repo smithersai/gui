@@ -1,4 +1,4 @@
-// TabmonstersiOSE2ELaunchEnvironment.swift — XCUITest helper that stamps the
+// SmithersGUIiOSE2ELaunchEnvironment.swift — XCUITest helper that stamps the
 // process launch environment used by `Shared/Sources/SmithersE2ESupport/`.
 //
 // Ticket: ios-e2e-harness. Every test in this bundle is expected to call

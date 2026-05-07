@@ -1,7 +1,7 @@
 import XCTest
 import SwiftUI
 import ViewInspector
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 
 private func makeRendererBlock(role: String, content: String) -> ChatBlock {

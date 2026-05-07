@@ -5,7 +5,7 @@ import AppKit
 #endif
 
 enum DeveloperDebugMode {
-    static let environmentKey = "TABMONSTERS_DEBUG"
+    static let environmentKey = "SMITHERS_APP_DEBUG"
     private static let enableArguments = ["--developer-debug", "--dev-debug", "--debug-mode"]
     private static let disableArguments = ["--no-developer-debug", "--no-dev-debug"]
     private static let truthyValues = ["1", "true", "yes", "on", "enabled"]

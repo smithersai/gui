@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 /// Tests for `SessionController`, the Swift client for the native session
 /// daemon. These use a real UNIX-domain listening socket on a tmp path as a
@@ -220,7 +220,7 @@ final class SessionControllerTests: XCTestCase {
     private func makeBundledExecutableFixture(named binaryName: String) throws -> (root: URL, bundleURL: URL, binaryPath: String) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("SessionControllerTests-Bundle-\(UUID().uuidString)", isDirectory: true)
-        let bundleURL = root.appendingPathComponent("Tabmonsters.app", isDirectory: true)
+        let bundleURL = root.appendingPathComponent("SmithersGUI.app", isDirectory: true)
         let binaryURL = bundleURL
             .appendingPathComponent("Contents/Resources", isDirectory: true)
             .appendingPathComponent(binaryName, isDirectory: false)
@@ -234,7 +234,7 @@ final class SessionControllerTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("SessionControllerTests-AppBundle-\(UUID().uuidString)", isDirectory: true)
         let exportDir = root.appendingPathComponent("build/export", isDirectory: true)
-        let bundleURL = exportDir.appendingPathComponent("Tabmonsters.app", isDirectory: true)
+        let bundleURL = exportDir.appendingPathComponent("SmithersGUI.app", isDirectory: true)
         let binaryURL = root
             .appendingPathComponent("libsmithers/zig-out/bin", isDirectory: true)
             .appendingPathComponent(binaryName, isDirectory: false)

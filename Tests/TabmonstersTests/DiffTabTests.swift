@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 actor MockNodeDiffClient: NodeDiffFetching {
     struct QueuedResponse {

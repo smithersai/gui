@@ -76,7 +76,7 @@ final class ShareExtensionViewModel: ObservableObject {
     }
 }
 
-struct TabmonstersShareExtensionView: View {
+struct SmithersGUIShareExtensionView: View {
     @StateObject private var model: ShareExtensionViewModel
     private let onCancel: () -> Void
     private let onComplete: () -> Void

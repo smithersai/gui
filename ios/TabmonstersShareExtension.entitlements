@@ -4,11 +4,11 @@
 <dict>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.com.tabmonsters.ios</string>
+        <string>group.com.smithers-app.ios</string>
     </array>
     <key>keychain-access-groups</key>
     <array>
-        <string>$(AppIdentifierPrefix)com.tabmonsters.ios</string>
+        <string>$(AppIdentifierPrefix)com.smithers-app.ios</string>
     </array>
 </dict>
 </plist>

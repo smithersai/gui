@@ -1159,7 +1159,7 @@ class DevToolsStore: ObservableObject {
     }
 
     private static func resolvedGhostNodeCap() -> Int {
-        guard let raw = ProcessInfo.processInfo.environment["TABMONSTERS_DEVTOOLS_GHOST_CAP"] else {
+        guard let raw = ProcessInfo.processInfo.environment["SMITHERS_APP_DEVTOOLS_GHOST_CAP"] else {
             return defaultGhostNodeCap
         }
         guard let parsed = Int(raw), parsed > 0 else {

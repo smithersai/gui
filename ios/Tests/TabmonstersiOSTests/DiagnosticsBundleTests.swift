@@ -1,7 +1,7 @@
 #if os(iOS)
 import Foundation
 import XCTest
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 final class DiagnosticsBundleTests: XCTestCase {
     func testGenerateProducesWellFormedJSONWithExpectedKeys() async throws {
@@ -22,7 +22,7 @@ final class DiagnosticsBundleTests: XCTestCase {
                 ]
             },
             logLinesProvider: { _ in
-                ["2026-04-24T12:00:00Z INFO TabmonstersiOS Test log line"]
+                ["2026-04-24T12:00:00Z INFO SmithersGUIiOS Test log line"]
             },
             networkRecorder: recorder,
             bundle: Bundle(for: Self.self),

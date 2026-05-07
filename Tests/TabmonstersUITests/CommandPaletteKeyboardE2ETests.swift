@@ -1,6 +1,6 @@
 import XCTest
 
-final class CommandPaletteKeyboardE2ETests: TabmonstersUITestCase {
+final class CommandPaletteKeyboardE2ETests: SmithersGUIUITestCase {
     func testCommandPOpensAndEscapeClosesLauncher() {
         app.typeKey("p", modifierFlags: .command)
         XCTAssertTrue(element("commandPalette.root").waitForExistence(timeout: 3))

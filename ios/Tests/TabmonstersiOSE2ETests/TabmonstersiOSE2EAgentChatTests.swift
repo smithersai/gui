@@ -300,7 +300,7 @@ private func shapeRows(from response: AgentChatHTTPResponse) throws -> [[String:
     return rows
 }
 
-final class TabmonstersiOSE2EAgentChatTests: XCTestCase {
+final class SmithersGUIiOSE2EAgentChatTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

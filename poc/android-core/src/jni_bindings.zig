@@ -85,13 +85,13 @@ const JNI_VERSION_1_6: jint = 0x00010006;
 //
 // Signature convention: Java_<package_with_underscores>_<Class>_<method>
 //
-//   package:  com.tabmonsters.androidcore
+//   package:  com.smithers-app.androidcore
 //   class:    CoreBridge
 //
 // `jlong` is used for all opaque handles (session pointer, subscription id,
 // counter). This matches the 64-bit-only minSdk=29 target.
 
-export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeNewSession(
+export fn Java_com_smithers-app_androidcore_CoreBridge_nativeNewSession(
     _: *JNIEnv,
     _: jclass,
 ) callconv(.c) jlong {
@@ -99,7 +99,7 @@ export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeNewSession(
     return @bitCast(@intFromPtr(s));
 }
 
-export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeCloseSession(
+export fn Java_com_smithers-app_androidcore_CoreBridge_nativeCloseSession(
     _: *JNIEnv,
     _: jclass,
     handle: jlong,
@@ -110,7 +110,7 @@ export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeCloseSession(
     s.destroy();
 }
 
-export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeTick(
+export fn Java_com_smithers-app_androidcore_CoreBridge_nativeTick(
     _: *JNIEnv,
     _: jclass,
     handle: jlong,
@@ -140,7 +140,7 @@ fn observerCallback(counter: u64, user_data: ?*anyopaque) callconv(.c) void {
     obs.latest.store(counter, .release);
 }
 
-export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeSubscribe(
+export fn Java_com_smithers-app_androidcore_CoreBridge_nativeSubscribe(
     _: *JNIEnv,
     _: jclass,
     session_handle: jlong,
@@ -163,7 +163,7 @@ export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeSubscribe(
     return @bitCast(@intFromPtr(obs));
 }
 
-export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeLatestCounter(
+export fn Java_com_smithers-app_androidcore_CoreBridge_nativeLatestCounter(
     _: *JNIEnv,
     _: jclass,
     observer_handle: jlong,
@@ -174,7 +174,7 @@ export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeLatestCounter(
     return @bitCast(obs.latest.load(.acquire));
 }
 
-export fn Java_com_tabmonsters_androidcore_CoreBridge_nativeUnsubscribe(
+export fn Java_com_smithers-app_androidcore_CoreBridge_nativeUnsubscribe(
     _: *JNIEnv,
     _: jclass,
     session_handle: jlong,

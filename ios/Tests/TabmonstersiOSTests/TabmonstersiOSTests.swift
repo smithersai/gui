@@ -1,4 +1,4 @@
-// TabmonstersiOSTests.swift — iOS unit test scaffold (ticket 0121).
+// SmithersGUIiOSTests.swift — iOS unit test scaffold (ticket 0121).
 //
 // Purpose: give the iOS target a real xctest bundle so CI can exercise
 // `xcodebuild test` on the iOS simulator. Actual coverage grows as shared
@@ -6,11 +6,11 @@
 
 #if os(iOS)
 import XCTest
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
-final class TabmonstersiOSSmokeTests: XCTestCase {
+final class SmithersGUIiOSSmokeTests: XCTestCase {
     func testBundleIdentifierMatchesExpectation() {
-        // Sanity check that we are linked into the TabmonstersiOS target. The
+        // Sanity check that we are linked into the SmithersGUIiOS target. The
         // bundle id may be nil when tests run in-process; we only assert the
         // test binary itself loads.
         XCTAssertNotNil(Bundle(for: Self.self).bundleIdentifier)

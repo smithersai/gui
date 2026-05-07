@@ -7,8 +7,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const ROOT = import.meta.dir;
-const SCHEME = "Tabmonsters";
-const VOLUME_NAME = "TABMONSTERS";
+const SCHEME = "SmithersGUI";
+const VOLUME_NAME = "Smithers App";
 const BUILD = join(ROOT, "build");
 const ARCHIVE = join(BUILD, `${SCHEME}.xcarchive`);
 const APP = join(BUILD, "export", `${SCHEME}.app`);
@@ -30,9 +30,9 @@ if (!signed || !APPLE_ID || !TEAM || !PW) {
 
 if (!has("--skip-build")) await build();
 
-const app = await alchemy("tabmonsters");
-export const releases = await R2Bucket("tabmonsters-releases", {
-  name: "tabmonsters-releases",
+const app = await alchemy("smithers-app");
+export const releases = await R2Bucket("smithers-app-releases", {
+  name: "smithers-app-releases",
   devDomain: true,
   adopt: true,
 });
@@ -190,10 +190,10 @@ async function upload() {
   for (const key of dmgKeys) await releases.put(key, body, dmgOpts);
 
   const base = releases.devDomain ? `https://${releases.devDomain}` : null;
-  const url = (key: string) => (base ? `${base}/${key}` : `(r2://tabmonsters-releases/${key})`);
+  const url = (key: string) => (base ? `${base}/${key}` : `(r2://smithers-app-releases/${key})`);
   console.log("\n✓ uploaded:");
   for (const key of dmgKeys) console.log(`  ${url(key)}`);
-  console.log("\n  public:    https://download.smithers.sh/Tabmonsters.dmg");
+  console.log("\n  public:    https://download.smithers.sh/SmithersGUI.dmg");
 }
 
 async function deployVercelRedirect() {

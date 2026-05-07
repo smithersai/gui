@@ -1,10 +1,10 @@
 import XCTest
 
-final class LiveRunDevToolsE2ETests: TabmonstersUITestCase {
+final class LiveRunDevToolsE2ETests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
         [
-            "TABMONSTERS_UITEST_TREE": "1",
-            "TABMONSTERS_UITEST_TREE_STREAM": "0",
+            "SMITHERS_APP_UITEST_TREE": "1",
+            "SMITHERS_APP_UITEST_TREE_STREAM": "0",
         ]
     }
 

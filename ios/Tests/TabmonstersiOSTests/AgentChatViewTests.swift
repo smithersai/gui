@@ -2,7 +2,7 @@
 import Foundation
 import XCTest
 import ViewInspector
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 extension AgentChatView: Inspectable {}
 
@@ -242,7 +242,7 @@ final class AgentChatViewTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("ios/Sources/TabmonstersiOS/Chat/AgentChatView.swift")
+            .appendingPathComponent("ios/Sources/SmithersGUIiOS/Chat/AgentChatView.swift")
     }
 
     private static let iso8601Formatter: ISO8601DateFormatter = {

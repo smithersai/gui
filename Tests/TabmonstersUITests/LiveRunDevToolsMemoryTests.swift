@@ -1,11 +1,11 @@
 import XCTest
 
-final class LiveRunDevToolsMemoryTests: TabmonstersUITestCase {
+final class LiveRunDevToolsMemoryTests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
         [
-            "TABMONSTERS_UITEST_TREE": "1",
-            "TABMONSTERS_UITEST_OPEN_TREE_ON_LAUNCH": "1",
-            "TABMONSTERS_UITEST_TREE_STREAM": "0",
+            "SMITHERS_APP_UITEST_TREE": "1",
+            "SMITHERS_APP_UITEST_OPEN_TREE_ON_LAUNCH": "1",
+            "SMITHERS_APP_UITEST_TREE_STREAM": "0",
         ]
     }
 

@@ -1,19 +1,19 @@
-# TABMONSTERS
+# Smithers App
 
 Tabslop Agent Browser Multiplexer for Orchestrating Native Smithers Terminal Execution Runtime Sessions.
 
-TABMONSTERS is a native macOS SwiftUI application for managing Smithers workflows, agent sessions, terminals, and tickets.
+Smithers App is a native macOS SwiftUI application for managing Smithers workflows, agent sessions, terminals, and tickets.
 
 Requires **macOS 14 (Sonoma)** or later, **Apple Silicon (arm64)**.
 
-> **Status: early / unstable.** Tabmonsters is in active development and is **not expected to be stable until ~mid-March 2027**. Expect crashes, broken flows, and breaking changes between releases. If you hit a bug, please send logs (see [Reporting bugs](#reporting-bugs) below).
+> **Status: early / unstable.** SmithersGUI is in active development and is **not expected to be stable until ~mid-March 2027**. Expect crashes, broken flows, and breaking changes between releases. If you hit a bug, please send logs (see [Reporting bugs](#reporting-bugs) below).
 
 ## Download
 
-[**Download Tabmonsters.dmg**](https://download.smithers.sh/Tabmonsters.dmg)
-&nbsp; · &nbsp; [`.sha256`](https://download.smithers.sh/Tabmonsters.dmg.sha256)
+[**Download SmithersGUI.dmg**](https://download.smithers.sh/SmithersGUI.dmg)
+&nbsp; · &nbsp; [`.sha256`](https://download.smithers.sh/SmithersGUI.dmg.sha256)
 
-> Releases are notarized through Apple's standard distribution flow. If macOS still blocks a local or development build, open **System Settings -> Privacy & Security**, scroll to the message about Tabmonsters being blocked, and click **Open Anyway**.
+> Releases are notarized through Apple's standard distribution flow. If macOS still blocks a local or development build, open **System Settings -> Privacy & Security**, scroll to the message about SmithersGUI being blocked, and click **Open Anyway**.
 
 ### Verify the binary
 
@@ -21,25 +21,25 @@ Verify the downloaded artifact against the published SHA-256 checksum:
 
 ```bash
 # 1. download the artifacts
-curl -LO https://download.smithers.sh/Tabmonsters.dmg
-curl -LO https://download.smithers.sh/Tabmonsters.dmg.sha256
+curl -LO https://download.smithers.sh/SmithersGUI.dmg
+curl -LO https://download.smithers.sh/SmithersGUI.dmg.sha256
 
 # 2. verify the checksum
-shasum -a 256 -c Tabmonsters.dmg.sha256
+shasum -a 256 -c SmithersGUI.dmg.sha256
 ```
 
 ## Reporting bugs
 
-The app writes a structured JSON log to `~/Library/Logs/Tabmonsters/app.log`, and macOS drops native crash reports into `~/Library/Logs/DiagnosticReports/Tabmonsters-*.ips`. To send everything in one go, paste this into Terminal:
+The app writes a structured JSON log to `~/Library/Logs/SmithersGUI/app.log`, and macOS drops native crash reports into `~/Library/Logs/DiagnosticReports/SmithersGUI-*.ips`. To send everything in one go, paste this into Terminal:
 
 ```bash
-zip -j ~/Desktop/tabmonsters-logs.zip \
-  ~/Library/Logs/Tabmonsters/app.log \
-  ~/Library/Logs/DiagnosticReports/Tabmonsters-*.ips 2>/dev/null
-open -R ~/Desktop/tabmonsters-logs.zip
+zip -j ~/Desktop/smithers-app-logs.zip \
+  ~/Library/Logs/SmithersGUI/app.log \
+  ~/Library/Logs/DiagnosticReports/SmithersGUI-*.ips 2>/dev/null
+open -R ~/Desktop/smithers-app-logs.zip
 ```
 
-That produces `~/Desktop/tabmonsters-logs.zip` and reveals it in Finder. Attach the zip to your bug report along with:
+That produces `~/Desktop/smithers-app-logs.zip` and reveals it in Finder. Attach the zip to your bug report along with:
 
 - a short description of what you were doing
 - the workspace folder you'd opened (path is fine — we don't need its contents)
@@ -47,17 +47,17 @@ That produces `~/Desktop/tabmonsters-logs.zip` and reveals it in Finder. Attach 
 
 ## Application data and settings
 
-Tabmonsters keeps local app state in predictable macOS locations:
+SmithersGUI keeps local app state in predictable macOS locations:
 
 | Data | Location |
 |---|---|
-| App session database | `~/Library/Application Support/Tabmonsters/app.sqlite` |
-| App preferences | `defaults read com.tabmonsters.Tabmonsters` |
+| App session database | `~/Library/Application Support/SmithersGUI/app.sqlite` |
+| App preferences | `defaults read com.smithers-app.SmithersGUI` |
 | Shortcut settings file | `~/.config/smithers/settings.json` |
-| App log | `~/Library/Logs/Tabmonsters/app.log` |
-| Crash reports | `~/Library/Logs/DiagnosticReports/Tabmonsters-*.ips` |
+| App log | `~/Library/Logs/SmithersGUI/app.log` |
+| Crash reports | `~/Library/Logs/DiagnosticReports/SmithersGUI-*.ips` |
 
-Set `TABMONSTERS_APP_SUPPORT=/path/to/dir` before launching the app to move the app session database to another directory. Set `TABMONSTERS_SESSION_PERSISTENCE_DISABLE=1` to disable workspace/session persistence while testing.
+Set `SMITHERS_APP_APP_SUPPORT=/path/to/dir` before launching the app to move the app session database to another directory. Set `SMITHERS_APP_SESSION_PERSISTENCE_DISABLE=1` to disable workspace/session persistence while testing.
 
 ### Default shell
 
@@ -103,9 +103,9 @@ cross-platform SwiftUI surface fed by `libghostty`'s pipes backend via
   macOS and iOS. Bytes flow through `TerminalPTYTransport`.
 - `TerminalView+macOS.swift` — macOS bridge that keeps the existing
   apprt-backed renderer.
-- `ios/Sources/TabmonstersiOS/Terminal/TerminalIOSRenderer.swift` +
-  `ios/Sources/TabmonstersiOS/Terminal/TerminalIOSCellView.swift` +
-  `ios/Sources/TabmonstersiOS/Terminal/TerminalIOSGhostty.swift` — iOS
+- `ios/Sources/SmithersGUIiOS/Terminal/TerminalIOSRenderer.swift` +
+  `ios/Sources/SmithersGUIiOS/Terminal/TerminalIOSCellView.swift` +
+  `ios/Sources/SmithersGUIiOS/Terminal/TerminalIOSGhostty.swift` — iOS
   Ghostty VT cell-grid renderer (SGR colors + cursor), backed by
   `ghostty-vt.xcframework`.
 - iOS input behavior keeps both paths:
@@ -146,7 +146,7 @@ continue reconnecting from the last acknowledged sequence.
   `N × (active tree + buffered live events + ghost map)` for `N` concurrently
   open run tabs. Ghost retention is capped and oldest entries are evicted.
 - Ghost cap:
-  set `TABMONSTERS_DEVTOOLS_GHOST_CAP=<positive int>` to override the default cap
+  set `SMITHERS_APP_DEVTOOLS_GHOST_CAP=<positive int>` to override the default cap
   (`256` ghost task entries per run store).
 
 ### Build-only
@@ -157,7 +157,7 @@ continue reconnecting from the last acknowledged sequence.
 | **Xcode** / Swift | 15+ / Swift 5.9+ | Compiler toolchain (`xcode-select --install` for CLI tools only is not enough — needs full Xcode for `xcodebuild`) |
 | **Rust** | stable (1.80+) | Builds `libcodex_ffi.a` from `codex-ffi/` | Install via [rustup](https://rustup.rs) |
 | **Zig** | **exactly 0.15.2** (pinned in `.zigversion`) | Build driver (`build.zig`) + required for rebuilding the Ghostty xcframework | Install via [zvm](https://github.com/tristanisham/zvm): `zvm install 0.15.2 && zvm use 0.15.2` |
-| **xcodegen** | 2.43+ | Regenerates `Tabmonsters.xcodeproj` from `project.yml` | `brew install xcodegen` |
+| **xcodegen** | 2.43+ | Regenerates `SmithersGUI.xcodeproj` from `project.yml` | `brew install xcodegen` |
 | **ViewInspector** (Swift package) | auto | Test-only dependency, fetched automatically | — |
 
 > Zig has no official LTS release. We pin **0.15.2** (matching ghostty's `minimum_zig_version`) via `.zigversion`. `zvm` picks this up automatically when you `cd` into the repo. `build.zig` will hard-fail at compile time if the Zig version doesn't match.
@@ -167,11 +167,11 @@ continue reconnecting from the last acknowledged sequence.
 ### First-time setup
 
 ```bash
-git clone --recursive https://github.com/smithersai/tabmonsters.git
-cd tabmonsters
+git clone --recursive https://github.com/smithersai/smithers-app.git
+cd smithers-app
 zvm use                 # picks up .zigversion (0.15.2)
 zig build ghostty       # one-time, slow (~3-10 min). Builds GhosttyKit.xcframework.
-zig build               # builds codex-ffi + Tabmonsters
+zig build               # builds codex-ffi + SmithersGUI
 ```
 
 If you already cloned without `--recursive`:
@@ -189,11 +189,11 @@ The project uses `build.zig` as a Makefile-style entrypoint. All common tasks go
 | Command | What it does |
 |---|---|
 | `zig build` | Build everything needed to run the app (codex-ffi + `swift build`). Default step. |
-| `zig build run` | Build then launch `.build/debug/Tabmonsters`. |
+| `zig build run` | Build then launch `.build/debug/SmithersGUI`. |
 | `zig build codex-ffi` | Just the Rust FFI staticlib (`codex-ffi/target/release/libcodex_ffi.a`). |
 | `zig build swift` | Just the Swift app via `swift build`. |
 | `zig build xcode` | Build via `xcodebuild` (Debug). Pass `-Drelease=true` for Release. |
-| `zig build xcodegen` | Regenerate `Tabmonsters.xcodeproj` from `project.yml`. Run this after editing `project.yml`. |
+| `zig build xcodegen` | Regenerate `SmithersGUI.xcodeproj` from `project.yml`. Run this after editing `project.yml`. |
 | `zig build test` | Run `cargo test` + `swift test`. |
 | `zig build ghostty` | Rebuild `ghostty/macos/GhosttyKit.xcframework` from source. Slow; only needed if the vendored xcframework is missing or you want to update it. |
 | `zig build clean` | `cargo clean` + `swift package clean`. |
@@ -203,7 +203,7 @@ Pass `-Drelease=true` to any build step for release-mode compilation.
 ### iOS Device Preview Backend
 
 Physical iPhones cannot reach the Mac's `localhost:4000`. For preview
-testing, build TabmonstersiOS with a reachable Smithers base URL baked into
+testing, build SmithersGUIiOS with a reachable Smithers base URL baked into
 `Info.plist`.
 
 **Internet-reachable review with ngrok:**
@@ -255,7 +255,7 @@ curl -fsS "$LAN_URL/api/health"
 
 - **`codex-ffi/`** — a standalone Rust crate in this repo that wraps `codex-core` via C ABI. Produces `libcodex_ffi.a` (~115 MB static archive) which Swift links against. Depends on codex crates via path into the `codex/` submodule.
 - **`ghostty/macos/GhosttyKit.xcframework/`** — a prebuilt xcframework checked into the ghostty submodule. You normally don't need to rebuild this; `zig build ghostty` is only for toolchain updates.
-- **Tabmonsters** — the Swift app itself, linking both of the above.
+- **SmithersGUI** — the Swift app itself, linking both of the above.
 
 ### Troubleshooting
 

@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 final class TerminalShellPreferenceTests: XCTestCase {
     func testResolvedShellUsesConfiguredExecutableBeforeEnvironmentShell() throws {

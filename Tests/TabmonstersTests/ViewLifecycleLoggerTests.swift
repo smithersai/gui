@@ -1,7 +1,7 @@
 import XCTest
 import SwiftUI
 import ViewInspector
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 final class ViewLifecycleLoggerTests: XCTestCase {
     func testLogLifecycleModifierPreservesWrappedContent() throws {

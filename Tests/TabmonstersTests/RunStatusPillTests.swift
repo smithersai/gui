@@ -1,6 +1,6 @@
 import AppKit
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 final class RunStatusPillTests: XCTestCase {
 

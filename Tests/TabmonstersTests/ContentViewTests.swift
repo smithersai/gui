@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 final class NavDestinationMetadataTests: XCTestCase {
     private let destinations: [NavDestination] = [
@@ -75,7 +75,7 @@ final class AppPreferenceKeysTests: XCTestCase {
         let keys = [
             AppPreferenceKeys.vimModeEnabled,
             AppPreferenceKeys.developerToolsEnabled,
-            AppPreferenceKeys.tabmonstersControlSidebarEnabled,
+            AppPreferenceKeys.smithersGUIControlSidebarEnabled,
             AppPreferenceKeys.externalAgentUnsafeFlagsEnabled,
             AppPreferenceKeys.browserSearchEngine,
             AppPreferenceKeys.shortcutCheatSheetFooterEnabled,

@@ -1,6 +1,6 @@
 import XCTest
 import ViewInspector
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 
 final class LogViewerFormattingTests: XCTestCase {

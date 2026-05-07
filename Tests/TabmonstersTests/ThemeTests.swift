@@ -1,6 +1,6 @@
 import XCTest
 import SwiftUI
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 // MARK: - Helper to extract sRGB components from a Color
 

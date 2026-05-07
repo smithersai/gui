@@ -1,11 +1,11 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 @MainActor
 final class StoreSoakTests: XCTestCase {
 
     private func isSoakEnabled() -> Bool {
-        ProcessInfo.processInfo.environment["TABMONSTERS_SOAK"] == "1"
+        ProcessInfo.processInfo.environment["SMITHERS_APP_SOAK"] == "1"
     }
 
     private func makeNode(
@@ -17,7 +17,7 @@ final class StoreSoakTests: XCTestCase {
 
     func testSoakStoreProcessesManyEvents() throws {
         guard isSoakEnabled() else {
-            throw XCTSkip("Soak test requires TABMONSTERS_SOAK=1")
+            throw XCTSkip("Soak test requires SMITHERS_APP_SOAK=1")
         }
 
         let store = DevToolsStore()
@@ -60,7 +60,7 @@ final class StoreSoakTests: XCTestCase {
 
     func testSoakNoTaskLeaks() throws {
         guard isSoakEnabled() else {
-            throw XCTSkip("Soak test requires TABMONSTERS_SOAK=1")
+            throw XCTSkip("Soak test requires SMITHERS_APP_SOAK=1")
         }
 
         let provider = MockSoakStreamProvider()

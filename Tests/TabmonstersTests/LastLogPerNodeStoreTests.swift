@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tabmonsters
+@testable import SmithersGUI
 
 @MainActor
 private final class MockLastLogStreamProvider: ChatStreamProviding {

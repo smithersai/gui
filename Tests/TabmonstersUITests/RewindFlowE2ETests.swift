@@ -1,10 +1,10 @@
 import XCTest
 
-final class RewindFlowE2ETests: TabmonstersUITestCase {
+final class RewindFlowE2ETests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
         [
-            "TABMONSTERS_UITEST_TREE": "1",
-            "TABMONSTERS_UITEST_TREE_STREAM": "0",
+            "SMITHERS_APP_UITEST_TREE": "1",
+            "SMITHERS_APP_UITEST_TREE_STREAM": "0",
         ]
     }
 
@@ -57,12 +57,12 @@ final class RewindFlowE2ETests: TabmonstersUITestCase {
     }
 }
 
-final class RewindFlowErrorE2ETests: TabmonstersUITestCase {
+final class RewindFlowErrorE2ETests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
         [
-            "TABMONSTERS_UITEST_TREE": "1",
-            "TABMONSTERS_UITEST_TREE_STREAM": "0",
-            "TABMONSTERS_UITEST_REWIND_ERROR": "network",
+            "SMITHERS_APP_UITEST_TREE": "1",
+            "SMITHERS_APP_UITEST_TREE_STREAM": "0",
+            "SMITHERS_APP_UITEST_REWIND_ERROR": "network",
         ]
     }
 
@@ -109,12 +109,12 @@ final class RewindFlowErrorE2ETests: TabmonstersUITestCase {
     }
 }
 
-final class RewindFinishedRunE2ETests: TabmonstersUITestCase {
+final class RewindFinishedRunE2ETests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
         [
-            "TABMONSTERS_UITEST_TREE": "1",
-            "TABMONSTERS_UITEST_TREE_STREAM": "0",
-            "TABMONSTERS_UITEST_TREE_FINISHED": "1",
+            "SMITHERS_APP_UITEST_TREE": "1",
+            "SMITHERS_APP_UITEST_TREE_STREAM": "0",
+            "SMITHERS_APP_UITEST_TREE_FINISHED": "1",
         ]
     }
 

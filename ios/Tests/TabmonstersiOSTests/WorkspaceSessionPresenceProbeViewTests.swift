@@ -1,7 +1,7 @@
 #if os(iOS)
 import Foundation
 import XCTest
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 @MainActor
 final class WorkspaceSessionPresenceProbeViewTests: XCTestCase {
@@ -131,7 +131,7 @@ final class WorkspaceSessionPresenceProbeViewTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Sources")
-            .appendingPathComponent("TabmonstersiOS")
+            .appendingPathComponent("SmithersGUIiOS")
             .appendingPathComponent("ContentShell.iOS.swift")
     }
 }

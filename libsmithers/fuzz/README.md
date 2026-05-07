@@ -67,7 +67,7 @@ docker run --rm libsmithers-fuzz ./run.sh --short
 
 The Dockerfile is written for that exact build context. Since Docker cannot copy
 files outside `libsmithers/fuzz` when that context is used, it clones
-`smithersai/tabmonsters` inside the image and overlays the local fuzz directory from the
+`smithersai/smithers-app` inside the image and overlays the local fuzz directory from the
 build context.
 
 `--short` runs each target for 30 seconds. `--long` runs each target for 10

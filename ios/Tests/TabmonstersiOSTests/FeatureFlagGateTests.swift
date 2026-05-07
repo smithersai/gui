@@ -2,7 +2,7 @@
 import Combine
 import XCTest
 import ViewInspector
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 extension SignedInRemoteAccessSurface: Inspectable {}
 extension IOSContentShell: Inspectable {}

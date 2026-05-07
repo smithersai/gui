@@ -309,7 +309,7 @@ struct LogViewerView: View {
         Task { @MainActor in
             guard let logURL = await AppLogger.fileWriter.exportLog() else { return }
             let panel = NSSavePanel()
-            panel.nameFieldStringValue = "tabmonsters-logs-\(Self.exportDateString()).log"
+            panel.nameFieldStringValue = "smithers-app-logs-\(Self.exportDateString()).log"
             panel.allowedContentTypes = [.plainText]
             guard panel.runModal() == .OK, let dest = panel.url else { return }
             do {

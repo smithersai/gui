@@ -1,4 +1,4 @@
-// TabmonstersiOSE2EReconnectTests.swift — reconnect resilience scenario
+// SmithersGUIiOSE2EReconnectTests.swift — reconnect resilience scenario
 // group (ticket ios-e2e-harness, scenario group C).
 //
 // XCUITest runs inside the simulator and cannot directly `docker pause`
@@ -31,7 +31,7 @@
 #if os(iOS)
 import XCTest
 
-final class TabmonstersiOSE2EReconnectTests: XCTestCase {
+final class SmithersGUIiOSE2EReconnectTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

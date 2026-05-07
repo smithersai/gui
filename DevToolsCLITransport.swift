@@ -287,7 +287,7 @@ enum DevToolsNodeStateQuery {
 /// A single row from `_smithers_attempts` with enough data to decide what state a
 /// node was in at a given wall-clock timestamp.
 ///
-/// DB schema (confirmed against `/Users/williamcory/tabmonsters/smithers.db`):
+/// DB schema (confirmed against `/Users/williamcory/smithers-app/smithers.db`):
 ///   `_smithers_attempts(run_id, node_id, iteration, attempt, state, started_at_ms,
 ///    finished_at_ms, heartbeat_at_ms, heartbeat_data_json, error_json, ...)`.
 ///

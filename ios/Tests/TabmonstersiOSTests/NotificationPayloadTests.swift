@@ -1,7 +1,7 @@
 #if os(iOS)
 import UserNotifications
 import XCTest
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 final class NotificationPayloadTests: XCTestCase {
     func testParseNestedAPNSPayloadForApproveAction() throws {
@@ -35,14 +35,14 @@ final class NotificationPayloadTests: XCTestCase {
         let userInfo: [AnyHashable: Any] = [
             "aps": ["category": ApprovalNotificationIdentifier.category],
             "approval_id": "approval-456",
-            "repo_full_name": "smithers/tabmonsters",
+            "repo_full_name": "smithers/smithers-app",
         ]
 
         let payload = try XCTUnwrap(NotificationPayload.parse(userInfo))
 
         XCTAssertEqual(payload.approvalID, "approval-456")
         XCTAssertEqual(payload.repoOwner, "smithers")
-        XCTAssertEqual(payload.repoName, "tabmonsters")
+        XCTAssertEqual(payload.repoName, "smithers-app")
         XCTAssertEqual(payload.action, .open)
     }
 

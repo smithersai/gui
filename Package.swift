@@ -14,7 +14,7 @@ import PackageDescription
 //   Tickets 0122/0123/0124 will migrate more surfaces off AppKit; when the
 //   runtime surface is cross-platform, this file will grow an iOS target.
 let package = Package(
-    name: "Tabmonsters",
+    name: "SmithersGUI",
     platforms: [
         .macOS(.v14),
         .iOS(.v17),
@@ -55,9 +55,9 @@ let package = Package(
         ),
         // Tests for SmithersAuth live in the standalone SwiftPM package at
         // `Shared/Package.swift` so `swift test` there can run hermetically
-        // without compiling the whole Tabmonsters / CGhosttyKit graph.
+        // without compiling the whole SmithersGUI / CGhosttyKit graph.
         .executableTarget(
-            name: "Tabmonsters",
+            name: "SmithersGUI",
             dependencies: ["CGhosttyKit", "CSmithersKit", "SmithersAuth", "SmithersRuntime", "SmithersStore", "SmithersE2ESupport"],
             path: ".",
             exclude: [
@@ -97,7 +97,7 @@ let package = Package(
                 "bun.lock",
                 "build",
                 "run-1777173223656.log",
-                "Tabmonsters.xcodeproj",
+                "SmithersGUI.xcodeproj",
                 "Shared",
             ],
             resources: [
@@ -142,12 +142,12 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "TabmonstersTests",
+            name: "SmithersGUITests",
             dependencies: [
-                "Tabmonsters",
+                "SmithersGUI",
                 .product(name: "ViewInspector", package: "ViewInspector"),
             ],
-            path: "Tests/TabmonstersTests"
+            path: "Tests/SmithersGUITests"
         ),
 
         // ticket/0120 — thin Swift wrapper around the new libsmithers-core FFI.

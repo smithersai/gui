@@ -1,6 +1,6 @@
 import XCTest
 
-class TabmonstersUITestCase: XCTestCase {
+class SmithersGUIUITestCase: XCTestCase {
     var app: XCUIApplication!
     var workspacePath: String!
     var launchArguments: [String] { ["--uitesting"] }
@@ -13,11 +13,11 @@ class TabmonstersUITestCase: XCTestCase {
 
         let git = URL(fileURLWithPath: "/usr/bin/git")
         _ = try? Process.run(git, arguments: ["-C", tmp.path, "init"])
-        _ = try? Process.run(git, arguments: ["-C", tmp.path, "config", "user.email", "uitests@tabmonsters.local"])
-        _ = try? Process.run(git, arguments: ["-C", tmp.path, "config", "user.name", "Tabmonsters UI Tests"])
+        _ = try? Process.run(git, arguments: ["-C", tmp.path, "config", "user.email", "uitests@smithers-app.local"])
+        _ = try? Process.run(git, arguments: ["-C", tmp.path, "config", "user.name", "SmithersGUI UI Tests"])
 
         let readme = tmp.appendingPathComponent("README.md")
-        try? "# Tabmonsters UI Test Workspace\n".write(to: readme, atomically: true, encoding: .utf8)
+        try? "# SmithersGUI UI Test Workspace\n".write(to: readme, atomically: true, encoding: .utf8)
         _ = try? Process.run(git, arguments: ["-C", tmp.path, "add", "."])
         _ = try? Process.run(git, arguments: ["-C", tmp.path, "commit", "-m", "init"])
 
@@ -30,15 +30,15 @@ class TabmonstersUITestCase: XCTestCase {
 
         // Clear saved application state to prevent crash-recovery dialogs
         let savedStateDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Saved Application State/com.tabmonsters.Tabmonsters.savedState")
+            .appendingPathComponent("Library/Saved Application State/com.smithers-app.SmithersGUI.savedState")
         try? FileManager.default.removeItem(at: savedStateDir)
 
         app = XCUIApplication()
         app.launchArguments = launchArguments
         var launchEnvironment: [String: String] = [
-            "TABMONSTERS_UITEST": "1",
-            "TABMONSTERS_DISABLE_ANIMATIONS": "1",
-            "TABMONSTERS_OPEN_WORKSPACE": workspacePath,
+            "SMITHERS_APP_UITEST": "1",
+            "SMITHERS_APP_DISABLE_ANIMATIONS": "1",
+            "SMITHERS_APP_OPEN_WORKSPACE": workspacePath,
         ]
         launchEnvironment.merge(launchEnvironmentOverrides) { _, new in new }
         app.launchEnvironment = launchEnvironment

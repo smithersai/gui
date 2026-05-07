@@ -259,7 +259,7 @@ private struct SeedSnapshot {
     let approvalID: String
 }
 
-final class TabmonstersiOSE2EApprovalsFlowTests: XCTestCase {
+final class SmithersGUIiOSE2EApprovalsFlowTests: XCTestCase {
     private let http = ApprovalFlowHTTPClient()
     private static let repoRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()

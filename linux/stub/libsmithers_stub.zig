@@ -179,7 +179,7 @@ export fn smithers_app_remove_recent_workspace(_: c.smithers_app_t, _: [*c]const
 export fn smithers_app_recent_workspaces_json(_: c.smithers_app_t) callconv(.c) c.smithers_string_s {
     return makeString(
         \\[
-        \\ {"id":"tabmonsters","name":"TABMONSTERS","status":"active","createdAt":"today"},
+        \\ {"id":"smithers-app","name":"SMITHERS_APP","status":"active","createdAt":"today"},
         \\ {"id":"demo","name":"Demo Workspace","status":"suspended","createdAt":"recent"}
         \\]
     );
@@ -420,7 +420,7 @@ const agents_json =
 
 const workspaces_json =
     \\[
-    \\ {"id":"tabmonsters","name":"TABMONSTERS","status":"active","createdAt":"2026-04-21"},
+    \\ {"id":"smithers-app","name":"SMITHERS_APP","status":"active","createdAt":"2026-04-21"},
     \\ {"id":"jjhub-demo","name":"JJHub Demo","status":"suspended","createdAt":"2026-04-20"}
     \\]
 ;

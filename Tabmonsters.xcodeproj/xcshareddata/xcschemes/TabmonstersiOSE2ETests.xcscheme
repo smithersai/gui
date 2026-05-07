@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "2BA66B6A9826A78A807E93CF"
-               BuildableName = "TabmonstersiOS.app"
-               BlueprintName = "TabmonstersiOS"
-               ReferencedContainer = "container:Tabmonsters.xcodeproj">
+               BuildableName = "SmithersGUIiOS.app"
+               BlueprintName = "SmithersGUIiOS"
+               ReferencedContainer = "container:SmithersGUI.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
          <BuildActionEntry
@@ -30,9 +30,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "57483C1ACECC5B8FBE13C608"
-               BuildableName = "TabmonstersiOSE2ETests.xctest"
-               BlueprintName = "TabmonstersiOSE2ETests"
-               ReferencedContainer = "container:Tabmonsters.xcodeproj">
+               BuildableName = "SmithersGUIiOSE2ETests.xctest"
+               BlueprintName = "SmithersGUIiOSE2ETests"
+               ReferencedContainer = "container:SmithersGUI.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -47,9 +47,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "2BA66B6A9826A78A807E93CF"
-            BuildableName = "TabmonstersiOS.app"
-            BlueprintName = "TabmonstersiOS"
-            ReferencedContainer = "container:Tabmonsters.xcodeproj">
+            BuildableName = "SmithersGUIiOS.app"
+            BlueprintName = "SmithersGUIiOS"
+            ReferencedContainer = "container:SmithersGUI.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <Testables>
@@ -58,9 +58,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "57483C1ACECC5B8FBE13C608"
-               BuildableName = "TabmonstersiOSE2ETests.xctest"
-               BlueprintName = "TabmonstersiOSE2ETests"
-               ReferencedContainer = "container:Tabmonsters.xcodeproj">
+               BuildableName = "SmithersGUIiOSE2ETests.xctest"
+               BlueprintName = "SmithersGUIiOSE2ETests"
+               ReferencedContainer = "container:SmithersGUI.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -149,9 +149,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "2BA66B6A9826A78A807E93CF"
-            BuildableName = "TabmonstersiOS.app"
-            BlueprintName = "TabmonstersiOS"
-            ReferencedContainer = "container:Tabmonsters.xcodeproj">
+            BuildableName = "SmithersGUIiOS.app"
+            BlueprintName = "SmithersGUIiOS"
+            ReferencedContainer = "container:SmithersGUI.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -166,9 +166,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "2BA66B6A9826A78A807E93CF"
-            BuildableName = "TabmonstersiOS.app"
-            BlueprintName = "TabmonstersiOS"
-            ReferencedContainer = "container:Tabmonsters.xcodeproj">
+            BuildableName = "SmithersGUIiOS.app"
+            BlueprintName = "SmithersGUIiOS"
+            ReferencedContainer = "container:SmithersGUI.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

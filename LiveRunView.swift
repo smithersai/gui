@@ -51,7 +51,7 @@ struct LiveRunView: View {
     @State private var orchestratorVersion: String?
 
     private var useLiveRunTreeHarness: Bool {
-        UITestSupport.isEnabled && ProcessInfo.processInfo.environment["TABMONSTERS_UITEST_TREE"] == "1"
+        UITestSupport.isEnabled && ProcessInfo.processInfo.environment["SMITHERS_APP_UITEST_TREE"] == "1"
     }
 
     private var workflowName: String {

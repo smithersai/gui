@@ -1,6 +1,6 @@
 import XCTest
 
-final class RunInspectorE2ETests: TabmonstersUITestCase {
+final class RunInspectorE2ETests: SmithersGUIUITestCase {
     func testRunHijackOpensTerminalWithResumeCommand() {
         navigate(to: "Runs", expectedViewIdentifier: "view.runs")
 

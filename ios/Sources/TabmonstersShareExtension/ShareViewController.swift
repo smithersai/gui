@@ -2,13 +2,13 @@ import SwiftUI
 import UIKit
 
 final class ShareViewController: UIViewController {
-    private var hostingController: UIHostingController<TabmonstersShareExtensionView>?
+    private var hostingController: UIHostingController<SmithersGUIShareExtensionView>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
         let tokenStore = KeychainTokenStore(
-            service: "com.tabmonsters.oauth2.ios",
+            service: "com.smithers-app.oauth2.ios",
             account: "default"
         )
         let client = ShareExtensionAPIClient(
@@ -21,7 +21,7 @@ final class ShareViewController: UIViewController {
             contentLoader: ShareExtensionContentLoader(context: extensionContext),
             client: client
         )
-        let rootView = TabmonstersShareExtensionView(
+        let rootView = SmithersGUIShareExtensionView(
             model: model,
             onCancel: { [weak self] in self?.cancelShare() },
             onComplete: { [weak self] in self?.completeShare() }
@@ -47,7 +47,7 @@ final class ShareViewController: UIViewController {
 
     private func cancelShare() {
         let error = NSError(
-            domain: "com.tabmonsters.share-extension",
+            domain: "com.smithers-app.share-extension",
             code: NSUserCancelledError,
             userInfo: [NSLocalizedDescriptionKey: "Share cancelled"]
         )

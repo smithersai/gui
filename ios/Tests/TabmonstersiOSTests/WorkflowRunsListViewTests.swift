@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 import XCTest
 import ViewInspector
-@testable import TabmonstersiOS
+@testable import SmithersGUIiOS
 
 extension WorkflowRunsListView: Inspectable {}
 extension WorkflowRunDetailView: Inspectable {}

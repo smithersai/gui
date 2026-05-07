@@ -8,7 +8,7 @@
 // Keep these types:
 //   - Sendable + Codable + Equatable + Hashable where cheap
 //   - entity-oriented (no per-platform view shapes)
-//   - decoupled from `Tabmonsters` DTOs (those are the UI-facing projections
+//   - decoupled from `SmithersGUI` DTOs (those are the UI-facing projections
 //     and live in `SmithersModels.swift`); mapping happens in the view-
 //     level adapters that consume these stores.
 //

@@ -1,4 +1,4 @@
-# CI for Tabmonsters (ticket 0121).
+# CI for SmithersGUI (ticket 0121).
 #
 # Builds both the macOS app and the iOS app on every push/PR so the
 # cross-platform matrix is exercised continuously. The iOS jobs are the
@@ -52,10 +52,10 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          if ! git diff --quiet -- Tabmonsters.xcodeproj; then
-            echo "::error::Tabmonsters.xcodeproj is out of sync with project.yml."
+          if ! git diff --quiet -- SmithersGUI.xcodeproj; then
+            echo "::error::SmithersGUI.xcodeproj is out of sync with project.yml."
             echo "::error::Run 'xcodegen generate' from the repository root and commit the result."
-            git --no-pager diff --stat -- Tabmonsters.xcodeproj
+            git --no-pager diff --stat -- SmithersGUI.xcodeproj
             exit 1
           fi
 
@@ -86,11 +86,11 @@ jobs:
           mkdir -p libsmithers/zig-out/bin/smithers-session-daemon
           mkdir -p libsmithers/zig-out/bin/smithers-session-connect
           xcodegen generate
-      - name: Build Tabmonsters (macOS)
+      - name: Build SmithersGUI (macOS)
         run: |
           xcodebuild \
-            -project Tabmonsters.xcodeproj \
-            -scheme Tabmonsters \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersGUI \
             -destination 'platform=macOS' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
@@ -98,8 +98,8 @@ jobs:
       - name: Unit tests (macOS)
         run: |
           xcodebuild \
-            -project Tabmonsters.xcodeproj \
-            -scheme Tabmonsters \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersGUI \
             -destination 'platform=macOS' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
@@ -183,11 +183,11 @@ PY
       - name: Show chosen simulator destination
         run: |
           echo "Using destination: ${{ steps.simdest.outputs.destination }}"
-      - name: Build TabmonstersiOS (simulator)
+      - name: Build SmithersGUIiOS (simulator)
         run: |
           xcodebuild \
-            -project Tabmonsters.xcodeproj \
-            -scheme TabmonstersiOS \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersGUIiOS \
             -destination '${{ steps.simdest.outputs.destination }}' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
@@ -195,8 +195,8 @@ PY
       - name: Run iOS unit + UI tests (simulator)
         run: |
           xcodebuild \
-            -project Tabmonsters.xcodeproj \
-            -scheme TabmonstersiOS \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersGUIiOS \
             -destination '${{ steps.simdest.outputs.destination }}' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
@@ -280,11 +280,11 @@ PY
           mkdir -p libsmithers/zig-out/bin/smithers-session-daemon
           mkdir -p libsmithers/zig-out/bin/smithers-session-connect
           xcodegen generate
-      - name: Build TabmonstersiOS (device slice, no signing)
+      - name: Build SmithersGUIiOS (device slice, no signing)
         run: |
           xcodebuild \
-            -project Tabmonsters.xcodeproj \
-            -scheme TabmonstersiOS \
+            -project SmithersGUI.xcodeproj \
+            -scheme SmithersGUIiOS \
             -destination 'generic/platform=iOS' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \

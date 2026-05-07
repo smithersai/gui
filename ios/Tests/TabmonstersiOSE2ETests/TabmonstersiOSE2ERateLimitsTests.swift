@@ -2,7 +2,7 @@
 import Foundation
 import XCTest
 
-// TabmonstersiOSE2ERateLimitsTests.swift
+// SmithersGUIiOSE2ERateLimitsTests.swift
 //
 // HTTP-only E2E quota/rate-limit scenarios against a real plue backend.
 // These tests intentionally do NOT drive UI. They live in the XCUITest
@@ -16,7 +16,7 @@ import XCTest
 //   skip with an endpoint-specific follow-up.
 // - No xcodebuild or seed-script changes here.
 
-final class TabmonstersiOSE2ERateLimitsTests: XCTestCase {
+final class SmithersGUIiOSE2ERateLimitsTests: XCTestCase {
     private static let seededRepoIDEnvKey = "PLUE_E2E_REPO_ID"
     private static let electricBaseURLEnvKey = "PLUE_ELECTRIC_BASE_URL"
 

@@ -1,4 +1,4 @@
-// TabmonstersiOSE2EAuthTests.swift — authentication scenario group for the
+// SmithersGUIiOSE2EAuthTests.swift — authentication scenario group for the
 // iOS app against a real plue backend.
 //
 // These tests stay intentionally narrow: observable auth shell state only.
@@ -8,7 +8,7 @@
 #if os(iOS)
 import XCTest
 
-final class TabmonstersiOSE2EAuthTests: XCTestCase {
+final class SmithersGUIiOSE2EAuthTests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

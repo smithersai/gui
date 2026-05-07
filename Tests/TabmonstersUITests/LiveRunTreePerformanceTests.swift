@@ -1,8 +1,8 @@
 import XCTest
 
-final class LiveRunTreePerformanceTests: TabmonstersUITestCase {
+final class LiveRunTreePerformanceTests: SmithersGUIUITestCase {
     override var launchEnvironmentOverrides: [String: String] {
-        ["TABMONSTERS_UITEST_TREE": "1"]
+        ["SMITHERS_APP_UITEST_TREE": "1"]
     }
 
     func testTreeFirstPaintUnderBudget() {

@@ -159,7 +159,7 @@ BEGIN
     VALUES (
         'smithers-ios',
         'public-client-no-secret',
-        'Tabmonsters iOS',
+        'SmithersGUI iOS',
         ARRAY['smithers://oauth2/callback'],
         ARRAY['read:user', 'read:repo', 'write:workspace', 'write:approval', 'write:agent'],
         v_user_id,

@@ -1,1 +1,1 @@
-../tabmonsters/libsmithers
+../smithers-app/libsmithers

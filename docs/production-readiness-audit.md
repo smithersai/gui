@@ -4,7 +4,7 @@ Date: 2026-05-03
 
 ## Verdict
 
-Tabmonsters is not production-ready yet.
+SmithersGUI is not production-ready yet.
 
 The backend has been hardened in several important areas, and a focused
 Pydantic-free test slice is green. Full release validation is currently blocked
@@ -137,11 +137,11 @@ be treated as valid until that service is restarted or the machine is rebooted.
 ### Swift
 
 `swift test --jobs 1` was attempted. It produced no test output after roughly
-two minutes and was found stuck in SwiftPM's generated `tabmonsters-manifest` executable:
+two minutes and was found stuck in SwiftPM's generated `smithers-app-manifest` executable:
 
 ```text
 swift-test --jobs 1
-.../TemporaryDirectory.../tabmonsters-manifest -fileno 4 ...
+.../TemporaryDirectory.../smithers-app-manifest -fileno 4 ...
 ```
 
 That process was terminated cleanly. This is consistent with the same local

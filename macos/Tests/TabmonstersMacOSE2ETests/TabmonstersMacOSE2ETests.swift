@@ -1,8 +1,8 @@
-// TabmonstersMacOSE2ETests.swift — full-stack XCUITest suite for the macOS
+// SmithersGUIMacOSE2ETests.swift — full-stack XCUITest suite for the macOS
 // desktop app.
 //
 // Ticket: macos-e2e-harness. Mirrors the iOS suite
-// (`ios/Tests/TabmonstersiOSE2ETests/TabmonstersiOSE2ETests.swift`). This bundle
+// (`ios/Tests/SmithersGUIiOSE2ETests/SmithersGUIiOSE2ETests.swift`). This bundle
 // expects a real plue backend on `PLUE_BASE_URL` and a seeded bearer
 // token in `SMITHERS_E2E_BEARER`. See `macos/scripts/run-e2e.sh` for the
 // orchestration, and `Shared/Sources/SmithersE2ESupport/E2EEnvironment.swift`
@@ -16,7 +16,7 @@
 #if os(macOS)
 import XCTest
 
-final class TabmonstersMacOSE2ETests: XCTestCase {
+final class SmithersGUIMacOSE2ETests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
@@ -24,11 +24,11 @@ final class TabmonstersMacOSE2ETests: XCTestCase {
         // Clear macOS "Saved Application State" so a prior crash does
         // not restore the app into an opaque off-screen window before
         // XCUITest gets a chance to query it. Mirrors the setup in
-        // `TabmonstersUITestCase` — without this, the very first test
+        // `SmithersGUIUITestCase` — without this, the very first test
         // in a fresh runner intermittently boots into a restored shell
         // that is not accessibility-visible.
         let savedStateDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Saved Application State/com.tabmonsters.Tabmonsters.savedState")
+            .appendingPathComponent("Library/Saved Application State/com.smithers-app.SmithersGUI.savedState")
         try? FileManager.default.removeItem(at: savedStateDir)
     }
 
@@ -81,7 +81,7 @@ final class TabmonstersMacOSE2ETests: XCTestCase {
 
         // SwiftUI-on-macOS can take 15-30s to register the first window
         // in XCUITest's accessibility tree on this machine (macOS 26.2
-        // beta behaviour — matches the existing TabmonstersUITestCase
+        // beta behaviour — matches the existing SmithersGUIUITestCase
         // which waits 30s for `sidebar`). Anchor the assertion on the
         // WelcomeView button rather than the ZStack root identifier
         // (which SwiftUI doesn't reliably propagate to AX on macOS).

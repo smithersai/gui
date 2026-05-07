@@ -1,4 +1,4 @@
-name: Tabmonsters
+name: SmithersGUI
 options:
   minimumXcodeGenVersion: 2.43.0
   deploymentTarget:
@@ -23,13 +23,13 @@ targets:
   # libsmithers/zig-out/bin. Linker flags and AppKit frameworks are kept
   # macOS-only; the iOS target below does not inherit any of them.
   # ---------------------------------------------------------------------------
-  Tabmonsters:
+  SmithersGUI:
     type: application
     platform: macOS
     sources:
       - AppLogger.swift
-      - Tabmonsters/Runtime/DevToolsClient.swift
-      - Tabmonsters/Runtime/DevToolsStore.swift
+      - SmithersGUI/Runtime/DevToolsClient.swift
+      - SmithersGUI/Runtime/DevToolsStore.swift
       - DevToolsModels.swift
       - DevToolsClientError.swift
       - DevToolsCLITransport.swift
@@ -45,8 +45,8 @@ targets:
       - FrameScrubberView.swift
       - RewindConfirmationDialog.swift
       - LiveRunLayout.swift
-      - Tabmonsters/Views/RunInspector/RunInspectorView.swift
-      - Tabmonsters/Views/RunInspector/RunTreeView.swift
+      - SmithersGUI/Views/RunInspector/RunInspectorView.swift
+      - SmithersGUI/Views/RunInspector/RunTreeView.swift
       - LiveRunView.swift
       - LiveRunTreeExpansionStore.swift
       - LiveRunTreeView.swift
@@ -59,7 +59,7 @@ targets:
       - BrowserSurfaceView.swift
       - DateFormatters.swift
       - DeveloperDebugView.swift
-      - TabmonstersControlSidebar.swift
+      - SmithersGUIControlSidebar.swift
       - GUINotifications.swift
       - AgentsView.swift
       - ApprovalsView.swift
@@ -170,10 +170,10 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.Tabmonsters
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers-app.SmithersGUI
         GENERATE_INFOPLIST_FILE: YES
         ENABLE_APPINTENTS_METADATA_GENERATION: NO
-        INFOPLIST_KEY_CFBundleDisplayName: TABMONSTERS
+        INFOPLIST_KEY_CFBundleDisplayName: Smithers App
         INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
         SUPPORTED_PLATFORMS: macosx
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CGhosttyKit $(SRCROOT)/CSmithersKit"
@@ -196,61 +196,61 @@ targets:
       - sdk: libsqlite3.tbd
       - sdk: AuthenticationServices.framework
       - sdk: CryptoKit.framework
-  TabmonstersTests:
+  SmithersGUITests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: Tests/TabmonstersTests
+      - path: Tests/SmithersGUITests
         excludes:
           - "**/*ViewTests.swift"
           - "**/*View*Tests.swift"
           - "HighCoverageViewRenderTests.swift"
     dependencies:
-      - target: Tabmonsters
+      - target: SmithersGUI
       - package: ViewInspector
         product: ViewInspector
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.TabmonstersTests
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers-app.SmithersGUITests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_TARGET_NAME: Tabmonsters
+        TEST_TARGET_NAME: SmithersGUI
         SUPPORTED_PLATFORMS: macosx
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CGhosttyKit $(SRCROOT)/CSmithersKit"
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/ghostty/macos/GhosttyKit.xcframework/macos-arm64 $(SRCROOT)/libsmithers/zig-out/lib $(SRCROOT)/libsmithers"
         OTHER_LDFLAGS: "$(inherited) -lghostty-fat -lsmithers -lc++ -lresolv -lz -lbz2 -lsqlite3"
-  TabmonstersUITests:
+  SmithersGUIUITests:
     type: bundle.ui-testing
     platform: macOS
     sources:
-      - path: Tests/TabmonstersUITests
+      - path: Tests/SmithersGUIUITests
     dependencies:
-      - target: Tabmonsters
+      - target: SmithersGUI
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.TabmonstersUITests
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers-app.SmithersGUIUITests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_TARGET_NAME: Tabmonsters
+        TEST_TARGET_NAME: SmithersGUI
         SUPPORTED_PLATFORMS: macosx
   # ---------------------------------------------------------------------------
   # macOS E2E test target (ticket macos-e2e-harness). Full-stack XCUITest
   # bundle that talks to a real Smithers backend on localhost:4000 via the
   # SMITHERS_E2E_MODE env-var bypass in SmithersE2ESupport. Mirrors the iOS
-  # TabmonstersiOSE2ETests target. See macos/scripts/run-e2e.sh for the
-  # orchestration. Kept distinct from TabmonstersUITests (the cheap
+  # SmithersGUIiOSE2ETests target. See macos/scripts/run-e2e.sh for the
+  # orchestration. Kept distinct from SmithersGUIUITests (the cheap
   # launch-smoke UI test bundle).
   # ---------------------------------------------------------------------------
-  TabmonstersMacOSE2ETests:
+  SmithersGUIMacOSE2ETests:
     type: bundle.ui-testing
     platform: macOS
     sources:
-      - path: macos/Tests/TabmonstersMacOSE2ETests
+      - path: macos/Tests/SmithersGUIMacOSE2ETests
     dependencies:
-      - target: Tabmonsters
+      - target: SmithersGUI
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.TabmonstersMacOSE2ETests
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers-app.SmithersGUIMacOSE2ETests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_TARGET_NAME: Tabmonsters
+        TEST_TARGET_NAME: SmithersGUI
         SUPPORTED_PLATFORMS: macosx
   # ---------------------------------------------------------------------------
   # iOS app (ticket 0121). Intentionally minimal scaffolding so the build
@@ -262,14 +262,14 @@ targets:
   #
   # The target explicitly does NOT link AppKit, and does NOT bundle the
   # macOS-only `smithers-session-daemon` / `smithers-session-connect` helper
-  # binaries. Both are macOS-only in the Tabmonsters target above.
+  # binaries. Both are macOS-only in the SmithersGUI target above.
   # ---------------------------------------------------------------------------
-  TabmonstersiOS:
+  SmithersGUIiOS:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: ios/Sources/TabmonstersiOS
+      - path: ios/Sources/SmithersGUIiOS
         excludes:
           - Info.plist
       - path: Shared/Sources/SmithersAuth
@@ -299,10 +299,10 @@ targets:
       # in the App Store binary.
       - path: Shared/Sources/SmithersE2ESupport
     info:
-      path: ios/Sources/TabmonstersiOS/Info.plist
+      path: ios/Sources/SmithersGUIiOS/Info.plist
       properties:
         CFBundleDevelopmentRegion: en
-        CFBundleDisplayName: TABMONSTERS
+        CFBundleDisplayName: Smithers App
         CFBundleExecutable: "$(EXECUTABLE_NAME)"
         CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
         CFBundleInfoDictionaryVersion: "6.0"
@@ -325,7 +325,7 @@ targets:
         # Register `smithers://` once for OAuth2 callbacks and app deep links.
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
-            CFBundleURLName: com.tabmonsters.ios.deep-links
+            CFBundleURLName: com.smithers-app.ios.deep-links
             CFBundleURLSchemes:
               - smithers
         NSAppTransportSecurity:
@@ -342,7 +342,7 @@ targets:
         # Ticket 0125: bundle id is the canonical App Store Connect identifier.
         # Registering a different id in ASC will break upload; this value is
         # the knob the user plugs into https://appstoreconnect.apple.com/.
-        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.ios
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers-app.ios
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_APPINTENTS_METADATA_GENERATION: NO
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -350,7 +350,7 @@ targets:
         SUPPORTS_MACCATALYST: NO
         # Holds the associated-domains placeholder for universal links.
         # Production link handling still requires the AASA file + profile.
-        CODE_SIGN_ENTITLEMENTS: ios/TabmonstersiOS.entitlements
+        CODE_SIGN_ENTITLEMENTS: ios/SmithersGUIiOS.entitlements
         APS_ENVIRONMENT: development
         # Ticket 0125: versioning.
         #   MARKETING_VERSION      = CFBundleShortVersionString (e.g. 0.1.0).
@@ -406,7 +406,7 @@ targets:
           CODE_SIGN_IDENTITY: "Apple Distribution"
           APS_ENVIRONMENT: production
     dependencies:
-      - target: TabmonstersShareExtension
+      - target: SmithersGUIShareExtension
         embed: true
       - sdk: AppIntents.framework
       - framework: ghostty/zig-out/lib/ghostty-vt.xcframework
@@ -424,22 +424,22 @@ targets:
       - sdk: CryptoKit.framework
       - sdk: Security.framework
       - sdk: libsqlite3.tbd
-  TabmonstersShareExtension:
+  SmithersGUIShareExtension:
     type: app-extension
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: ios/Sources/TabmonstersShareExtension
+      - path: ios/Sources/SmithersGUIShareExtension
         excludes:
           - Info.plist
       # Keychain bearer reader only. Avoid the full auth UI/session-driver
       # surface because app extensions cannot present ASWebAuthenticationSession.
       - Shared/Sources/SmithersAuth/TokenStore.swift
     info:
-      path: ios/Sources/TabmonstersShareExtension/Info.plist
+      path: ios/Sources/SmithersGUIShareExtension/Info.plist
       properties:
         CFBundleDevelopmentRegion: en
-        CFBundleDisplayName: TABMONSTERS
+        CFBundleDisplayName: Smithers App
         CFBundleExecutable: "$(EXECUTABLE_NAME)"
         CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
         CFBundleInfoDictionaryVersion: "6.0"
@@ -469,13 +469,13 @@ targets:
               NSIncludesSubdomains: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.ios.ShareExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers-app.ios.ShareExtension
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
         APPLICATION_EXTENSION_API_ONLY: YES
-        CODE_SIGN_ENTITLEMENTS: ios/TabmonstersShareExtension.entitlements
+        CODE_SIGN_ENTITLEMENTS: ios/SmithersGUIShareExtension.entitlements
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_STYLE: Manual
@@ -502,21 +502,21 @@ targets:
       - sdk: SwiftUI.framework
       - sdk: Security.framework
       - sdk: UniformTypeIdentifiers.framework
-  TabmonstersiOSTests:
+  SmithersGUIiOSTests:
     type: bundle.unit-test
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: ios/Tests/TabmonstersiOSTests
+      - path: ios/Tests/SmithersGUIiOSTests
     dependencies:
-      - target: TabmonstersiOS
+      - target: SmithersGUIiOS
       - package: ViewInspector
         product: ViewInspector
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.TabmonstersiOSTests
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers-app.SmithersGUIiOSTests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_TARGET_NAME: TabmonstersiOS
+        TEST_TARGET_NAME: SmithersGUIiOS
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
         "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
@@ -526,19 +526,19 @@ targets:
         CODE_SIGNING_ALLOWED: NO
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CSmithersKit"
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
-  TabmonstersiOSUITests:
+  SmithersGUIiOSUITests:
     type: bundle.ui-testing
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: ios/Tests/TabmonstersiOSUITests
+      - path: ios/Tests/SmithersGUIiOSUITests
     dependencies:
-      - target: TabmonstersiOS
+      - target: SmithersGUIiOS
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.TabmonstersiOSUITests
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers-app.SmithersGUIiOSUITests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_TARGET_NAME: TabmonstersiOS
+        TEST_TARGET_NAME: SmithersGUIiOS
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
         "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
@@ -551,23 +551,23 @@ targets:
   # iOS E2E test target (ticket ios-e2e-harness). Full-stack XCUITest bundle
   # that talks to a real Smithers backend on localhost:4000 via the SMITHERS_E2E_MODE
   # env-var bypass in SmithersE2ESupport. See ios/scripts/run-e2e.sh for the
-  # orchestration. DISTINCT from TabmonstersiOSUITests (which is the unit-y
+  # orchestration. DISTINCT from SmithersGUIiOSUITests (which is the unit-y
   # launch smoke bundle from 0121) — keep them separate so the cheap launch
   # test runs on every PR but the expensive e2e suite only runs on main.
   # ---------------------------------------------------------------------------
-  TabmonstersiOSE2ETests:
+  SmithersGUIiOSE2ETests:
     type: bundle.ui-testing
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: ios/Tests/TabmonstersiOSE2ETests
+      - path: ios/Tests/SmithersGUIiOSE2ETests
     dependencies:
-      - target: TabmonstersiOS
+      - target: SmithersGUIiOS
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tabmonsters.TabmonstersiOSE2ETests
+        PRODUCT_BUNDLE_IDENTIFIER: com.smithers-app.SmithersGUIiOSE2ETests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_TARGET_NAME: TabmonstersiOS
+        TEST_TARGET_NAME: SmithersGUIiOS
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: NO
         "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
@@ -577,28 +577,28 @@ targets:
         CODE_SIGNING_ALLOWED: NO
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
 schemes:
-  Tabmonsters:
+  SmithersGUI:
     build:
       targets:
-        Tabmonsters: all
-        TabmonstersTests: [test]
-        TabmonstersUITests: [test]
+        SmithersGUI: all
+        SmithersGUITests: [test]
+        SmithersGUIUITests: [test]
     test:
       targets:
-        - TabmonstersTests
-        - TabmonstersUITests
+        - SmithersGUITests
+        - SmithersGUIUITests
       gatherCoverageData: false
   # Dedicated scheme for the macOS full-stack E2E bundle. Mirrors the
-  # TabmonstersiOSE2ETests scheme. Scheme-level environment variables are
+  # SmithersGUIiOSE2ETests scheme. Scheme-level environment variables are
   # the reliable path to thread values into the XCUITest runner's
   # `ProcessInfo` — `${...}` macros resolve at test time from the
   # invoking process environment, so `macos/scripts/run-e2e.sh` just
   # exports these and calls xcodebuild.
-  TabmonstersMacOSE2ETests:
+  SmithersGUIMacOSE2ETests:
     build:
       targets:
-        Tabmonsters: all
-        TabmonstersMacOSE2ETests: [test]
+        SmithersGUI: all
+        SmithersGUIMacOSE2ETests: [test]
     test:
       environmentVariables:
         - variable: SMITHERS_E2E_BEARER
@@ -626,40 +626,40 @@ schemes:
           value: $(SMITHERS_E2E_REFRESH)
           isEnabled: true
       targets:
-        - TabmonstersMacOSE2ETests
+        - SmithersGUIMacOSE2ETests
       gatherCoverageData: false
-  TabmonstersiOS:
+  SmithersGUIiOS:
     build:
       targets:
-        TabmonstersiOS: all
-        TabmonstersShareExtension: all
-        TabmonstersiOSTests: [test]
-        TabmonstersiOSUITests: [test]
+        SmithersGUIiOS: all
+        SmithersGUIShareExtension: all
+        SmithersGUIiOSTests: [test]
+        SmithersGUIiOSUITests: [test]
     test:
       targets:
-        - TabmonstersiOSTests
-        - TabmonstersiOSUITests
+        - SmithersGUIiOSTests
+        - SmithersGUIiOSUITests
       gatherCoverageData: false
-  TabmonstersShareExtension:
+  SmithersGUIShareExtension:
     build:
       targets:
-        TabmonstersiOS: all
-        TabmonstersShareExtension: all
+        SmithersGUIiOS: all
+        SmithersGUIShareExtension: all
   # Dedicated scheme for the full-stack E2E bundle. Kept separate from
-  # the `TabmonstersiOS` scheme so `xcodebuild -scheme TabmonstersiOSE2ETests test`
+  # the `SmithersGUIiOS` scheme so `xcodebuild -scheme SmithersGUIiOSE2ETests test`
   # runs ONLY the e2e bundle and does not re-run the launch smoke test.
   #
-  # The scheme points at `TabmonstersiOSE2ETests.xctestplan` whose
+  # The scheme points at `SmithersGUIiOSE2ETests.xctestplan` whose
   # `environmentVariableEntries` use `$(SMITHERS_E2E_BEARER)` etc. so
   # values come from the xcodebuild invocation's process environment.
   # This is the only reliable way to thread env vars into an XCUITest
   # runner process — direct `-env` or shell env inheritance does not
   # propagate through the test host on iOS.
-  TabmonstersiOSE2ETests:
+  SmithersGUIiOSE2ETests:
     build:
       targets:
-        TabmonstersiOS: all
-        TabmonstersiOSE2ETests: [test]
+        SmithersGUIiOS: all
+        SmithersGUIiOSE2ETests: [test]
     test:
       # Scheme-level environment variables are the reliable path to
       # thread values into the XCUITest runner's `ProcessInfo`. Values
@@ -715,5 +715,5 @@ schemes:
           value: $(PLUE_E2E_DOCKER_API_CONTAINER)
           isEnabled: true
       targets:
-        - TabmonstersiOSE2ETests
+        - SmithersGUIiOSE2ETests
       gatherCoverageData: false
