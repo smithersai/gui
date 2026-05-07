@@ -1,0 +1,19 @@
+.{
+    .name = .libsmithers,
+    .version = "0.0.1",
+    .fingerprint = 0xe1b27d9578b83431,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .zmux = .{
+            .url = "git+https://github.com/smithersai/zmux#b03b0c37f5fda9d68469b3fa669971a99455987f",
+            .hash = "zmux-0.1.0-50zQ2JgbAwB-p4vHriAIa-QhCBOSYYolJn0ZwoXD-yUG",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "include",
+        "src",
+        "test",
+    },
+}

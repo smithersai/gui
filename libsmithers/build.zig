@@ -42,40 +42,22 @@ pub fn build(b: *std.Build) void {
         "smithers.h",
     ).step);
 
-    const daemon_mod = b.createModule(.{
-        .root_source_file = b.path("../zmux/src/daemon.zig"),
+    // zmux is a separate package fetched via build.zig.zon; install its
+    // helper executables under our zig-out/bin so the Swift app and tests
+    // continue to find smithers-session-{daemon,connect} where they expect.
+    const zmux_dep = b.dependency("zmux", .{
         .target = target,
         .optimize = optimize,
     });
-    daemon_mod.link_libc = true;
 
-    const daemon = b.addExecutable(.{
-        .name = "smithers-session-daemon",
-        .root_module = daemon_mod,
-    });
-    if (target.result.os.tag == .linux) daemon.linkSystemLibrary("util");
-    if (target.result.os.tag == .macos) daemon.linkSystemLibrary("proc");
-    // iOS targets cannot spawn child processes, so the local-PTY helper
-    // binaries are macOS/Linux-only. Skip their install step for iOS.
-    if (target.result.os.tag != .ios) b.installArtifact(daemon);
-
-    const connect_mod = b.createModule(.{
-        .root_source_file = b.path("../zmux/src/connect.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    connect_mod.link_libc = true;
-
-    const connect = b.addExecutable(.{
-        .name = "smithers-session-connect",
-        .root_module = connect_mod,
-    });
-    if (target.result.os.tag == .linux) connect.linkSystemLibrary("util");
-    if (target.result.os.tag != .ios) b.installArtifact(connect);
+    if (target.result.os.tag != .ios) {
+        b.installArtifact(zmux_dep.artifact("smithers-session-daemon"));
+        b.installArtifact(zmux_dep.artifact("smithers-session-connect"));
+    }
 
     const connect_unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("../zmux/src/connect.zig"),
+            .root_source_file = zmux_dep.path("src/connect.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -96,7 +78,7 @@ pub fn build(b: *std.Build) void {
 
     const daemon_unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("../zmux/src/daemon.zig"),
+            .root_source_file = zmux_dep.path("src/daemon.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -150,7 +132,7 @@ pub fn build(b: *std.Build) void {
     // clash with the shared libsmithers root module.
     test_step.dependOn(&(blk: {
         const session_server_mod = b.createModule(.{
-            .root_source_file = b.path("../zmux/src/server.zig"),
+            .root_source_file = zmux_dep.path("src/server.zig"),
             .target = target,
             .optimize = optimize,
         });
@@ -159,7 +141,7 @@ pub fn build(b: *std.Build) void {
 
         const session_daemon_tests = b.addTest(.{
             .root_module = b.createModule(.{
-                .root_source_file = b.path("../zmux/test/integration/session_daemon.zig"),
+                .root_source_file = zmux_dep.path("test/integration/session_daemon.zig"),
                 .target = target,
                 .optimize = optimize,
                 .imports = &.{.{ .name = "zmux_server", .module = session_server_mod }},
