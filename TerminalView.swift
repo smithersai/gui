@@ -576,7 +576,7 @@ struct TerminalWorkspaceShortcutDispatcher {
 }
 #endif
 
-class TerminalSurfaceView: NSView {
+class TerminalSurfaceView: NSView, NSTextInputClient, NSServicesMenuRequestor {
     var surface: ghostty_surface_t?
     private(set) var sessionId: String?
     private var trackingArea: NSTrackingArea?
@@ -584,6 +584,8 @@ class TerminalSurfaceView: NSView {
     private var windowScreenObserver: NSObjectProtocol?
     private weak var observedWindow: NSWindow?
     private var forwardedKeyDownKeyCodes = Set<UInt16>()
+    private var markedText = NSMutableAttributedString()
+    private var textInputSelectedRange = NSRange(location: NSNotFound, length: 0)
     private let callbacks = TerminalCallbackCoordinator()
     private var retainedCallbacks: Unmanaged<TerminalCallbackCoordinator>?
     private var cleanedUp = false
@@ -769,6 +771,217 @@ class TerminalSurfaceView: NSView {
         if !forwardFlagsChanged(with: event) {
             super.flagsChanged(with: event)
         }
+    }
+
+    override func doCommand(by selector: Selector) {
+        // NSTextInputClient routes unhandled commands here. Swallowing the
+        // selector avoids AppKit beeps while preserving the raw key path above.
+    }
+
+    // MARK: - Text Input
+
+    static func stringForTextInput(_ value: Any) -> String? {
+        if let string = value as? String {
+            return string
+        }
+
+        if let attributed = value as? NSAttributedString {
+            return attributed.string
+        }
+
+        return nil
+    }
+
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        guard let text = Self.stringForTextInput(string), !text.isEmpty else { return }
+        unmarkText()
+        sendText(text)
+    }
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        guard let text = Self.stringForTextInput(string) else { return }
+        markedText = NSMutableAttributedString(string: text)
+        textInputSelectedRange = selectedRange
+        syncPreedit()
+    }
+
+    func unmarkText() {
+        if markedText.length > 0 {
+            markedText.mutableString.setString("")
+        }
+        textInputSelectedRange = NSRange(location: NSNotFound, length: 0)
+        syncPreedit()
+    }
+
+    func selectedRange() -> NSRange {
+        guard let surface else { return textInputSelectedRange }
+
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text) else {
+            return textInputSelectedRange.location == NSNotFound
+                ? NSRange(location: 0, length: 0)
+                : textInputSelectedRange
+        }
+        defer { ghostty_surface_free_text(surface, &text) }
+
+        return NSRange(location: Int(text.offset_start), length: Int(text.offset_len))
+    }
+
+    func markedRange() -> NSRange {
+        guard markedText.length > 0 else {
+            return NSRange(location: NSNotFound, length: 0)
+        }
+        return NSRange(location: 0, length: markedText.length)
+    }
+
+    func hasMarkedText() -> Bool {
+        markedText.length > 0
+    }
+
+    func attributedSubstring(
+        forProposedRange range: NSRange,
+        actualRange: NSRangePointer?
+    ) -> NSAttributedString? {
+        guard range.length > 0, let surface else { return nil }
+
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+
+        actualRange?.pointee = NSRange(location: Int(text.offset_start), length: Int(text.offset_len))
+        guard let textPointer = text.text else { return nil }
+        return NSAttributedString(string: String(cString: textPointer))
+    }
+
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        []
+    }
+
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        actualRange?.pointee = range
+
+        guard let surface else {
+            let fallback = NSRect(x: bounds.minX, y: bounds.maxY, width: 0, height: 0)
+            return window?.convertToScreen(convert(fallback, to: nil)) ?? fallback
+        }
+
+        var x: Double = 0
+        var y: Double = 0
+        var width: Double = 0
+        var height: Double = 0
+        ghostty_surface_ime_point(surface, &x, &y, &width, &height)
+
+        if range.length == 0 {
+            width = 0
+        }
+
+        let viewRect = NSRect(
+            x: x,
+            y: bounds.height - y - height,
+            width: width,
+            height: height
+        )
+        let windowRect = convert(viewRect, to: nil)
+        return window?.convertToScreen(windowRect) ?? windowRect
+    }
+
+    func characterIndex(for point: NSPoint) -> Int {
+        0
+    }
+
+    private func syncPreedit() {
+        guard let surface else { return }
+
+        guard markedText.length > 0 else {
+            ghostty_surface_preedit(surface, nil, 0)
+            return
+        }
+
+        let text = markedText.string
+        text.withCString { ptr in
+            ghostty_surface_preedit(surface, ptr, UInt(text.lengthOfBytes(using: .utf8)))
+        }
+    }
+
+    // MARK: - Accessibility
+
+    override func isAccessibilityElement() -> Bool {
+        true
+    }
+
+    override func accessibilityRole() -> NSAccessibility.Role? {
+        .textArea
+    }
+
+    override func accessibilityHelp() -> String? {
+        "Terminal content area"
+    }
+
+    override func accessibilityValue() -> Any? {
+        terminalAccessibilityText() ?? ""
+    }
+
+    override func accessibilitySelectedTextRange() -> NSRange {
+        selectedRange()
+    }
+
+    override func accessibilitySelectedText() -> String? {
+        selectedText()
+    }
+
+    override func accessibilityNumberOfCharacters() -> Int {
+        terminalAccessibilityText()?.count ?? 0
+    }
+
+    override func accessibilityVisibleCharacterRange() -> NSRange {
+        let count = terminalAccessibilityText()?.count ?? 0
+        return NSRange(location: 0, length: count)
+    }
+
+    override func accessibilityString(for range: NSRange) -> String? {
+        guard let text = terminalAccessibilityText(),
+              let swiftRange = Range(range, in: text) else {
+            return nil
+        }
+        return String(text[swiftRange])
+    }
+
+    private func selectedText() -> String? {
+        guard let surface else { return nil }
+
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+
+        guard let textPointer = text.text else { return nil }
+        let string = String(cString: textPointer)
+        return string.isEmpty ? nil : string
+    }
+
+    private func terminalAccessibilityText() -> String? {
+        guard let surface else { return nil }
+
+        var selection = ghostty_selection_s()
+        selection.top_left = ghostty_point_s(
+            tag: GHOSTTY_POINT_VIEWPORT,
+            coord: GHOSTTY_POINT_COORD_TOP_LEFT,
+            x: 0,
+            y: 0
+        )
+        selection.bottom_right = ghostty_point_s(
+            tag: GHOSTTY_POINT_VIEWPORT,
+            coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+            x: 0,
+            y: 0
+        )
+        selection.rectangle = false
+
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+
+        guard let textPointer = text.text else { return "" }
+        return String(cString: textPointer)
     }
 
     // MARK: - Mouse Input

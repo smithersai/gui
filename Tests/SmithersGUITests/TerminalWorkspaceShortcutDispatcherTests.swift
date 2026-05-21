@@ -5,6 +5,26 @@ import AppKit
 #if os(macOS)
 @MainActor
 final class TerminalWorkspaceShortcutDispatcherTests: XCTestCase {
+    func testTextInputExtractsPlainString() {
+        XCTAssertEqual(
+            TerminalSurfaceView.stringForTextInput("dictated text"),
+            "dictated text"
+        )
+    }
+
+    func testTextInputExtractsAttributedString() {
+        let attributed = NSAttributedString(string: "dictated attributed text")
+
+        XCTAssertEqual(
+            TerminalSurfaceView.stringForTextInput(attributed),
+            "dictated attributed text"
+        )
+    }
+
+    func testTextInputRejectsUnsupportedPayload() {
+        XCTAssertNil(TerminalSurfaceView.stringForTextInput(42))
+    }
+
     func testDispatcherInvokesPaletteShortcutCallbacks() throws {
         let dispatcher = TerminalWorkspaceShortcutDispatcher { action in
             action.defaultShortcut

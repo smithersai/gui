@@ -258,6 +258,20 @@ final class TerminalViewTests: XCTestCase {
         // never fire — the current implementation is correct.
     }
 
+    func test_TERMINAL_TEXT_INPUT_dictationPathDocumentation() {
+        // TerminalSurfaceView conforms to NSTextInputClient so macOS dictation,
+        // IMEs, and third-party dictation tools can call insertText(_:replacementRange:)
+        // on the focused terminal view. Direct inserted text is forwarded through
+        // ghostty_surface_text rather than the raw key-event path.
+    }
+
+    func test_TERMINAL_ACCESSIBILITY_textAreaDocumentation() {
+        // TerminalSurfaceView exposes itself as an accessibility text area.
+        // Dictation tools such as MacWhisper check the focused UI element before
+        // inserting text; without a standard text role the embedded terminal can
+        // look like a non-text custom NSView even though it accepts keyDown events.
+    }
+
     // -------------------------------------------------------------------------
     // TERMINAL_MOUSE_Y_COORDINATE_FLIP
     // sendMousePos flips Y: bounds.height - pt.y
@@ -619,6 +633,12 @@ final class TerminalViewTests: XCTestCase {
 // TERMINAL_ACCEPTS_FIRST_RESPONDER:
 //   - Assert view.acceptsFirstResponder == true
 //   - Assert view.becomeFirstResponder() == true
+//
+// TERMINAL_TEXT_INPUT:
+//   - Assert TerminalSurfaceView conforms to NSTextInputClient
+//   - Call insertText(_:replacementRange:) and verify ghostty_surface_text receives UTF-8 text
+//   - Call setMarkedText/unmarkText and verify ghostty_surface_preedit mirrors IME state
+//   - Query accessibilityRole and verify the surface reports .textArea
 //
 // RESIDUAL INTEGRATION COVERAGE:
 //   1. Auto-focus in makeNSView uses asyncAfter(0.1s), so a live-window
