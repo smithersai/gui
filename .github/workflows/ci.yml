@@ -180,8 +180,19 @@ jobs:
             -scheme SmithersGUI \
             -destination 'platform=macOS' \
             -configuration Debug \
+            -resultBundlePath build/macos-tests.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             test
+      # The result bundle holds each UI test's screenshots and accessibility
+      # snapshots; open it in Xcode to see the app state at a failure.
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-tests-xcresult
+          path: build/macos-tests.xcresult
+          if-no-files-found: warn
+          retention-days: 14
 
   # ---------------------------------------------------------------------------
   # iOS simulator app + tests. Builds the libghostty-vt and libsmithers iOS
