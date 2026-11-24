@@ -259,11 +259,11 @@ pub fn upsertPersistedChatSession(self: *App, session: *const Session) void {
     };
 
     persistence.upsertChatSession(
-        record.@"workspacePath",
+        record.workspacePath,
         record.id,
         out.written(),
-        record.@"createdAtMs",
-        record.@"updatedAtMs",
+        record.createdAtMs,
+        record.updatedAtMs,
     ) catch |err| {
         self.logPersistedSessionError("failed to save persisted chat session", err);
     };
@@ -403,7 +403,7 @@ fn restorePersistedChatSessions(self: *App, workspace_path: []const u8) void {
 
         const record = parsed.value;
         if (record.kind != .chat) continue;
-        if (!std.mem.eql(u8, record.@"workspacePath", workspace_path)) continue;
+        if (!std.mem.eql(u8, record.workspacePath, workspace_path)) continue;
         if (self.hasLivePersistedSession(workspace_path, record.id)) continue;
         _ = Session.createRestored(self, record) catch |err| {
             self.logPersistedSessionError("failed to restore persisted chat session", err);

@@ -125,7 +125,7 @@ test "FFI: subscribe agent_sessions + cache query round-trip" {
     // Tick drains the (empty) fake transport — no deltas yet, query returns [].
     smithers_core_tick_for_test(s);
     const rows0 = smithers_core_cache_query(s, "agent_sessions", null, 0, 0, &err);
-    defer if (rows0.ptr) |p| std.heap.c_allocator.free(@as([*]u8, @constCast(@ptrCast(p)))[0 .. rows0.len + 1]);
+    defer if (rows0.ptr) |p| std.heap.c_allocator.free(@as([*]u8, @ptrCast(@constCast(p)))[0 .. rows0.len + 1]);
     const s0 = std.mem.sliceTo(rows0.ptr.?, 0);
     try testing.expectEqualStrings("[]", s0);
 

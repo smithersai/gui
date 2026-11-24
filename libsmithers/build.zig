@@ -227,33 +227,155 @@ pub fn build(b: *std.Build) void {
 fn configureSQLite(b: *std.Build, module: *std.Build.Module, target: std.Build.ResolvedTarget) void {
     module.link_libc = true;
     if (target.result.os.tag == .macos or target.result.os.tag == .ios) {
-        if (appleSdkRoot(b)) |sdk_root| {
+        if (appleSdkRoot(b, target)) |sdk_root| {
             module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk_root, "usr/lib" }) });
         }
     }
     module.linkSystemLibrary("sqlite3", .{});
 }
 
-fn appleSdkRoot(b: *std.Build) ?[]const u8 {
+fn appleSdkRoot(b: *std.Build, target: std.Build.ResolvedTarget) ?[]const u8 {
     // SDKROOT is the canonical signal — set by xcrun-style invocations and
-    // by the iOS xcframework build script. Trust it when libsqlite3 is
-    // present, regardless of platform.
+    // by the iOS xcframework build script. Trust it when its libsqlite3
+    // exports this target, regardless of platform.
     if (b.graph.env_map.get("SDKROOT")) |sdk_root| {
-        if (sdkHasSQLite(b, sdk_root)) return sdk_root;
+        if (sdkHasSQLite(b, sdk_root, target)) return sdk_root;
     }
 
+    // A Command Line Tools SDK can ship a libsqlite3.tbd that lists
+    // arm64e-macos but not arm64-macos. Linking against it on Apple silicon
+    // fails with undefined _sqlite3_* symbols, so each candidate must export
+    // this target's slice; otherwise the Xcode SDK is used.
     const candidates = [_][]const u8{
         "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
         "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
     };
     for (candidates) |sdk_root| {
-        if (sdkHasSQLite(b, sdk_root)) return sdk_root;
+        if (sdkHasSQLite(b, sdk_root, target)) return sdk_root;
     }
     return null;
 }
 
-fn sdkHasSQLite(b: *std.Build, sdk_root: []const u8) bool {
+fn sdkHasSQLite(b: *std.Build, sdk_root: []const u8, target: std.Build.ResolvedTarget) bool {
     const sqlite_stub = b.pathJoin(&.{ sdk_root, "usr/lib/libsqlite3.tbd" });
-    std.fs.accessAbsolute(sqlite_stub, .{}) catch return false;
-    return true;
+    const stub = std.fs.cwd().readFileAlloc(b.allocator, sqlite_stub, 4 << 20) catch return false;
+    const slice = tbdTarget(b, target) orelse return true;
+    return tbdExportsTarget(stub, slice);
+}
+
+/// The text-based stub (.tbd) name of a target's slice, such as
+/// `arm64-macos` or `arm64-ios-simulator`, or null when the stub format
+/// has no name for it.
+fn tbdTarget(b: *std.Build, target: std.Build.ResolvedTarget) ?[]const u8 {
+    const arch: []const u8 = switch (target.result.cpu.arch) {
+        .aarch64 => "arm64",
+        .x86_64 => "x86_64",
+        else => return null,
+    };
+    const platform: []const u8 = switch (target.result.os.tag) {
+        .macos => "macos",
+        .ios => if (target.result.abi == .simulator) "ios-simulator" else "ios",
+        else => return null,
+    };
+    return b.fmt("{s}-{s}", .{ arch, platform });
+}
+
+/// Whether a .tbd stub can serve `slice`. Version 4 stubs name their slices
+/// in `targets: [ ... ]` lists, and the slice must appear in one as a whole
+/// name: `arm64-macos` does not match `arm64e-macos`, and `arm64-ios` does
+/// not match `arm64-ios-simulator`. Stubs without such a list (version 3
+/// `archs:` and `platform:` keys, or JSON version 5) are accepted as before.
+fn tbdExportsTarget(stub: []const u8, slice: []const u8) bool {
+    const key = "targets:";
+    var listed = false;
+    var start: usize = 0;
+    while (std.mem.indexOfPos(u8, stub, start, key)) |at| {
+        start = at + key.len;
+        var open = start;
+        while (open < stub.len and std.ascii.isWhitespace(stub[open])) open += 1;
+        if (open == stub.len or stub[open] != '[') continue;
+        const close = std.mem.indexOfScalarPos(u8, stub, open, ']') orelse break;
+        listed = true;
+        if (listsName(stub[open + 1 .. close], slice)) return true;
+        start = close + 1;
+    }
+    return !listed;
+}
+
+fn listsName(list: []const u8, name: []const u8) bool {
+    var start: usize = 0;
+    while (std.mem.indexOfPos(u8, list, start, name)) |at| : (start = at + 1) {
+        const end = at + name.len;
+        const whole_start = at == 0 or !isTbdNameByte(list[at - 1]);
+        const whole_end = end == list.len or !isTbdNameByte(list[end]);
+        const line_start = if (std.mem.lastIndexOfScalar(u8, list[0..at], '\n')) |nl| nl + 1 else 0;
+        const commented = std.mem.indexOfScalar(u8, list[line_start..at], '#') != null;
+        if (whole_start and whole_end and !commented) return true;
+    }
+    return false;
+}
+
+fn isTbdNameByte(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '-' or c == '_';
+}
+
+test "tbdExportsTarget rejects an arm64e-only Command Line Tools stub for arm64-macos" {
+    const stub =
+        \\targets:         [ x86_64-macos, x86_64-maccatalyst, x86_64h-macos, x86_64h-maccatalyst,
+        \\                   arm64e-macos, arm64e-maccatalyst ]
+    ;
+    try std.testing.expect(!tbdExportsTarget(stub, "arm64-macos"));
+    try std.testing.expect(tbdExportsTarget(stub, "x86_64-macos"));
+}
+
+test "tbdExportsTarget accepts the Xcode SDK stub for arm64-macos" {
+    const stub =
+        \\targets:         [ x86_64-macos, x86_64-maccatalyst, x86_64h-macos, x86_64h-maccatalyst,
+        \\                   arm64-macos, arm64-maccatalyst, arm64e-macos, arm64e-maccatalyst ]
+    ;
+    try std.testing.expect(tbdExportsTarget(stub, "arm64-macos"));
+}
+
+test "tbdExportsTarget keeps device and simulator slices apart" {
+    const stub = "targets: [ arm64-ios-simulator, x86_64-ios-simulator ]";
+    try std.testing.expect(!tbdExportsTarget(stub, "arm64-ios"));
+    try std.testing.expect(tbdExportsTarget(stub, "arm64-ios-simulator"));
+}
+
+test "tbdExportsTarget accepts version 3 stubs, which name archs and platform separately" {
+    const stub =
+        \\--- !tapi-tbd-v3
+        \\archs:           [ x86_64 ]
+        \\platform:        macosx
+        \\install-name:    /usr/lib/libsqlite3.dylib
+    ;
+    try std.testing.expect(tbdExportsTarget(stub, "arm64-macos"));
+}
+
+test "tbdExportsTarget ignores a slice named outside the targets lists" {
+    const stub =
+        \\# built without arm64-macos
+        \\targets:         [ arm64e-macos ]
+        \\install-name:    '/usr/lib/libsqlite3.dylib'
+    ;
+    try std.testing.expect(!tbdExportsTarget(stub, "arm64-macos"));
+    try std.testing.expect(tbdExportsTarget(stub, "arm64e-macos"));
+}
+
+test "tbdExportsTarget reads a targets list that starts on the next line" {
+    const stub =
+        \\targets:
+        \\  [ x86_64-macos, arm64e-macos ]
+    ;
+    try std.testing.expect(!tbdExportsTarget(stub, "arm64-macos"));
+    try std.testing.expect(tbdExportsTarget(stub, "x86_64-macos"));
+}
+
+test "tbdExportsTarget ignores a commented-out slice inside a targets list" {
+    const stub =
+        \\targets:         [ x86_64-macos, # arm64-macos
+        \\                   arm64e-macos ]
+    ;
+    try std.testing.expect(!tbdExportsTarget(stub, "arm64-macos"));
+    try std.testing.expect(tbdExportsTarget(stub, "arm64e-macos"));
 }

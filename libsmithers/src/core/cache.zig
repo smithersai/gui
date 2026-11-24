@@ -118,9 +118,9 @@ pub const Cache = struct {
         // Try each adapter table. For the skeleton this is fine; a more
         // granular design would route by the stored shape_name.
         const tables = [_][]const u8{
-            "agent_sessions",         "agent_messages",      "agent_parts",
-            "workspaces",             "workspace_sessions",  "approvals",
-            "workflow_runs",          "devtools_snapshots",
+            "agent_sessions", "agent_messages",     "agent_parts",
+            "workspaces",     "workspace_sessions", "approvals",
+            "workflow_runs",  "devtools_snapshots",
         };
         for (tables) |t| {
             const sql = try std.fmt.allocPrintSentinel(

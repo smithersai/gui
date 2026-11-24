@@ -13,17 +13,17 @@ pub const PersistedMessage = struct {
     id: []const u8,
     role: []const u8,
     content: []const u8,
-    @"timestampMs": i64 = 0,
+    timestampMs: i64 = 0,
 };
 
 pub const PersistedRecord = struct {
     id: []const u8,
     kind: structs.SessionKind = .chat,
     title: []const u8,
-    @"targetId": ?[]const u8 = null,
-    @"workspacePath": []const u8,
-    @"createdAtMs": i64 = 0,
-    @"updatedAtMs": i64 = 0,
+    targetId: ?[]const u8 = null,
+    workspacePath: []const u8,
+    createdAtMs: i64 = 0,
+    updatedAtMs: i64 = 0,
     messages: []const PersistedMessage = &.{},
 };
 
@@ -102,9 +102,9 @@ pub fn createRestored(app: *App, record: PersistedRecord) !*Session {
 
     const session_id = try allocator.dupe(u8, record.id);
     errdefer allocator.free(session_id);
-    const workspace_path = try allocator.dupe(u8, record.@"workspacePath");
+    const workspace_path = try allocator.dupe(u8, record.workspacePath);
     errdefer allocator.free(workspace_path);
-    const target_id = if (record.@"targetId") |value|
+    const target_id = if (record.targetId) |value|
         try allocator.dupe(u8, value)
     else
         null;
@@ -126,8 +126,8 @@ pub fn createRestored(app: *App, record: PersistedRecord) !*Session {
         .userdata_value = null,
         .events_stream = stream,
         .title_cache = title_value,
-        .created_at_ms = if (record.@"createdAtMs" > 0) record.@"createdAtMs" else nowMillis(),
-        .updated_at_ms = if (record.@"updatedAtMs" > 0) record.@"updatedAtMs" else nowMillis(),
+        .created_at_ms = if (record.createdAtMs > 0) record.createdAtMs else nowMillis(),
+        .updated_at_ms = if (record.updatedAtMs > 0) record.updatedAtMs else nowMillis(),
         .messages = messages,
     };
 
@@ -184,10 +184,10 @@ pub fn persistedRecord(self: *const Session) ?PersistedRecord {
         .id = self.id_value,
         .kind = self.kind_value,
         .title = self.title_cache,
-        .@"targetId" = self.target_id,
-        .@"workspacePath" = workspace_path,
-        .@"createdAtMs" = self.created_at_ms,
-        .@"updatedAtMs" = self.updated_at_ms,
+        .targetId = self.target_id,
+        .workspacePath = workspace_path,
+        .createdAtMs = self.created_at_ms,
+        .updatedAtMs = self.updated_at_ms,
         .messages = self.messages.items,
     };
 }
@@ -240,7 +240,7 @@ fn sendChatText(self: *Session, text: []const u8) void {
             .id = message_id,
             .role = role,
             .content = content,
-            .@"timestampMs" = timestamp_ms,
+            .timestampMs = timestamp_ms,
         };
     };
 
@@ -337,7 +337,7 @@ fn duplicateMessages(
                 .id = message_id,
                 .role = role,
                 .content = content,
-                .@"timestampMs" = message.@"timestampMs",
+                .timestampMs = message.timestampMs,
             };
         };
         messages.appendAssumeCapacity(cloned);

@@ -654,8 +654,7 @@ fn expectedShapeForAction(action: []const u8) ?schema.Shape {
     {
         return .workspaces;
     }
-    if (std.mem.eql(u8, action, "approval.decide"))
-    {
+    if (std.mem.eql(u8, action, "approval.decide")) {
         return .approvals;
     }
     if (std.mem.eql(u8, action, "agent_session.create") or
@@ -663,8 +662,7 @@ fn expectedShapeForAction(action: []const u8) ?schema.Shape {
     {
         return .agent_sessions;
     }
-    if (std.mem.eql(u8, action, "agent_session.append_message"))
-    {
+    if (std.mem.eql(u8, action, "agent_session.append_message")) {
         return .agent_messages;
     }
     return null;
@@ -684,8 +682,7 @@ fn expectedPkFieldForAction(action: []const u8) ?[]const u8 {
     {
         return "workspace_id";
     }
-    if (std.mem.eql(u8, action, "approval.decide"))
-    {
+    if (std.mem.eql(u8, action, "approval.decide")) {
         return "approval_id";
     }
     if (std.mem.eql(u8, action, "agent_session.delete")) {
