@@ -1,8 +1,8 @@
 # macos-e2e.yml — full-stack XCUITest harness for the SmithersGUI macOS app.
 #
 # Ticket: macos-e2e-harness. Mirrors `ios-e2e.yml` but runs against the
-# native macOS destination instead of the iOS Simulator. Runs on macos-14
-# hosted runners — no iOS-simulator boot is required.
+# native macOS destination instead of the iOS Simulator. No iOS-simulator
+# boot is required.
 #
 # Gating: expensive (~10-15 min) because it spins the full plue stack,
 # so it runs only on push-to-main and on PRs that explicitly target
@@ -22,9 +22,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The harness clones the private smithersai/plue repository, so it needs
+  # the PLUE_CHECKOUT_TOKEN secret. Without it the E2E job is skipped, not
+  # failed. Enabling it also needs a runner with Docker: GitHub's arm64
+  # macOS runners have no nested virtualization, so
+  # docker/setup-docker-action cannot start a VM there.
+  preflight:
+    name: Check E2E prerequisites
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          PLUE_CHECKOUT_TOKEN: ${{ secrets.PLUE_CHECKOUT_TOKEN }}
+        run: |
+          if [ -n "${PLUE_CHECKOUT_TOKEN}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::PLUE_CHECKOUT_TOKEN is not set; skipping the macOS E2E harness."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
   macos-e2e:
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
     name: macOS E2E (platform=macOS)
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Checkout gui
@@ -35,7 +59,7 @@ jobs:
       - name: Checkout plue
         uses: actions/checkout@v4
         with:
-          repository: smithers-sh/plue
+          repository: smithersai/plue
           path: plue
           token: ${{ secrets.PLUE_CHECKOUT_TOKEN }}
           persist-credentials: false

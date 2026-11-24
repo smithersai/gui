@@ -1,11 +1,7 @@
 # ios-e2e.yml — full-stack XCUITest harness for the SmithersiOS app.
 #
-# Ticket: ios-e2e-harness. Runs on macos-14 hosted runners which, since
-# 2026, ship with a working Colima/Lima stack so `docker compose up` works
-# out of the box. See:
-#   https://github.com/docker/setup-docker-action  (installs the docker
-#                                                   CLI + daemon on macos
-#                                                   hosted runners)
+# Ticket: ios-e2e-harness. The harness needs `docker compose up` for the
+# plue stack; see the preflight job below for what enabling it requires.
 #
 # Gating: this workflow is expensive (~10-15 min) because it spins the
 # full plue stack, so it runs only on push-to-main and on PRs that
@@ -31,9 +27,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The harness clones the private smithersai/plue repository, so it needs
+  # the PLUE_CHECKOUT_TOKEN secret. Without it the E2E job is skipped, not
+  # failed. Enabling it also needs a runner with Docker: GitHub's arm64
+  # macOS runners have no nested virtualization, so
+  # docker/setup-docker-action cannot start a VM there.
+  preflight:
+    name: Check E2E prerequisites
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          PLUE_CHECKOUT_TOKEN: ${{ secrets.PLUE_CHECKOUT_TOKEN }}
+        run: |
+          if [ -n "${PLUE_CHECKOUT_TOKEN}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::PLUE_CHECKOUT_TOKEN is not set; skipping the iOS E2E harness."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
   ios-e2e:
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
     name: iOS E2E (iPhone 16 / iOS 18.6)
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Checkout gui
@@ -48,11 +68,9 @@ jobs:
       - name: Checkout plue
         uses: actions/checkout@v4
         with:
-          repository: smithers-sh/plue
+          repository: smithersai/plue
           path: plue
           token: ${{ secrets.PLUE_CHECKOUT_TOKEN }}
-          # Fall back to the public mirror when the secret is not set
-          # (community PRs). The plue repo goes public with ticket 0119.
           persist-credentials: false
 
       - name: Install Xcode toolchain
@@ -63,16 +81,8 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      # Docker on macOS hosted runners in 2026: the `docker/setup-docker-action`
-      # installs the docker CLI + configures a Colima VM. This is the current
-      # blessed path — the GitHub docs for macos-14 runners confirm Docker
-      # support via this action since late 2025.
-      #
-      # If this action breaks in the future, the fallback is to install
-      # Colima manually:
-      #   brew install colima docker docker-compose
-      #   colima start --cpu 4 --memory 8 --disk 20
-      # which gives the same result but is slower to start.
+      # docker/setup-docker-action starts a Lima VM. It needs nested
+      # virtualization, which GitHub's arm64 macOS runners lack.
       - name: Set up Docker (macOS)
         uses: docker/setup-docker-action@v4
 

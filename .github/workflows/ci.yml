@@ -10,9 +10,14 @@
 #   0124: libsmithers-core iOS static archive build + linking
 #   0125: code signing + release upload
 #
-# Until 0123/0124 land, the iOS target is scaffolding only — it does not
-# link libghostty or libsmithers — so CI builds it standalone without the
-# Zig prerequisites.
+# 0123/0124 have landed: the iOS target links ghostty-vt.xcframework and
+# libsmithers-ios.xcframework, so the iOS jobs build both with Zig first.
+#
+# The Xcode jobs run on macos-26 with Xcode 26.3 (GitHub retired macos-14
+# on 2026-11-02). Since 2026-04-28 App Store Connect accepts only uploads
+# built with Xcode 26 and the iOS 26 SDK
+# (https://developer.apple.com/news/upcoming-requirements/), and 26.3 is the
+# Xcode the pinned ghostty submodule's own CI uses.
 
 name: CI
 
@@ -28,8 +33,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # XcodeGen reads project.yml; pin version via brew for reproducibility.
+  # XcodeGen reads project.yml. The xcodegen-check job compares its output
+  # byte for byte, so every job installs this exact release, not brew's.
   XCODEGEN_VERSION: "2.43.0"
+  XCODE_VERSION: "26.3"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -87,13 +94,16 @@ jobs:
   # ---------------------------------------------------------------------------
   xcodegen-check:
     name: XcodeGen regenerate
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: false
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install XcodeGen (pinned)
+        run: |
+          curl -fsSL "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" -o "${RUNNER_TEMP}/xcodegen.zip"
+          unzip -q "${RUNNER_TEMP}/xcodegen.zip" -d "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/xcodegen/bin" >> "$GITHUB_PATH"
       - name: Regenerate project
         run: xcodegen generate
       - name: Verify .xcodeproj is in sync
@@ -113,24 +123,45 @@ jobs:
   # ---------------------------------------------------------------------------
   macos-build:
     name: macOS build & test
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
-      - name: Install XcodeGen
-        run: brew install xcodegen
+        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+      # Xcode 26 ships the Metal compiler as a separate component; the
+      # GhosttyKit build compiles Ghostty's shaders with `xcrun metal`.
+      - name: Ensure the Metal toolchain
+        run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+      - name: Install XcodeGen (pinned)
+        run: |
+          curl -fsSL "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" -o "${RUNNER_TEMP}/xcodegen.zip"
+          unzip -q "${RUNNER_TEMP}/xcodegen.zip" -d "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/xcodegen/bin" >> "$GITHUB_PATH"
       - name: Install Zig (pinned)
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
-      - name: Build libsmithers + libghostty
+      - name: Resolve GhosttyKit cache key
+        id: ghostty_cache_key
         run: |
-          zig build libsmithers
-          zig build ghostty
+          set -euo pipefail
+          GHOSTTY_SHA="$(git -C ghostty rev-parse HEAD)"
+          BUILD_HASH="$(shasum -a 256 build.zig | cut -d' ' -f1)"
+          echo "key=ghosttykit-macos-${XCODE_VERSION}-$(cat .zigversion)-${GHOSTTY_SHA}-${BUILD_HASH}" >> "$GITHUB_OUTPUT"
+      - name: Restore GhosttyKit.xcframework cache
+        id: ghostty_cache
+        uses: actions/cache@v4
+        with:
+          path: ghostty/macos/GhosttyKit.xcframework
+          key: ${{ steps.ghostty_cache_key.outputs.key }}
+      - name: Build libsmithers
+        run: zig build libsmithers
+      - name: Build GhosttyKit.xcframework
+        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        run: zig build ghostty
       - name: Regenerate Xcode project
         run: xcodegen generate
       - name: Build SmithersGUI (macOS)
@@ -153,22 +184,73 @@ jobs:
             test
 
   # ---------------------------------------------------------------------------
-  # iOS simulator app + tests. No Zig prerequisites until 0123/0124 land the
-  # iOS artifacts for libghostty / libsmithers-core. Once those ship, reuse
-  # the same zig build steps as the macOS job.
+  # iOS simulator app + tests. Builds the libghostty-vt and libsmithers iOS
+  # xcframeworks first (tickets 0123/0124).
   # ---------------------------------------------------------------------------
   ios-simulator-build:
     name: iOS simulator build & test
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 45
+    env:
+      # Xcode 26.3's iOS 26.2 runtime on macos-26 offers iPhone 17.
+      IOS_SIMULATOR: iPhone 17
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: recursive
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
-      - name: Install XcodeGen
-        run: brew install xcodegen
+        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+      - name: Install XcodeGen (pinned)
+        run: |
+          curl -fsSL "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" -o "${RUNNER_TEMP}/xcodegen.zip"
+          unzip -q "${RUNNER_TEMP}/xcodegen.zip" -d "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/xcodegen/bin" >> "$GITHUB_PATH"
+      # project.yml links ghostty/zig-out/lib/ghostty-vt.xcframework and
+      # libsmithers/zig-out/lib/libsmithers-ios.xcframework into SmithersiOS.
+      # Both are build outputs, so build them (or restore them) first. The
+      # cache keys match ios-testflight.yml.
+      - name: Resolve iOS xcframework cache keys
+        id: ios_cache_keys
+        run: |
+          set -euo pipefail
+          ZIG_VERSION="$(cat .zigversion)"
+          GHOSTTY_SHA="$(git -C ghostty rev-parse HEAD)"
+          SCRIPT_HASH="$(shasum -a 256 poc/libghostty-ios/scripts/build-xcframework.sh | cut -d' ' -f1)"
+          SRC_HASH="$(find libsmithers -type f \( -name '*.zig' -o -name '*.zon' -o -name '*.h' -o -path 'libsmithers/scripts/*' \) -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 shasum -a 256 \
+            | shasum -a 256 \
+            | cut -d' ' -f1)"
+          echo "ghostty=ghostty-vt-xcframework-${ZIG_VERSION}-${GHOSTTY_SHA}-${SCRIPT_HASH}-xcode${XCODE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "libsmithers=libsmithers-ios-xcframework-${ZIG_VERSION}-${SRC_HASH}-xcode${XCODE_VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Restore ghostty-vt.xcframework cache
+        id: ghostty_cache
+        uses: actions/cache@v4
+        with:
+          path: ghostty/zig-out
+          key: ${{ steps.ios_cache_keys.outputs.ghostty }}
+      - name: Restore libsmithers-ios.xcframework cache
+        id: libsmithers_cache
+        uses: actions/cache@v4
+        with:
+          path: libsmithers/zig-out/lib/libsmithers-ios.xcframework
+          key: ${{ steps.ios_cache_keys.outputs.libsmithers }}
+      - name: Install Zig (pinned)
+        if: steps.ghostty_cache.outputs.cache-hit != 'true' || steps.libsmithers_cache.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      # The universal ghostty build also emits GhosttyKit, which compiles
+      # Ghostty's shaders; Xcode 26 ships the Metal compiler separately.
+      - name: Ensure the Metal toolchain
+        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+      - name: Build ghostty-vt.xcframework
+        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        run: ./poc/libghostty-ios/scripts/build-xcframework.sh
+      - name: Build libsmithers-ios.xcframework
+        if: steps.libsmithers_cache.outputs.cache-hit != 'true'
+        run: ./libsmithers/scripts/build-ios-xcframework.sh
       - name: Regenerate Xcode project
         run: xcodegen generate
       - name: Show available iOS simulators
@@ -178,7 +260,7 @@ jobs:
           xcodebuild \
             -project SmithersGUI.xcodeproj \
             -scheme SmithersiOS \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination "platform=iOS Simulator,name=${IOS_SIMULATOR}" \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             build
@@ -187,7 +269,7 @@ jobs:
           xcodebuild \
             -project SmithersGUI.xcodeproj \
             -scheme SmithersiOS \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination "platform=iOS Simulator,name=${IOS_SIMULATOR}" \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             test
@@ -224,11 +306,11 @@ jobs:
           distribution: temurin
           java-version: "17"
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        # v3 installs the removed `tools` package and fails; v4 installs
+        # only platform-tools by default. The pinned components are
+        # installed explicitly below so the NDK version is auditable here.
+        uses: android-actions/setup-android@v4
         with:
-          # Do not pass `packages:` here — the action installs the latest
-          # commandlinetools by default. We install the pinned components
-          # explicitly below so the NDK version is auditable in this file.
           log-accepted-android-sdk-licenses: false
       - name: Install pinned NDK + platforms
         run: |
@@ -240,11 +322,15 @@ jobs:
             "ndk;${ANDROID_NDK_VERSION}"
           echo "ANDROID_NDK_ROOT=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
       - name: Install Zig (pinned)
-        uses: mlugg/setup-zig@v1
+        uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          # Matches gradle/wrapper/gradle-wrapper.properties; AGP 8.4 needs
+          # Gradle 8.6 or later within 8.x.
+          gradle-version: "8.7"
       - name: Zig cross-compile sanity check (aarch64-linux-android)
         # Independent verification that the Zig source cross-compiles
         # even before Gradle orchestrates it. Fast-fails when a Zig-side
@@ -281,16 +367,65 @@ jobs:
   # ---------------------------------------------------------------------------
   ios-device-build:
     name: iOS device-slice build (no signing)
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: recursive
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app || true
-      - name: Install XcodeGen
-        run: brew install xcodegen
+        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+      - name: Install XcodeGen (pinned)
+        run: |
+          curl -fsSL "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" -o "${RUNNER_TEMP}/xcodegen.zip"
+          unzip -q "${RUNNER_TEMP}/xcodegen.zip" -d "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/xcodegen/bin" >> "$GITHUB_PATH"
+      # project.yml links ghostty/zig-out/lib/ghostty-vt.xcframework and
+      # libsmithers/zig-out/lib/libsmithers-ios.xcframework into SmithersiOS.
+      # Both are build outputs, so build them (or restore them) first. The
+      # cache keys match ios-testflight.yml.
+      - name: Resolve iOS xcframework cache keys
+        id: ios_cache_keys
+        run: |
+          set -euo pipefail
+          ZIG_VERSION="$(cat .zigversion)"
+          GHOSTTY_SHA="$(git -C ghostty rev-parse HEAD)"
+          SCRIPT_HASH="$(shasum -a 256 poc/libghostty-ios/scripts/build-xcframework.sh | cut -d' ' -f1)"
+          SRC_HASH="$(find libsmithers -type f \( -name '*.zig' -o -name '*.zon' -o -name '*.h' -o -path 'libsmithers/scripts/*' \) -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 shasum -a 256 \
+            | shasum -a 256 \
+            | cut -d' ' -f1)"
+          echo "ghostty=ghostty-vt-xcframework-${ZIG_VERSION}-${GHOSTTY_SHA}-${SCRIPT_HASH}-xcode${XCODE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "libsmithers=libsmithers-ios-xcframework-${ZIG_VERSION}-${SRC_HASH}-xcode${XCODE_VERSION}" >> "$GITHUB_OUTPUT"
+      - name: Restore ghostty-vt.xcframework cache
+        id: ghostty_cache
+        uses: actions/cache@v4
+        with:
+          path: ghostty/zig-out
+          key: ${{ steps.ios_cache_keys.outputs.ghostty }}
+      - name: Restore libsmithers-ios.xcframework cache
+        id: libsmithers_cache
+        uses: actions/cache@v4
+        with:
+          path: libsmithers/zig-out/lib/libsmithers-ios.xcframework
+          key: ${{ steps.ios_cache_keys.outputs.libsmithers }}
+      - name: Install Zig (pinned)
+        if: steps.ghostty_cache.outputs.cache-hit != 'true' || steps.libsmithers_cache.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      # The universal ghostty build also emits GhosttyKit, which compiles
+      # Ghostty's shaders; Xcode 26 ships the Metal compiler separately.
+      - name: Ensure the Metal toolchain
+        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        run: xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+      - name: Build ghostty-vt.xcframework
+        if: steps.ghostty_cache.outputs.cache-hit != 'true'
+        run: ./poc/libghostty-ios/scripts/build-xcframework.sh
+      - name: Build libsmithers-ios.xcframework
+        if: steps.libsmithers_cache.outputs.cache-hit != 'true'
+        run: ./libsmithers/scripts/build-ios-xcframework.sh
       - name: Regenerate Xcode project
         run: xcodegen generate
       - name: Build SmithersiOS (device slice, no signing)

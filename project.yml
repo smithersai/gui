@@ -159,9 +159,16 @@ targets:
       # Helper binaries are macOS-only and intentionally NOT bundled into the
       # iOS target below (ticket 0121 acceptance: iOS build graph must not
       # include these).
+      # `zig build libsmithers` produces these, so a fresh checkout lacks
+      # them. `type: file` + `optional: true` lets `xcodegen generate` run
+      # without them and emits the same project whether or not they exist.
       - path: libsmithers/zig-out/bin/smithers-session-daemon
+        type: file
+        optional: true
         buildPhase: resources
       - path: libsmithers/zig-out/bin/smithers-session-connect
+        type: file
+        optional: true
         buildPhase: resources
     settings:
       base:
