@@ -24,3 +24,10 @@ tmux/
 .DS_Store
 *.xcuserstate
 xcuserdata/
+
+# Smithers 1.0 runtime state: action cache, embedded Postgres, flow reports
+# and run directories are never source.
+.smithers/cache/
+.smithers/pg/
+.smithers/reports/
+.flows/

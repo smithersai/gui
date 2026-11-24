@@ -4,3 +4,6 @@ executions/
 *.sqlite
 dist/
 .DS_Store
+/cache/
+/pg/
+/reports/

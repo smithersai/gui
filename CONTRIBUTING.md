@@ -11,6 +11,9 @@ task is explicitly about those integrations.
 - Run focused tests with `swift test --filter <TestName>`.
 - If you add an app source file, make sure it is included in both SwiftPM and
   `SmithersGUI.xcodeproj` when the Xcode project is part of the workflow.
+- Run `smthrs ci //...` for the cached libsmithers, hygiene, workflow helper
+  and factory checks, and `smthrs test //Shared:test` for the Shared Swift
+  package. See `.smithers/README.md` for every target.
 
 ## Developer Debug Mode
 

@@ -33,6 +33,54 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Smithers 1.0 dogfooding: `smthrs ci //...` runs every PACKAGE.ts target
+  # this Linux host supports: libsmithers build, tests, build-script tests and
+  # zig fmt (//libsmithers), repository hygiene, workflow helper tests, and the
+  # factory projection check (//.smithers). //Shared:test is darwin-only and
+  # exclusive, so the wildcard omits it here; run it on a Mac with
+  # `smthrs test //Shared:test`. Results replay from .smithers/cache (kept by
+  # actions/cache) and sync through build.smithers.sh when the tokens are set.
+  # ---------------------------------------------------------------------------
+  smthrs-ci:
+    name: smthrs ci //...
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SMTHRS_VERSION: "1.0.0-rc.18"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: Install Bun (pinned)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.12"
+      - name: Install Zig (pinned)
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - name: Install SQLite development files (libsmithers links sqlite3)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends libsqlite3-dev
+      - name: Restore the smthrs result and Zig caches
+        uses: actions/cache@v4
+        with:
+          path: .smithers/cache
+          key: smthrs-${{ runner.os }}-${{ github.sha }}
+          restore-keys: smthrs-${{ runner.os }}-
+      - name: smthrs ci //...
+        run: npx --yes --package="@smthrs/cli@${SMTHRS_VERSION}" smthrs ci '//...' --verbose
+        env:
+          SMITHERS_CACHE_READ_TOKEN: ${{ secrets.SMITHERS_CACHE_READ_TOKEN }}
+          # Only pushes to main publish to the shared cache; pull requests read.
+          SMITHERS_CACHE_WRITE_TOKEN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SMITHERS_CACHE_WRITE_TOKEN || '' }}
+
+  # ---------------------------------------------------------------------------
   # Regenerate the Xcode project and fail if project.yml drifted out of sync
   # with the tracked .xcodeproj. Cheap sanity gate that runs before the heavy
   # build jobs.

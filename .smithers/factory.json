@@ -1,0 +1,212 @@
+{
+  "summary": "SmithersGUI: native macOS and iOS client for Smithers, with incremental Zig and Swift checks, C ABI review, and ticket verification.",
+  "flows": [
+    {
+      "id": "checks/review",
+      "description": "Review a SmithersGUI change for Swift/Zig C ABI ownership, SwiftUI platform guards, OAuth and Keychain safety, and build configuration drift.",
+      "summary": "Review changes for Swift/Zig C ABI ownership, SwiftUI platform guards, OAuth and Keychain safety, and build drift.",
+      "featured": true,
+      "kind": "mdx",
+      "path": ".smithers/flows/checks/review/flow.mdx",
+      "capabilities": [
+        "fs:read:**"
+      ],
+      "model": null,
+      "modelInvocable": true,
+      "inputSchema": {
+        "dialect": "draft-2020-12",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": true
+        },
+        "definitions": {}
+      },
+      "flows": [
+        "coding/ReviewCheck"
+      ]
+    },
+    {
+      "id": "issue/repro",
+      "description": "Reproduce a SmithersGUI, iOS, or libsmithers defect with a minimal failing test or command before planning a fix.",
+      "summary": "Reproduce a SmithersGUI, iOS, or libsmithers defect with a minimal failing test or command before planning a fix.",
+      "featured": true,
+      "kind": "mdx",
+      "path": ".smithers/flows/issue/repro/flow.mdx",
+      "capabilities": [
+        "fs:read:**",
+        "proc:spawn:rg *",
+        "proc:spawn:jj --no-pager *",
+        "proc:spawn:zig build *",
+        "proc:spawn:zig test *",
+        "proc:spawn:swift test *",
+        "proc:spawn:smthrs *"
+      ],
+      "model": "sol",
+      "modelInvocable": true,
+      "inputSchema": {
+        "dialect": "draft-2020-12",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": true
+        },
+        "definitions": {}
+      },
+      "flows": [],
+      "budget": {
+        "tokens": 64000,
+        "milliseconds": 1800000
+      }
+    },
+    {
+      "id": "issue/poc",
+      "description": "Implement a bounded SmithersGUI fix with a focused Zig or Swift regression and the affected smthrs targets green.",
+      "summary": "Implement a bounded fix with a focused Zig or Swift regression and the affected smthrs targets green.",
+      "featured": true,
+      "kind": "mdx",
+      "path": ".smithers/flows/issue/poc/flow.mdx",
+      "capabilities": [
+        "fs:read:**",
+        "fs:write:**",
+        "proc:spawn:rg *",
+        "proc:spawn:jj --no-pager *",
+        "proc:spawn:zig build *",
+        "proc:spawn:zig test *",
+        "proc:spawn:zig fmt *",
+        "proc:spawn:swift test *",
+        "proc:spawn:smthrs *",
+        "proc:spawn:xcodegen generate",
+        "proc:spawn:xcodebuild *"
+      ],
+      "model": "sol",
+      "modelInvocable": true,
+      "inputSchema": {
+        "dialect": "draft-2020-12",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": true
+        },
+        "definitions": {}
+      },
+      "flows": [],
+      "budget": {
+        "tokens": 100000,
+        "milliseconds": 3600000
+      }
+    },
+    {
+      "id": "tickets/verify",
+      "description": "Verify one .smithers/tickets ticket's acceptance criteria against the code and tests, and report each criterion as shipped, partial, or missing with file evidence.",
+      "summary": "Check a .smithers/tickets ticket's acceptance criteria against the code and tests: shipped, partial, or missing.",
+      "featured": true,
+      "kind": "mdx",
+      "path": ".smithers/flows/tickets/verify/flow.mdx",
+      "capabilities": [
+        "fs:read:**",
+        "fs:write:.smithers/reports/ticket-verify.json",
+        "proc:spawn:rg *",
+        "proc:spawn:jj --no-pager *"
+      ],
+      "model": "sol",
+      "modelInvocable": true,
+      "inputSchema": {
+        "dialect": "draft-2020-12",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": true
+        },
+        "definitions": {}
+      },
+      "flows": [],
+      "budget": {
+        "tokens": 64000,
+        "milliseconds": 900000
+      }
+    },
+    {
+      "id": "pr-triage",
+      "description": "Triage a SmithersGUI pull request from supplied metadata and diff without executing untrusted PR code.",
+      "summary": "Assess pull request readiness from its diff and CI evidence without executing untrusted PR code.",
+      "featured": true,
+      "kind": "mdx",
+      "path": ".smithers/flows/pr-triage/flow.mdx",
+      "capabilities": [
+        "fs:read:**",
+        "fs:write:.smithers/reports/pr-triage.json",
+        "proc:spawn:rg *"
+      ],
+      "model": "sol",
+      "modelInvocable": true,
+      "inputSchema": {
+        "dialect": "draft-2020-12",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "args": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "args"
+          ],
+          "additionalProperties": true
+        },
+        "definitions": {}
+      },
+      "flows": [],
+      "budget": {
+        "tokens": 64000,
+        "milliseconds": 600000
+      }
+    }
+  ],
+  "on": [],
+  "github": {
+    "mirror": "pull",
+    "issues": "read",
+    "changes": "send-upstream",
+    "protectedPaths": [
+      "libsmithers/include/smithers.h",
+      "libsmithers/src/apprt/embedded.zig",
+      "Shared/Sources/SmithersAuth",
+      "project.yml",
+      "Package.swift",
+      "alchemy.run.ts",
+      ".github/workflows/ios-testflight.yml"
+    ],
+    "maintainers": [
+      "roninjin10"
+    ]
+  }
+}

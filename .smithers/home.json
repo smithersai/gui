@@ -1,0 +1,39 @@
+{
+  "blocks": [
+    {
+      "type": "text",
+      "title": "SmithersGUI factory",
+      "text": "Native SwiftUI client for Smithers workflows, agent sessions, terminals, and tickets on macOS 14+ and iOS 17+. The Zig core (libsmithers) exposes a C ABI to Swift; Ghostty renders terminals. smthrs ci runs the Zig build, tests, and format check, the workflow helper tests, and repository hygiene with a local-first cache synced through build.smithers.sh."
+    },
+    {
+      "type": "prompt",
+      "title": "Ask about SmithersGUI",
+      "placeholder": "Describe a GUI, iOS, or libsmithers bug or change…"
+    },
+    {
+      "type": "flows",
+      "title": "Review, reproduce, and verify tickets"
+    },
+    {
+      "type": "links",
+      "links": [
+        {
+          "label": "Repository",
+          "url": "https://github.com/smithersai/gui"
+        },
+        {
+          "label": "CI",
+          "url": "https://github.com/smithersai/gui/actions/workflows/ci.yml"
+        },
+        {
+          "label": "Download SmithersGUI.dmg",
+          "url": "https://download.smithers.sh/SmithersGUI.dmg"
+        },
+        {
+          "label": "libsmithers C ABI contract",
+          "url": "https://github.com/smithersai/gui/blob/main/docs/libsmithers-contract.md"
+        }
+      ]
+    }
+  ]
+}

@@ -21,6 +21,11 @@
     "./**/*"
   ],
   "exclude": [
-    "./executions/**/*"
+    "./executions/**/*",
+    "./WORKSPACE.ts",
+    "./PACKAGE.ts",
+    "./FACTORY.ts",
+    "./checks/**/*",
+    "./cache/**/*"
   ]
 }
