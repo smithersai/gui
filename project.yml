@@ -519,6 +519,9 @@ targets:
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
         LIBRARY_SEARCH_PATHS: "$(inherited) $(SDKROOT)/usr/lib"
+        # `@testable import SmithersiOS` loads the app's Swift module, which
+        # imports CSmithersKit, so the tests need its module map too.
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/CSmithersKit"
   SmithersiOSUITests:
     type: bundle.ui-testing
     platform: iOS

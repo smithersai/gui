@@ -79,18 +79,34 @@ pub fn build(b: *std.Build) void {
         // so it can locate Bionic headers and link stubs for the platform
         // API level.
         const sysroot = b.pathJoin(&.{ sysroot_parent, "toolchains", "llvm", "prebuilt", hostTag(), "sysroot" });
-        lib_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr", "include" }) });
-        lib_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr", "include", "aarch64-linux-android" }) });
-        // Link stubs live under `usr/lib/aarch64-linux-android/<api>/`.
-        lib_mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr", "lib", "aarch64-linux-android", b.fmt("{d}", .{android_api}) }) });
+        const include_dir = b.pathJoin(&.{ sysroot, "usr", "include" });
+        const arch_include_dir = b.pathJoin(&.{ sysroot, "usr", "include", "aarch64-linux-android" });
+        // Link stubs and crt objects live under `usr/lib/aarch64-linux-android/<api>/`.
+        const crt_dir = b.pathJoin(&.{ sysroot, "usr", "lib", "aarch64-linux-android", b.fmt("{d}", .{android_api}) });
+        lib_mod.addSystemIncludePath(.{ .cwd_relative = include_dir });
+        lib_mod.addSystemIncludePath(.{ .cwd_relative = arch_include_dir });
+        lib_mod.addLibraryPath(.{ .cwd_relative = crt_dir });
         lib_mod.linkSystemLibrary("log", .{}); // __android_log_print, if we want it later
         lib_mod.linkSystemLibrary("dl", .{});
+
+        // Zig ships no Bionic, so without a libc file it fails with "unable
+        // to provide libc for target ...-android". Describe the NDK's.
+        const libc_file = b.addWriteFiles().add("android-libc.txt", b.fmt(
+            \\include_dir={s}
+            \\sys_include_dir={s}
+            \\crt_dir={s}
+            \\msvc_lib_dir=
+            \\kernel32_lib_dir=
+            \\gcc_dir=
+            \\
+        , .{ include_dir, arch_include_dir, crt_dir }));
 
         const shared = b.addLibrary(.{
             .name = "smithers_core",
             .root_module = lib_mod,
             .linkage = .dynamic,
         });
+        shared.setLibCFile(libc_file);
         b.installArtifact(shared);
     } else {
         // No NDK: static archive. Proves the source still cross-compiles for

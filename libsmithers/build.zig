@@ -243,9 +243,16 @@ fn appleSdkRoot(b: *std.Build, target: std.Build.ResolvedTarget) ?[]const u8 {
     }
 
     // A Command Line Tools SDK can ship a libsqlite3.tbd that lists
-    // arm64e-macos but not arm64-macos. Linking against it on Apple silicon
-    // fails with undefined _sqlite3_* symbols, so each candidate must export
-    // this target's slice; otherwise the Xcode SDK is used.
+    // arm64e-macos but not arm64-macos (macOS 26.5 SDK). Linking against it
+    // on Apple silicon fails with undefined _sqlite3_* symbols, so each
+    // candidate must export this target's slice.
+    //
+    // The selected Xcode (xcode-select or DEVELOPER_DIR) comes first: CI
+    // selects Xcode 26.3, whose SDK exports arm64-macos, while
+    // /Applications/Xcode.app is a newer Xcode whose SDK does not.
+    if (xcrunSdkPath(b, target)) |sdk_root| {
+        if (sdkHasSQLite(b, sdk_root, target)) return sdk_root;
+    }
     const candidates = [_][]const u8{
         "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
         "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
@@ -254,6 +261,26 @@ fn appleSdkRoot(b: *std.Build, target: std.Build.ResolvedTarget) ?[]const u8 {
         if (sdkHasSQLite(b, sdk_root, target)) return sdk_root;
     }
     return null;
+}
+
+/// The SDK path `xcrun` reports for the selected Xcode, or null when xcrun
+/// is missing or fails (non-Apple hosts, no Xcode).
+fn xcrunSdkPath(b: *std.Build, target: std.Build.ResolvedTarget) ?[]const u8 {
+    const sdk: []const u8 = switch (target.result.os.tag) {
+        .macos => "macosx",
+        .ios => if (target.result.abi == .simulator) "iphonesimulator" else "iphoneos",
+        else => return null,
+    };
+    const result = std.process.Child.run(.{
+        .allocator = b.allocator,
+        .argv = &.{ "xcrun", "--sdk", sdk, "--show-sdk-path" },
+    }) catch return null;
+    switch (result.term) {
+        .Exited => |code| if (code != 0) return null,
+        else => return null,
+    }
+    const path = std.mem.trim(u8, result.stdout, " \t\r\n");
+    return if (path.len == 0) null else path;
 }
 
 fn sdkHasSQLite(b: *std.Build, sdk_root: []const u8, target: std.Build.ResolvedTarget) bool {
