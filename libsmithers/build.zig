@@ -147,6 +147,12 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{.{ .name = "zmux_server", .module = session_server_mod }},
             }),
         });
+        const integration_options = b.addOptions();
+        integration_options.addOptionPath("zmuxd_path", zmux_dep.artifact("zmuxd").getEmittedBin());
+        integration_options.addOptionPath("smithers_session_daemon_path", zmux_dep.artifact("smithers-session-daemon").getEmittedBin());
+        integration_options.addOptionPath("zmux_connect_path", zmux_dep.artifact("zmux-connect").getEmittedBin());
+        integration_options.addOptionPath("smithers_session_connect_path", zmux_dep.artifact("smithers-session-connect").getEmittedBin());
+        session_daemon_tests.root_module.addOptions("test_build_options", integration_options);
         session_daemon_tests.linkLibC();
         if (target.result.os.tag == .linux) session_daemon_tests.linkSystemLibrary("util");
         if (target.result.os.tag == .macos) session_daemon_tests.linkSystemLibrary("proc");
